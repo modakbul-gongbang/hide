@@ -19,6 +19,6 @@
     "~/projects/oh-my-principle"
   ],
   "judge": {
-    "retryBudget": 10
+    "retryBudget": 15
   }
 }
