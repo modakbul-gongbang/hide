@@ -3,7 +3,11 @@
     "mode": "local",
     "baseBranch": "main",
     "branchPrefix": "gen-prd",
-    "ci": { "watch": true, "maxFixAttempts": 2, "timeoutSeconds": 240 }
+    "ci": {
+      "watch": true,
+      "maxFixAttempts": 2,
+      "timeoutSeconds": 240
+    }
   },
   "worktree": {
     "enabled": true,
@@ -11,5 +15,10 @@
     "copy": [],
     "setup": []
   },
-  "principles": ["~/projects/oh-my-principle"]
+  "principles": [
+    "~/projects/oh-my-principle"
+  ],
+  "judge": {
+    "retryBudget": 10
+  }
 }
