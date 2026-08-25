@@ -2374,3 +2374,13 @@ normalization_checkpoint_every: 10
 - highest-risk blocker: 없음.
 - final-blocking-question: 없음.
 - PRD impact: 사이클 2 클로저 PASS, sealed. qa-log를 complete로 전환한다. 이후 프런트매터와 이 섹션 외의 수정은 gate status를 STALE로 만든다.
+
+### Audit 5
+- type: gap-audit-gate
+- result: skipped
+- missing decision_ids: 없음(판정 미수행).
+- unsupported assumptions: 없음.
+- UX or behavior gap: 없음.
+- highest-risk blocker: 없음.
+- final-blocking-question: 없음.
+- PRD impact: 사이클 2 PASS(sealed) 이후 세 건이 추가·갱신되어 봉인이 STALE이 됐다. D-53(chromux 라이선스 부재 -> 2026-08-26 커밋 93f770f로 MIT 추가 확인, 선행 항목 해소), D-59(orca 실행 화면을 시각·인터랙션 기준선으로 채택, docs/design-reference/), D-43(grab 인터랙션을 orca-02 레퍼런스 기준으로 확정, 호버 형태·중첩 이동·다중 선택만 디자인 단계로 잔류). 사용자 변경 요청으로 사이클 3을 재개방해 전체 라운드를 시작했으나, 실행 중 D-59와 D-43이 추가되어 판정 입력이 다시 낡았다. 사용자 판단으로 사이클 3을 중단하고 여기서 마무리한다. 근거는 세 건 모두 새 스코프나 새 미결이 아니라 이미 확정된 결정의 사실 갱신·구체화이고, gen-prd 이후의 spec 게이트가 PRD를 이 qa-log와 대조하며 같은 내용을 다시 검사하기 때문이다. **따라서 이 세 건은 독립 심판을 거치지 않았다.** gate status는 사이클 3 미완 상태로 남는다.
