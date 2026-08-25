@@ -1,0 +1,15 @@
+{
+  "delivery": {
+    "mode": "local",
+    "baseBranch": "main",
+    "branchPrefix": "gen-prd",
+    "ci": { "watch": true, "maxFixAttempts": 2, "timeoutSeconds": 240 }
+  },
+  "worktree": {
+    "enabled": true,
+    "link": [],
+    "copy": [],
+    "setup": []
+  },
+  "principles": ["~/projects/oh-my-principle"]
+}

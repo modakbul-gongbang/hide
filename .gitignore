@@ -8,3 +8,5 @@ out/
 agents/implement/
 agents/runs/
 agents/quick/
+
+agents/interview/*/.cadence.json
