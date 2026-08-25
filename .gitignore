@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+.vite/
+.DS_Store
+
+# PRD pipeline runtime state
+agents/implement/
+agents/runs/
+agents/quick/

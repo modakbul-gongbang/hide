@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "Blue Slime",
+  "version": "1.0.0",
+  "viewBox": { "x": 0, "y": 0, "width": 1024, "height": 1024 },
+  "states": {
+    "idle": "assets/idle.png",
+    "working": "assets/working.png",
+    "attention-0": "assets/attention-0.png",
+    "attention-1": "assets/attention-1.png",
+    "attention-2": "assets/attention-2.png",
+    "attention-3": "assets/attention-3.png",
+    "error": "assets/error.png",
+    "disconnected": "assets/disconnected.png",
+    "sleeping": "assets/sleeping.png"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "at": "2026-08-17T04:11:09.826Z",
+  "gate": "gap-audit",
+  "verdict": "BLOCK",
+  "judgedVerdict": "BLOCK",
+  "demotedCount": 1,
+  "dedupedCount": 0,
+  "findings": [
+    {
+      "area": "data",
+      "severity": "P1",
+      "missing": "D-10/D-11이 diff 뷰어를 내장 뷰어 타입으로 확정했지만, git UI가 비목표로 명시된 상태에서 diff의 비교 기준(작업트리 vs HEAD, staged 여부, git 리포 아닌 경우 동작)이 정의되어 있지 않다.",
+      "recommendation": "diff 뷰어가 무엇을 기준으로 비교를 계산하는지(예: git diff HEAD, 비-git 디렉토리에서의 폴백) 사용자에게 확인해 결정으로 등록한다.",
+      "requiresHuman": true,
+      "origin": "new"
+    },
+    {
+      "area": "data",
+      "severity": "P1",
+      "missing": "UX-04 검색(파일명/텍스트) 범위가 정의되지 않음 — .gitignore 존중 여부, node_modules/바이너리/숨김파일 포함 여부, 대규모 트리 인덱싱 전략이 결정되지 않았다.",
+      "recommendation": "검색 대상 범위(gitignore 존중, 제외 패턴, 인덱싱 방식)를 사용자와 확정해 데이터 소스 오브 트루스로 등록한다.",
+      "requiresHuman": true,
+      "origin": "new"
+    },
+    {
+      "area": "risk",
+      "severity": "P1",
+      "missing": "herdr TUI sidebar 숨김을 위한 포크+upstream PR 방침(D-24②)이 있지만, 포크가 필요한 시나리오에서 upstream이 PR을 거부/지연할 경우의 장기 유지 리스크나 병합 실패 기준이 정의되지 않았다.",
+      "recommendation": "포크 유지가 얼마나 지속 가능한지, upstream 미병합 시의 대응 기준을 명시하거나 명시적으로 비목표/수용 리스크로 기록.",
+      "requiresHuman": true,
+      "origin": "new"
+    },
+    {
+      "area": "verification",
+      "severity": "P2",
+      "missing": "UX-02(native sidebar 조작), UX-03(가벼운 편집·저장), UX-04(검색)에는 proof가 있으나 D-20(서버 비독점 병행 사용 보장)에 대한 독립적 관찰 가능한 검증 절차가 골든 시나리오(D-19)의 리모트 attach 확인에만 암묵적으로 얹혀 있고, '기존 터미널에서 herdr CLI로 같은 서버 붙는' 병행 사용 자체를 확인하는 명시적 proof가 없다.",
+      "recommendation": "[auto-demoted: new non-P0 finding on a re-run cannot block] D-20을 위한 별도 UX/verification 카드나 proof 문장을 추가(예: 앱 실행 중 별도 터미널에서 herdr attach 성공 확인).",
+      "requiresHuman": false,
+      "origin": "new"
+    }
+  ],
+  "lanes": [
+    {
+      "laneId": "goal-scope",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:10:49.500Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:goal-scope",
+        "durationMs": 3980,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "ux-behavior",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:10:49.506Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:ux-behavior",
+        "durationMs": 3398,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "data-tech",
+      "verdict": "BLOCK",
+      "findingCount": 2,
+      "judge": {
+        "at": "2026-08-17T04:10:49.511Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:data-tech",
+        "durationMs": 20314,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "risk-ops-verification",
+      "verdict": "BLOCK",
+      "findingCount": 2,
+      "judge": {
+        "at": "2026-08-17T04:10:49.516Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:risk-ops-verification",
+        "durationMs": 9710,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "path": "agents/interview/herdr-lightweight-ide/qa-log.md",
+      "sha256": "2e16f779c1fb4748bad1d2b607f9109ce62c4c3e019190ff12cba7b84a1a91d1"
+    }
+  ]
+}

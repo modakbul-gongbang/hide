@@ -1,0 +1,51 @@
+{
+  "at": "2026-08-17T04:21:15.860Z",
+  "gate": "spec",
+  "verdict": "PASS",
+  "judgedVerdict": "PASS",
+  "demotedCount": 0,
+  "dedupedCount": 0,
+  "findings": [],
+  "lanes": [
+    {
+      "laneId": "fidelity",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:21:11.886Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:spec:lane:fidelity",
+        "durationMs": 3973,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "testability",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:21:11.891Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:spec:lane:testability",
+        "durationMs": 3351,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "path": "agents/prd/herdr-lightweight-ide/prd.md",
+      "sha256": "30dc0f71c9b7e2f1c04d5fc530468be96ebc4b4af4fd7c0b3202bebea00e0cbc"
+    },
+    {
+      "path": "agents/interview/herdr-lightweight-ide/qa-log.md",
+      "sha256": "d0da1642b6f46f9b0782a8786e1a1a0020b3c7df6843aecdd7ad54c5c8347a3d"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "at": "2026-08-17T04:13:05.829Z",
+  "gate": "gap-audit",
+  "verdict": "PASS",
+  "judgedVerdict": "PASS",
+  "demotedCount": 0,
+  "dedupedCount": 0,
+  "findings": [
+    {
+      "area": "risk",
+      "severity": "P2",
+      "missing": "포크 유지 리스크는 수용 리스크로 확정됐지만(D-34), upstream이 PR을 아예 거부하는 경우의 재논의 트리거는 '패치 규모 증가 시'로만 정의되어 거부 자체에 대한 트리거는 없다.",
+      "recommendation": "필요 시 'upstream 거부 확인 시 재논의'를 트리거에 추가할 수 있으나 현재도 실무적으로 수용 가능한 수준.",
+      "requiresHuman": false,
+      "origin": "prior-unresolved"
+    }
+  ],
+  "lanes": [
+    {
+      "laneId": "goal-scope",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:12:59.800Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:goal-scope",
+        "durationMs": 3422,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "ux-behavior",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:12:59.805Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:ux-behavior",
+        "durationMs": 4029,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "data-tech",
+      "verdict": "PASS",
+      "findingCount": 0,
+      "judge": {
+        "at": "2026-08-17T04:12:59.810Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:data-tech",
+        "durationMs": 4542,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    },
+    {
+      "laneId": "risk-ops-verification",
+      "verdict": "PASS",
+      "findingCount": 1,
+      "judge": {
+        "at": "2026-08-17T04:12:59.816Z",
+        "backend": "claude",
+        "model": "claude-sonnet-5",
+        "tier": "frugal",
+        "purpose": "gate:gap-audit:lane:risk-ops-verification",
+        "durationMs": 6012,
+        "attempts": 1,
+        "outcome": "ok"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "path": "agents/interview/herdr-lightweight-ide/qa-log.md",
+      "sha256": "d0da1642b6f46f9b0782a8786e1a1a0020b3c7df6843aecdd7ad54c5c8347a3d"
+    }
+  ]
+}
