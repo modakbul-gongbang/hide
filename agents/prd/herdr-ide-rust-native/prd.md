@@ -15,7 +15,7 @@ updated_at: "2026-08-26"
 
 `herdr-ide`를 Electron 호환 계층 없이 Rust 기반 macOS 네이티브 IDE로 전면 재구축한다.
 앱은 Herdr가 소유하는 workspace, tab, pane, agent 상태 위에 빠른 실제 PTY terminal, 파일 workbench, CEF Browser pane, local·remote agent 탐색, 전역 `Option+Tab` overlay, 통합 Herdr Pet을 제공한다.
-UI는 고정 3열이 아니라 왼쪽 navigator와 Ghostty처럼 tab·split을 자유롭게 쓰는 main canvas로 구성한다.
+UI는 고정 3열이 아니라 왼쪽 navigator와 Ghostty처럼 tab·split을 자유롭게 쓰고 focused pane을 `Cmd+Shift+Enter`로 zoom할 수 있는 main canvas로 구성한다.
 기존 Electron worktree는 시각 밀도, 상태 배지, local·remote 표기 같은 정보 구조만 읽기 전용으로 참고하며 코드, 상태 모델, 런타임은 재사용하지 않는다.
 
 이 PRD는 승인된 `agents/prd/herdr-lightweight-ide/prd.md`의 Swift/libghostty/TUI 구조와 승인 대기 중인 `agents/prd/herdr-ide-native-shell/prd.md`의 Electron/fixed 3-column/Grab 구조를 모두 대체한다.
@@ -30,7 +30,7 @@ AppKit + WGPU + CEF라는 큰 구조와 terminal, text, accessibility, shortcut,
 - **대체와 저장소 경계** - 두 이전 PRD를 supersede하고 기존 Electron worktree는 읽기 전용 UI 참고로만 남기며, Rust 구현은 새 worktree에서 진행한다. (3장, 4.2장 HD1)
 - **architecture preflight** - 본 구현 전에 제품·OSS 비교, license·maintenance 검토, terminal/IME/CEF/CDP/AX/bundle 성립성 spike와 ADR을 완료한다. (4.2장 HD2, 6장 R2-R3, 8장 T1)
 - **장기 구조** - Herdr가 typed pane surface와 agent lineage의 단일 원본이 되고, AppKit이 native lifecycle, WGPU가 IDE/terminal pixels, CEF가 Browser pixels를 소유한다. (4.2장 HD3, 5장)
-- **완결 범위** - tab/split/terminal, 세 sidebar view, file workbench, Browser QA, remote `mini`, shortcuts, `Option+Tab`, lineage, OpenRouter summaries, Pet까지 첫 전체 Done에 포함한다. (3장, 6장)
+- **완결 범위** - tab/split/terminal, `Cmd+Shift+Enter` pane zoom, 세 sidebar view, file workbench, Browser QA, remote `mini`, shortcuts, `Option+Tab`, lineage, OpenRouter summaries, Pet까지 첫 전체 Done에 포함한다. (3장, 6장)
 - **위험 경계** - destructive E2E는 exact owned fixture만 건드리고, remote 변경은 명시적 확인을 받으며, CDP는 scoped loopback endpoint만 열고, secret·transcript는 로그에 남기지 않는다. (4.2장 HD4-HD5, 11장)
 - **hard performance gate** - release build가 warm usable 1초, terminal input-to-present p95 50ms, idle CPU 1%, Browser 닫힘 RSS 200MB, Browser 1개 포함 RSS 600MB 목표를 충족해야 하며 preflight가 불가능성을 보이면 수치 변경 전에 재승인을 받는다. (4.2장 HD6, 7장 AC24)
 - **검증과 전달** - 설치된 `.app` 한 인스턴스를 실제 AX 입력과 screenshot으로 검증하고 Herdr snapshot, chromux, local·remote fixture로 상태를 대조하며 delivery mode는 local이다. (4.2장 HD7, 9장)
@@ -51,7 +51,7 @@ Browser를 별도 창이나 plugin UI로 띄우면 agent가 요청한 Browser QA
 ### 목표
 
 Rust와 native macOS lifecycle을 기반으로 키 입력과 pane 전환에 즉각 반응하고, Herdr의 실제 상태를 모든 UI가 공유하는 daily-driver IDE를 만든다.
-사용자는 workspace를 고른 뒤 tab, split, terminal, file, Browser를 자연스럽게 배치하고, `Option+Tab` 한 번으로 local·remote agent 전체의 현재 상태를 확인해 정확한 pane으로 이동할 수 있어야 한다.
+사용자는 workspace를 고른 뒤 tab, split, terminal, file, Browser를 자연스럽게 배치하고, 현재 pane에 집중할 때는 한 번의 shortcut으로 main canvas를 zoom하며, `Option+Tab`으로 local·remote agent 전체의 현재 상태를 확인해 정확한 pane으로 이동할 수 있어야 한다.
 Browser QA는 source pane과 연결된 native Browser pane에서 chromux로 제어·검증하고, Pet은 별도 상태를 추측하지 않고 IDE와 같은 agent를 보여줘야 한다.
 
 ### 성공의 모습
@@ -64,9 +64,9 @@ Browser, remote, file save, summary, Pet 중 하나가 실패해도 다른 기�
 
 - SC1. Workspace에서 실제 tab과 terminal pane으로 작업한다.
   Actors: 개발자, local Herdr server.
-  Primary path: 개발자가 Workspaces view에서 workspace를 선택하고 `Cmd+T`, `Cmd+D`, `Cmd+Shift+D`로 실제 Herdr tab과 오른쪽·아래 terminal pane을 만든 뒤 keyboard, paste, 한글 IME, scroll, resize를 사용한다.
-  Failure state: Herdr event sequence가 끊기거나 attach가 실패하면 빈 pane이나 성공한 것처럼 보이는 layout을 만들지 않고 해당 surface를 stale 또는 failed로 표시한다.
-  Recovery: 사용자가 retry하거나 connection을 복구하면 전체 snapshot으로 resync하고 마지막으로 확인된 active tab과 pane을 복원한다.
+  Primary path: 개발자가 Workspaces view에서 workspace를 선택하고 `Cmd+T`, `Cmd+D`, `Cmd+Shift+D`로 실제 Herdr tab과 오른쪽·아래 terminal pane을 만든 뒤 keyboard, paste, 한글 IME, scroll, resize를 사용하며 focused terminal·editor·Browser pane에서 `Cmd+Shift+Enter`를 눌러 main canvas zoom을 켜고 끈다.
+  Failure state: Herdr event sequence가 끊기거나 attach가 실패하거나 zoom target이 사라지면 빈 pane, stale zoom, 성공한 것처럼 보이는 layout을 만들지 않고 해당 surface를 stale 또는 failed로 표시하거나 zoom을 해제한 이유를 보여준다.
+  Recovery: 사용자가 zoom을 다시 toggle하면 exact split ratios와 focus를 복원하고, connection을 복구하면 전체 snapshot으로 resync해 마지막으로 확인된 active tab과 pane을 복원한다.
   Reach: `herdr-ide-e2e-*` local workspace와 실제 PTY pane을 자동으로 준비하며 사용자 workspace는 사용하지 않는다.
 
 - SC2. Agent가 요청한 Browser QA를 native pane에서 수행한다.
@@ -140,7 +140,7 @@ Browser, remote, file save, summary, Pet 중 하나가 실패해도 다른 기�
 - architecture, OSS, framework, license, maintenance, packaging research와 native risk spike.
 - AppKit lifecycle과 native windows, WGPU IDE·terminal rendering, CEF native Browser child view.
 - Herdr-owned workspace, tab, typed pane surface, layout, agent lifecycle, lineage snapshot과 ordered events.
-- 실제 PTY terminal, tab 생성·선택·rename·close·drag reorder, split·focus·resize·close.
+- 실제 PTY terminal, tab 생성·선택·rename·close·drag reorder, split·focus·resize·close, focused terminal·editor·Browser pane의 main-canvas zoom.
 - persistent left navigator의 Workspaces, Agents, Worktrees view와 flexible main split canvas.
 - local·remote 파일 탐색, expansion persistence, filename/content search, open/edit/save, external-change detection, diff, Git status.
 - source-pane-linked native Browser, local persistent profile, scoped loopback CDP, chromux attach·detach, remote request bridge.
@@ -165,6 +165,7 @@ Browser, remote, file save, summary, Pet 중 하나가 실패해도 다른 기�
 - 실제 사용자 workspace, pane, worktree, Browser profile을 E2E fixture로 사용하는 것.
 - native parity가 검증되기 전 Electron reference 또는 standalone Herdr Pet 제거.
 - Windows·Linux 지원과 첫 release의 Apple notarization·공개 배포 자동화.
+- `Cmd+Shift+Enter` pane zoom을 macOS window fullscreen, 별도 window 또는 Herdr split topology 변경으로 구현하는 것.
 
 ### 제품 완결성
 
@@ -214,8 +215,11 @@ T1 architecture preflight remains mandatory implementation work and must pass be
 - D16. 현재 합의한 stack은 AppKit/`objc2`, WGPU, `alacritty_terminal`, `cosmic-text`, CEF native child view이며 exact binding과 revision은 preflight에서 확정한다. -> R2-R3, AC2, T1.
 - D17. 이전 fixed 3-column은 latest pane 요구와 충돌하므로 persistent left navigator + flexible split canvas로 대체한다. -> agent-owned recommendation, HD3 승인 대상, R6, AC3.
 - D18. pane communication은 별도 chat UI가 아니라 real agent pane 사이의 unique nonce roundtrip을 뜻한다. -> R12, AC11, V7.
+- D19. `Cmd+Shift+Enter`는 focused pane이 main canvas를 임시로 독점하는 zoom을 toggle하고 다시 누르면 원래 split layout으로 복귀한다. -> SC1, R27, AC26, T4-T5, T10, V2-V4.
+- A1. 사용자의 “특정 pane이 전체 차지”는 macOS window fullscreen이 아니라 persistent navigator와 tab strip을 유지한 main-canvas zoom으로 해석한다. -> agent-owned assumption, 승인 checklist의 완결 범위, R27, AC26.
+- A2. zoom은 tab별 transient state로 같은 app session의 tab·workspace 왕복에서는 유지하고 app relaunch에서는 해제하며, topology command는 zoom을 먼저 해제한 뒤 직전 target에 적용한다. -> agent-owned interaction assumption, R27, AC26, V2-V4.
 
-**최신 12개 사용자 요청 trace matrix**
+**최신 13개 사용자 요청 trace matrix**
 
 | 요청 | 사용자 의도 | Product contract | Verification |
 | --- | --- | --- | --- |
@@ -231,6 +235,7 @@ T1 architecture preflight remains mandatory implementation work and must pass be
 | REQ-10 | workspace 선택 후 real tab·pane 생성과 분리 | SC1, R6-R8 | AC5-AC7, V3-V4 |
 | REQ-11 | `herdr agent new`의 parent-child lineage tree | SC3, R11 | AC10-AC11, V2-V3, V6 |
 | REQ-12 | Codex·Claude logo, 작업 summary, OpenRouter key Settings | SC9, R13, R19 | AC12, AC19, V2, V4, V9 |
+| REQ-13 | `Cmd+Shift+Enter`로 focused pane zoom과 원래 split 복귀 | SC1, R27 | AC26, V2-V4 |
 
 **검증된 현재 코드 사실과 architecture 영향**
 
@@ -278,6 +283,7 @@ local/remote Herdr server
   -> host-scoped domain projection
   -> shared AgentPresentationStore
      -> left navigator / tab strip / split canvas
+     -> window-local pane zoom presentation state
      -> Option+Tab overlay
      -> native Pet window
 
@@ -309,6 +315,16 @@ WGPU는 IDE chrome, navigator, tab strip, split canvas, terminal, editor, overla
 CEF는 Browser pixels와 Browser process/helper lifecycle을 소유하며 WGPU는 Browser texture를 복사하거나 합성하지 않는다.
 Terminal runtime은 pane surface가 제공하는 `terminal_id` 또는 새 `herdr pane attach <pane-id>`·`herdr terminal attach <terminal-id>` 계약으로 실제 PTY stream을 attach하고 terminal state와 glyph shaping을 UI layout과 분리한다.
 `herdr agent attach`는 agent-target convenience path일 뿐 terminal surface rendering의 필수 경로가 아니다.
+
+### Pane zoom presentation state
+
+Pane zoom은 macOS window fullscreen이나 Herdr split topology mutation이 아니라 active window와 tab에 속하는 transient presentation state다.
+`Cmd+Shift+Enter`는 focused `terminal`, `editor`, `browser` pane의 stable ID를 `zoomed_pane_id`로 설정하고 main canvas의 sibling panes만 숨기며 persistent navigator와 tab strip은 유지한다.
+같은 shortcut을 다시 누르면 zoom 직전의 split ratios, active pane, focus를 정확히 복원하고 tab·workspace를 바꿨다가 같은 app session에서 돌아오면 해당 tab의 zoom state를 복원하되 app relaunch는 normal split layout으로 시작한다.
+숨겨진 sibling pane의 PTY process, editor buffer, Browser page·profile은 계속 살아 있고 zoom toggle은 Herdr snapshot의 pane tree, split ratios, process ownership을 변경하지 않는다.
+split, move, resize, close처럼 topology를 바꾸는 command는 zoom을 먼저 명시적으로 해제한 뒤 직전 zoom target에 적용하며 target pane이 remote event로 사라지면 stale ID를 유지하지 않고 zoom 해제 이유와 새 focus를 표시한다.
+focused zoomable pane이 없으면 command는 layout을 바꾸지 않고 unavailable reason을 표시한다.
+zoom 상태는 tab strip과 Accessibility tree에서 읽을 수 있는 indicator로 표현하고 central command registry에서 shortcut remap과 conflict 처리를 공유한다.
 
 ### Local·remote service boundaries
 
@@ -354,6 +370,7 @@ structured diagnostics는 operation과 stable IDs를 포함하되 secret, transc
 - R24. E2E harness는 실행 전 existing app process, Herdr session, Browser view, `mini` state를 inventory하고 installed release `.app` 한 인스턴스만 허용한다. `herdr-ide-e2e-*` fixture를 만든 즉시 exact owned ID manifest에 기록하고 cleanup은 manifest ID만 사용하며 같은 suite를 두 번 실행해도 user state나 orphan resource를 늘리지 않는다.
 - R25. target Mac release build에서 warm first usable state가 1초 이하, terminal input-to-present p95가 50ms 이하, 안정 idle CPU 평균이 1% 이하, Browser closed 7 workspace·11 pane process-tree RSS가 200MB 이하, CEF Browser 1개와 helper를 포함한 RSS가 600MB 이하여야 한다. 측정은 build identity, machine, condition, sample count, process tree를 기록하고 dev build 결과를 acceptance로 쓰지 않는다.
 - R26. release `.app`은 Rust executable, CEF framework·helper·localization·resources, app icon, Pet assets를 포함하고 rpath, executable permissions, helper identity, crash-free relaunch를 검증한다. 이 PRD의 Done 시점까지 Electron reference와 standalone Pet을 유지하고, native acceptance와 parity evidence를 사용자가 확인한 뒤 별도 승인된 exact-target cleanup에서만 retirement한다.
+- R27. `Cmd+Shift+Enter`는 focused terminal·editor·Browser pane이 navigator와 tab strip을 제외한 main canvas를 독점하는 zoom을 toggle하며 sibling lifecycle과 Herdr topology를 바꾸지 않고 해제 시 exact split ratios와 focus를 복원한다. command는 central registry에서 remap 가능해야 하고 missing·removed target, tab switch, topology mutation을 deterministic state transition으로 처리하며 현재 zoom state를 시각적 indicator와 Accessibility state로 노출하고 zoomable focus가 없으면 layout을 바꾸지 않은 채 unavailable reason을 보여준다.
 
 ## 7. Acceptance Criteria
 
@@ -382,24 +399,25 @@ structured diagnostics는 operation과 stable IDs를 포함하되 secret, transc
 - AC23. 모든 native E2E가 시작 전 exactly one installed app instance와 owned fixture manifest를 확인하고 실제 AX/CGEvent interaction, Herdr snapshot before·after, native `screencapture`를 evidence로 남기며 suite 재실행 뒤 기존 user state와 orphan count가 변하지 않는다.
 - AC24. fixed release fixture에서 warm usable, terminal latency, idle CPU, Browser closed RSS, one-Browser RSS가 각각 R25 한계를 넘지 않고 process-tree 전체와 CEF helper가 측정에 포함된다.
 - AC25. packaged `.app`을 clean launch context에서 실행해 terminal, CEF, Keychain, global shortcut, Pet asset이 동작하고 helper/rpath/resources가 유효하며 이 PRD의 Done evidence가 기록되는 동안 Electron reference와 standalone Pet이 그대로 남는다.
+- AC26. terminal·editor·Browser가 함께 있는 split에서 각 pane을 focus하고 `Cmd+Shift+Enter`를 누르면 해당 pane만 main canvas를 채우고 navigator·tab strip·zoom indicator가 남으며, 다시 누르면 동일한 logical split ratios와 focus가 복원되고 sibling PTY·buffer·Browser page 및 Herdr snapshot topology가 변하지 않는다. zoom 중 topology command, tab·workspace switch, target removal, shortcut remap·conflict를 수행하거나 zoomable focus 없이 command를 호출해도 blank canvas, hidden new pane, stale zoom ID, lost process가 생기지 않고 AX inspection이 zoomed state 또는 unavailable state를 반환한다.
 
 ## 8. PRD-Level Tasks
 
-- T1. architecture·product·OSS preflight를 수행한다. Tide, herdrm, Ghostty, Zed, official.browser/chromux, Herdr Pet의 relevant pattern과 native stack 후보의 license·maintenance·security·macOS·IME·AX·bundle·performance를 비교하고 ADR을 작성하며 release `.app` spike로 WGPU, PTY, CEF, CDP, 한글 IME, shortcuts, AX, packaging, launch metrics를 증명한다. Covers R2-R3, R23, R25-R26, AC2-AC3, AC7, AC22, AC24-AC25. Depends on: none.
+- T1. architecture·product·OSS preflight를 수행한다. Tide, herdrm, Ghostty, Zed, official.browser/chromux, Herdr Pet의 relevant pattern과 native stack 후보의 license·maintenance·security·macOS·IME·AX·bundle·performance를 비교하고 ADR을 작성하며 release `.app` spike로 WGPU, PTY, CEF, CDP, 한글 IME, shortcuts, cross-surface pane zoom bounds·focus, AX, packaging, launch metrics를 증명한다. Covers R2-R3, R23, R25-R27, AC2-AC3, AC7, AC22, AC24-AC26. Depends on: none.
 - T2. Herdr protocol을 versioned typed surface, ordered event sequence, snapshot resync, host-scoped stable IDs, idempotent operation contract로 확장한다. typed terminal payload는 stable `pane_id`, optional `agent_instance_id`, required terminal attach endpoint를 제공하고 plain terminal의 agent-only attach는 typed error로 실패시킨다. Covers R4-R5, R8, R21-R22, AC4-AC7, AC21. Depends on: T1.
 - T3. atomic `agent.new` API·CLI와 durable lineage lifecycle을 구현하고 IDE·terminal spawn을 같은 contract에 연결한다. Covers R11-R12, AC10-AC11. Depends on: T2.
-- T4. AppKit application lifecycle, WGPU shell, persistent navigator, flexible tab/split canvas, native menus, accessibility bridge, shared domain projection과 presentation store를 구현한다. Covers R3-R6, R13, R22-R23, AC3-AC5, AC12, AC21-AC22. Depends on: T1, T2.
-- T5. 실제 PTY terminal runtime과 Herdr tab·split·focus·resize·rename·reorder·close command를 구현한다. Covers R7-R8, AC6-AC7. Depends on: T4.
+- T4. AppKit application lifecycle, WGPU shell, persistent navigator, flexible tab/split canvas, window-local pane zoom state, native menus, accessibility bridge, shared domain projection과 presentation store를 구현한다. Covers R3-R6, R13, R22-R23, R27, AC3-AC5, AC12, AC21-AC22, AC26. Depends on: T1, T2.
+- T5. 실제 PTY terminal runtime과 Herdr tab·split·focus·resize·rename·reorder·close command 및 topology-safe pane zoom toggle을 구현한다. Covers R7-R8, R27, AC6-AC7, AC26. Depends on: T4.
 - T6. Workspaces, Agents, Worktrees view와 authoritative agent identity, lineage, host/state/summary presentation을 구현한다. Covers R6, R11, R13, AC10, AC12. Depends on: T3, T4.
 - T7. local filesystem·remote SFTP FileService, search, editor, external-change guard, diff, Git status를 typed editor surface에 연결한다. Covers R5, R15, AC5, AC15. Depends on: T4.
 - T8. CEF Browser runtime, source-linked typed Browser surface, persistent profile, loopback CDP gateway와 chromux lifecycle을 구현한다. Covers R5, R9-R10, R22, AC5, AC8-AC9, AC21. Depends on: T1, T2, T4.
 - T9. SSH alias setup, staged capability test, remote Herdr projection, PTY, SFTP, Git, reverse Browser bridge, reconnect와 owned tunnel cleanup을 구현한다. Covers R4-R5, R18, R21-R22, AC4-AC5, AC18, AC21. Depends on: T2, T5, T7, T8.
-- T10. central command registry, shortcut Settings, global registration, Keychain-backed OpenRouter Settings와 single summary-writer integration을 구현한다. Covers R16, R19, R21-R22, AC16, AC19, AC21. Depends on: T4, T6.
+- T10. central command registry, shortcut Settings, global registration, pane zoom remap·conflict handling, Keychain-backed OpenRouter Settings와 single summary-writer integration을 구현한다. Covers R16, R19, R21-R22, R27, AC16, AC19, AC21, AC26. Depends on: T4, T6.
 - T11. `Option+Tab` overlay와 IDE-owned native Pet을 shared presentation store에 연결하고 기존 Pet behavior·assets를 parity한다. Covers R17, R20, R23, AC17, AC20, AC22. Depends on: T6, T10.
 - T12. workspace·agent·worktree native context menu, consequence disclosure, server-confirmed mutation과 exact-ID destructive guard를 구현한다. Covers R14, R21-R22, R24, AC13-AC14, AC21, AC23. Depends on: T4, T6.
 - T13. cross-process structured diagnostics, redaction, operation manifest, reconnect state와 user-visible recovery surfaces를 완성한다. Covers R4, R18-R19, R21-R22, AC4, AC18-AC19, AC21. Depends on: T8, T9, T10, T12.
 - T14. exactly-one-instance installed-app E2E harness와 local·remote fixture ownership, AX/CGEvent control, Herdr snapshot comparison, native screenshot capture를 구현한다. Covers R24, AC23. Depends on: T3, T5-T13.
-- T15. automated regression, protocol integration, two-real-agent nonce, Browser/chromux, `mini`, performance process-tree, release bundle acceptance를 실행하고 모든 required evidence를 고정한다. Covers R1-R26, AC1-AC25. Depends on: T14.
+- T15. automated regression, protocol integration, two-real-agent nonce, Browser/chromux, `mini`, pane zoom, performance process-tree, release bundle acceptance를 실행하고 모든 required evidence를 고정한다. Covers R1-R27, AC1-AC26. Depends on: T14.
 - T16. 두 이전 PRD의 superseded 상태를 명확히 하고 Electron reference와 standalone Pet의 before·after unchanged evidence와 향후 exact-target retirement 조건을 결과 보고에 남긴다. 실제 retirement는 이 PRD receipt와 사용자 확인 뒤 별도 승인된 cleanup으로 미룬다. Covers R1, R26, AC1, AC25. Depends on: T15.
 
 ## 9. Verification Contract
@@ -409,9 +427,9 @@ structured diagnostics는 operation과 stable IDs를 포함하되 secret, transc
 | Mode | Required For Done | Covers | Human Decision |
 | --- | --- | --- | --- |
 | build/static | yes | Rust workspace와 cross-repo schema, dependency/license, bundle structure, secret contract | none |
-| automated behavior | yes | projection, event gap, idempotency, layout, file conflict, shortcut, status, Pet, cleanup regressions | none |
+| automated behavior | yes | projection, event gap, idempotency, layout, pane zoom state, file conflict, shortcut, status, Pet, cleanup regressions | none |
 | protocol/integration | yes | 실제 local Herdr snapshot·command·typed surface·lineage | none |
-| native runtime | yes | 설치된 macOS 앱의 terminal, UI, AX, shortcuts, context menu, overlay, Pet | 최종 시각·interaction taste는 9.3 |
+| native runtime | yes | 설치된 macOS 앱의 terminal, UI, AX, shortcuts, pane zoom, context menu, overlay, Pet | 최종 시각·interaction taste는 9.3 |
 | browser/CDP runtime | yes | CEF Browser surface와 chromux lifecycle | none |
 | agent runtime | yes | 두 disposable real agent의 nonce roundtrip | provider 사용과 fixture safety는 HD5 |
 | remote runtime | yes | `mini`의 Herdr·PTY·SFTP·Browser bridge와 recovery | machine unavailable이면 Done을 차단 |
@@ -427,9 +445,9 @@ structured diagnostics는 operation과 stable IDs를 포함하되 secret, transc
 | ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Allowed Side Effect | Sensitive Data Policy |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | V1 | build/static | R1-R3, R19, R21, R23, R26, AC1-AC3, AC19, AC22, AC25 | 네 저장소의 build·lint·schema·bundle·license checks가 통과하고 Electron reference diff가 없으며 dependency graph, config, bundle inspection이 승인된 Rust/CEF 구조와 secret boundary를 위반하지 않는다 | yes | no | build artifact와 disposable bundle 생성 | path와 account name을 redact하고 secret·transcript를 수집하지 않는다 |
-| V2 | automated behavior | R4-R6, R11-R17, R19-R24, AC4-AC6, AC10, AC12-AC17, AC19-AC23 | event gap과 resync, typed layout persistence, duplicate `agent.new`, lineage rename/restart, agent identity, external file conflict, shortcut conflict, status priority, Pet clamp, operation cleanup의 실제 회귀 위험이 deterministic tests로 차단된다 | yes | no | temporary state와 fake identifiers 생성 | fixture는 합성 내용만 쓰고 test secret은 출력하지 않는다 |
-| V3 | protocol/integration | SC1, R4-R8, R11, R21-R22, AC4-AC7, AC10, AC21 | real local Herdr에서 tab·terminal/editor/Browser leaf, split·focus·close, snapshot IDs, stale/resync, idempotent agent creation이 UI projection과 일치한다 | yes | no | `herdr-ide-e2e-*` local workspace와 pane 생성·종료 | manifest-owned exact IDs만 사용하고 user sessions를 읽거나 닫지 않는다 |
-| V4 | native runtime | SC1, SC4-SC6, SC8-SC9, R6-R8, R13-R17, R19-R24, R26, AC3, AC6-AC7, AC12-AC17, AC19-AC23, AC25 | installed release `.app` 한 인스턴스에서 실제 terminal/IME, navigator, file flow, native menus, shortcut remap, `Option+Tab`, Pet, failure states와 keyboard/AX 접근성이 작동하고 Herdr snapshot과 native screenshots가 같은 state를 증명한다 | yes | no | owned local fixtures, app settings fixture, dummy Keychain item 생성·삭제 | screenshots와 diagnostics에 secret, transcript, username, absolute home path를 남기지 않는다 |
+| V2 | automated behavior | R4-R6, R11-R17, R19-R24, R27, AC4-AC6, AC10, AC12-AC17, AC19-AC23, AC26 | event gap과 resync, typed layout persistence, pane zoom toggle·target removal·tab switch·topology mutation, duplicate `agent.new`, lineage rename/restart, agent identity, external file conflict, shortcut conflict, status priority, Pet clamp, operation cleanup의 실제 회귀 위험이 deterministic tests로 차단된다 | yes | no | temporary state와 fake identifiers 생성 | fixture는 합성 내용만 쓰고 test secret은 출력하지 않는다 |
+| V3 | protocol/integration | SC1, R4-R8, R11, R21-R22, R27, AC4-AC7, AC10, AC21, AC26 | real local Herdr에서 tab·terminal/editor/Browser leaf, split·focus·close, snapshot IDs, stale/resync, idempotent agent creation이 UI projection과 일치하고 pane zoom 전후 server topology가 변하지 않는다 | yes | no | `herdr-ide-e2e-*` local workspace와 pane 생성·종료 | manifest-owned exact IDs만 사용하고 user sessions를 읽거나 닫지 않는다 |
+| V4 | native runtime | SC1, SC4-SC6, SC8-SC9, R6-R8, R13-R17, R19-R24, R26-R27, AC3, AC6-AC7, AC12-AC17, AC19-AC23, AC25-AC26 | installed release `.app` 한 인스턴스에서 실제 terminal/IME, navigator, file flow, native menus, shortcut remap, terminal·editor·Browser pane zoom과 exact restore, `Option+Tab`, Pet, failure states, keyboard/AX 접근성이 작동하고 Herdr snapshot과 native screenshots가 같은 state를 증명한다 | yes | no | owned local fixtures, app settings fixture, dummy Keychain item 생성·삭제 | screenshots와 diagnostics에 secret, transcript, username, absolute home path를 남기지 않는다 |
 | V5 | browser/CDP runtime | SC2, R5, R9-R10, R18, R22-R24, AC5, AC8-AC9, AC18, AC21-AC23 | source-linked CEF Browser가 focus를 지키며 open·reuse되고 chromux navigation/snapshot/click/fill/screenshot과 detach·reattach 뒤에도 same profile/page가 유지되며 Grab surface가 없다 | yes | no | local test page, owned Browser view/profile, scoped CDP endpoint 생성 | test login만 사용하고 cookies, tokens, form secrets를 artifact에 포함하지 않는다 |
 | V6 | agent runtime | SC3, R11-R13, R24, AC10-AC12, AC23 | disposable parent·child real agents가 unique nonce를 왕복하고 두 view의 lineage와 exact Herdr IDs가 일치하며 retry가 duplicate agent를 만들지 않는다 | yes | yes | nonce-only prompt와 disposable agent process 생성·종료 | 사용자 transcript나 project content를 prompt에 넣지 않는다 |
 | V7 | remote runtime | SC7, R4-R5, R7-R10, R13, R15, R18, R21-R24, AC4-AC9, AC12, AC15, AC18, AC21-AC23 | `mini`의 exact owned fixture에서 remote badge, Herdr state, PTY, SFTP file flow, Git diff, Browser reverse bridge, disconnect·reconnect·stale tunnel·protocol mismatch가 동작하고 기존 remote resource는 변하지 않는다 | yes | yes | `herdr-ide-e2e-*` remote workspace, files, scoped tunnels 생성·정리 | SSH key와 remote env를 출력하지 않고 manifest-owned target만 변경한다 |
@@ -438,7 +456,7 @@ structured diagnostics는 operation과 stable IDs를 포함하되 secret, transc
 
 ### 9.3 Human Verification
 
-- HV1. persistent navigator와 flexible tab/split canvas가 Electron reference의 dark low-chrome density, Ghostty의 조작 감각, Tide·herdrm의 정보 grouping을 적절히 흡수했는지 최종 시각·interaction taste를 판단한다.
+- HV1. persistent navigator, flexible tab/split canvas, pane zoom indicator와 복귀 감각이 Electron reference의 dark low-chrome density, Ghostty의 조작 감각, Tide·herdrm의 정보 grouping을 적절히 흡수했는지 최종 시각·interaction taste를 판단한다.
 - HV2. workspace close, agent stop, worktree remove, remote install/update confirmation 문구가 실제 결과와 손실 가능성을 오해 없이 설명하는지 판단한다.
 - HV3. OpenRouter opt-in disclosure가 어떤 context가 외부로 전송되는지 충분히 명확하고 과도하게 숨기거나 겁주지 않는지 판단한다.
 - HV4. 설치 앱을 실제 하루 작업 흐름에 사용했을 때 terminal, file, Browser, agent switching, remote, Pet 사이에 반복적인 우회가 남지 않았는지 최종 daily-driver 판단을 한다.
@@ -455,6 +473,7 @@ structured diagnostics는 operation과 stable IDs를 포함하되 secret, transc
 - RISK8. WGPU custom editor·terminal은 native control보다 AX와 IME 구현 비용이 크다. T1에서 최소 vertical slice를 증명하고 AccessKit 또는 더 적합한 maintained bridge를 선택하되 architecture ownership 변경은 재승인받는다.
 - RISK9. R25의 200MB/600MB budget이 CEF release 구성에서 불가능할 수 있다. baseline은 수치를 자동 완화하는 근거가 아니라 조기 blocker evidence이며, 변경은 HD6을 다시 열어 사용자가 결정한다.
 - RISK10. shared summary metadata가 stale하거나 여러 writer에게 덮일 수 있다. agent당 writer ownership, revision, generated-at, provider error state를 명시하고 UI가 stale을 success로 표시하지 않는다.
+- RISK11. WGPU terminal·editor와 native CEF child view는 zoom 시 bounds, focus, z-order update 경로가 달라 sibling이 겹치거나 blank surface가 남을 수 있다. T1 cross-surface spike와 V2-V4에서 동일 state transition, Herdr topology 불변, before·zoomed·restored evidence를 함께 고정한다.
 
 PRD 승인 후 blocking open decision은 없다.
 Exact crate versions, CEF Rust binding 또는 thin audited bridge, PTY/Accessibility/global-hotkey/SSH supporting libraries는 T1이 승인된 architecture 안에서 결정한다.
@@ -474,7 +493,7 @@ T1 결과가 AppKit + WGPU + CEF ownership 또는 hard performance budget을 바
 - `engineering/principles.md` rule 8, Make architectural decisions for the long term: Browser/editor를 terminal-backed phantom pane으로 덮지 않고 typed surface를 Herdr source of truth로 만든다.
 - `engineering/principles.md` rule 9, Log for later questions: operation, host, workspace, tab, pane, agent, Browser view, reconnect stage, performance context를 structured field로 남긴다.
 - `engineering/principles.md` rule 10, Every failure must be observable outside the process: UI state, Herdr snapshot, exit status, redacted diagnostics, AX tree, screenshot 중 적합한 외부 surface에서 실패를 확인할 수 있어야 한다.
-- `engineering/principles.md` rule 11, Assume every operation runs twice: agent create, Browser open/reuse, save, settings write, reconnect, cleanup은 idempotency key 또는 exact revision/identity로 수렴한다.
+- `engineering/principles.md` rule 11, Assume every operation runs twice: agent create, Browser open/reuse, pane zoom toggle, save, settings write, reconnect, cleanup은 idempotency key, exact revision·identity 또는 deterministic state transition으로 수렴한다.
 - `engineering/principles.md` rule 12, Price a test before writing it: projection·parser·idempotency·conflict·priority는 빠른 automated test로, native focus·IME·CEF·AX·Pet은 실제 runtime proof로 검증하고 brittle pixel snapshot은 쓰지 않는다.
 - `engineering/principles.md` rule 13, Fix the class of failure: shortcut, state mismatch, phantom pane, stale tunnel, duplicate writer를 개별 예외가 아니라 central registry, single source, typed protocol, ownership manifest로 고친다.
 
@@ -487,11 +506,11 @@ T1 결과가 AppKit + WGPU + CEF ownership 또는 hard performance budget을 바
 
 - `design/principles.md` rule 1, A list is a read view: Workspaces, Agents, Worktrees를 하나의 억지 tree에 섞지 않고 각 data 관계에 맞는 view로 보여준다.
 - `design/principles.md` rule 2, The screen follows the operator's workflow: persistent navigator와 flexible canvas는 workspace 선택, agent 확인, terminal/file/Browser 작업 순서를 따른다.
-- `design/principles.md` rule 3, The most frequent action takes the fewest clicks: workspace focus, tab/split creation, blocked agent focus, Browser open/reuse, Pet jump는 shortcut 또는 한 번의 primary action으로 끝낸다.
-- `design/principles.md` rule 4, Show derived state: remote host, stale connection, attention priority, summary age, dirty worktree, shortcut conflict, source Browser pane을 사용자가 계산하지 않게 표시한다.
+- `design/principles.md` rule 3, The most frequent action takes the fewest clicks: workspace focus, tab/split creation, focused pane zoom, blocked agent focus, Browser open/reuse, Pet jump는 shortcut 또는 한 번의 primary action으로 끝낸다.
+- `design/principles.md` rule 4, Show derived state: remote host, stale connection, attention priority, summary age, dirty worktree, shortcut conflict, source Browser pane, current pane zoom을 사용자가 계산하지 않게 표시한다.
 - `design/principles.md` rule 5, Follow existing patterns: Electron reference의 density, Ghostty tab/split, herdrm grouping, current Herdr status token을 참고하되 현재 요구와 충돌하는 fixed layout과 Grab은 따르지 않는다.
 - `design/principles.md` rule 6, State the consequence before destructive action: agent stop, workspace close, worktree remove, remote install/update는 대상과 결과를 확인 전에 설명한다.
-- `design/principles.md` rule 7, Encode state and structure visually: hierarchy, focus, source relationship, remote, working, attention, error, stale을 indentation, icon, badge, color, placement로 표현하고 icon에는 accessible label을 둔다.
+- `design/principles.md` rule 7, Encode state and structure visually: hierarchy, focus, source relationship, pane zoom, remote, working, attention, error, stale을 indentation, icon, badge, color, placement로 표현하고 icon에는 accessible label을 둔다.
 
 ### Project-local safety and scope
 
@@ -510,14 +529,14 @@ T1 결과가 AppKit + WGPU + CEF ownership 또는 hard performance budget을 바
 구현 에이전트는 다음을 보고해야 한다.
 
 - status: `Done`, `Partially Done`, `Blocked` 중 하나와 그 판정 근거.
-- user-visible changes: workspace, tab, pane, terminal, file, Browser, agent views, remote, shortcuts, overlay, summary, Pet에서 사용자가 실제로 보게 되는 변화.
+- user-visible changes: workspace, tab, split, pane zoom, terminal, file, Browser, agent views, remote, shortcuts, overlay, summary, Pet에서 사용자가 실제로 보게 되는 변화.
 - architecture preflight: 비교한 products와 libraries, exact chosen versions·commits, license·maintenance 판정, accepted·rejected alternatives, runnable spike 결과, 남은 update risk.
 - actual structure: 각 저장소의 실제 modules와 Herdr protocol/data shape, AppKit/WGPU/CEF ownership, PTY, file, SSH/SFTP, Keychain, diagnostics responsibility boundary.
 - approved structure fidelity: 5장의 구조와 T1 ADR을 따랐는지, 벗어났다면 사전 승인 evidence와 이유.
 - task status: T1-T16 각각의 완료·부분·차단 상태와 dependencies.
-- coverage: SC1-SC9, R1-R26, AC1-AC25, V1-V9 각각의 결과와 누락 이유.
+- coverage: SC1-SC9, R1-R27, AC1-AC26, V1-V9 각각의 결과와 누락 이유.
 - verification evidence by mode: build/static, automated behavior, protocol/integration, native runtime, browser/CDP, agent runtime, remote runtime, performance/bundle, optional live external API.
-- native evidence: exactly-one installed app identity, AX tree, actual input flow, Herdr snapshot before·after, native screenshots, CEF/chromux evidence, Pet drag·restore evidence.
+- native evidence: exactly-one installed app identity, AX tree, actual input flow, pane zoom before·zoomed·restored state, Herdr snapshot topology invariance, native screenshots, CEF/chromux evidence, Pet drag·restore evidence.
 - performance evidence: release build identity, machine, cold·warm definitions, sample counts, input-to-present distribution, idle interval, full process-tree RSS와 CEF helper 포함 여부.
 - safety evidence: local·remote before inventory, fixture manifests, exact cleanup results, rerun orphan count, Electron reference diff, existing user resource non-mutation.
 - security evidence: endpoint bind scope, tunnel ownership, Keychain state, secret scan, diagnostics redaction, OpenRouter disclosure와 live probe boundary.
