@@ -1,0 +1,13 @@
+- [done] Screen Recording preflight/request and restart behavior - WHY permission onboarding must be deterministic - ANGLE Apple ScreenCaptureKit and CoreGraphics docs
+- [done] Accessibility trust and asynchronous prompt semantics - WHY automation must fail explicitly while user grants access - ANGLE Apple AX API docs
+- [done] TCC identity of CLI children, hosts, paths, and signer changes - WHY grants must survive updates - ANGLE Apple code requirements plus current tool permission guides
+- [done] LaunchAgent, LaunchDaemon, SSH, and Aqua session boundaries - WHY background Codex/Herdr calls need the right process context - ANGLE Apple daemon/session docs plus bridge tool docs
+- [done] Lock, Fast User Switching, and pre-login behavior - WHY unattended operation has hard session boundaries - ANGLE Apple multiple-user docs and DTS loginwindow guidance
+- [done] Restricted persistent content capture - WHY VNC-style pre-login capture is not a generic CLI capability - ANGLE Apple entitlement docs
+- [done] AX semantic automation versus raster/coordinate automation - WHY reliability and safety differ by primitive - ANGLE Apple AX/AppKit docs plus hybrid tool implementations
+- [done] Retina, multi-display, and coordinate transforms - WHY clicks otherwise land on the wrong target - ANGLE Apple scale/display docs and tool coordinate metadata
+- [done] Signing, notarization, and hardened runtime - WHY direct distribution and TCC identity need stable code - ANGLE Apple distribution docs
+- [done] Safe CLI/MCP implementations - WHY a concrete build-or-buy choice is needed - ANGLE Peekaboo, screencommander, AXorcist, MCPMacControl, cliclick, Hammerspoon
+- [done] MDM and PPPC permission limits and macOS 27 migration - WHY enterprise provisioning cannot silently grant every capability - ANGLE Apple Device Management docs
+- [dup] Apple Events and PostEvent extra permissions - already covered under permission surface and implementation choices
+- [dead] Public Apple specification of the exact responsible-process algorithm for arbitrary CLI child TCC attribution - no complete stable contract found; tool behavior and code identity docs are the best available evidence
