@@ -22,7 +22,7 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-25
+- next_decision_id: D-27
 - next_question: (owned by the live conversation until checkpoint)
 - last_materiality_sweep: checkpoint 3
 - outstanding_raw_entries: none
@@ -50,9 +50,9 @@ normalization_checkpoint_every: 10
 | D-10 | fact | 브라우저 | Swift에서 CEF 임베드에 실용 경로가 없다. 유일한 Swift 바인딩 lvsti/CEF.swift는 2021-11-01 이후 방치되고 릴리스가 0개다. CEF 자체는 SetAsChild(parent_nsview, rect)로 기존 NSView에 붙는 API가 있으나, CEF 포럼에 macOS 임베딩 시 빈 화면 렌더링, 부모 NSView 리사이즈 미추종, key window 하나 제약에 의한 포커스 문제가 반복 보고된다. Swift에서 쓰려면 C++/ObjC++/Swift 브리지를 자체 유지해야 한다. 선행 D-12가 Rust에 내린 판정과 동일하다. 조사 방식은 문서와 이슈 검토이며 실제 임베딩을 시도하지 않았다. | P0 | github.com/lvsti/CEF.swift API(마지막 push 2021-11-01, 릴리스 0, star 104), magpcss.org CEF 포럼 macOS 임베딩 스레드 다수 (2026-08-28 조사) | resolved | R#: 옵션 C 기각 근거 |
 | D-11 | decision | 아키텍처 | A-1 확정. herdr-ide는 브라우저를 임베드하지 않는다. src/browser.rs 721줄(CEF CDP 게이트웨이, attach_chromux/detach_chromux, capability 토큰)을 삭제한다. 선행 인터뷰의 D-11(브라우저 패널+grab), D-19(CDP 엔드포인트 노출), D-53(chromux 전제조건)을 무효화한다. D-16의 화면 구조에서 우측 패널의 브라우저 전환이 빠지고 워크벤치만 남는다. 수용한 비용은 브라우저가 herdr-ide 창 밖의 별도 Chrome 창이라는 것이다. | P0 | user Q5 | resolved | R#: 브라우저 경계 / 선행 D-11/D-19/D-53 무효화 |
 | D-12 | fact | 브라우저 | chromux는 headed(창 있는) 진짜 Chrome을 띄우고 loopback CDP를 외부에 노출한다. 실측: launchMode headed, headless false, port 9300, Chrome/151.0.7922.175, Protocol-Version 1.3, webSocketDebuggerUrl 제공, /json/list로 탭 목록 조회 가능. 포트는 chromux ps --json이 알려준다. 빈 Chrome 1개의 실측 자원은 프로세스 6개 / 렌더러 2개 / RSS 676MB다. 또한 chromux는 존재하지 않는 프로필을 스스로 만들지 않고 사용자 승인을 요구한다. | P0 | 로컬 실측 2026-08-28: chromux launch default + curl 127.0.0.1:9300/json/version, /json/list, chromux ps --json | resolved | R#: A-1 성립 근거 |
-| D-13 | decision | 브라우저 | herdr-ide는 브라우저 행동을 chromux CLI로 위임하고(chromux launch / open / ps --json, std::process::Command), 상태 표시는 GET http://127.0.0.1:<port>/json/list 읽기 전용 HTTP로만 한다. herdr-ide가 CDP로 직접 조작하는 것은 금지한다. 근거는 chromux가 그 Chrome의 데몬/세션/직렬화(serialQueue)/pause 잠금을 소유하고 있어, herdr-ide가 같은 포트로 명령하면 주인이 둘이 되어 에이전트 조작 도중 충돌이 나기 때문이다. Rust CDP 크레이트(chromiumoxide 0.9.1, headless_chrome 1.0.22)는 읽기 전용 GET 하나에 과하므로 채택하지 않는다. herdr-ide도 chromux의 프로필 생성 규칙을 따라 없는 프로필을 임의 생성하지 않는다. 예상 코드량은 100줄 안쪽이다. | P1 | user Q6에서 수용한 권고 | resolved | R#: 브라우저 연동 방식 |
+| D-13 | decision | 브라우저 | herdr-ide의 브라우저 제어 방식: chromux CLI 위임 + 읽기 전용 /json/list만 쓰고 직접 CDP 조작을 금지할지. 에이전트가 이 안을 권고했으나 사용자의 명시적 승인은 없었다. Q5에서 사용자는 'chromux Chrome을 띄우게 하고 cdp로 조절이 가능하게'를 요청했고, Q6의 '1로 ㄱㄱ'는 메모리 선택지(1)만 고른 것이다. 즉 사용자 요청은 CDP 조작 쪽에 가까웠는데 에이전트가 CLI 전용안으로 기록했다. 근거였던 소유권 충돌(chromux가 데몬/세션/serialQueue/pause를 소유)은 사실로 유효하나 결정은 사용자의 것이다. | P1 | 미확정 - 에이전트가 사용자 동의 없이 resolved로 기록했던 항목 | open | 미정 - 사용자 확인 필요 |
 | D-14 | decision | 검증 | 메모리 인수 조건을 herdr-ide 프로세스만 400MB 이하로 재정의한다. 선행 D-41(브라우저 닫힘 400MB / 브라우저 열림 900MB)을 대체한다. 근거는 D-11로 브라우저가 앱 밖 별도 Chrome이 되어 우리가 통제할 수 없는 자원이 되었기 때문이며, 통제 못 하는 값으로 합격/불합격을 가르면 그 게이트는 곧 무시된다. 측정 시나리오는 D-41과 같이 workspace 7 / pane 11 실사용 규모를 유지하고 ps 기반 자동 판정도 유지한다. | P0 | user Q6 | resolved | V#: 메모리 인수 조건 / 선행 D-41 대체 |
-| D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환을 확정한다. 단 D-18의 0단계 스파이크 4항목 통과가 선행 조건이며, 실패 시 그 자리에서 멈추고 재검토한다. 기존 Rust 코드 삭제는 D-22에 따라 스파이크 통과 후 태그를 남기고 수행한다. | P0 | user Q9, Q10의 연쇄 결정 (스파이크 승인, SwiftTerm 채택, 기존 Rust 폐기 승인, 버전 고정 지시) | resolved | R#: 전환 확정 / D-18의 스파이크 게이트 조건부 |
+| D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환 자체의 최종 확정. Q10에서 합의 목표 한 문장과 유지/폐기 표를 제시하고 확정 여부를 물었으나 사용자는 확정 대신 SwiftTerm 질문으로 응답했다. 개별 결정(SwiftTerm 채택, 기존 Rust 폐기 승인, 스파이크 게이트, 버전 고정)은 모두 명시적으로 받았으나 전환 전체의 확정 문장은 미수령이다. | P0 | 미확정 - Q10의 폐쇄 확인 문장에 사용자 응답 없음 | open | 미정 - 폐쇄 확인 필요 |
 | D-16 | decision | 터미널 | 터미널 뷰로 SwiftTerm을 채택한다(버전은 D-23). 엔진과 뷰를 모두 SwiftTerm에 맡기고, Rust 코어는 SSH/PTY 바이트만 담당해 feed(byteArray:)로 넣고 send(source:data:) 델리게이트로 받는다. 결과로 alacritty_terminal 의존과 src/terminal.rs 755줄, src/render.rs 921줄이 폐기된다. 기각한 대안 둘: (1) libghostty - 1차 인터뷰 D-13이 채택했다가 D-14가 최상위 리스크로 걸었던 것으로, 2026-08-28 재확인 시점에도 Ghostty 공식 문서가 'not yet stabilized for general-purpose embedding, may change significantly between releases'라고 명시하며 유일한 검증 소비자가 Ghostty 자체 macOS 앱이다. 안정화 근접한 것은 파서인 libghostty-vt뿐이라 우리가 필요한 뷰를 대체하지 못한다. (2) NSTextView 위 alacritty_terminal 직접 구현 - 셀 렌더링/스크롤백/선택/링크/리사이즈를 자체 구현해야 하며 이는 현재 render.rs 921줄이 하는 일 그대로라 전환의 목적에 반한다. SwiftTerm 채택의 잔여 리스크: 사실상 개인 주도 프로젝트(open issue 75), 릴리스 변동 잦음. 완화책은 D-23의 정확 버전 고정과 D-24의 herdrm 참조 경로다. | P0 | user Q8 | resolved | R#: 터미널 뷰 / libghostty 기각 근거 포함 |
 | D-17 | decision | 검증 | SwiftUI 앱의 에이전트 검증은 peekaboo(4.2.2 설치 확인)로 한다. peekaboo see --app으로 접근성 기반 UI 요소 맵을 받고 click/type/press로 조작한다. 선행 D-34의 'chromux가 herdr-ide CDP에 붙어 조작'을 대체한다. 결과 확인에 herdr 소켓 API를 쓰는 부분은 그대로 유지한다. SwiftUI가 접근성 트리를 기본 제공하므로 src/accessibility.rs 165줄은 폐기된다. 수용한 비용: Screen Recording과 Accessibility 권한이 필요해 D-29 공개 배포 대상자와 CI에서 마찰이 있다. 에이전트가 상태 스냅샷을 직접 읽는 별도 표면은 채택하지 않았다. | P0 | user Q7 | resolved | V#: 앱 검증 경로 / 선행 D-34 대체 |
 | D-18 | decision | 리스크 | 0단계 스파이크를 전환의 게이트로 둔다. 근거는 지난 4번의 런타임 전환 중 3번이 '결정 후에 죽일 요인을 만나서' 죽었다는 이력이다(1차는 승인 후 Xcode 전체 설치 장벽으로 소스 0줄, 3차는 질문 44개 인터뷰 후 메모리 실증과 충돌해 코드 전 폐기, 4차는 16040줄을 만든 뒤 UI 품질과 IME로 폐기). 스파이크에서 네 가지를 모두 시험한다: (1) Rust staticlib과 Swift 간 FFI 비용, 특히 SSH 이벤트를 Swift로 올리는 비동기 콜백 (2) Rust가 뽑은 SSH 바이트를 SwiftTerm feed(byteArray:)에 넣고 send 델리게이트로 되받는 왕복 (3) 원격 SSH + 에이전트 TUI 환경에서의 한글 IME 실동작 (4) xcodebuild 없이 .app 번들 조립, 코드사인, 공증, Sparkle. 하나라도 실패하면 그 자리에서 멈추고 재검토한다. 기간은 2~3일. | P0 | user Q9 | resolved | R#: 전환 게이트 / V#: 스파이크 통과 조건 |
@@ -62,12 +62,14 @@ normalization_checkpoint_every: 10
 | D-22 | decision | 운영 | 기존 Rust 네이티브 코드(D-20의 폐기 대상)는 0단계 스파이크를 통과한 뒤에 삭제한다. 삭제 직전 커밋에 태그를 남긴다(예: rust-native-final). 근거는 스파이크가 실패했을 때 돌아갈 지점이 필요하기 때문이며, 지금 삭제하면 되돌릴 곳이 없어진다. 원칙 1(하위 호환 유지 안 함)은 살아 있는 코드 경로를 둘로 유지하지 말라는 것이지 되돌리기 지점을 남기지 말라는 것이 아니므로 충돌하지 않는다. | P0 | user Q9 | resolved | R#: 되돌리기 지점 / D-20 실행 조건 |
 | D-23 | decision | 의존성 | SwiftTerm을 최신 릴리스 1.20.0(2026-08-18)으로 정확 고정한다. herdrm은 from: 1.19.0으로 하한만 두지만 herdr-ide는 Cargo.toml이 전부 = 고정인 기존 방침과 1차 인터뷰 D-24의 버전 고정 방침에 맞춰 exact 고정한다. 근거는 SwiftTerm 릴리스 속도가 빠르고(1.18 8/9, 1.19와 1.20이 같은 날 8/18) 1.19에서 1.20 사이 파괴적 변경 여부를 확인하지 않았기 때문이다. 업데이트는 수동 검증 후에만 올린다. | P1 | user Q10 | resolved | R#: SwiftTerm 버전 고정 |
 | D-24 | decision | 리스크 | 한글 IME 문제가 발생하면 missuo/herdrm의 Sources/HerdrM/TerminalView.swift를 참조해 대응한다. 사용자가 herdrm에서 한글이 잘 동작한다고 실사용으로 확인했다. 참조 대상 패턴은 rememberIMECaretFrame(마지막 유효 캐럿 프레임을 캐시해 후보창이 0,0으로 떨어지는 것을 방지)과 isEditShortcutDuringComposition(조합 중 편집 단축키를 interpretKeyEvents에서 걸러냄)이다. 제약: herdrm은 GitHub API licenseInfo가 NONE이고 저장소에 LICENSE 파일이 없어 기본적으로 all rights reserved다. herdr-ide는 MIT이므로 herdrm 코드를 복사해 넣을 수 없고, 읽고 접근법을 이해한 뒤 독립 구현만 가능하다. 선행 D-53에서 chromux가 같은 상태(public이지만 라이선스 없음)였다가 MIT 추가로 해소된 전례가 있으므로, herdrm에 라이선스가 추가되면 이 제약을 재검토한다. | P1 | user Q10 | resolved | R#: 한글 IME 대응 경로 / revisit: IME 결함 발생 시 |
+| D-25 | decision | compatibility | 윈도우 지원은 v1 비목표로 연기한다. 사용자 표현은 '우선 윈도우는 당장 안해도 돼'로 영구 기각이 아니라 현시점 연기다. 이 연기가 D-16(SwiftTerm 채택, 터미널 엔진을 Rust에 유지할 근거 소멸)과 D-11(브라우저를 chromux에 위임)의 전제이므로, 윈도우 요구가 되살아나면 두 결정을 함께 재검토해야 한다. owner: 사용자. revisit trigger: 윈도우 지원 요구 제기 시. | P0 | user 발화 '우선 윈도우는 당장 안해도 돼' (전환 계획 논의 중) | deferred | 비목표(v1) / revisit: 사용자가 윈도우 요구를 제기할 때 |
+| D-26 | fact | 선행이력 | 이 인터뷰는 선행 인터뷰 herdr-ide-native-shell(질문 44개, D-01~D-59)을 대체하지 않고 런타임 축만 개정한다. 선행 인터뷰가 이미 확정한 것으로 이번에 재론하지 않는 항목: 제품 정체성(D-09), 화면 구조 3열(D-16), 파일 워크벤치 깊이 F2(D-25), workspace/worktree 모델(D-24), 사이드바 계약(D-40/D-54), 생성·닫기 조작과 파괴적 동작 고지(D-42/D-44/D-50), 원격 타겟 설정(D-45), herdr 버전 게이팅(D-46), pet 흡수(D-07/D-15), 배포 방침(D-29). 이번 인터뷰가 무효화한 것은 D-11, D-19, D-34, D-41, D-53이며 각각 D-08/D-11, D-11, D-17, D-14, D-11이 대체한다. | P0 | repo: agents/interview/herdr-ide-native-shell/qa-log.md (질문 44개, status complete) | resolved | R#: 이 인터뷰의 범위 경계 |
 
 ## Raw Q&A
 
 ### Q1: 인터뷰 로그를 만들고 사전 조사 사실 7개를 등록했습니다: `agents/interview/swift-shell-pivot/qa-
-- decision_ids: none
-- route: mixed
+- decision_ids: D-08
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:471a91db-0de1-4288-bdb7-42db411c15df
 - asked: 인터뷰 로그를 만들고 사전 조사 사실 7개를 등록했습니다: `agents/interview/swift-shell-pivot/qa-log.md`
   
@@ -117,7 +119,7 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q2: 네, 사실상 그것밖에 없습니다. 이유를 짧게 설명드릴게요.
-- decision_ids: none
+- decision_ids: D-09
 - route: mixed
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:380c243e-1355-4f27-947c-75788a796701
 - asked: 네, 사실상 그것밖에 없습니다. 이유를 짧게 설명드릴게요.
@@ -181,8 +183,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q3: 확인 끝났습니다. **선생님 감이 맞았고, 제가 놓친 세 번째 길이 있습니다.**
-- decision_ids: none
-- route: mixed
+- decision_ids: D-09
+- route: research
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:b2fd9d75-4607-47ab-865f-85b16e91c4e6
 - asked: 확인 끝났습니다. **선생님 감이 맞았고, 제가 놓친 세 번째 길이 있습니다.**
   
@@ -261,8 +263,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q4: 아, 제가 헷갈리게 말했네요. **아닙니다.** 쉽게 정리할게요.
-- decision_ids: none
-- route: mixed
+- decision_ids: D-09, D-10
+- route: research
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:7a20eda0-5f30-4e80-9a02-f3587188f621
 - asked: 아, 제가 헷갈리게 말했네요. **아닙니다.** 쉽게 정리할게요.
   
@@ -324,8 +326,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q5: 조사 끝났습니다. 둘 다 답이 나왔는데, **두 개 다 "그 길은 아니다"** 쪽입니다.
-- decision_ids: none
-- route: mixed
+- decision_ids: D-11
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:e04a9481-b889-441f-8d4b-886cb765a27e
 - asked: 조사 끝났습니다. 둘 다 답이 나왔는데, **두 개 다 "그 길은 아니다"** 쪽입니다.
   
@@ -420,8 +422,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q6: 조사 끝났습니다. **실제로 붙여서 확인했습니다.** (테스트로 띄운 Chrome은 닫았습니다.)
-- decision_ids: none
-- route: mixed
+- decision_ids: D-14
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:cca7c3c2-4825-47c0-bdd2-c1faaa5d0dd8
 - asked: 조사 끝났습니다. **실제로 붙여서 확인했습니다.** (테스트로 띄운 Chrome은 닫았습니다.)
   
@@ -530,8 +532,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q7: `peekaboo 4.2.2` 설치되어 있습니다 (어제 설치하셨네요). 이제 질문드립니다.
-- decision_ids: none
-- route: mixed
+- decision_ids: D-17
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:fa6e3648-1929-4cbe-ad8c-7cf34b813000
 - asked: `peekaboo 4.2.2` 설치되어 있습니다 (어제 설치하셨네요). 이제 질문드립니다.
   
@@ -594,8 +596,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q8: `peekaboo type`은 `--app`으로 프로세스에 키 이벤트를 넣는 방식입니다. **IME를 거치는지는 명시되어 있지 않
-- decision_ids: none
-- route: mixed
+- decision_ids: D-16, D-19, D-20
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:d08c241a-cc84-412a-98cd-c4984001c431
 - asked: `peekaboo type`은 `--app`으로 프로세스에 키 이벤트를 넣는 방식입니다. **IME를 거치는지는 명시되어 있지 않아 확인 못 했습니다.**
   
@@ -638,8 +640,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q9: 3번이 무슨 질문이었는지
-- decision_ids: none
-- route: mixed
+- decision_ids: D-18, D-22
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:ed24dafc-eb6c-411b-a109-fe131a781416
 - asked: ## 3번이 무슨 질문이었는지
   
@@ -756,12 +758,12 @@ normalization_checkpoint_every: 10
   확정하시면 gap-audit 게이트를 돌리고, 통과하면 `/gen-prd`로 넘어갑니다.
 - recommended: none
 - answer: 나근데 궁금한게 Swift app에서 터미널은 저게 최선인거야? herdrm 프로젝트 봣을 때 쟨 뭐로햆어?
-- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- immediate_notes: 폐쇄 확인 문장을 제시했으나 사용자가 확정 대신 SwiftTerm 질문으로 응답했다. D-15 확정 미수령.
 - needs_normalization: false
 
 ### Q11: **herdrm은 SwiftTerm입니다.** `project.yml`에 이렇게 박혀 있습니다:
-- decision_ids: none
-- route: mixed
+- decision_ids: D-23, D-24
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:6a239340-7c00-4220-89a3-e09875f7c35e
 - asked: **herdrm은 SwiftTerm입니다.** `project.yml`에 이렇게 박혀 있습니다:
   
