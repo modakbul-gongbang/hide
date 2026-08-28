@@ -22,7 +22,7 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-19
+- next_decision_id: D-22
 - next_question: (owned by the live conversation until checkpoint)
 - last_materiality_sweep: checkpoint 1
 - outstanding_raw_entries: none
@@ -53,9 +53,12 @@ normalization_checkpoint_every: 10
 | D-13 | decision | 브라우저 | herdr-ide는 브라우저 행동을 chromux CLI로 위임하고(chromux launch / open / ps --json, std::process::Command), 상태 표시는 GET http://127.0.0.1:<port>/json/list 읽기 전용 HTTP로만 한다. herdr-ide가 CDP로 직접 조작하는 것은 금지한다. 근거는 chromux가 그 Chrome의 데몬/세션/직렬화(serialQueue)/pause 잠금을 소유하고 있어, herdr-ide가 같은 포트로 명령하면 주인이 둘이 되어 에이전트 조작 도중 충돌이 나기 때문이다. Rust CDP 크레이트(chromiumoxide 0.9.1, headless_chrome 1.0.22)는 읽기 전용 GET 하나에 과하므로 채택하지 않는다. herdr-ide도 chromux의 프로필 생성 규칙을 따라 없는 프로필을 임의 생성하지 않는다. 예상 코드량은 100줄 안쪽이다. | P1 | user Q6에서 수용한 권고 | resolved | R#: 브라우저 연동 방식 |
 | D-14 | decision | 검증 | 메모리 인수 조건을 herdr-ide 프로세스만 400MB 이하로 재정의한다. 선행 D-41(브라우저 닫힘 400MB / 브라우저 열림 900MB)을 대체한다. 근거는 D-11로 브라우저가 앱 밖 별도 Chrome이 되어 우리가 통제할 수 없는 자원이 되었기 때문이며, 통제 못 하는 값으로 합격/불합격을 가르면 그 게이트는 곧 무시된다. 측정 시나리오는 D-41과 같이 workspace 7 / pane 11 실사용 규모를 유지하고 ps 기반 자동 판정도 유지한다. | P0 | user Q6 | resolved | V#: 메모리 인수 조건 / 선행 D-41 대체 |
 | D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환 자체의 최종 확정. 사용자가 'swift 괜찮은 것 같다'는 방향을 표명하고 계획 수립을 요청했으나 명시적 확정 응답은 아직 없다. 폐쇄 전 확인 필요. | P0 | 미확정 - 사용자 방향 표명만 있음 | open | 미정 |
-| D-16 | decision | 터미널 | 터미널 뷰를 SwiftTerm 1.19+로 채택할지, NSTextView 위에 직접 구현할지. 윈도우 미지원 확정으로 터미널 엔진을 Rust에 유지할 근거가 사라져 SwiftTerm 채택이 유력하다고 권고했으나 사용자 확정 응답은 없다. 채택 시 alacritty_terminal 의존과 src/terminal.rs 755줄이 폐기된다. | P0 | 미확정 - 에이전트 권고만 있음 | open | 미정 |
-| D-17 | decision | 검증 | SwiftUI 네이티브 앱의 에이전트 자동 검증 경로. 선행 D-34는 'herdr-ide를 --remote-debugging-port로 띄우고 chromux가 그 CDP에 붙어 UI를 조작'을 v1 주 검증 모드로 확정했고, D-35는 에이전트 검증 가능성을 전략이 아닌 제품 요구로 못박았다. D-11(브라우저 임베드 포기)로 herdr-ide에 CDP가 없어지므로 두 결정의 전제가 무너졌다. 대체 경로 결정 필요. | P0 | 선행 D-34/D-35가 CDP 전제라 D-11로 무효화됨 | open | 미정 - 다음 질문 |
+| D-16 | decision | 터미널 | 터미널 뷰로 SwiftTerm(1.19 이상)을 채택한다. 엔진과 뷰를 모두 SwiftTerm에 맡긴다. Rust 코어는 SSH/PTY 바이트만 담당하고 feed(byteArray:)로 넣고 send(source:data:) 델리게이트로 받는다. 결과로 alacritty_terminal 의존과 src/terminal.rs 755줄, src/render.rs 921줄이 폐기된다. 윈도우 미지원 확정으로 터미널 엔진을 Rust에 유지할 유일한 근거가 사라진 것이 판단 근거다. | P0 | user Q8 | resolved | R#: 터미널 뷰 |
+| D-17 | decision | 검증 | SwiftUI 앱의 에이전트 검증은 peekaboo(4.2.2 설치 확인)로 한다. peekaboo see --app으로 접근성 기반 UI 요소 맵을 받고 click/type/press로 조작한다. 선행 D-34의 'chromux가 herdr-ide CDP에 붙어 조작'을 대체한다. 결과 확인에 herdr 소켓 API를 쓰는 부분은 그대로 유지한다. SwiftUI가 접근성 트리를 기본 제공하므로 src/accessibility.rs 165줄은 폐기된다. 수용한 비용: Screen Recording과 Accessibility 권한이 필요해 D-29 공개 배포 대상자와 CI에서 마찰이 있다. 에이전트가 상태 스냅샷을 직접 읽는 별도 표면은 채택하지 않았다. | P0 | user Q7 | resolved | V#: 앱 검증 경로 / 선행 D-34 대체 |
 | D-18 | decision | 리스크 | 5번째 런타임 전환을 성립시키는 조건. 이전 4번 중 herdr-lightweight-ide는 approved PRD가 소스 0줄로 끝났고, Electron 확정(선행 D-10) 역시 코드로 이어지지 않은 채 Rust 네이티브로 뒤집혔다. 이번 전환의 중단 조건, 되돌리기 기준, 기존 Rust 네이티브 16040줄의 처리 방침을 정해야 한다. | P0 | D-05의 전환 이력 | open | 미정 |
+| D-19 | decision | 검증 | 한글 조합 입력을 사람 판정 완료 게이트로 둘지는 0단계 스파이크 결과를 보고 정한다. 판정 방법은 한글 IME를 켜고 peekaboo type 'gks'를 보내 '한'이 나오는지 보는 것이다. 나오면 peekaboo가 IME 경로를 거치는 것이라 자동 게이트로, 안 나오면 IME를 우회하는 것이라 사람 게이트로 간다. owner: 사용자. revisit trigger: 0단계 스파이크 완료 시점. 사람 게이트가 될 경우 확인 항목은 후보창이 커서를 따라오는가, 조합 중 백스페이스가 조합을 지우는가, 두 글자 이상 조합이 뒤 글자를 덮지 않는가, 터미널과 에디터 양쪽에서 되는가 네 가지다. | P0 | user Q8 | deferred | V#: IME 게이트 / revisit: 0단계 스파이크 |
+| D-20 | decision | 아키텍처 | 기존 Rust 네이티브 셸 코드를 삭제해도 된다. 폐기 대상은 app.rs 2412줄 중 AppKit/wgpu 부분, render.rs 921줄, terminal.rs 755줄, accessibility.rs 165줄, browser.rs 721줄과 wgpu/glyphon/bytemuck/raw-window-handle/objc2/alacritty_terminal 의존이다. 유지 대상은 remote.rs 3550줄, herdr.rs 1154줄, files/commands/domain/navigator/layout/presentation/browser 축을 제외한 로직 계층이다. 삭제 시점과 되돌리기 지점은 D-18에서 정한다. | P0 | user Q8 | resolved | R#: 폐기 범위 |
+| D-21 | fact | 운영 | Xcode.app은 설치되어 있지 않고 Command Line Tools만 있다(/Library/Developer/CommandLineTools). xcodebuild와 xcodegen은 쓸 수 없다. 그러나 SwiftUI.framework와 AppKit.framework가 CLT SDK에 포함되어 있고, swiftc -parse-as-library로 SwiftUI 앱을 실제로 컴파일해 arm64 Mach-O 실행파일을 얻는 데 성공했다(Swift 6.0.3). 따라서 선행 D-04가 기록한 PW1(Xcode 전체 설치) 차단요인 - 1차 전환 herdr-lightweight-ide를 소스 0줄로 죽인 원인 - 은 이번 전환에서 해소된다. 다만 herdrm이 쓰는 XcodeGen+xcodebuild 방식은 쓸 수 없고, .app 번들 조립과 코드사인/공증 경로는 아직 확인하지 않았다. | P0 | 로컬 실측 2026-08-28: xcode-select -p, xcodebuild -version, swiftc 빌드 성공 | resolved | R#: 1차 전환 차단요인 해소 |
 
 ## Raw Q&A
 
