@@ -1,12 +1,13 @@
 ---
 topic: "herdr-ide macOS 셸을 SwiftUI + SwiftTerm으로 교체하고 Rust 코어를 남기는 하이브리드 전환"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"
 review_profile: "high-risk"
 review_rationale: "SSH 자격증명 경로(SSH_AUTH_SOCK)와 원격 프로덕션 머신(mini)을 다루고, 실패 주입 검증이 사용자의 실행 중인 herdr 소켓과 chromux 로그인 프로필을 직접 대상으로 하며, 16040줄 중 약 3300줄을 삭제하는 되돌리기 어려운 구조 전환이다."
 source_intake: "agents/interview/swift-shell-pivot/qa-log.md"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
+approval_note: "사용자 승인 2026-08-28: '오케이 승인 다 하고' - Approval checklist 8항목 전체"
 ---
 
 # PRD: herdr-ide macOS 셸을 SwiftUI + SwiftTerm으로 교체하고 Rust 코어를 남기는 하이브리드 전환
