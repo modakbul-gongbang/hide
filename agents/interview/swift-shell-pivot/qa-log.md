@@ -22,7 +22,7 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-33
+- next_decision_id: D-35
 - next_question: (owned by the live conversation until checkpoint)
 - last_materiality_sweep: checkpoint 4
 - outstanding_raw_entries: none
@@ -70,6 +70,8 @@ normalization_checkpoint_every: 10
 | D-30 | fact | 운영 | Xcode 없이 배포 가능한 .app을 만들 수 있음을 실측했다. (1) swiftc가 산출한 실행파일은 이미 ad-hoc 서명되어 있다(CodeDirectory flags=0x20002 adhoc,linker-signed). arm64 macOS는 모든 바이너리에 최소 ad-hoc 서명을 요구하므로 이는 필수 조건이며 자동으로 충족된다. (2) codesign(/usr/bin/codesign), notarytool(CLT 경로), stapler(/usr/bin/stapler), xcrun이 모두 Xcode 없이 사용 가능하다. (3) Contents/MacOS + Info.plist로 .app을 손조립하고 codesign --force --deep -s -로 재서명하면 Signature=adhoc, TeamIdentifier=not set 상태의 정상 번들이 된다. 따라서 D-18의 스파이크 4번 항목은 '서명 없는 .app이 실행되는가'로 좁혀지며, 패키징 가능성 자체는 이미 사실이다. | P0 | 로컬 실측 2026-08-28: codesign -dv, xcrun -f, .app 손조립 후 codesign --force --deep -s - | resolved | R#: D-29 성립 근거 / 스파이크 4번 항목 축소 근거 |
 | D-31 | decision | 외부의존 | chromux 연동 계약을 확정한다. (1) 프로필은 default 하나만 쓴다. workspace별 프로필 분리는 비목표이며, 그 근거였던 브라우저 패널이 D-11로 사라졌고 프로필이 늘면 디스크와 로그인 관리가 따라온다. herdr-ide는 chromux의 규칙대로 없는 프로필을 임의 생성하지 않는다. (2) chromux가 없으면 브라우저 열기 버튼을 비활성화하고 사유와 설치 안내를 표시한다. 조용히 실패하지 않는다(원칙 4). 선행 D-53의 부분 degrade 방식을 대체한다. (3) 이미 실행 중이면 재사용한다. chromux ps --json의 status가 running이면 launch를 건너뛰고 open만 호출한다. 매번 새로 띄우면 로그인 세션이 날아가기 때문이다. (4) herdr-ide는 Chrome을 종료하지 않는다. herdr-ide를 닫아도 Chrome은 남긴다. 에이전트가 그 Chrome을 쓰고 있을 수 있고 우리가 만들지 않은 것을 닫지 않는다는 원칙 때문이다. 정리는 사용자의 chromux kill이나 chromux kill --idle에 맡긴다. (5) 버전 게이팅은 herdr에 적용한 D-46의 protocol 정수 판정 방식을 쓰지 않고, 필요한 명령이 없으면 그 사유를 표시하고 실패하는 방식으로 단순화한다. | P1 | user Q15 (1 가, 2~4 및 버전 방침 수용) | resolved | R#: chromux 프로바이더 계약 / 선행 D-21·D-22·D-53 대체 |
 | D-32 | fact | 외부의존 | chromux는 사용자 본인이 만든 도구다(modakbul-gongbang/chromux, MIT). 따라서 통제 불가능한 서드파티 프로바이더가 아니며, herdr-ide가 필요로 하는 계약이 없거나 맞지 않으면 herdr-ide 쪽에서 우회 구현을 하지 말고 chromux를 고치는 것이 우선 경로다. 이는 D-31의 버전 게이팅을 단순화해도 되는 근거이기도 하다. herdrm(라이선스 없음, D-24)이나 CodeEditSourceEditor(4개월 정체, D-28) 같은 외부 의존과 성격이 다르므로 리스크 등급을 낮게 둔다. | P1 | user Q15 '참고로 chromux 내가 만든거라 내가 걍 고치면 되니까' | resolved | R#: 프로바이더 리스크 완화 / D-31 보완 |
+| D-33 | decision | UX/design | UI 품질의 사람 판정 인수 기준 6항목을 확정한다. (1) 구조: 3열 유지(사이드바+pet / 터미널 / 워크벤치), 밀도는 docs/design-reference/orca-01 기준선 (2) 텍스트: 시스템 폰트에 크기 위계가 보이고 터미널만 등폭이며 한글이 깨지지 않음 (3) 상태 표현: 색과 구조로 드러나고 문장 설명은 최후 수단(design 원칙 7) (4) 다크모드: 시스템 설정을 따라감 (5) 리사이즈: 창 크기를 바꿔도 레이아웃이 유지되고 패널 경계를 드래그로 조절 가능 (6) 네이티브 관용구: 진짜 메뉴바, 진짜 우클릭 메뉴, 진짜 스크롤바를 쓰고 그려낸 흉내를 쓰지 않음. 판정 시점은 두 번이다: 3a(창+레이아웃 완성) 시점에 방향 확인, v1 종료 시점에 최종. 판정 방법은 스크린샷을 사용자가 보고 판정하며, 구조는 peekaboo see로 요소가 제대로 잡히는지 함께 본다. 시각 방침은 macOS 네이티브 관용구를 우선하되(사용자 선택 '나') orca-01을 밀도와 배치의 시각 기준선으로 함께 유지한다(사용자 지시). 선행 D-59를 이 형태로 갱신한다. | P1 | user Q16 | resolved | V#: UI 품질 인수 기준 / 사람 판정 항목 |
+| D-34 | decision | UX/design | 사이드바 구성은 herdr-agent-context-labels(yansfil, 사용자 본인 제작) 플러그인의 레이아웃을 herdr-ide 네이티브로 적용한다. 확인된 구성: 항목당 2줄이며 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(12s/4m/2h/3d 형식)이다. 상태는 question, approval, error, working, unseen completion, idle, unknown을 컴팩트 심볼로 표시하고 상태당 심볼 하나를 고정하며, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 플러그인이 발행하는 sort_rank와 activity 토큰을 따라 막고 있는 순서대로(에러, 질문/승인, 완료 미확인, 진행 중, 확인됨) 두고 동률은 activity 시계로 깬다. 이는 선행 D-40(config.toml [ui.sidebar.agents] rows를 읽어 렌더)과 D-54(기본 레이아웃 내장)를 구체화한 것이다. | P1 | user Q16 'herdr-label 플러그인 그거의 구성도 잘 적용해서 함께 넣어주고' | resolved | R#: 사이드바 구성 / 선행 D-40·D-54 구체화 |
 
 ## Raw Q&A
 
