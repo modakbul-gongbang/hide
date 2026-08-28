@@ -339,6 +339,9 @@ Approval checklist:
 | V30 | browser/runtime | R12 | 실패 상태들이 각각 사유를 보인다: PTY 종료 시 종료 사실과 종료 코드, 바이너리 파일의 미리보기 불가 사유, 읽기 실패 시 경로와 사유 | yes | no |
 | V31 | browser/runtime | R12, SC5 | working pane 2개 이상을 가진 workspace를 닫으면 개별 확인이 아니라 집계 경고 하나가 뜨고 종료될 에이전트가 요약과 함께 나열된다 | yes | no |
 | V32 | browser/runtime | R11 | 레지스트리에 등록된 모든 키에 대해 존재·부재 시 동작이 선언과 일치하고, sentinel 값을 넣었을 때 스냅샷·오류·상태 메시지·로그 어디에도 그 값이 나타나지 않는다 | yes | no |
+| V33 | browser/runtime | R12 | 로딩 상태가 각 표면에서 빈 화면이 아니라 진행 표시로 나타난다: 사이드바 첫 스냅샷 수신 전, 터미널 attach 중, 워크벤치 대용량 파일 로딩 중, 원격 SSH 연결 중, chromux launch 진행 중 | yes | no |
+| V34 | browser/runtime | R12, SC2 | 포커스된 pane이 트리 루트와 다른 경로에 있으면 트리 상단에 그 사실이 표시되고, 트리가 자동으로 그 경로를 따라가지 않는다 | yes | no |
+| V35 | browser/runtime | R12, SC5 | tab 닫기가 workspace와 같은 집계 경고를 띄우고, attention 상태 pane 닫기가 확인 다이얼로그를 띄우며, worktree 제거가 체크아웃이 지워진다는 결과를 고지하고 확인을 받는다 | yes | no |
 
 실패 주입 정책: 사용자가 실제 서비스 대상 검증을 승인했다(D-47). chromux `default` 프로필, 실행 중인 herdr 소켓, mini의 원격 herdr를 직접 대상으로 삼을 수 있다. 고지된 결과는 검증 실행 중 실제 작업이 중단될 수 있다는 것이다. 단 파괴적 삭제는 이 승인에 포함되지 않는다. chromux `default` 프로필 삭제는 사용자 Chrome 로그인을 복구 불가능하게 잃게 하므로 금지하며 V13은 존재하지 않는 이름으로 재현한다(D-51). workspace/worktree 생성·삭제는 `herdr-ide-verify-` 접두어 fixture에서만 수행한다. 검증 시작을 사용자에게 알리고, 끝나면 중단시킨 서비스를 원상 복구한다.
 
@@ -398,7 +401,7 @@ CI에서 돌리는 것은 V1, V11, V21뿐이다. V14는 앱을 띄우고 화면 
 - 스파이크 T1~T4 각각의 판정 결과와 T3의 IME 게이트 소유자 결정(OPEN-1 해소).
 - `rust-native-final` 태그의 커밋 해시와 삭제된 파일·의존 목록.
 - T1~T18 완료 상태.
-- R1~R12(R6a~R6d 포함), AC1~AC15, V1~V32 커버리지.
+- R1~R12(R6a~R6d 포함), AC1~AC15, V1~V35 커버리지.
 - 모드별 검증 증거: CI 로그, peekaboo 스냅샷과 스크린샷, `ps` 메모리 측정, mini 원격 증거.
 - 추가·수정한 자동 테스트와 각각이 막는 회귀 위험. 테스트를 쓰지 않은 영역은 왜 다른 증명 모드가 더 강한지.
 - 환경변수 레지스트리의 최종 키 목록과 각 키의 필수/선택·부재 시 동작.
