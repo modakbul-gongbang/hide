@@ -1,6 +1,6 @@
 ---
 topic: "herdr-ide 셸을 SwiftUI + Rust 코어 하이브리드로 전환"
-status: "active"
+status: "complete"
 where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
@@ -1564,3 +1564,34 @@ CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibilit
 - highest_remaining_gap: D-19(IME 게이트 소유자) 스파이크 대기. .gitignore에 .env 추가는 사용자 승인 대기.
 
 ## Audit History
+
+### Audit 1
+- type: gap-audit-gate
+- result: fail (cycle 1, closure exhausted)
+- missing decision_ids: D-13, D-15 (에이전트가 동의 없이 resolved로 기록 -> open 복귀 후 사용자 재확정), D-25 (윈도우 정책 미기록)
+- unsupported assumptions: 브라우저 CLI 전용 제어를 사용자 승인 없이 확정
+- UX or behavior gap: v1 워크플로와 상태 매트릭스가 선행 인터뷰 참조로만 존재
+- highest-risk blocker: 전환 전체 확정(D-15) 미수령
+- final-blocking-question: 브라우저 직접 CDP 조작 여부 / 윈도우 정책 / 전환 확정
+- PRD impact: 세 P0 모두 Q12에서 사용자 답변으로 해소
+
+### Audit 2
+- type: gap-audit-gate
+- result: fail (cycle 2, closure exhausted)
+- missing decision_ids: D-36 (openrouter.rs 삭제를 동의 없이 확정), D-39 (navigator.json 폐기를 에이전트 기본값으로 확정), D-45 (FFI 계약을 에이전트 제안으로 확정)
+- unsupported assumptions: 위 3건 모두 사용자 승인 없이 resolved
+- UX or behavior gap: 첫 실행/빈/로딩/복구 상태 계약 부재, chromux 실패 동작 미정
+- highest-risk blocker: 에이전트 제안을 사용자 결정으로 기록하는 패턴 (3회 반복)
+- final-blocking-question: openrouter.rs 삭제 / navigator.json 처리 / FFI 계약 확정 시점
+- PRD impact: Q19, Q21에서 전부 사용자 답변으로 해소. State/Recovery 매트릭스와 검증 V12~V19 신설
+
+### Audit 3
+- type: gap-audit-gate
+- result: fail (cycle 3, closure exhausted) -> PASS (overridden by user)
+- missing decision_ids: 없음
+- unsupported assumptions: 없음
+- UX or behavior gap: 없음
+- highest-risk blocker: V13이 사용자의 실제 chromux default 프로필 삭제를 요구했고, D-47의 사용자 승인 범위(서비스 중단형 장애 주입)를 벗어났다. 프로필 삭제는 Chrome 로그인 세션을 복구 불가능하게 잃게 한다.
+- final-blocking-question: 없음. 판정 후 V13을 비파괴 방식(존재하지 않는 이름 herdr-ide-verify-absent 지정)으로 수정하고 D-51로 default 프로필 삭제를 금지했다. 그 수정으로 게이트가 stale이 되었고 재심이 소진되어 사용자가 override했다.
+- PRD impact: 지적된 결함은 override 전에 이미 해소되었으나 재판정을 받지 않았다. override reason: "남은 P0 1건(V13 프로필 삭제)은 이미 비파괴 방식으로 수정됨. 스파이크부터 시작하기로 하고 PRD로 진행"
+
