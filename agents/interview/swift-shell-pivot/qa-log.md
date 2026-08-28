@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
-question_count: 12
+question_count: 18
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -22,10 +22,10 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-35
+- next_decision_id: D-37
 - next_question: (owned by the live conversation until checkpoint)
 - last_materiality_sweep: checkpoint 4
-- outstanding_raw_entries: none
+- outstanding_raw_entries: Q13, Q14, Q15, Q16, Q17, Q18
 - next_checkpoint_at: Q22
 
 ## Transcript Sources
@@ -72,6 +72,8 @@ normalization_checkpoint_every: 10
 | D-32 | fact | 외부의존 | chromux는 사용자 본인이 만든 도구다(modakbul-gongbang/chromux, MIT). 따라서 통제 불가능한 서드파티 프로바이더가 아니며, herdr-ide가 필요로 하는 계약이 없거나 맞지 않으면 herdr-ide 쪽에서 우회 구현을 하지 말고 chromux를 고치는 것이 우선 경로다. 이는 D-31의 버전 게이팅을 단순화해도 되는 근거이기도 하다. herdrm(라이선스 없음, D-24)이나 CodeEditSourceEditor(4개월 정체, D-28) 같은 외부 의존과 성격이 다르므로 리스크 등급을 낮게 둔다. | P1 | user Q15 '참고로 chromux 내가 만든거라 내가 걍 고치면 되니까' | resolved | R#: 프로바이더 리스크 완화 / D-31 보완 |
 | D-33 | decision | UX/design | UI 품질의 사람 판정 인수 기준 6항목을 확정한다. (1) 구조: 3열 유지(사이드바+pet / 터미널 / 워크벤치), 밀도는 docs/design-reference/orca-01 기준선 (2) 텍스트: 시스템 폰트에 크기 위계가 보이고 터미널만 등폭이며 한글이 깨지지 않음 (3) 상태 표현: 색과 구조로 드러나고 문장 설명은 최후 수단(design 원칙 7) (4) 다크모드: 시스템 설정을 따라감 (5) 리사이즈: 창 크기를 바꿔도 레이아웃이 유지되고 패널 경계를 드래그로 조절 가능 (6) 네이티브 관용구: 진짜 메뉴바, 진짜 우클릭 메뉴, 진짜 스크롤바를 쓰고 그려낸 흉내를 쓰지 않음. 판정 시점은 두 번이다: 3a(창+레이아웃 완성) 시점에 방향 확인, v1 종료 시점에 최종. 판정 방법은 스크린샷을 사용자가 보고 판정하며, 구조는 peekaboo see로 요소가 제대로 잡히는지 함께 본다. 시각 방침은 macOS 네이티브 관용구를 우선하되(사용자 선택 '나') orca-01을 밀도와 배치의 시각 기준선으로 함께 유지한다(사용자 지시). 선행 D-59를 이 형태로 갱신한다. | P1 | user Q16 | resolved | V#: UI 품질 인수 기준 / 사람 판정 항목 |
 | D-34 | decision | UX/design | 사이드바 구성은 herdr-agent-context-labels(yansfil, 사용자 본인 제작) 플러그인의 레이아웃을 herdr-ide 네이티브로 적용한다. 확인된 구성: 항목당 2줄이며 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(12s/4m/2h/3d 형식)이다. 상태는 question, approval, error, working, unseen completion, idle, unknown을 컴팩트 심볼로 표시하고 상태당 심볼 하나를 고정하며, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 플러그인이 발행하는 sort_rank와 activity 토큰을 따라 막고 있는 순서대로(에러, 질문/승인, 완료 미확인, 진행 중, 확인됨) 두고 동률은 activity 시계로 깬다. 이는 선행 D-40(config.toml [ui.sidebar.agents] rows를 읽어 렌더)과 D-54(기본 레이아웃 내장)를 구체화한 것이다. | P1 | user Q16 'herdr-label 플러그인 그거의 구성도 잘 적용해서 함께 넣어주고' | resolved | R#: 사이드바 구성 / 선행 D-40·D-54 구체화 |
+| D-35 | decision | 데이터/상태 | OpenRouter API 키는 v1에서 기존 방식을 유지한다. 키는 ~/.zshrc의 OPENROUTER_API_KEY 환경변수에 남고, herdr-agent-context-labels 플러그인이 std::env::var로 읽는 현재 경로를 바꾸지 않는다. herdr-ide는 키 유무만 확인해 없을 때 안내를 표시한다. 조용히 빈 요약 줄을 두지 않는다(원칙 4). Keychain 입력 UI는 v1 비목표다. 근거는 실제 OpenRouter 호출 주체가 herdr-ide가 아니라 플러그인이고(선행 D-40의 구조: 플러그인이 토큰을 발행하고 herdr-ide는 session.snapshot에서 읽어 렌더), 플러그인이 herdr의 startup hook으로 실행되어 herdr-ide가 env를 주입할 지점이 없기 때문이다. 나중에 Keychain으로 옮기려면 플러그인이 Keychain 우선 env 폴백으로 읽도록 고쳐야 하며 사용자가 플러그인 소유자라 가능하다. revisit trigger: 사용자가 셸 프로필에서 키를 빼고 싶어질 때. | P1 | user Q17 '우선 다로 하자. 키가 없으면 안내만. Keychain은 나중에' | resolved | R#: OpenRouter 키 / 비목표(v1): Keychain 입력 UI |
+| D-36 | assumption | 아키텍처 | src/openrouter.rs 541줄(KeychainStore trait, MacKeychainStore, security-framework 의존)은 D-35로 v1에서 쓰이지 않는다. 현재도 lib.rs가 모듈로 선언만 하고 어디서도 호출하지 않는 미사용 코드다. D-20의 폐기 대상에 포함해 삭제하고 security-framework 의존도 제거한다. 되돌리기는 D-22의 rust-native-final 태그로 가능하므로 나중에 Keychain 작업을 할 때 꺼내 쓸 수 있다. 원칙 1(하위 호환 유지 안 함)과 원칙 2(현재 요구를 충족하는 가장 단순한 구현)에 따른다. 사용자가 유지를 원하면 되돌린다. | P2 | agent default - D-35의 귀결 | resolved | R#: 폐기 범위 보완 / revisit: Keychain 작업 착수 시 |
 
 ## Raw Q&A
 
@@ -895,7 +897,343 @@ normalization_checkpoint_every: 10
 - immediate_notes: decision: 브라우저 제어는 chromux CLI 위임 + 읽기 전용(가), 윈도우 미지원 확정, SwiftUI 전환 확정. reasoning: 소유권 충돌 회피와 macOS 전용 고정. constraints: 창이 두 개가 되는 것을 수용. explicit non-goals: 윈도우 지원, herdr-ide가 CDP 직접 조작, Chrome 창 자동 배치. verified facts: chromux headed CDP 실측(D-12), Xcode 없이 SwiftUI 빌드 성공(D-21). unresolved follow-up: 스파이크 4항목(D-18)과 IME 게이트(D-19). source: user Q12.
 - needs_normalization: false
 
+### Q13: 마지막 게이트 라운드가 백그라운드에서 돌고 있습니다. 그동안 정리해 드립니다.
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:3e68a94a-1b05-4318-962d-bac6282bc739
+- asked: 마지막 게이트 라운드가 백그라운드에서 돌고 있습니다. 그동안 정리해 드립니다.
+  
+  ## 확정된 것 (결정 27개)
+  
+  | | |
+  |---|---|
+  | **런타임** | SwiftUI + Rust 코어. Xcode 없이 `swiftc`로 빌드 가능 확인 |
+  | **플랫폼** | macOS 전용. 윈도우 미지원 확정 |
+  | **터미널** | SwiftTerm **1.20.0 정확 고정**. 엔진·뷰 모두 위임 |
+  | **브라우저** | 앱 밖 chromux Chrome. herdr-ide는 CLI 위임 + 상태 읽기만 (~100줄) |
+  | **grab** | v1 비목표 |
+  | **검증** | peekaboo. chromux-CDP 방식 폐기 |
+  | **메모리** | herdr-ide 프로세스만 400MB 이하 |
+  | **한글 IME** | 문제 생기면 herdrm `TerminalView.swift` 참조 (읽기만, 복사 불가) |
+  | **게이트** | 0단계 스파이크 4항목 통과 전에는 아무것도 삭제하지 않음 |
+  | **되돌리기** | 삭제 직전 커밋에 `rust-native-final` 태그 |
+  
+  ## 무효화된 선행 결정 5개
+  
+  `D-11` 브라우저 패널+grab · `D-19` CDP 노출 · `D-34` chromux가 앱 CDP에 붙어 검증 · `D-41` 400/900MB · `D-53` chromux 전제조건
+  
+  나머지 선행 인터뷰(질문 44개)는 **그대로 유효**합니다. 이번 인터뷰는 런타임 축만 개정했습니다 (D-26).
+  
+  ## 이번 인터뷰에서 실제로 뒤집힌 것
+  
+  처음에 제가 드린 답 중 셋이 조사하면서 틀린 걸로 드러났습니다.
+  
+  1. **"WKWebView + grab"을 추천** → grab이 빠지자 존재 이유가 사라짐
+  2. **"herdr browser pane 쓰시면 됩니다"** → 헤드리스 스크린캐스트라 선생님이 이미 탈락시킨 것이었음
+  3. **"Swift로 가면 Xcode가 필요"** → CLT만으로 SwiftUI 빌드 성공. 1차 전환을 죽였던 장벽이 사라짐
+  
+  그리고 게이트가 **제가 동의 없이 결정으로 기록한 2건**을 잡아냈습니다. 되돌려서 다시 여쭙고 확정했습니다.
+  
+  ## 남은 미확정 (스파이크가 답할 것)
+  
+  FFI 계약 · 기존 저장 상태 마이그레이션 · chromux 실패 시 동작 · `xcodebuild` 없는 빌드/배포
+  
+  이 넷은 0단계 스파이크 산출물로 PRD에서 확정합니다.
+  
+  ---
+  
+  게이트 결과 나오면 바로 알려드리고, PASS면 `/gen-prd`로 넘어갈 준비가 끝납니다.
+- recommended: none
+- answer: ㅇㅇㅇ 그렇게 하고 근데 File Tree + File View는 어떤거 붙여스는게 나을까?
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: true
+
+### Q14: 조사 결과와 게이트 결과 둘 다 나왔습니다.
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:39b483b6-266f-4e92-ba36-27aec67453bc
+- asked: 조사 결과와 게이트 결과 둘 다 나왔습니다.
+  
+  ## 1. File Tree + File View
+  
+  **트리는 붙일 게 없습니다.** SwiftUI에 `OutlineGroup` / `DisclosureGroup`이 기본으로 있고, macOS에는 `NSOutlineView`가 있습니다. 파일 트리는 SwiftUI에서 import하는 물건이 아니라 List 하나 쓰는 일입니다. **의존성 0개.**
+  
+  **뷰어/편집기가 진짜 질문입니다.** D-25가 "탐색 + 이미지/마크다운/코드 강조/git diff 보기 + **가벼운 인라인 편집과 저장**"까지로 정해뒀으니, 읽기 전용이 아니라 편집기가 필요합니다.
+  
+  | 후보 | 별 | 최근 푸시 | 라이선스 | 판정 |
+  |---|---|---|---|---|
+  | **CodeEditSourceEditor** | 716 | 2026-04-20 | **MIT** | **유력** |
+  | STTextView | 1588 | 2026-08-18 | **GPLv3 / 상용** | ❌ **탈락** |
+  | Highlightr | 1868 | 2026-02-13 | MIT | 가벼운 대안 |
+  | Runestone | 3201 | 2026-03-25 | MIT | iOS 중심 (macOS 지원 확인 못 함) |
+  | Splash | 1869 | **2024-05-27** | MIT | ❌ Swift 코드만 강조 + 2년 정체 |
+  
+  **STTextView는 함정입니다.** 가장 활발(10일 전 푸시, open issue 3개)해서 매력적인데, 라이선스를 열어보니:
+  
+  > If you are creating an open source application under a license compatible with the **GNU GPL license v3**, you may use STTextView under the terms of the GPLv3. ... commercial licenses are available.
+  
+  **herdr-ide는 MIT입니다.** 이걸 쓰면 herdr-ide 전체가 GPLv3가 되거나 상용 라이선스를 사야 합니다. herdrm 라이선스 없음 건에 이어 **오늘 두 번째 라이선스 함정**이네요.
+  
+  ### 추천 조합
+  
+  ```
+  트리        SwiftUI OutlineGroup              의존성 0
+  코드 뷰/편집  CodeEditSourceEditor (MIT)        tree-sitter 하이라이팅 + 편집
+  마크다운     swift-markdown-ui (MIT, ⭐3921)    또는 swiftlang/swift-markdown (Apache-2.0, 오늘 푸시)
+  이미지       SwiftUI Image                     의존성 0
+  git diff    Rust에서 계산 → 색만 입혀 표시       의존성 0
+  ```
+  
+  `CodeEditSourceEditor`는 CodeEdit 에디터 프로젝트에서 떼어낸 macOS 네이티브 패키지입니다. tree-sitter 기반이라 **앞서 논의한 tree-sitter를 Rust가 아니라 Swift 쪽에서 얻게 됩니다.**
+  
+  **주의:** 마지막 푸시가 2026-04-20으로 **4개월 정체**, open issue 48개. SwiftTerm(어제 푸시)만큼 활발하지 않습니다.
+  
+  **더 가벼운 대안:** `NSTextView` + `Highlightr`. 편집은 NSTextView 기본 기능으로 하고 하이라이팅만 얹습니다. 의존성 하나로 끝나지만 tree-sitter급 정확도는 아닙니다.
+  
+  ---
+  
+  ## 2. 게이트 결과: BLOCKED (재심 소진)
+  
+  **P0 3건은 전부 해소됐습니다.** 브라우저 제어 동의, 윈도우, 전환 확정 모두 통과했습니다.
+  
+  **P1 7건이 남았고, 재심 기회(2/2)를 다 썼습니다.** 이 사이클은 종료됐고, 제가 판정을 한 번 더 부를 수 없습니다.
+  
+  남은 7건: v1 워크플로 명시 · 상태/복구 매트릭스 · UI 품질 인수 기준 · chromux 프로바이더 계약 · 빌드/배포 · 검증 매트릭스 · chromux 실패 동작
+  
+  게이트 말이 맞습니다. 제가 D-26으로 "선행 인터뷰 참조"라고만 적었는데, 게이트는 *"참조하지 말고 실제로 옮겨 적거나 정확히 인용하라"*고 요구합니다.
+  
+  ### 세 가지 길
+  
+  **(A) 스파이크부터 하고 나중에 마무리** ← 추천
+  qa-log를 `paused`로 두고 0단계 스파이크를 먼저 돌립니다. **남은 P1 중 넷(FFI 계약, 빌드/배포, 검증 매트릭스, chromux 실패 동작)은 스파이크가 사실로 만들어 줍니다.** 지금 말로 정하면 또 "결정하고 나서 죽일 요인 만나기" 패턴이 됩니다.
+  
+  **(B) 지금 P1 7건을 다 답한다**
+  질문 10~15개 더 필요합니다. 게이트를 다시 열려면 선생님의 명시적 변경 요청이 근거로 필요합니다 (`gate reopen`).
+  
+  **(C) 선생님이 직접 override**
+  `sasu gate override`는 **사용자 전용 명령**이라 제가 못 돌립니다. 남은 P1을 감수하고 PRD로 넘어가는 선택입니다.
+  
+  ---
+  
+  지금 물어보신 File Tree 결정을 추가하는 것 자체가 변경 요청이라 게이트 재개 근거가 됩니다.
+  
+  **File Tree/Viewer는 위 추천 조합으로 갈까요?** 그리고 **(A)/(B)/(C) 중 어느 쪽**인가요? 저는 **File Tree 결정을 기록하고 → (A)로 스파이크 먼저**를 권합니다.
+- recommended: none
+- answer: FIle Tree/Viewer는 추천ㄴ조합으로 가고 B로 하자
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: true
+
+### Q15: 선행 인터뷰에 **UX 시나리오 카드 6장**이 상태·실패·복구·증명까지 다 있습니다. 게이트가 요구한 건 "참조하지 말고 옮겨
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:1cacfddd-02d4-47ce-b3a0-dd1ee1094cac
+- asked: 선행 인터뷰에 **UX 시나리오 카드 6장**이 상태·실패·복구·증명까지 다 있습니다. 게이트가 요구한 건 "참조하지 말고 옮겨 적어라"니, 그건 제가 하겠습니다 (증명 방식만 chromux→peekaboo로 바꾸고, 브라우저 카드는 새로 씁니다).
+  
+  **선생님께 물어야 하는 건 4개 영역**입니다. 가장 위험한 것부터 갑니다.
+  
+  ---
+  
+  ### Q14. 빌드/배포 (4개 묶음)
+  
+  이게 **1차 전환을 죽인 영역**이고, `xcodebuild`가 없다는 새 제약이 걸려 있습니다.
+  
+  **① 지원 macOS 버전** — herdrm은 14.0+입니다. 우리도 **macOS 14.0+**? (SwiftUI 최신 API를 쓰려면 높을수록 편하고, 선생님 맥은 15.x입니다)
+  
+  **② CPU 타겟** — herdrm은 유니버설(arm64+x86_64)입니다. 우리는 **arm64 전용**을 권합니다. 선생님 맥이 arm64고, 유니버설은 Rust도 두 번 빌드해서 `lipo`로 합쳐야 해서 빌드 파이프라인이 두 배가 됩니다. D-29(공개 배포)가 있지만 2026년에 Intel 맥 사용자는 소수입니다.
+  
+  **③ Sparkle 자동 업데이트를 v1에 넣나?** — herdrm은 씁니다(2.9.6). **v1 비목표**를 권합니다. 자동 업데이트는 서명된 appcast + 배포 서버 + EdDSA 키 관리가 따라옵니다. v1은 GitHub Releases에서 받아 쓰는 걸로 충분하고, 이건 나중에 얹을 수 있습니다.
+  
+  **④ 코드사인/공증** — 이게 진짜 미지수입니다. `xcodebuild` 없이 `codesign`/`notarytool`만으로 되는지 **확인 못 했습니다.** (둘 다 CLT에 포함되어 있을 가능성은 높습니다.)
+  
+  권고: **v1은 서명 없이 배포**하고, 사용자가 처음 실행할 때 우클릭→열기로 Gatekeeper를 통과시키게 안내합니다. 오픈소스 프로젝트에서 흔한 방식이고, Apple Developer Program(연 $99)이 없어도 됩니다.
+  → 대신 **0단계 스파이크 4번 항목을 "서명 없는 .app 번들을 만들어 실행되는가"로 좁힙니다.**
+  
+  **①~④ 이대로 갈까요?** 다르게 하고 싶은 항목만 말씀해 주세요.
+  
+  (다음은 chromux 계약 → UI 품질 인수 기준 → 검증 권한 순서로 여쭙겠습니다.)
+- recommended: none
+- answer: 1. mac os 는 14.0+ 로 
+  2. arm 64
+  3. ㅇㅇㅇ 그렇게 ㄱㄱ
+  4. 너가 최대한 간단하게 할 수 있는것으로 해서 해봐
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: true
+
+### Q16: Q15. chromux 계약 (4개 묶음)
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:a66e5415-8c97-43d6-a2c2-91095d5a2992
+- asked: ### Q15. chromux 계약 (4개 묶음)
+  
+  게이트가 "행복한 경로만 있고 실패 동작이 없다"고 지적한 부분입니다.
+  
+  **① 어느 프로필을 쓰나?**
+  chromux는 없는 프로필을 스스로 안 만듭니다(실측 확인). 선택지:
+  - **(가) `default` 프로필 하나만 쓴다** ← 추천. 가장 단순하고, 지금 선생님이 쓰는 방식입니다.
+  - (나) workspace마다 프로필을 나눈다 → 선행 D-21/D-22가 브라우저 패널 시절 정했던 건데, 패널이 사라졌으니 근거도 약해졌습니다. 프로필이 늘면 디스크와 로그인 관리가 따라옵니다.
+  
+  **② chromux가 없으면?**
+  선행 D-53은 "브라우저 패널은 뜨되 에이전트 연동만 degrade"였는데 패널이 없어졌습니다. 이제 단순합니다 - **"브라우저 열기" 버튼이 비활성화되고 이유를 표시**합니다 (원칙 4: 조용히 실패하지 않기). 설치 안내 문구를 같이 보여줍니다.
+  
+  **③ 이미 떠 있으면 재사용하나?**
+  **재사용을 권합니다.** `chromux ps --json`으로 `status: running`이면 `launch`를 건너뛰고 `open`만 합니다. 매번 새로 띄우면 로그인 세션이 날아갑니다.
+  
+  **④ herdr-ide가 끄나?**
+  **안 끕니다.** herdr-ide를 닫아도 Chrome은 그대로 둡니다. 근거는 에이전트가 그 Chrome을 쓰고 있을 수 있고, 우리가 만들지 않은 것을 닫지 않는다는 원칙입니다. 정리는 사용자가 `chromux kill`로 하거나 `chromux kill --idle`에 맡깁니다.
+  
+  **추가로 하나 더:** chromux **최소 버전**을 정해야 하는데, 지금 `chromux --version`을 확인 안 했습니다. 선행 D-46이 herdr에 대해 "protocol 정수로 판정하고 미달하면 조용히 degrade하지 말고 명확히 실패"를 정했는데, chromux에도 같은 방침을 적용할지요. 다만 chromux는 CLI라 버전 확인이 문자열 파싱이 됩니다. **간단하게는 "필요한 명령이 없으면 그 사유를 표시하고 실패"** 정도가 적당해 보입니다.
+  
+  **①~④ + 버전 방침, 이대로 갈까요?** 바꾸고 싶은 것만 말씀해 주세요.
+- recommended: none
+- answer: ㅇㅇㅇ 우선 가로 하자.. 
+  2. ㅇㅇㅇ
+  3. ㅇㅇㅇ 고고
+  4. ㅇㅇ 우선 그렇게 해...
+  ㅇㅇㅇ (참고로 chromux 내가만든거라 내가 걍 고치면되니까 고고)
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: true
+
+### Q17: `docs/design-reference/`에 orca 스크린샷 3장이 있네요 (orca-02는 grab용이라 이제 무관).
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:fd833701-91c2-41d2-8577-047e1cae721e
+- asked: `docs/design-reference/`에 orca 스크린샷 3장이 있네요 (orca-02는 grab용이라 이제 무관).
+  
+  ### Q16. "투박한 UI"의 합격 기준 (마지막에서 두 번째)
+  
+  이번 전환의 목적이 "UI가 투박하다"인데, **무엇이 되면 합격인지가 없으면 판정할 수 없습니다.** 게이트가 정확히 이걸 지적했습니다.
+  
+  **사람이 눈으로 판정할 항목 6개를 제안합니다:**
+  
+  | | 합격 기준 |
+  |---|---|
+  | **구조** | 3열 유지 (사이드바+pet / 터미널 / 워크벤치). 밀도는 `orca-01` 기준선 |
+  | **텍스트** | 시스템 폰트 + 크기 위계가 보임. 터미널만 등폭. 한글이 안 깨짐 |
+  | **상태 표현** | 색과 구조로 드러남. 문장 설명은 최후 수단 (design 원칙 7) |
+  | **다크모드** | 시스템 설정을 따라감 |
+  | **리사이즈** | 창 크기를 바꿔도 레이아웃이 유지되고, 패널 경계를 드래그로 조절 |
+  | **네이티브 관용구** | 진짜 메뉴바 · 진짜 우클릭 메뉴 · 진짜 스크롤바 (그려낸 흉내가 아니라) |
+  
+  **판정 시점은 두 번**을 제안합니다:
+  - **3a 끝(창+레이아웃 완성)** - 여기서 방향이 틀렸으면 일찍 잡습니다
+  - **v1 끝** - 최종
+  
+  **판정 방법:** 스크린샷을 보고 선생님이 판정. 구조는 `peekaboo see`로 요소가 제대로 잡히는지 같이 봅니다.
+  
+  **그리고 `orca-01`을 시각 기준선으로 계속 쓸까요?** 선행 D-59가 그렇게 정했는데, orca는 Electron이라 밀도와 표현이 웹 스타일입니다. macOS 네이티브로 가면 오히려 **시스템 관용구를 따르는 게 맞을 수도** 있습니다.
+  
+  - **(가) orca-01을 밀도 기준선으로 유지** ← 선행 결정 유지
+  - **(나) macOS 네이티브 관용구 우선, orca는 참고만** ← 제 추천
+  
+  **6개 항목 + 판정 시점 이대로 괜찮은지, 그리고 (가)/(나) 중 어느 쪽인지** 알려주세요.
+- recommended: none
+- answer: ㅇㅇㅇ orca-01을 시각 기준선으로 + herdr-label 플러그인(내가 만든거) 그거의 구성도 잘 적용해서 함께 넣어주고 + openrouter key 입력받게 세팅도 하고 (이거 지금 ~/.zshrc에 이씅ㅁ) + 나로 우선 고고 
+  여튼 디자인 좀 깔쌈하게
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: true
+
+### Q18: 드리프트 경고가 떴습니다 (매 턴 결정을 쓰지 말고 체크포인트에 모으라는 것). 앞으로 모아서 쓰겠습니다.
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:ded93e63-44e9-423b-9823-a2c6e6576a7d
+- asked: 드리프트 경고가 떴습니다 (매 턴 결정을 쓰지 말고 체크포인트에 모으라는 것). 앞으로 모아서 쓰겠습니다.
+  
+  ### Q17. OpenRouter 키 — 이게 마지막 질문입니다
+  
+  **찾은 사실:**
+  ```
+  플러그인 src/lib.rs:50  OpenRouterApiKey => "OPENROUTER_API_KEY"
+  플러그인 src/lib.rs:55  std::env::var(self.name())        ← 환경변수로만 읽음
+  플러그인 실행 주체        herdr의 startup hook (herdr-ide가 아님)
+  현재 키 위치              ~/.zshrc의 export
+  herdr-ide 쪽              src/openrouter.rs 541줄에 Keychain 저장소가 이미 구현됨 (아직 아무 데서도 안 씀)
+  ```
+  
+  그리고 선행 D-40이 정한 구조가 이렇습니다: **플러그인이 토큰을 만들어 herdr에 발행하고, herdr-ide는 `session.snapshot`에서 그 토큰을 읽어서 그린다.** 즉 OpenRouter를 실제로 호출하는 건 **플러그인**이지 herdr-ide가 아닙니다.
+  
+  그래서 "herdr-ide가 키를 입력받는다"가 세 갈래로 갈립니다.
+  
+  **(가) herdr-ide가 Keychain에 저장하고, 플러그인이 Keychain에서 읽도록 고친다** ← 추천
+  - 선생님이 플러그인 소유자라 가능합니다 (chromux와 같은 패턴)
+  - `~/.zshrc`에서 API 키가 사라집니다. 셸 프로필에 비밀을 두지 않는 게 맞습니다
+  - 플러그인은 "Keychain 우선, 없으면 env" 순으로 읽으면 기존 사용자도 안 깨집니다
+  - 비용: 플러그인 수정이 herdr-ide 작업에 딸려옵니다
+  
+  **(나) herdr-ide가 Keychain에 저장하고, 플러그인 실행 시 env로 주입한다**
+  - 문제: 플러그인을 띄우는 건 herdr지 herdr-ide가 아닙니다. herdr-ide가 끼어들 지점이 없습니다. **사실상 불가능해 보입니다.**
+  
+  **(다) 키는 그대로 `~/.zshrc`에 두고, herdr-ide는 키 유무만 보여준다**
+  - 가장 싸지만 "입력받게 세팅"이라는 요청을 만족 못 합니다
+  
+  ---
+  
+  **추가로 정할 것 2개** (가로 가실 경우):
+  
+  - **키가 없으면?** 사이드바에 요약 줄이 안 뜹니다. **설정 화면으로 가는 안내를 사이드바에 표시**하는 걸 권합니다 (조용히 빈 줄로 두지 않기, 원칙 4).
+  - **기존 zshrc 키 마이그레이션?** 첫 실행 시 `OPENROUTER_API_KEY`가 환경에 있으면 **"Keychain으로 옮길까요?"를 묻고**, 옮긴 뒤 zshrc에서 지우라고 안내하는 걸 권합니다. 자동으로 zshrc를 고치지는 않습니다.
+  
+  **(가)/(다) 중 어느 쪽인가요?** 그리고 추가 2개도 이대로 괜찮은지 알려주세요.
+- recommended: none
+- answer: 우선 다로 하자. 나중에 고치지 뭐 
+  
+  키가 없으면 안내만!
+  Keychain은 나중에~
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: true
+
 ## UX Scenario Cards
+
+선행 인터뷰 herdr-ide-native-shell의 UX-01~UX-06을 이 런타임 결정에 맞춰 이식한다.
+증명 방식은 chromux가 herdr-ide CDP에 붙는 방식(선행 D-34)에서 peekaboo(D-17)로 전부 교체했다.
+UX-03은 브라우저 패널과 grab이 D-08/D-11로 사라져 새로 작성했다.
+
+### UX-01: 막힌 에이전트를 찾아 붙는다
+- trigger: 여러 workspace에 에이전트가 돌고 있고 그중 하나가 질문, 승인, 에러로 멈춰 있다.
+- happy path: 사이드바 agents 목록에서 미확인(`_new`) attention 표시를 보고 클릭한다. 중앙 SwiftTerm 뷰가 그 pane의 PTY로 바뀐다. 답하면 표시가 사라진다. 항목은 2줄 구성이다(D-34).
+- state / failure: (1) herdr 서버 미실행 - 소켓 파일 없음과 응답 없음을 구분해 표시하고 서버 실행 버튼을 준다. 자동 기동하지 않는다(선행 D-38). (2) 확인된 `?`는 attention이 아니라 idle로 내려간다(INV-herdr-unseen-token). (3) OPENROUTER_API_KEY가 없으면 요약 줄이 비므로 그 사유와 설정 안내를 표시한다(D-35).
+- recovery: 서버가 죽으면 버튼으로 재기동하고, 재기동 후 사이드바가 스냅샷을 다시 읽는다.
+- proof: `peekaboo see --app herdr-ide --json`으로 사이드바 항목을 찾아 `peekaboo click`하고, herdr `pane.get`의 focused가 그 pane으로 바뀌는지 확인한다. `_new` 판정은 이식한 순수 함수 테스트로 본다.
+- linked decisions: D-16, D-17, D-33, D-34, D-35
+
+### UX-02: 에이전트가 만든 산출물을 확인한다
+- trigger: 에이전트가 이미지나 파일을 생성했고 눈으로 확인해야 한다.
+- happy path: 우측 워크벤치의 파일트리(SwiftUI OutlineGroup)에서 파일을 클릭한다. 이미지는 SwiftUI Image로, 마크다운은 swift-markdown-ui로, 코드는 CodeEditSourceEditor로 렌더된다. 값 하나를 고쳐야 하면 그 자리에서 편집하고 저장한다(선행 D-25의 F2 깊이).
+- state / failure: (1) 포커스된 pane이 트리 루트와 다른 경로에 있으면 트리 상단에 그 사실을 표시하고 자동으로 따라가지 않는다. (2) 편집 중 에이전트가 같은 파일을 덮어쓰면 내 편집 유지 / 다시 읽기를 묻는다(선행 D-27). (3) 우측 패널은 워크벤치만이며 브라우저 전환은 없다(D-11).
+- recovery: 명시적 조작으로만 pane 경로로 트리를 옮긴다. 충돌 시 사용자가 어느 쪽을 잃을지 고른다.
+- proof: peekaboo로 트리 노드를 클릭하고 뷰어에 내용이 뜨는지 스크린샷으로 확인한다. 충돌 분기는 파일을 외부에서 수정한 뒤 다이얼로그가 뜨는지로 본다.
+- linked decisions: D-11, D-17, D-28, D-33
+
+### UX-03: 브라우저로 결과를 확인하고 에이전트에게 QA를 맡긴다
+- trigger: 에이전트가 만든 로컬 화면을 확인해야 하거나, 에이전트에게 브라우저 QA를 시켜야 한다.
+- happy path: herdr-ide에서 브라우저 열기를 누르면 chromux default 프로필의 진짜 Chrome 창이 별도로 뜬다. 이미 running이면 재사용한다. herdr-ide는 현재 열린 탭의 URL과 제목을 상태로 표시한다. 에이전트는 같은 Chrome에 chromux로 붙어 snapshot/click/screenshot을 수행한다.
+- state / failure: (1) chromux가 없으면 버튼을 비활성화하고 사유와 설치 안내를 표시한다. 조용히 실패하지 않는다(D-31). (2) 필요한 chromux 명령이 없으면 그 사유를 표시하고 실패한다. 버전 정수 게이팅은 하지 않는다(D-31). (3) chromux 데몬이나 포트가 응답하지 않으면 상태 표시를 마지막 확인 시각과 함께 stale로 두고 갱신 실패를 알린다. (4) default 프로필이 없으면 herdr-ide가 임의 생성하지 않고 사용자에게 chromux profile new를 안내한다(D-12로 확인된 chromux 규칙). (5) 브라우저는 herdr-ide 창 밖의 별도 창이며 앱 안에 임베드되지 않는다(D-11, D-27).
+- recovery: herdr-ide를 닫아도 Chrome을 종료하지 않는다. 에이전트가 쓰고 있을 수 있고 우리가 만들지 않은 것을 닫지 않는다. 정리는 사용자의 chromux kill이나 chromux kill --idle에 맡긴다(D-31).
+- proof: peekaboo로 브라우저 열기를 클릭한 뒤 `chromux ps --json`의 status가 running인지, `GET 127.0.0.1:<port>/json/list`에 기대한 URL이 있는지 확인한다. chromux 부재 분기는 PATH에서 chromux를 가린 상태로 버튼이 비활성화되고 사유가 표시되는지로 본다.
+- linked decisions: D-08, D-11, D-12, D-13, D-27, D-31, D-32
+
+### UX-04: 원격(mini) workspace에서 작업한다
+- trigger: mini에서 돌고 있는 에이전트를 확인하거나 붙어야 한다.
+- happy path: 사이드바에 원격 workspace가 함께 보인다. 선택하면 SwiftTerm 뷰가 원격 pane에 attach되고 분할도 동작한다. 파일트리로 원격 파일을 탐색하고 뷰어로 본다. SSH와 sftp는 Rust 코어(remote.rs 3550줄)가 그대로 담당한다.
+- state / failure: (1) 인라인 편집은 원격에서 동작하지 않으며 회색으로 비워두지 않고 이유를 표시한다(선행 D-37). (2) SSH 연결이 끊기면 그 사실을 알린다. 조용히 빈 목록을 보여주지 않는다. (3) 브라우저는 로컬 chromux 창이므로 원격 workspace에서도 동작하지만, 원격 호스트의 페이지를 보려면 사용자가 포트포워딩을 해야 한다.
+- recovery: 원격 파일 수정은 그 pane의 터미널에서 한다. 연결 끊김은 재연결을 시도하고 결과를 알린다.
+- proof: mini에 붙어 원격 workspace가 사이드바에 뜨고 attach와 파일 나열이 되는지 확인한다. 머신 가용성에 따라 차단 가능한 항목으로 둔다.
+- linked decisions: D-11, D-17, D-31
+
+### UX-05: 창이 뒤로 갔을 때 알림을 받는다
+- trigger: herdr-ide가 아닌 다른 앱을 보고 있는데 에이전트가 멈췄다.
+- happy path: 데스크톱의 펫이 상태를 드러낸다(에러, 질문, 승인 우선). 클릭하면 herdr-ide가 앞으로 나오면서 해당 에이전트로 이동한다.
+- state / failure: (1) herdr-ide 창이 앞에 있을 때는 펫이 조용히 있고 사이드바가 알린다. 같은 사실을 두 곳에서 말하지 않는다. (2) 저장된 펫 위치가 연결되지 않은 모니터를 가리키면 주 디스플레이로 복구한다(REG-window-position-offscreen).
+- recovery: 오프스크린 좌표는 클램프로 복구하며 실제 사고 좌표가 테스트에 고정되어 있다.
+- proof: 클램프 기하는 순수 함수 테스트로 본다. 투명, 무테, 항상 위, 클릭스루, 드래그 조합은 SwiftUI/AppKit에서 다시 확인해야 한다. 선행 D-33의 Electron 스파이크는 무효이며 AppKit NSWindow 기준으로 재검증한다. 역할 분리는 herdr-ide 창을 앞뒤로 보낸 뒤 peekaboo로 펫 표시와 사이드바 attention 표시가 반대로 뒤집히는지 확인한다.
+- linked decisions: D-15, D-17, D-33
+
+### UX-06: workspace, worktree, pane을 앱 안에서 만들고 닫는다
+- trigger: 새 작업을 시작하거나 끝난 작업을 정리한다.
+- happy path: 사이드바에서 새 workspace/worktree를 만들고 라벨을 준다. workspace 안에서 새 pane을 열어 에이전트를 띄운다. 끝나면 닫는다. CLI로 나가지 않는다.
+- state / failure: (1) working이나 attention 상태인 pane을 닫으려 하면 확인 다이얼로그를 띄우고 그 프로세스에 무슨 일이 생기는지 문장으로 알린다. idle이면 바로 닫는다(선행 D-44). (2) workspace나 tab을 닫을 때는 집계 경고 하나를 띄우고 종료될 에이전트를 tokens.summary와 함께 나열한다(선행 D-50). (3) worktree 제거는 체크아웃을 실제로 지우므로 결과를 고지하고 확인을 받는다. (4) Git work tree가 아닌 곳에서는 herdr가 not_git_worktree를 돌려주므로 그 사유를 그대로 보여준다. (5) herdr protocol이 요구 버전에 미달하면 부분 비활성화하지 않고 명확한 메시지로 실패한다(선행 D-46).
+- recovery: 파괴적 동작은 확인 단계에서 취소할 수 있다.
+- proof: peekaboo로 생성 조작을 실행한 뒤 herdr workspace.list / worktree.list / pane.list에 반영됐는지 확인한다. 파괴적 동작 검증은 herdr-ide-verify- 접두어 fixture에서만 돌린다(선행 D-56).
+- linked decisions: D-17, D-33
 
 ## Evidence From Code, Docs, Or Research
 
