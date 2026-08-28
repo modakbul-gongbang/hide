@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
-question_count: 6
+question_count: 9
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -22,11 +22,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-22
+- next_decision_id: D-23
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 1
+- last_materiality_sweep: checkpoint 2
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q16
+- next_checkpoint_at: Q19
 
 ## Transcript Sources
 
@@ -44,7 +44,7 @@ normalization_checkpoint_every: 10
 | D-04 | fact | 참조제품 | 형제 제품 missuo/herdrm(SwiftUI, macOS 14+, 636 stars)은 SwiftTerm 1.19 + Sparkle 2.9.6 + 로컬 HerdrKit만 의존한다. project.yml:19 주석이 'SwiftTerm 1.19 ships the marked-text overlay used for IME preedit; do not reimplement it'라고 명시한다. SwiftTerm은 public func feed(byteArray:)(Terminal.swift:6559)와 send(source:data:) 델리게이트(MacTerminalView.swift:1436)를 제공해 Rust SSH 바이트와 2개 함수로 연결된다. | P0 | git clone missuo/herdrm + migueldeicaza/SwiftTerm (2026-08-28) | resolved | R#: 터미널 뷰 선택 근거 |
 | D-05 | fact | 선행이력 | 런타임 결정이 11일간 4번 바뀌었다. herdr-lightweight-ide(2026-08-17, Swift+libghostty+WKWebView, approved 후 소스 0줄) -> D-05 Rust/Tauri(rejected) -> D-10 Electron+TS(2026-08-25 확정, herdr-core를 TS로 재구현하기로 결정) -> 브랜치 prd/herdr-ide-rust-native-800mb의 Rust native(현 코드 16040줄). PRD 디렉터리가 5개이고 전부 status ready다. 이번 SwiftUI 전환은 5번째 런타임 결정이 된다. | P0 | repo: agents/interview/*/qa-log.md, git log, agents/prd/ 5개 | resolved | R#: 전환 리스크 |
 | D-06 | fact | 검증 | D-41이 메모리 예산을 v1 인수 조건으로 고정했다. workspace 7/pane 11 기준 브라우저 닫힌 상태 400MB 이하, 브라우저 하나 연 상태 900MB 이하. 초과 시 v1 미완료 판정. 근거는 사용자가 orca를 무거워서 제거한 실증이다. SwiftUI+Rust는 이 예산에 유리하므로 전환이 D-41과 충돌하지 않는다. | P0 | agents/interview/herdr-ide-native-shell/qa-log.md D-41, D-13 | resolved | R#: 인수 조건 유지 여부 |
-| D-07 | fact | 브라우저 | src/browser.rs(721줄)는 CEF CDP 업스트림에 붙는 loopback CDP 게이트웨이로 구현돼 있다(에러 문구 'CEF CDP upstream unavailable', attach_chromux/detach_chromux, capability 스코프). 즉 현 설계는 앱에 CEF(Chromium)를 임베드하는 전제다. 선행 인터뷰 D-11은 브라우저 패널+grab을 v1 최대 기능으로, D-19는 chromux가 붙을 CDP 엔드포인트 노출을, D-53은 chromux를 전제조건으로 확정했다. 한편 D-12는 Rust에서 CEF 임베딩에 실용 경로가 없다고 기록했다. SwiftUI 전환 시 이 축이 전부 재결정 대상이다. | P0 | repo: src/browser.rs:43,92,109,144 + herdr-ide-native-shell D-11/D-12/D-19/D-53 | open | 미정 - Q1 |
+| D-07 | fact | 브라우저 | src/browser.rs(721줄)는 CEF CDP 업스트림에 붙는 loopback CDP 게이트웨이로 구현돼 있다(에러 문구 'CEF CDP upstream unavailable', attach_chromux/detach_chromux, capability 스코프). 즉 현 설계는 앱에 CEF(Chromium)를 임베드하는 전제다. 선행 인터뷰 D-11은 브라우저 패널+grab을 v1 최대 기능으로, D-19는 chromux가 붙을 CDP 엔드포인트 노출을, D-53은 chromux를 전제조건으로 확정했다. 한편 D-12는 Rust에서 CEF 임베딩에 실용 경로가 없다고 기록했다. SwiftUI 전환 시 이 축이 전부 재결정 대상이다. | P0 | repo: src/browser.rs:43,92,109,144 + herdr-ide-native-shell D-11/D-12/D-19/D-53 | resolved | D-11이 종결. browser.rs 삭제 대상 |
 | D-08 | decision | 스코프 | grab(브라우저 요소를 집어 HTML/CSS/크롭 스크린샷을 에이전트 pane에 주입)은 v1 비목표다. 선행 인터뷰 D-11이 v1 최대 기능으로 두었으나 사용자가 현재 필요 없다고 판정했다. 이 결정이 인앱 브라우저의 마지막 존재 이유를 제거한다. | P0 | user Q2 | resolved | 비목표(v1) / 선행 D-11의 grab 성분 무효 |
 | D-09 | fact | 브라우저 | herdr official.browser 플러그인(ogulcancelik/herdr-browser v0.1.0, MIT, 사용자가 설치한 서드파티)은 --headless=new Chrome을 띄우고 매 프레임을 PNG로 캡처해 kitty graphics로 터미널에 그린다. 주소창(handleUrlInputKey)과 탭/뒤로/앞으로/새로고침/정지/줌 버튼은 이미 구현돼 있다. 즉 부족한 것은 UI가 아니라 전송 방식이며, 터미널 pane이 글자와 그림만 받으므로 fork로는 화질/반응 문제를 해결할 수 없다. | P1 | repo: ~/.config/herdr/plugins/github/official.browser-ff2a44eccae9/src/{chrome.ts:38,viewer.ts:292,302,839,1482-1489} | resolved | R#: 플러그인 fork 기각 근거 |
 | D-10 | fact | 브라우저 | Swift에서 CEF 임베드에 실용 경로가 없다. 유일한 Swift 바인딩 lvsti/CEF.swift는 2021-11-01 이후 방치되고 릴리스가 0개다. CEF 자체는 SetAsChild(parent_nsview, rect)로 기존 NSView에 붙는 API가 있으나, CEF 포럼에 macOS 임베딩 시 빈 화면 렌더링, 부모 NSView 리사이즈 미추종, key window 하나 제약에 의한 포커스 문제가 반복 보고된다. Swift에서 쓰려면 C++/ObjC++/Swift 브리지를 자체 유지해야 한다. 선행 D-12가 Rust에 내린 판정과 동일하다. 조사 방식은 문서와 이슈 검토이며 실제 임베딩을 시도하지 않았다. | P0 | github.com/lvsti/CEF.swift API(마지막 push 2021-11-01, 릴리스 0, star 104), magpcss.org CEF 포럼 macOS 임베딩 스레드 다수 (2026-08-28 조사) | resolved | R#: 옵션 C 기각 근거 |
@@ -55,10 +55,11 @@ normalization_checkpoint_every: 10
 | D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환 자체의 최종 확정. 사용자가 'swift 괜찮은 것 같다'는 방향을 표명하고 계획 수립을 요청했으나 명시적 확정 응답은 아직 없다. 폐쇄 전 확인 필요. | P0 | 미확정 - 사용자 방향 표명만 있음 | open | 미정 |
 | D-16 | decision | 터미널 | 터미널 뷰로 SwiftTerm(1.19 이상)을 채택한다. 엔진과 뷰를 모두 SwiftTerm에 맡긴다. Rust 코어는 SSH/PTY 바이트만 담당하고 feed(byteArray:)로 넣고 send(source:data:) 델리게이트로 받는다. 결과로 alacritty_terminal 의존과 src/terminal.rs 755줄, src/render.rs 921줄이 폐기된다. 윈도우 미지원 확정으로 터미널 엔진을 Rust에 유지할 유일한 근거가 사라진 것이 판단 근거다. | P0 | user Q8 | resolved | R#: 터미널 뷰 |
 | D-17 | decision | 검증 | SwiftUI 앱의 에이전트 검증은 peekaboo(4.2.2 설치 확인)로 한다. peekaboo see --app으로 접근성 기반 UI 요소 맵을 받고 click/type/press로 조작한다. 선행 D-34의 'chromux가 herdr-ide CDP에 붙어 조작'을 대체한다. 결과 확인에 herdr 소켓 API를 쓰는 부분은 그대로 유지한다. SwiftUI가 접근성 트리를 기본 제공하므로 src/accessibility.rs 165줄은 폐기된다. 수용한 비용: Screen Recording과 Accessibility 권한이 필요해 D-29 공개 배포 대상자와 CI에서 마찰이 있다. 에이전트가 상태 스냅샷을 직접 읽는 별도 표면은 채택하지 않았다. | P0 | user Q7 | resolved | V#: 앱 검증 경로 / 선행 D-34 대체 |
-| D-18 | decision | 리스크 | 5번째 런타임 전환을 성립시키는 조건. 이전 4번 중 herdr-lightweight-ide는 approved PRD가 소스 0줄로 끝났고, Electron 확정(선행 D-10) 역시 코드로 이어지지 않은 채 Rust 네이티브로 뒤집혔다. 이번 전환의 중단 조건, 되돌리기 기준, 기존 Rust 네이티브 16040줄의 처리 방침을 정해야 한다. | P0 | D-05의 전환 이력 | open | 미정 |
+| D-18 | decision | 리스크 | 0단계 스파이크를 전환의 게이트로 둔다. 근거는 지난 4번의 런타임 전환 중 3번이 '결정 후에 죽일 요인을 만나서' 죽었다는 이력이다(1차는 승인 후 Xcode 전체 설치 장벽으로 소스 0줄, 3차는 질문 44개 인터뷰 후 메모리 실증과 충돌해 코드 전 폐기, 4차는 16040줄을 만든 뒤 UI 품질과 IME로 폐기). 스파이크에서 네 가지를 모두 시험한다: (1) Rust staticlib과 Swift 간 FFI 비용, 특히 SSH 이벤트를 Swift로 올리는 비동기 콜백 (2) Rust가 뽑은 SSH 바이트를 SwiftTerm feed(byteArray:)에 넣고 send 델리게이트로 되받는 왕복 (3) 원격 SSH + 에이전트 TUI 환경에서의 한글 IME 실동작 (4) xcodebuild 없이 .app 번들 조립, 코드사인, 공증, Sparkle. 하나라도 실패하면 그 자리에서 멈추고 재검토한다. 기간은 2~3일. | P0 | user Q9 | resolved | R#: 전환 게이트 / V#: 스파이크 통과 조건 |
 | D-19 | decision | 검증 | 한글 조합 입력을 사람 판정 완료 게이트로 둘지는 0단계 스파이크 결과를 보고 정한다. 판정 방법은 한글 IME를 켜고 peekaboo type 'gks'를 보내 '한'이 나오는지 보는 것이다. 나오면 peekaboo가 IME 경로를 거치는 것이라 자동 게이트로, 안 나오면 IME를 우회하는 것이라 사람 게이트로 간다. owner: 사용자. revisit trigger: 0단계 스파이크 완료 시점. 사람 게이트가 될 경우 확인 항목은 후보창이 커서를 따라오는가, 조합 중 백스페이스가 조합을 지우는가, 두 글자 이상 조합이 뒤 글자를 덮지 않는가, 터미널과 에디터 양쪽에서 되는가 네 가지다. | P0 | user Q8 | deferred | V#: IME 게이트 / revisit: 0단계 스파이크 |
 | D-20 | decision | 아키텍처 | 기존 Rust 네이티브 셸 코드를 삭제해도 된다. 폐기 대상은 app.rs 2412줄 중 AppKit/wgpu 부분, render.rs 921줄, terminal.rs 755줄, accessibility.rs 165줄, browser.rs 721줄과 wgpu/glyphon/bytemuck/raw-window-handle/objc2/alacritty_terminal 의존이다. 유지 대상은 remote.rs 3550줄, herdr.rs 1154줄, files/commands/domain/navigator/layout/presentation/browser 축을 제외한 로직 계층이다. 삭제 시점과 되돌리기 지점은 D-18에서 정한다. | P0 | user Q8 | resolved | R#: 폐기 범위 |
 | D-21 | fact | 운영 | Xcode.app은 설치되어 있지 않고 Command Line Tools만 있다(/Library/Developer/CommandLineTools). xcodebuild와 xcodegen은 쓸 수 없다. 그러나 SwiftUI.framework와 AppKit.framework가 CLT SDK에 포함되어 있고, swiftc -parse-as-library로 SwiftUI 앱을 실제로 컴파일해 arm64 Mach-O 실행파일을 얻는 데 성공했다(Swift 6.0.3). 따라서 선행 D-04가 기록한 PW1(Xcode 전체 설치) 차단요인 - 1차 전환 herdr-lightweight-ide를 소스 0줄로 죽인 원인 - 은 이번 전환에서 해소된다. 다만 herdrm이 쓰는 XcodeGen+xcodebuild 방식은 쓸 수 없고, .app 번들 조립과 코드사인/공증 경로는 아직 확인하지 않았다. | P0 | 로컬 실측 2026-08-28: xcode-select -p, xcodebuild -version, swiftc 빌드 성공 | resolved | R#: 1차 전환 차단요인 해소 |
+| D-22 | decision | 운영 | 기존 Rust 네이티브 코드(D-20의 폐기 대상)는 0단계 스파이크를 통과한 뒤에 삭제한다. 삭제 직전 커밋에 태그를 남긴다(예: rust-native-final). 근거는 스파이크가 실패했을 때 돌아갈 지점이 필요하기 때문이며, 지금 삭제하면 되돌릴 곳이 없어진다. 원칙 1(하위 호환 유지 안 함)은 살아 있는 코드 경로를 둘로 유지하지 말라는 것이지 되돌리기 지점을 남기지 말라는 것이 아니므로 충돌하지 않는다. | P0 | user Q9 | resolved | R#: 되돌리기 지점 / D-20 실행 조건 |
 
 ## Raw Q&A
 
@@ -526,6 +527,193 @@ normalization_checkpoint_every: 10
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
 - needs_normalization: false
 
+### Q7: `peekaboo 4.2.2` 설치되어 있습니다 (어제 설치하셨네요). 이제 질문드립니다.
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:fa6e3648-1929-4cbe-ad8c-7cf34b813000
+- asked: `peekaboo 4.2.2` 설치되어 있습니다 (어제 설치하셨네요). 이제 질문드립니다.
+  
+  ---
+  
+  ## 구멍: 앱을 에이전트가 검증할 방법이 사라졌습니다
+  
+  선행 인터뷰에서 이렇게 못박아 두셨습니다.
+  
+  **D-34 (v1 주 검증 모드):**
+  > herdr-ide를 `--remote-debugging-port`로 띄우고 **chromux가 그 CDP에 붙어 UI를 조작**한 뒤, 결과는 herdr 소켓 API로 확인한다. UI 배선 유닛 테스트는 쓰지 않는다.
+  
+  **D-35 (제품 요구):**
+  > 에이전트가 검증할 수 있는 것은 최대한 에이전트가 검증하도록 만드는 것이 **설계 요구사항이다. 검증 전략이 아니라 제품 요구로 취급한다.** (1) herdr-ide는 자기 CDP 엔드포인트를 열 수 있어야 한다 ...
+  
+  **방금 A-1으로 CDP를 없앴습니다.** SwiftUI 네이티브 앱에는 `--remote-debugging-port`가 없습니다. **D-34의 주 검증 모드가 통째로 무효가 됐습니다.**
+  
+  D-35의 요구는 남아 있습니다. 그러니 대체 경로를 정해야 합니다.
+  
+  ---
+  
+  ### Q7. 앱을 어떻게 검증할까요?
+  
+  **(1) peekaboo로 대체한다**
+  `peekaboo see --app herdr-ide --json` → UI 요소 맵과 ID를 받고, `click` / `type` / `press`로 조작합니다. macOS 접근성 트리 기반이에요.
+  - 잘 맞는 이유: **SwiftUI가 접근성을 거의 공짜로 줍니다.** (그래서 `accessibility.rs` 165줄이 삭제되는 거고요.) 그리고 선생님 글로벌 규칙에 이미 macOS 자동화 표준으로 박혀 있습니다.
+  - 비용: Screen Recording + Accessibility 권한이 필요합니다. 선생님 맥에선 이미 되지만, **D-29(공개 배포)로 남이 쓸 때와 CI에서는 마찰**입니다.
+  
+  **(2) herdr-ide가 자체 검증 소켓을 연다**
+  우리가 명령/조회용 소켓을 직접 만듭니다. 확실하지만 우리 코드가 늘고, "테스트용 뒷문"이 제품에 생깁니다.
+  
+  **(3) 둘을 나눈다** ← 제 추천
+  - **조작은 peekaboo.** 사람이 실제로 클릭하는 경로 그대로라 가장 정직한 검증입니다.
+  - **상태 확인은 스냅샷을 밖으로 내보낸다.** 그런데 이게 **거의 공짜입니다.** SwiftUI에 넘기려고 어차피 만드는 그 스냅샷(`FrameModel` → JSON)을 파일이나 소켓으로 한 벌 더 내보내면 끝이에요.
+  
+  ```
+  Swift가 그리려고 받는 것  ─┐
+                            ├─  같은 JSON 하나
+  검증이 읽는 것            ─┘
+  ```
+  
+  **하나를 만들어서 두 군데 쓰는 겁니다.** 원칙 10(모든 실패는 프로세스 밖에서 관측 가능해야 한다)을 거의 비용 없이 만족합니다. 그리고 D-35가 원했던 "UI가 표현하는 상태를 앱 내부에만 두지 마라"가 바로 이겁니다.
+  
+  - 결과 확인은 기존대로 herdr 소켓 API도 같이 씁니다 (pane 생겼나 등). 이건 A-1과 무관하게 그대로 살아 있습니다.
+  
+  ---
+  
+  **한 가지 더 짚어야 할 게 있습니다.**
+  
+  이번 전환의 **가장 큰 동기가 한글 IME**인데, **조합 입력을 자동으로 검증할 수 있는지는 제가 확인 못 했습니다.** `peekaboo type`이 IME를 거쳐 들어가는지, 아니면 완성된 문자를 바로 주입하는지에 따라 달라집니다. 후자면 "ㅎ+ㅏ+ㄴ → 한" 조합 과정을 자동으로 못 재현합니다.
+  
+  즉 **한글 조합은 사람 판정 항목으로 남을 가능성이 있습니다.** D-34가 "골든 시나리오는 사람 판정으로 기록하되 완료 게이트로 쓰지 않는다"고 했는데, IME는 이번 전환의 존재 이유라 **여기서만은 사람 판정을 완료 게이트로 올려야 할 수도** 있습니다.
+  
+  ---
+  
+  **(1) / (2) / (3) 중 어느 쪽인가요?** 그리고 **한글 IME를 사람 판정 완료 게이트로 둘지**도 같이 정해주시면 좋겠습니다.
+- recommended: none
+- answer: 1
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
+### Q8: `peekaboo type`은 `--app`으로 프로세스에 키 이벤트를 넣는 방식입니다. **IME를 거치는지는 명시되어 있지 않
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:d08c241a-cc84-412a-98cd-c4984001c431
+- asked: `peekaboo type`은 `--app`으로 프로세스에 키 이벤트를 넣는 방식입니다. **IME를 거치는지는 명시되어 있지 않아 확인 못 했습니다.**
+  
+  다만 방법은 있습니다. 한글 IME를 켠 상태에서 `peekaboo type "gks"`를 보내면, 두벌식으로 ㅎ+ㅏ+ㄴ이라 **정상 경로면 "한"이 나옵니다.** 나오면 자동 검증 가능, 안 나오면 IME를 우회하는 겁니다. **0단계 스파이크에서 10분이면 판정됩니다.**
+  
+  ---
+  
+  ### Q8. 한글 조합 입력을 "사람이 직접 확인해야 완료"로 둘까요?
+  
+  이번 전환의 존재 이유가 한글 IME인데, 자동 검증이 될지 지금은 모릅니다.
+  
+  **(가) 사람 판정을 완료 게이트로 둔다** ← 추천
+  자동 검증이 되든 안 되든, **한글 조합은 사람이 직접 쳐보고 통과시켜야 v1 완료.** 확인 항목은 4개면 충분합니다: 후보창이 커서를 따라오는가 / 조합 중 백스페이스가 조합을 지우는가 / 두 글자 이상 조합이 뒤 글자를 안 덮는가 / 터미널과 에디터 양쪽에서 되는가.
+  
+  - 근거: 선행 D-34가 "사람 판정은 완료 게이트로 쓰지 않는다"고 했지만, 그건 **골든 시나리오(하루 실사용)** 얘기였습니다. IME는 이 전환의 목적 그 자체라 성격이 다릅니다. 자동 검증이 안 되는 걸 이유로 게이트에서 빼면, **고치려던 문제를 확인 안 하고 끝내는** 게 됩니다.
+  - 비용: 선생님이 직접 4개 항목을 쳐보셔야 합니다. 5분.
+  
+  **(나) 스파이크 결과를 보고 정한다**
+  peekaboo가 IME를 거치면 자동 게이트, 아니면 사람 게이트.
+  
+  **(다) 자동 검증만 쓴다**
+  안 되면 게이트에서 뺀다.
+  
+  ---
+  
+  **(가)/(나)/(다)?**
+  
+  그리고 이거 정하면 **브라우저 축은 완전히 닫히고**, 남은 P0가 셋입니다. 다음 순서로 여쭙겠습니다:
+  
+  1. **터미널 뷰** - SwiftTerm 채택할지 (제 추천은 채택)
+  2. **기존 Rust 16040줄을 어떻게 할지** - 폐기 범위와 되돌리기 기준
+  3. **이번이 5번째 런타임 전환인데, 무엇이 이번엔 다른지** - 중단 조건
+- recommended: none
+- answer: 나로 가자 
+  
+  1. 터미널 뷰는 SwiftTerm
+  2. 기존 Rust는 삭제해도 돼
+  3. ?
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
+### Q9: 3번이 무슨 질문이었는지
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:ed24dafc-eb6c-411b-a109-fe131a781416
+- asked: ## 3번이 무슨 질문이었는지
+  
+  **전환 이력을 보니 패턴이 하나 있습니다. 매번 그 결정을 죽일 요인을 시험해보지 않은 채 결정했습니다.**
+  
+  | | 무엇으로 정했나 | 무엇에 죽었나 | 결과 |
+  |---|---|---|---|
+  | 1차 Swift+libghostty (8/17) | PRD 승인까지 감 | **Xcode 전체 설치** 장벽을 승인 후에 만남 | **소스 0줄** |
+  | 2차 Rust/Tauri (8/25) | 인터뷰 중 | CEF 경로 없음 | 같은 인터뷰에서 기각 |
+  | 3차 Electron (8/25) | **질문 44개 인터뷰** | 메모리. orca를 무거워서 버린 자기 실증과 충돌 | **코드 전에 폐기** |
+  | 4차 Rust 네이티브 (8/26) | 실제로 만듦 (16040줄) | UI 품질 + 한글 IME | **오늘 폐기 결정** |
+  
+  **매번 "만들어보거나 부딪혀보고" 나서야 죽일 요인을 발견했습니다.** 3번 질문은 이거였습니다: *이번엔 그걸 먼저 만나게 할 방법이 있는가.*
+  
+  ---
+  
+  ### 그래서 방금 하나를 미리 죽여봤습니다
+  
+  **1차를 죽인 게 Xcode 전체 설치였는데, Swift로 돌아가면 그게 다시 옵니다.** 확인했습니다.
+  
+  ```
+  $ xcode-select -p       → /Library/Developer/CommandLineTools   (Xcode.app 없음)
+  $ xcodebuild -version   → error: requires Xcode
+  $ xcodegen              → not found
+  ```
+  
+  **여전히 없습니다.** herdrm이 쓰는 XcodeGen + xcodebuild 방식은 못 씁니다.
+  
+  그런데 SDK를 열어보니 SwiftUI가 들어 있길래, 실제로 빌드해봤습니다.
+  
+  ```
+  $ ls $(xcrun --show-sdk-path)/System/Library/Frameworks/ | grep SwiftUI
+  SwiftUI.framework
+  SwiftUICore.framework
+  
+  $ swiftc -parse-as-library -o probe main.swift    # SwiftUI 앱 15줄
+  BUILD_OK
+  probe: Mach-O 64-bit executable arm64
+  ```
+  
+  **Xcode 없이 SwiftUI 앱이 컴파일됩니다.** 1차를 죽였던 장벽은 이번엔 없습니다.
+  
+  ---
+  
+  ### 남은 킬러 후보 4개
+  
+  Xcode는 치웠고, 아직 안 죽여본 게 넷 있습니다.
+  
+  1. **FFI 비용** - Rust staticlib ↔ Swift, 특히 SSH 이벤트를 Swift로 올리는 비동기 콜백
+  2. **SwiftTerm 결합** - Rust가 뽑은 SSH 바이트를 `feed()`에 넣고 델리게이트로 되받는 왕복
+  3. **한글 IME** - 우리 케이스(원격 SSH + 에이전트 TUI)에서 실제로 되는가
+  4. **배포** - `xcodebuild` 없이 `.app` 번들 조립, 코드사인, 공증, Sparkle **← 미확인. 1차를 죽인 것과 같은 종류입니다.**
+  
+  ---
+  
+  ### Q9. 이렇게 할까요?
+  
+  **(가) 0단계 스파이크에서 4개를 전부 시험한다.** ← 추천
+  2~3일. 하나라도 실패하면 그 자리에서 멈추고 재검토합니다. 코드를 지우기 전에요.
+  
+  **그리고 기존 Rust는 스파이크 통과 후에 지웁니다.** 지금 지우면 실패했을 때 돌아갈 곳이 없습니다. 방법은 간단합니다 - 지우기 직전 커밋에 태그 하나 (`rust-native-final`). 나중에 필요하면 거기서 꺼냅니다.
+  
+  **(나) 1·2·3만 시험하고 배포(4)는 나중에.** 스파이크가 하루로 줄지만, 1차를 죽인 것과 같은 종류의 위험을 뒤로 미룹니다.
+  
+  **(다) 스파이크 없이 바로 간다.** 이미 충분히 봤다고 보고 3단계로 직행.
+  
+  ---
+  
+  제가 **(가)** 를 미는 이유는 하나입니다. **지난 4번 중 3번이 "결정 후에 죽일 요인을 만나서" 죽었습니다.** 2~3일 스파이크는 그 패턴을 깨는 가장 싼 방법이고, 특히 4번(배포)은 이미 한 번 이 프로젝트를 죽인 적이 있습니다.
+  
+  **(가)/(나)/(다)?**
+- recommended: none
+- answer: ㅇㅇㅇ 가로 가자
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 ## Evidence From Code, Docs, Or Research
@@ -547,5 +735,12 @@ normalization_checkpoint_every: 10
 - register_changes: 브라우저 축 종결: grab 비목표(D-08), 플러그인 fork 기각(D-09), Swift+CEF 기각(D-10), A-1 확정(D-11), chromux headed CDP 실측(D-12), 연동 방식 확정(D-13), 메모리 예산 재정의(D-14). 선행 인터뷰 D-11/D-19/D-41/D-53 무효화.
 - reopened_decisions: 선행 D-34, D-35 (CDP 전제 붕괴 -> D-17로 이관)
 - highest_remaining_gap: SwiftUI 네이티브 앱을 에이전트가 자동 검증할 경로가 없다. D-35가 에이전트 검증 가능성을 제품 요구로 규정했으므로 P0.
+
+### Checkpoint 2
+- after_question: Q9
+- normalized_entries: Q7, Q8, Q9
+- register_changes: 검증 경로 확정(D-17 peekaboo), IME 게이트 연기(D-19, revisit=스파이크), SwiftTerm 채택(D-16), 기존 Rust 폐기 승인(D-20), Xcode 차단요인 해소 실측(D-21), 스파이크 게이트 4항목 확정(D-18), 되돌리기 태그 확정(D-22).
+- reopened_decisions: 없음
+- highest_remaining_gap: D-15(SwiftUI 전환 자체의 명시적 확정)만 open. 폐쇄 문장 확인으로 종결 예정.
 
 ## Audit History
