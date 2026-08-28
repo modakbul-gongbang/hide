@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
-question_count: 9
+question_count: 11
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -22,11 +22,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-23
+- next_decision_id: D-25
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 2
+- last_materiality_sweep: checkpoint 3
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q19
+- next_checkpoint_at: Q21
 
 ## Transcript Sources
 
@@ -52,14 +52,16 @@ normalization_checkpoint_every: 10
 | D-12 | fact | 브라우저 | chromux는 headed(창 있는) 진짜 Chrome을 띄우고 loopback CDP를 외부에 노출한다. 실측: launchMode headed, headless false, port 9300, Chrome/151.0.7922.175, Protocol-Version 1.3, webSocketDebuggerUrl 제공, /json/list로 탭 목록 조회 가능. 포트는 chromux ps --json이 알려준다. 빈 Chrome 1개의 실측 자원은 프로세스 6개 / 렌더러 2개 / RSS 676MB다. 또한 chromux는 존재하지 않는 프로필을 스스로 만들지 않고 사용자 승인을 요구한다. | P0 | 로컬 실측 2026-08-28: chromux launch default + curl 127.0.0.1:9300/json/version, /json/list, chromux ps --json | resolved | R#: A-1 성립 근거 |
 | D-13 | decision | 브라우저 | herdr-ide는 브라우저 행동을 chromux CLI로 위임하고(chromux launch / open / ps --json, std::process::Command), 상태 표시는 GET http://127.0.0.1:<port>/json/list 읽기 전용 HTTP로만 한다. herdr-ide가 CDP로 직접 조작하는 것은 금지한다. 근거는 chromux가 그 Chrome의 데몬/세션/직렬화(serialQueue)/pause 잠금을 소유하고 있어, herdr-ide가 같은 포트로 명령하면 주인이 둘이 되어 에이전트 조작 도중 충돌이 나기 때문이다. Rust CDP 크레이트(chromiumoxide 0.9.1, headless_chrome 1.0.22)는 읽기 전용 GET 하나에 과하므로 채택하지 않는다. herdr-ide도 chromux의 프로필 생성 규칙을 따라 없는 프로필을 임의 생성하지 않는다. 예상 코드량은 100줄 안쪽이다. | P1 | user Q6에서 수용한 권고 | resolved | R#: 브라우저 연동 방식 |
 | D-14 | decision | 검증 | 메모리 인수 조건을 herdr-ide 프로세스만 400MB 이하로 재정의한다. 선행 D-41(브라우저 닫힘 400MB / 브라우저 열림 900MB)을 대체한다. 근거는 D-11로 브라우저가 앱 밖 별도 Chrome이 되어 우리가 통제할 수 없는 자원이 되었기 때문이며, 통제 못 하는 값으로 합격/불합격을 가르면 그 게이트는 곧 무시된다. 측정 시나리오는 D-41과 같이 workspace 7 / pane 11 실사용 규모를 유지하고 ps 기반 자동 판정도 유지한다. | P0 | user Q6 | resolved | V#: 메모리 인수 조건 / 선행 D-41 대체 |
-| D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환 자체의 최종 확정. 사용자가 'swift 괜찮은 것 같다'는 방향을 표명하고 계획 수립을 요청했으나 명시적 확정 응답은 아직 없다. 폐쇄 전 확인 필요. | P0 | 미확정 - 사용자 방향 표명만 있음 | open | 미정 |
-| D-16 | decision | 터미널 | 터미널 뷰로 SwiftTerm(1.19 이상)을 채택한다. 엔진과 뷰를 모두 SwiftTerm에 맡긴다. Rust 코어는 SSH/PTY 바이트만 담당하고 feed(byteArray:)로 넣고 send(source:data:) 델리게이트로 받는다. 결과로 alacritty_terminal 의존과 src/terminal.rs 755줄, src/render.rs 921줄이 폐기된다. 윈도우 미지원 확정으로 터미널 엔진을 Rust에 유지할 유일한 근거가 사라진 것이 판단 근거다. | P0 | user Q8 | resolved | R#: 터미널 뷰 |
+| D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환을 확정한다. 단 D-18의 0단계 스파이크 4항목 통과가 선행 조건이며, 실패 시 그 자리에서 멈추고 재검토한다. 기존 Rust 코드 삭제는 D-22에 따라 스파이크 통과 후 태그를 남기고 수행한다. | P0 | user Q9, Q10의 연쇄 결정 (스파이크 승인, SwiftTerm 채택, 기존 Rust 폐기 승인, 버전 고정 지시) | resolved | R#: 전환 확정 / D-18의 스파이크 게이트 조건부 |
+| D-16 | decision | 터미널 | 터미널 뷰로 SwiftTerm을 채택한다(버전은 D-23). 엔진과 뷰를 모두 SwiftTerm에 맡기고, Rust 코어는 SSH/PTY 바이트만 담당해 feed(byteArray:)로 넣고 send(source:data:) 델리게이트로 받는다. 결과로 alacritty_terminal 의존과 src/terminal.rs 755줄, src/render.rs 921줄이 폐기된다. 기각한 대안 둘: (1) libghostty - 1차 인터뷰 D-13이 채택했다가 D-14가 최상위 리스크로 걸었던 것으로, 2026-08-28 재확인 시점에도 Ghostty 공식 문서가 'not yet stabilized for general-purpose embedding, may change significantly between releases'라고 명시하며 유일한 검증 소비자가 Ghostty 자체 macOS 앱이다. 안정화 근접한 것은 파서인 libghostty-vt뿐이라 우리가 필요한 뷰를 대체하지 못한다. (2) NSTextView 위 alacritty_terminal 직접 구현 - 셀 렌더링/스크롤백/선택/링크/리사이즈를 자체 구현해야 하며 이는 현재 render.rs 921줄이 하는 일 그대로라 전환의 목적에 반한다. SwiftTerm 채택의 잔여 리스크: 사실상 개인 주도 프로젝트(open issue 75), 릴리스 변동 잦음. 완화책은 D-23의 정확 버전 고정과 D-24의 herdrm 참조 경로다. | P0 | user Q8 | resolved | R#: 터미널 뷰 / libghostty 기각 근거 포함 |
 | D-17 | decision | 검증 | SwiftUI 앱의 에이전트 검증은 peekaboo(4.2.2 설치 확인)로 한다. peekaboo see --app으로 접근성 기반 UI 요소 맵을 받고 click/type/press로 조작한다. 선행 D-34의 'chromux가 herdr-ide CDP에 붙어 조작'을 대체한다. 결과 확인에 herdr 소켓 API를 쓰는 부분은 그대로 유지한다. SwiftUI가 접근성 트리를 기본 제공하므로 src/accessibility.rs 165줄은 폐기된다. 수용한 비용: Screen Recording과 Accessibility 권한이 필요해 D-29 공개 배포 대상자와 CI에서 마찰이 있다. 에이전트가 상태 스냅샷을 직접 읽는 별도 표면은 채택하지 않았다. | P0 | user Q7 | resolved | V#: 앱 검증 경로 / 선행 D-34 대체 |
 | D-18 | decision | 리스크 | 0단계 스파이크를 전환의 게이트로 둔다. 근거는 지난 4번의 런타임 전환 중 3번이 '결정 후에 죽일 요인을 만나서' 죽었다는 이력이다(1차는 승인 후 Xcode 전체 설치 장벽으로 소스 0줄, 3차는 질문 44개 인터뷰 후 메모리 실증과 충돌해 코드 전 폐기, 4차는 16040줄을 만든 뒤 UI 품질과 IME로 폐기). 스파이크에서 네 가지를 모두 시험한다: (1) Rust staticlib과 Swift 간 FFI 비용, 특히 SSH 이벤트를 Swift로 올리는 비동기 콜백 (2) Rust가 뽑은 SSH 바이트를 SwiftTerm feed(byteArray:)에 넣고 send 델리게이트로 되받는 왕복 (3) 원격 SSH + 에이전트 TUI 환경에서의 한글 IME 실동작 (4) xcodebuild 없이 .app 번들 조립, 코드사인, 공증, Sparkle. 하나라도 실패하면 그 자리에서 멈추고 재검토한다. 기간은 2~3일. | P0 | user Q9 | resolved | R#: 전환 게이트 / V#: 스파이크 통과 조건 |
 | D-19 | decision | 검증 | 한글 조합 입력을 사람 판정 완료 게이트로 둘지는 0단계 스파이크 결과를 보고 정한다. 판정 방법은 한글 IME를 켜고 peekaboo type 'gks'를 보내 '한'이 나오는지 보는 것이다. 나오면 peekaboo가 IME 경로를 거치는 것이라 자동 게이트로, 안 나오면 IME를 우회하는 것이라 사람 게이트로 간다. owner: 사용자. revisit trigger: 0단계 스파이크 완료 시점. 사람 게이트가 될 경우 확인 항목은 후보창이 커서를 따라오는가, 조합 중 백스페이스가 조합을 지우는가, 두 글자 이상 조합이 뒤 글자를 덮지 않는가, 터미널과 에디터 양쪽에서 되는가 네 가지다. | P0 | user Q8 | deferred | V#: IME 게이트 / revisit: 0단계 스파이크 |
 | D-20 | decision | 아키텍처 | 기존 Rust 네이티브 셸 코드를 삭제해도 된다. 폐기 대상은 app.rs 2412줄 중 AppKit/wgpu 부분, render.rs 921줄, terminal.rs 755줄, accessibility.rs 165줄, browser.rs 721줄과 wgpu/glyphon/bytemuck/raw-window-handle/objc2/alacritty_terminal 의존이다. 유지 대상은 remote.rs 3550줄, herdr.rs 1154줄, files/commands/domain/navigator/layout/presentation/browser 축을 제외한 로직 계층이다. 삭제 시점과 되돌리기 지점은 D-18에서 정한다. | P0 | user Q8 | resolved | R#: 폐기 범위 |
 | D-21 | fact | 운영 | Xcode.app은 설치되어 있지 않고 Command Line Tools만 있다(/Library/Developer/CommandLineTools). xcodebuild와 xcodegen은 쓸 수 없다. 그러나 SwiftUI.framework와 AppKit.framework가 CLT SDK에 포함되어 있고, swiftc -parse-as-library로 SwiftUI 앱을 실제로 컴파일해 arm64 Mach-O 실행파일을 얻는 데 성공했다(Swift 6.0.3). 따라서 선행 D-04가 기록한 PW1(Xcode 전체 설치) 차단요인 - 1차 전환 herdr-lightweight-ide를 소스 0줄로 죽인 원인 - 은 이번 전환에서 해소된다. 다만 herdrm이 쓰는 XcodeGen+xcodebuild 방식은 쓸 수 없고, .app 번들 조립과 코드사인/공증 경로는 아직 확인하지 않았다. | P0 | 로컬 실측 2026-08-28: xcode-select -p, xcodebuild -version, swiftc 빌드 성공 | resolved | R#: 1차 전환 차단요인 해소 |
 | D-22 | decision | 운영 | 기존 Rust 네이티브 코드(D-20의 폐기 대상)는 0단계 스파이크를 통과한 뒤에 삭제한다. 삭제 직전 커밋에 태그를 남긴다(예: rust-native-final). 근거는 스파이크가 실패했을 때 돌아갈 지점이 필요하기 때문이며, 지금 삭제하면 되돌릴 곳이 없어진다. 원칙 1(하위 호환 유지 안 함)은 살아 있는 코드 경로를 둘로 유지하지 말라는 것이지 되돌리기 지점을 남기지 말라는 것이 아니므로 충돌하지 않는다. | P0 | user Q9 | resolved | R#: 되돌리기 지점 / D-20 실행 조건 |
+| D-23 | decision | 의존성 | SwiftTerm을 최신 릴리스 1.20.0(2026-08-18)으로 정확 고정한다. herdrm은 from: 1.19.0으로 하한만 두지만 herdr-ide는 Cargo.toml이 전부 = 고정인 기존 방침과 1차 인터뷰 D-24의 버전 고정 방침에 맞춰 exact 고정한다. 근거는 SwiftTerm 릴리스 속도가 빠르고(1.18 8/9, 1.19와 1.20이 같은 날 8/18) 1.19에서 1.20 사이 파괴적 변경 여부를 확인하지 않았기 때문이다. 업데이트는 수동 검증 후에만 올린다. | P1 | user Q10 | resolved | R#: SwiftTerm 버전 고정 |
+| D-24 | decision | 리스크 | 한글 IME 문제가 발생하면 missuo/herdrm의 Sources/HerdrM/TerminalView.swift를 참조해 대응한다. 사용자가 herdrm에서 한글이 잘 동작한다고 실사용으로 확인했다. 참조 대상 패턴은 rememberIMECaretFrame(마지막 유효 캐럿 프레임을 캐시해 후보창이 0,0으로 떨어지는 것을 방지)과 isEditShortcutDuringComposition(조합 중 편집 단축키를 interpretKeyEvents에서 걸러냄)이다. 제약: herdrm은 GitHub API licenseInfo가 NONE이고 저장소에 LICENSE 파일이 없어 기본적으로 all rights reserved다. herdr-ide는 MIT이므로 herdrm 코드를 복사해 넣을 수 없고, 읽고 접근법을 이해한 뒤 독립 구현만 가능하다. 선행 D-53에서 chromux가 같은 상태(public이지만 라이선스 없음)였다가 MIT 추가로 해소된 전례가 있으므로, herdrm에 라이선스가 추가되면 이 제약을 재검토한다. | P1 | user Q10 | resolved | R#: 한글 IME 대응 경로 / revisit: IME 결함 발생 시 |
 
 ## Raw Q&A
 
@@ -714,6 +716,113 @@ normalization_checkpoint_every: 10
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
 - needs_normalization: false
 
+### Q10: 체크포인트 2 기록. **결정이 다 모였습니다.** 마지막으로 한 문장 확인만 받겠습니다.
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:4a044aca-2ad8-49a3-9f82-2b327752a75b
+- asked: 체크포인트 2 기록. **결정이 다 모였습니다.** 마지막으로 한 문장 확인만 받겠습니다.
+  
+  ---
+  
+  ## 합의된 목표 (한 문장)
+  
+  > **herdr-ide의 macOS 셸을 SwiftUI + SwiftTerm으로 교체하고 SSH·herdr·도메인 로직은 Rust 코어로 남겨, 한글 IME와 UI 품질을 AppKit이 해결하게 한다. 브라우저는 앱 밖 chromux Chrome에 맡기고, 전환은 2~3일 스파이크 4항목을 통과한 뒤에만 확정한다.**
+  
+  ## 확정된 것
+  
+  | | 결정 |
+  |---|---|
+  | **런타임** | SwiftUI(Xcode 없이 `swiftc`로 빌드 가능 확인) + Rust 코어 |
+  | **터미널** | SwiftTerm 1.19+. 엔진·뷰 모두 위임. `feed()` / `send()` 2개 함수로 Rust SSH와 연결 |
+  | **브라우저** | herdr-ide는 안 만듦. chromux CLI 위임 + `/json/list` 읽기. `browser.rs` 721줄 삭제 |
+  | **grab** | v1 비목표 |
+  | **검증** | peekaboo (`see` / `click` / `type`). chromux-CDP 방식 폐기 |
+  | **한글 IME 게이트** | 스파이크에서 `peekaboo type "gks"` → "한" 나오는지 보고 결정 |
+  | **메모리** | herdr-ide 프로세스만 400MB 이하 (Chrome 제외) |
+  | **폐기** | `render.rs` · `terminal.rs` · `accessibility.rs` · `browser.rs` · `app.rs` 플랫폼부 + wgpu/glyphon/objc2/alacritty 의존 |
+  | **유지** | `remote.rs`(3550) · `herdr.rs`(1154) · files/commands/domain/navigator/layout/presentation |
+  | **되돌리기** | 스파이크 통과 후 삭제. 직전 커밋에 `rust-native-final` 태그 |
+  
+  ## 무효화된 선행 결정
+  
+  `D-11`(브라우저 패널+grab) · `D-19`(CDP 노출) · `D-34`(chromux가 앱 CDP에 붙어 검증) · `D-41`(400/900MB) · `D-53`(chromux 전제조건) → 전부 이번 인터뷰가 대체
+  
+  ---
+  
+  ### 마지막 확인
+  
+  위 한 문장을 다른 에이전트에게 주면 의도한 걸 만들 수 있어야 합니다. **이대로 확정할까요?**
+  
+  확정하시면 gap-audit 게이트를 돌리고, 통과하면 `/gen-prd`로 넘어갑니다.
+- recommended: none
+- answer: 나근데 궁금한게 Swift app에서 터미널은 저게 최선인거야? herdrm 프로젝트 봣을 때 쟨 뭐로햆어?
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
+### Q11: **herdrm은 SwiftTerm입니다.** `project.yml`에 이렇게 박혀 있습니다:
+- decision_ids: none
+- route: mixed
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:6a239340-7c00-4220-89a3-e09875f7c35e
+- asked: **herdrm은 SwiftTerm입니다.** `project.yml`에 이렇게 박혀 있습니다:
+  
+  ```yaml
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    # 1.19 ships the marked-text overlay used for IME preedit; do not reimplement it.
+    from: "1.19.0"
+  ```
+  
+  "최선인가"는 따로 봤습니다. **실질적인 후보가 셋뿐인데, 이 프로젝트가 이미 한 번 다른 걸 골랐다가 접었습니다.**
+  
+  ---
+  
+  ## 후보 3개
+  
+  **1. SwiftTerm** - MIT, ⭐1671, **어제 커밋**(8/27)
+  ```
+  v1.18.0  2026-08-09
+  v1.19.0  2026-08-18
+  v1.20.0  2026-08-18
+  ```
+  이번 달에만 릴리스 3개. 활발합니다. IME marked-text 오버레이 내장. herdrm이 실사용 중.
+  
+  **2. libghostty** - ⭐60364짜리 Ghostty의 임베딩 라이브러리
+  
+  **이게 1차 전환 때 고른 것이었습니다.** 1차 인터뷰 D-13이 "Swift 앱 + libghostty 터미널 서피스"로 확정했고, D-14가 "libghostty 비안정 대응: 버전 고정 + 임베딩 스파이크 최우선"을 최상위 리스크로 걸었습니다.
+  
+  **지금도 그대로입니다.** 방금 Ghostty 공식 문서를 다시 확인했습니다:
+  
+  > The libghostty API is currently used primarily by the macOS app and **is not yet stabilized for general-purpose embedding**. The API **may change significantly between releases.**
+  
+  - 서드파티 임베딩용 **안정 C API가 아직 없습니다**
+  - 유일한 검증된 소비자가 **Ghostty 자기 macOS 앱**
+  - 안정화 근접한 건 `libghostty-vt`(파서)뿐 - 우리가 필요한 건 파서가 아니라 뷰입니다
+  
+  **3. NSTextView + alacritty_terminal 직접** - 앞에서 검토했다가 접은 안
+  IME는 AppKit이 공짜로 주지만, 셀 렌더링·스크롤백·선택·링크·리사이즈를 우리가 다 만듭니다. **지금 `render.rs` 921줄로 하고 있는 그 일**이고, 벗어나려던 게 그거였습니다.
+  
+  ---
+  
+  ## 결론: 네, 현재로선 SwiftTerm이 최선입니다
+  
+  이유는 SwiftTerm이 완벽해서가 아니라, **기술적으로 더 나을 수 있는 libghostty가 공식적으로 "임베딩용으로 안정화 안 됨"이라고 못박고 있고, 이 프로젝트가 이미 그 리스크에 한 번 걸렸기 때문**입니다.
+  
+  ### 다만 솔직한 주의사항 3개
+  
+  1. **사실상 개인 프로젝트입니다.** Miguel de Icaza 주도, open issue 75개. herdrm과 여러 앱이 쓰고 있어 방치 위험은 낮지만 팀 프로젝트는 아닙니다.
+  2. **릴리스 속도가 빠릅니다.** 1.19와 1.20이 **같은 날**(8/18) 나왔습니다. 활발하다는 뜻이기도 하고 변동이 잦다는 뜻이기도 합니다. **1.19→1.20에 깨진 변경이 있는지는 확인 못 했습니다.**
+  3. **버전을 고정해야 합니다.** 1차 인터뷰 D-24가 이미 "herdr 버전 고정" 방침을 세웠는데, SwiftTerm에도 같은 규칙을 적용하는 게 맞습니다. herdrm은 `from: "1.19.0"`(하한만)인데, 우리는 **정확한 버전 고정**을 권합니다. 지금 Cargo.toml이 전부 `=` 고정인 것과 같은 방침이고요.
+  
+  **그리고 한글 IME가 우리 케이스(원격 SSH + 에이전트 TUI)에서 진짜 되는지는 스파이크 3번 항목**입니다. SwiftTerm이 해준다는 건 herdrm의 로컬 환경 얘기고, 우리 조건에서 확인 전까지는 가정입니다.
+  
+  ---
+  
+  이대로 두면 될까요? 아니면 SwiftTerm 버전 고정 방침을 결정으로 추가할까요? (추가하는 쪽을 권합니다 - `1.20.0` 정확 고정)
+- recommended: none
+- answer: ㅇㅇ 최신 버전 기준으로 고정시키자. 그리고 나중에 한굴 이슈생기면 저 herdrm 코드베이스보고 고칠거 있으면 고치는 식으로 한번 해보자. 여기는 한글이 잘 되서!
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 ## Evidence From Code, Docs, Or Research
@@ -742,5 +851,12 @@ normalization_checkpoint_every: 10
 - register_changes: 검증 경로 확정(D-17 peekaboo), IME 게이트 연기(D-19, revisit=스파이크), SwiftTerm 채택(D-16), 기존 Rust 폐기 승인(D-20), Xcode 차단요인 해소 실측(D-21), 스파이크 게이트 4항목 확정(D-18), 되돌리기 태그 확정(D-22).
 - reopened_decisions: 없음
 - highest_remaining_gap: D-15(SwiftUI 전환 자체의 명시적 확정)만 open. 폐쇄 문장 확인으로 종결 예정.
+
+### Checkpoint 3
+- after_question: Q11
+- normalized_entries: Q10, Q11
+- register_changes: SwiftTerm 1.20.0 정확 고정(D-23), 한글 IME 대응 경로로 herdrm 참조 확정 + 라이선스 제약 기록(D-24), D-16에 libghostty/NSTextView 기각 근거 보강, D-15 전환 확정(스파이크 조건부).
+- reopened_decisions: 없음
+- highest_remaining_gap: herdrm 라이선스 부재로 코드 복사 불가. 참조 후 독립 구현만 가능하며 D-24에 기록됨.
 
 ## Audit History
