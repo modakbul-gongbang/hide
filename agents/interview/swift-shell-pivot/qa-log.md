@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
-question_count: 18
+question_count: 20
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -22,11 +22,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-38
+- next_decision_id: D-46
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 5
+- last_materiality_sweep: checkpoint 6
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q28
+- next_checkpoint_at: Q30
 
 ## Transcript Sources
 
@@ -73,8 +73,16 @@ normalization_checkpoint_every: 10
 | D-33 | decision | UX/design | UI 품질의 사람 판정 인수 기준 6항목을 확정한다. (1) 구조: 3열 유지(사이드바+pet / 터미널 / 워크벤치), 밀도는 docs/design-reference/orca-01 기준선 (2) 텍스트: 시스템 폰트에 크기 위계가 보이고 터미널만 등폭이며 한글이 깨지지 않음 (3) 상태 표현: 색과 구조로 드러나고 문장 설명은 최후 수단(design 원칙 7) (4) 다크모드: 시스템 설정을 따라감 (5) 리사이즈: 창 크기를 바꿔도 레이아웃이 유지되고 패널 경계를 드래그로 조절 가능 (6) 네이티브 관용구: 진짜 메뉴바, 진짜 우클릭 메뉴, 진짜 스크롤바를 쓰고 그려낸 흉내를 쓰지 않음. 판정 시점은 두 번이다: 3a(창+레이아웃 완성) 시점에 방향 확인, v1 종료 시점에 최종. 판정 방법은 스크린샷을 사용자가 보고 판정하며, 구조는 peekaboo see로 요소가 제대로 잡히는지 함께 본다. 시각 방침은 macOS 네이티브 관용구를 우선하되(사용자 선택 '나') orca-01을 밀도와 배치의 시각 기준선으로 함께 유지한다(사용자 지시). 선행 D-59를 이 형태로 갱신한다. | P1 | user Q16 | resolved | V#: UI 품질 인수 기준 / 사람 판정 항목 |
 | D-34 | decision | UX/design | 사이드바 구성은 herdr-agent-context-labels(yansfil, 사용자 본인 제작) 플러그인의 레이아웃을 herdr-ide 네이티브로 적용한다. 확인된 구성: 항목당 2줄이며 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(12s/4m/2h/3d 형식)이다. 상태는 question, approval, error, working, unseen completion, idle, unknown을 컴팩트 심볼로 표시하고 상태당 심볼 하나를 고정하며, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 플러그인이 발행하는 sort_rank와 activity 토큰을 따라 막고 있는 순서대로(에러, 질문/승인, 완료 미확인, 진행 중, 확인됨) 두고 동률은 activity 시계로 깬다. 이는 선행 D-40(config.toml [ui.sidebar.agents] rows를 읽어 렌더)과 D-54(기본 레이아웃 내장)를 구체화한 것이다. | P1 | user Q16 'herdr-label 플러그인 그거의 구성도 잘 적용해서 함께 넣어주고' | resolved | R#: 사이드바 구성 / 선행 D-40·D-54 구체화 |
 | D-35 | decision | 데이터/상태 | OpenRouter API 키는 v1에서 기존 방식을 유지한다. 키는 ~/.zshrc의 OPENROUTER_API_KEY 환경변수에 남고, herdr-agent-context-labels 플러그인이 std::env::var로 읽는 현재 경로를 바꾸지 않는다. herdr-ide는 키 유무만 확인해 없을 때 안내를 표시한다. 조용히 빈 요약 줄을 두지 않는다(원칙 4). Keychain 입력 UI는 v1 비목표다. 근거는 실제 OpenRouter 호출 주체가 herdr-ide가 아니라 플러그인이고(선행 D-40의 구조: 플러그인이 토큰을 발행하고 herdr-ide는 session.snapshot에서 읽어 렌더), 플러그인이 herdr의 startup hook으로 실행되어 herdr-ide가 env를 주입할 지점이 없기 때문이다. 나중에 Keychain으로 옮기려면 플러그인이 Keychain 우선 env 폴백으로 읽도록 고쳐야 하며 사용자가 플러그인 소유자라 가능하다. revisit trigger: 사용자가 셸 프로필에서 키를 빼고 싶어질 때. | P1 | user Q17 '우선 다로 하자. 키가 없으면 안내만. Keychain은 나중에' | resolved | R#: OpenRouter 키 / 비목표(v1): Keychain 입력 UI |
-| D-36 | assumption | 아키텍처 | src/openrouter.rs 541줄(KeychainStore trait, MacKeychainStore, security-framework 의존)은 D-35로 v1에서 쓰이지 않는다. 현재도 lib.rs가 모듈로 선언만 하고 어디서도 호출하지 않는 미사용 코드다. D-20의 폐기 대상에 포함해 삭제하고 security-framework 의존도 제거한다. 되돌리기는 D-22의 rust-native-final 태그로 가능하므로 나중에 Keychain 작업을 할 때 꺼내 쓸 수 있다. 원칙 1(하위 호환 유지 안 함)과 원칙 2(현재 요구를 충족하는 가장 단순한 구현)에 따른다. 사용자가 유지를 원하면 되돌린다. | P2 | agent default - D-35의 귀결 | resolved | R#: 폐기 범위 보완 / revisit: Keychain 작업 착수 시 |
+| D-36 | decision | 아키텍처 | src/openrouter.rs 541줄과 security-framework 의존을 삭제한다. 사용자가 삭제를 선택했다(선택지 나). 현재도 lib.rs가 모듈 선언만 하고 어디서도 호출하지 않는 미사용 코드이며, D-35로 v1에서 Keychain을 쓰지 않기로 했다. 나중에 Keychain 작업을 할 때는 D-22의 rust-native-final 태그에서 꺼낸다. | P2 | user Q19 '1. 나' | resolved | D-20 폐기 범위에 포함 |
 | D-37 | decision | 검증 | 검증 실행 환경을 둘로 나눈다. CI는 권한이 필요 없는 것만 돌린다: Rust 코어 cargo test, swiftc 빌드 통과, .app 번들 조립 성공. 로컬(사용자 맥)에서만 돌리는 것: peekaboo 기반 UX 시나리오 6개, 한글 IME 확인, 메모리 400MB 측정(D-14), 디자인 사람 판정(D-33). 근거는 peekaboo가 Screen Recording과 Accessibility 권한을 요구하는데 CI에는 그 권한도 로그인한 데스크톱 세션도 없기 때문이며, self-hosted runner에 권한을 상시 부여하는 비용이 얻는 것보다 크다(원칙 12). mini를 러너로 쓰는 안은 그 머신이 프로덕션 자동화를 돌리고 있어 기각한다. 수용한 비용: UI 회귀는 사용자가 로컬에서 돌려야 잡힌다. | P1 | user Q18 '가' | resolved | V#: 검증 실행 환경 / 선행 D-34 보완 |
+| D-38 | fact | 데이터/상태 | herdr-ide가 디스크에 남기는 영속 상태는 ~/Library/Application Support/Herdr IDE/navigator.json(1434B, schema_version 1, 트리 펼침·선택 상태) 하나뿐이다. shortcuts.json은 코드에 경로만 있고 파일이 없으며, pet.json은 테스트의 temp_dir 경로다. 진짜 사용자 상태(workspace, tab, pane, 세션)는 herdr가 소유하고 herdr-ide는 소켓으로 읽기만 하므로 이번 재작성으로 잃는 사용자 데이터가 없다. 별도로 ~/Library/Application Support/herdr-ide/(소문자)에 Electron 시절 잔재 5.5MB가 남아 있었고(Cache, GPUCache, Local Storage, Session Storage, Partitions, Trust Tokens, blob_storage, browser-profiles.json, pet-position.json, 전부 2026-08-26 생성), 사용자 지시로 삭제했다. 삭제 전 scratchpad/electron-leftovers-backup.tgz(51K)로 백업했다. | P1 | 로컬 실측 2026-08-28 + user Q19 'Electron 잔재들 다 지워버려' | resolved | R#: 마이그레이션 범위 = 없음 |
+| D-39 | assumption | 데이터/상태 | navigator.json은 SwiftUI 셸에서 읽지 않고 새로 시작한다. 내용이 트리 펼침·선택 상태라는 UI 편의값뿐이라 잃어도 사용자 데이터 손실이 아니며, 재작성 셸이 기존 Rust 포맷을 읽게 만드는 비용이 얻는 것보다 크다(원칙 2). 새 셸은 같은 목적의 상태를 자체 포맷으로 저장한다. | P2 | agent default - D-38의 귀결, 사용자 이견 없음 | resolved | revisit: 사용자가 트리 상태 보존을 요구할 때 |
+| D-40 | decision | UX/design | 브라우저는 herdr-ide가 열어주기만 한다. 버튼을 누르면 chromux default 프로필의 Chrome이 뜨거나(없으면 launch, 있으면 재사용) 앞으로 나오고, URL 입력은 Chrome 안에서 사용자가 한다. herdr-ide에 URL 입력창을 두지 않는다. 포커스된 pane의 cwd에서 dev 서버 포트를 추측해 여는 방식도 v1 비목표다(herdr official.browser 플러그인에 open-localhost 액션이 이미 있으므로 필요하면 그쪽을 쓴다). herdr-ide는 현재 열린 탭의 URL과 제목만 /json/list로 읽어 표시한다. 탭이 없으면 '열린 탭 없음'을 표시한다. | P1 | user Q19 '3. 가' | resolved | R#: 브라우저 열기 흐름 / 비목표: 앱 내 URL 입력 |
+| D-41 | decision | 검증 | 원격(mini) workspace 지원을 v1 릴리스 게이트에 포함한다. 사용자가 mini에 herdr가 이미 실행 중이므로 실제 검증이 가능하다고 판단했다. 선행 인터뷰 UX-04의 '머신 가용성에 따라 차단 가능한 항목'을 격상한다. 검증 항목: 원격 workspace가 사이드바에 표시됨, 원격 pane attach와 분할 동작, 원격 파일 탐색과 뷰어 표시, 인라인 편집 비활성 사유 표시, SSH 연결 끊김 시 조용한 빈 목록이 아니라 사유 표시와 재연결 시도. mini가 응답하지 않으면 v1을 완료로 판정하지 않는다. | P1 | user Q19 '4. 나 v1에 넣어.. 이미 herdr remote 켜져있어서 그거 쓰면 되잖아' | resolved | V#: 원격 v1 릴리스 게이트 / UX-04 |
+| D-42 | decision | 의존성 | 마크다운 렌더러는 swift-markdown-ui(gonzalezreal, MIT, star 3921) 하나로 확정한다. swiftlang/swift-markdown(Apache-2.0)은 파서라 렌더링을 자체 구현해야 하므로 기각한다. D-28의 병기 상태를 해소한다. | P1 | user Q19 '5. 가' | resolved | R#: Markdown 패키지 / D-28 확정 |
+| D-43 | decision | UX/design | herdr-ide가 chromux Chrome 창의 위치·크기를 자동 배치해 한 화면처럼 보이게 하는 것은 v1 비목표이며, 재검토 트리거는 'v1 실사용에서 창 두 개가 실제로 불편하다고 사용자가 느낄 때'다. D-27의 v2 후보 기록에 이 트리거를 부여한다. owner: 사용자. | P2 | user Q19 '6. 가' | resolved | v2 후보 / revisit trigger 기록 |
+| D-44 | fact | 운영 | Xcode 없이 SwiftPM으로 외부 Swift 의존성을 해석하고 빌드할 수 있음을 실측했다. Package.swift(swift-tools-version 5.10, platforms macOS v14)에 .package(url: migueldeicaza/SwiftTerm, exact: 1.20.0)을 선언하고 swift build를 실행해 SwiftTerm 전체 컴파일과 링크가 통과했다(Build complete! 81.60s, .build/arm64-apple-macosx/debug 산출). 따라서 빌드 구조는 XcodeGen과 xcodebuild가 아니라 SwiftPM Package.swift + Package.resolved(lockfile)이며, 의존성 버전은 exact로 고정한다. Rust는 staticlib으로 빌드해 linkerSettings의 unsafeFlags 또는 별도 링크 단계로 결합하고, 산출 실행파일을 D-29의 .app 조립 스크립트에 넣는다. Rust staticlib과의 실제 링크는 아직 검증하지 않았으며 D-18 스파이크 1번 항목에 포함된다. | P0 | 로컬 실측 2026-08-28: swift build로 SwiftTerm 1.20.0 해석 및 빌드 성공 | resolved | R#: Swift 빌드 구조 / 스파이크 리스크 해소 |
+| D-45 | decision | 아키텍처 | Rust 코어와 Swift 셸 사이의 최소 FFI 계약을 고정한다. 함수 6개: herdr_core_create(options_json) -> Core*, herdr_core_dispatch(Core*, event_json_bytes, len), herdr_core_snapshot(Core*) -> Bytes, herdr_core_on_change(Core*, cb, ctx), herdr_core_free_bytes(Bytes), herdr_core_destroy(Core*). 데이터는 양방향 모두 JSON UTF-8 바이트이며 스냅샷은 render.rs의 FrameModel 계보를 잇는다(D-02). 소유권: Rust가 Core와 모든 버퍼를 소유하고 Swift는 받은 Bytes를 herdr_core_free_bytes로 반드시 반환한다. 스레드: create/dispatch/snapshot/destroy는 메인 스레드에서만 호출한다. on_change 콜백은 임의의 스레드에서 발생할 수 있고 데이터를 싣지 않으며 변경 사실만 알린다. Swift는 콜백을 받으면 메인 스레드로 홉한 뒤 snapshot을 당겨간다. 수명: ctx는 Core보다 오래 살아야 하고 destroy는 콜백 해제 후 해제한다. 오류: dispatch는 패닉을 넘기지 않고 오류를 다음 스냅샷의 오류 필드로 표면화한다(원칙 4). create는 실패 시 널을 반환한다. 스파이크 합격 기준: 원격 SSH 이벤트가 Rust 스레드에서 발생했을 때 Swift가 갱신된 스냅샷을 그리고, 이를 100회 반복해도 크래시와 누수가 없다. | P1 | agent 제안, 사용자 Q18 승인 대기 항목을 스파이크 합격 기준으로 고정 | resolved | R#: FFI 계약 / V1 합격 기준 |
 
 ## Raw Q&A
 
@@ -1182,6 +1190,103 @@ normalization_checkpoint_every: 10
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
 - needs_normalization: false
 
+### Q19: UX 카드 6장 이식 완료. **마지막 질문 하나만 남았습니다.**
+- decision_ids: D-36, D-38, D-39, D-40, D-41, D-42, D-43
+- route: user-decision
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:d7e29b70-f166-4608-9815-e04e41702e1b
+- asked: UX 카드 6장 이식 완료. **마지막 질문 하나만 남았습니다.**
+  
+  ### Q18. 검증을 어디서 돌리나?
+  
+  peekaboo는 **Screen Recording + Accessibility 권한**이 필요합니다. CI(GitHub Actions 등)에는 그 권한도, 로그인한 데스크톱 세션도 없습니다.
+  
+  **(가) UI 검증은 선생님 맥에서만. CI는 빌드와 순수 테스트만.** ← 추천
+  ```
+  CI            cargo test (Rust 코어) + swiftc 빌드 통과 + .app 조립 성공
+  로컬(선생님)    peekaboo UI 시나리오 6개 + 한글 IME + 메모리 400MB + 디자인 판정
+  ```
+  - 근거: 원칙 12(테스트는 값이 비용을 넘을 때만). macOS UI 자동화를 CI에 올리려면 self-hosted runner에 권한을 상시 부여해야 하는데, 그 비용이 얻는 것보다 큽니다.
+  - 비용: UI 회귀는 선생님이 돌려야 잡힙니다.
+  
+  **(나) self-hosted runner(예: mini)에 권한 주고 CI에서도 UI 검증**
+  - mini가 이미 SSH로 붙어 있고 macOS입니다. 다만 그 머신은 프로덕션 자동화가 도는 곳이라 권한 상시 부여가 부담입니다.
+  
+  **(다) CI 자체를 v1 비목표로 둔다**
+  - 지금 이 저장소에 CI가 있는지 확인 안 했습니다. 없으면 이게 제일 정직합니다.
+  
+  **(가)/(나)/(다)?** 답 주시면 검증 매트릭스를 쓰고 게이트 돌리겠습니다.
+- recommended: none
+- answer: 가
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
+### Q20: **SwiftPM이 Xcode 없이 SwiftTerm 1.20.0을 받아서 빌드했습니다.** `Build complete! (81
+- decision_ids: D-38
+- route: user-decision
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:bf425f48-6c11-482f-aea1-942b04c75dca
+- asked: **SwiftPM이 Xcode 없이 SwiftTerm 1.20.0을 받아서 빌드했습니다.** `Build complete! (81.60s)`, arm64 바이너리 생성 확인. Swift 의존성 리스크가 사실로 해소됐습니다.
+  
+  ---
+  
+  # 마지막 확인 (게이트 재심 1회 남음)
+  
+  ## 먼저, 제 월권 정정 ⚠️
+  
+  **`src/openrouter.rs` 541줄 삭제를 제가 결정으로 기록했습니다.** 선생님은 "Keychain은 나중에"라고만 하셨는데 제가 삭제까지 확정했습니다. 게이트가 P0로 잡았습니다.
+  
+  **① 어떻게 할까요?**
+  - **(가) 그냥 둔다** ← 추천. 미사용 코드지만 나중에 Keychain 작업할 때 그대로 씁니다. 541줄이 빌드에 드는 비용은 무시할 수준입니다.
+  - (나) 삭제. 필요하면 `rust-native-final` 태그에서 꺼냅니다.
+  
+  ---
+  
+  ## 사실로 확인된 것 (질문 아님)
+  
+  **저장 상태가 거의 없습니다.**
+  ```
+  ~/Library/Application Support/Herdr IDE/navigator.json   1434B, 트리 펼침/선택 상태뿐
+  ~/Library/Application Support/herdr-ide/                 ← Electron 시절 잔재 (8/26)
+  ```
+  진짜 사용자 상태(workspace, pane, 세션)는 **herdr가 갖고 있고** herdr-ide는 소켓으로 읽기만 합니다. 마이그레이션할 게 사실상 없습니다.
+  
+  **② 이렇게 처리할까요?** navigator.json은 **버리고 새로 시작**(트리 펼침 상태라 잃어도 무해), Electron 잔재 디렉터리는 **삭제**. → 이대로 괜찮으면 "ㅇㅇ"만 주세요.
+  
+  ---
+  
+  ## 나머지 4개
+  
+  **③ 브라우저 열기 - URL은 어디서 오나?**
+  - **(가) 열기만.** 버튼 누르면 Chrome이 뜨고 끝. URL은 사용자가 Chrome에서 침 ← 추천 (가장 단순)
+  - (나) herdr-ide에 URL 입력창을 둔다
+  - (다) 포커스된 pane의 cwd에서 dev 서버 포트를 추측해서 연다 (herdr 플러그인에 `open-localhost` 액션이 이미 있습니다)
+  
+  **④ 원격(mini)이 v1 릴리스 게이트인가?**
+  `remote.rs` 3550줄이 이미 있으니 기능은 v1입니다. 질문은 **"mini가 안 켜져 있으면 v1을 완료로 못 치는가"** 입니다.
+  - **(가) v1 게이트에서 뺀다.** 기능은 만들되, 검증은 mini 가용할 때 ← 추천
+  - (나) v1 게이트에 넣는다
+  
+  **⑤ Markdown 패키지 하나 확정** — 게이트가 둘을 병기했다고 지적했습니다.
+  - **(가) `swift-markdown-ui`** (MIT, ⭐3921) ← 추천. SwiftUI 렌더러라 바로 붙습니다
+  - (나) `swiftlang/swift-markdown` (Apache-2.0) — 파서라 렌더는 우리가 짜야 함
+  
+  **⑥ Chrome 창 자동배치(v2 후보) 재검토 조건**
+  - **(가) "창 두 개가 실제로 불편하다고 느낄 때"** ← 추천. v1 실사용 후 판단
+  - (나) 아예 영구 비목표로 닫는다
+  
+  ---
+  
+  **①~⑥ 답 주시면**, FFI 최소 계약과 UX 상태 매트릭스(첫 실행/빈/로딩/복구) 기본값까지 제가 써서 마지막 게이트를 돌리겠습니다. 그 둘도 초안을 보시고 고치실 수 있게 같이 보여드리겠습니다.
+- recommended: none
+- answer: 1. 나 
+  Electron 잔재들 다 지워버려! 안쓴다
+  
+  3. 가
+  4. 나 v1에 넣어.. 이미 remote 기능잇으면 테스트까지 해보면 좋지 이미 herdr remote 켜져있어서 그거 쓰면 되잖아;
+  5. 가
+  6. 가
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 선행 인터뷰 herdr-ide-native-shell의 UX-01~UX-06을 이 런타임 결정에 맞춰 이식한다.
@@ -1236,6 +1341,23 @@ UX-03은 브라우저 패널과 grab이 D-08/D-11로 사라져 새로 작성했�
 - proof: peekaboo로 생성 조작을 실행한 뒤 herdr workspace.list / worktree.list / pane.list에 반영됐는지 확인한다. 파괴적 동작 검증은 herdr-ide-verify- 접두어 fixture에서만 돌린다(선행 D-56).
 - linked decisions: D-17, D-33
 
+## State And Recovery Matrix
+
+D-33(디자인), D-40(브라우저), D-41(원격), 원칙 4(실패를 명시적으로 드러낸다)에 따른 상태 계약.
+모든 빈 상태는 회색 공백이 아니라 사유와 다음 행동을 함께 보여준다.
+
+| 표면 | 첫 실행 / 빈 | 로딩 | 실패 | 복구 |
+| --- | --- | --- | --- | --- |
+| 사이드바 | herdr 연결 전에는 연결 중 표시. workspace가 없으면 만들기 안내 | 스냅샷 첫 수신까지 자리 유지, 스켈레톤 | herdr 서버 미실행은 소켓 없음과 무응답을 구분해 표시하고 서버 실행 버튼 제공(자동 기동 안 함) | 버튼으로 재기동 후 스냅샷 재수신 |
+| 요약 줄 | OPENROUTER_API_KEY 없으면 사유와 설정 안내 표시(D-35) | 요약 미도착은 빈 줄 대신 대기 표시 | 플러그인 미실행이면 그 사실 표시 | 사용자가 키 설정 후 herdr 재시작 |
+| 터미널 | pane 미선택이면 선택 안내 | attach 중 표시 | PTY 종료 시 종료 사실과 종료 코드 표시, 창을 조용히 비우지 않음 | 같은 pane 재attach 또는 새 pane |
+| 워크벤치 | 파일 미선택이면 트리에서 고르라는 안내 | 대용량 파일 로딩 표시 | 읽기 실패는 경로와 사유 표시. 바이너리는 미리보기 불가 사유 표시 | 다시 열기 |
+| 워크벤치 저장 | - | 저장 중 표시 | 저장 실패는 사유 표시하고 편집 내용을 버리지 않음 | 재시도 또는 다른 경로로 저장 |
+| 워크벤치 충돌 | - | - | 편집 중 외부 변경 시 내 편집 유지 / 다시 읽기를 묻는다(선행 D-27) | 사용자가 무엇을 잃을지 선택 |
+| 원격(D-41) | 원격 타겟 미설정이면 설정 안내 | SSH 연결 중 표시 | 연결 끊김은 조용한 빈 목록이 아니라 끊김 사실 표시. 인라인 편집은 비활성 + 사유 | 재연결 시도 후 결과 알림 |
+| 브라우저(D-40) | chromux 없으면 버튼 비활성 + 설치 안내. 탭 없으면 열린 탭 없음 | launch 진행 표시 | 데몬·포트 무응답은 상태를 stale로 두고 마지막 확인 시각 표시. default 프로필 없으면 chromux profile new 안내 | 다시 열기. herdr-ide는 Chrome을 종료하지 않음(D-31) |
+| 파괴적 동작 | - | - | working/attention pane 닫기는 확인 다이얼로그. workspace/tab은 집계 경고(선행 D-44, D-50) | 확인 단계에서 취소 가능 |
+
 ## Verification Matrix
 
 D-17(peekaboo), D-37(실행 환경), D-19(IME 게이트 미정)에 따른 시나리오별 검증 계약.
@@ -1253,6 +1375,14 @@ D-17(peekaboo), D-37(실행 환경), D-19(IME 게이트 미정)에 따른 시나
 | V9 | 한글 IME | 한글 IME 켜고 조합 입력 | 후보창이 커서를 따라옴 / 조합 중 백스페이스가 조합을 지움 / 2글자 이상 조합이 뒤 글자를 안 덮음 / 터미널과 에디터 양쪽 동작 | 스크린샷 | 로컬 | **D-19 미정: peekaboo type "gks"가 "한"을 만들면 에이전트, 아니면 사람** |
 | V10 | 디자인 인수 | 3a 완료 시점, v1 완료 시점 | D-33의 6항목 | 스크린샷 | 로컬 | **사람(사용자)** |
 | V11 | 빌드/패키징 | 릴리스 빌드 | swiftc 통과 + .app 조립 + codesign adhoc 성공 + 실행됨 | 빌드 로그 + codesign -dv | CI(조립까지) + 로컬(실행) | 에이전트 |
+| V12 | chromux 데몬/포트 실패 | 포트를 막거나 데몬을 죽임 | 상태가 stale로 표시되고 마지막 확인 시각이 보임 | 스크린샷 | 로컬 | 에이전트 |
+| V13 | chromux 프로필 부재 | default 프로필을 지운 상태 | 임의 생성하지 않고 chromux profile new 안내 표시 | 스크린샷 | 로컬 | 에이전트 |
+| V14 | herdr 서버 미실행 | herdr 소켓을 내림 | 소켓 없음과 무응답을 구분 표시하고 서버 실행 버튼 노출 | 스크린샷 | 로컬 | 에이전트 |
+| V15 | herdr protocol 미달 | 요구 protocol 미만 서버 | 부분 비활성화 없이 명확한 실패 메시지(선행 D-46) | 스크린샷 | 로컬 | 에이전트 |
+| V16 | 원격 v1 게이트(D-41) | mini의 herdr에 연결 | 사이드바 표시, attach, 분할, 파일 탐색, 편집 비활성 사유, 끊김 시 사유 표시 | 스크린샷 + herdr pane.list | 로컬(mini 필수) | 에이전트 |
+| V17 | 워크벤치 저장 실패 | 읽기 전용 경로에 저장 시도 | 사유 표시하고 편집 내용 보존 | 스크린샷 | 로컬 | 에이전트 |
+
+실패 경로는 가짜 chromux(PATH 가리기), 포트 차단, herdr 소켓 내림, herdr-ide-verify- 접두어 fixture로 재현한다(선행 D-56).
 
 CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibility 권한과 로그인 데스크톱 세션이 필요하다(D-37).
 
@@ -1303,5 +1433,12 @@ CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibilit
 - register_changes: File Tree/Viewer 스택(D-28), 빌드·배포 계약 + Xcode 없는 패키징 실측(D-29/D-30), chromux 프로바이더 계약 + 사용자 소유 사실(D-31/D-32), UI 품질 인수 6항목(D-33), 사이드바 구성(D-34), OpenRouter 키 현행 유지(D-35), openrouter.rs 폐기(D-36), 검증 실행 환경 분리(D-37). UX 시나리오 카드 6장 이식(증명을 peekaboo로 교체, UX-03 신규). 검증 매트릭스 V1~V11 신설.
 - reopened_decisions: 없음
 - highest_remaining_gap: D-19(IME 게이트 소유자)만 스파이크 대기. 나머지 P1은 이번 사이클에서 해소.
+
+### Checkpoint 6
+- after_question: Q20
+- normalized_entries: Q19, Q20
+- register_changes: openrouter.rs 삭제 확정(D-36, 사용자 선택), 영속 상태 실측 + Electron 잔재 5.5MB 삭제(D-38/D-39), 브라우저 열기만(D-40), 원격 v1 게이트 승격(D-41), Markdown 단일 확정(D-42), Chrome 배치 revisit 트리거(D-43), SwiftPM 빌드 실측(D-44), FFI 최소 계약 + 스파이크 합격 기준(D-45). State/Recovery 매트릭스 신설, 검증 V12~V17 실패경로 추가.
+- reopened_decisions: 없음
+- highest_remaining_gap: D-19(IME 게이트 소유자)만 스파이크 대기.
 
 ## Audit History
