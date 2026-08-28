@@ -22,7 +22,7 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-29
+- next_decision_id: D-31
 - next_question: (owned by the live conversation until checkpoint)
 - last_materiality_sweep: checkpoint 4
 - outstanding_raw_entries: none
@@ -66,6 +66,8 @@ normalization_checkpoint_every: 10
 | D-26 | fact | 선행이력 | 이 인터뷰는 선행 인터뷰 herdr-ide-native-shell(질문 44개, D-01~D-59)을 대체하지 않고 런타임 축만 개정한다. 선행 인터뷰가 이미 확정한 것으로 이번에 재론하지 않는 항목: 제품 정체성(D-09), 화면 구조 3열(D-16), 파일 워크벤치 깊이 F2(D-25), workspace/worktree 모델(D-24), 사이드바 계약(D-40/D-54), 생성·닫기 조작과 파괴적 동작 고지(D-42/D-44/D-50), 원격 타겟 설정(D-45), herdr 버전 게이팅(D-46), pet 흡수(D-07/D-15), 배포 방침(D-29). 이번 인터뷰가 무효화한 것은 D-11, D-19, D-34, D-41, D-53이며 각각 D-08/D-11, D-11, D-17, D-14, D-11이 대체한다. | P0 | repo: agents/interview/herdr-ide-native-shell/qa-log.md (질문 44개, status complete) | resolved | R#: 이 인터뷰의 범위 경계 |
 | D-27 | decision | UX/design | herdr-ide가 chromux Chrome 창의 위치·크기를 자동 배치해 한 화면처럼 보이게 하는 것은 v1 비목표다. 사용자가 브라우저가 앱 밖이라는 사실을 확인하고 수용했다. v2 후보로만 기록한다. 창이 두 개라는 것이 D-11의 수용한 비용이다. | P2 | user Q12 확인 응답에 대한 에이전트 정리, 사용자 이견 없음 | resolved | 비목표(v1) / v2 후보 |
 | D-28 | decision | UX/design | 파일 트리와 뷰어의 구현 스택을 확정한다. 트리는 SwiftUI OutlineGroup/List로 직접 만들고 외부 의존성을 쓰지 않는다. 코드 뷰어와 가벼운 편집은 CodeEditSourceEditor(MIT, star 716, CodeEdit 프로젝트에서 분리한 macOS 네이티브 패키지, tree-sitter 하이라이팅)를 쓴다. 마크다운은 swift-markdown-ui(MIT, star 3921) 또는 swiftlang/swift-markdown(Apache-2.0)을 쓴다. 이미지는 SwiftUI Image 기본이다. git diff는 Rust 코어에서 계산해 색만 입혀 표시하며 별도 라이브러리를 쓰지 않는다. 기각한 후보: STTextView는 GPLv3 또는 상용 라이선스라 MIT인 herdr-ide에 쓸 수 없다(LICENSE.md 확인). Splash는 Swift 코드만 강조하고 2024-05-27 이후 정체다. Runestone은 iOS 중심으로 macOS 지원을 확인하지 못했다. Highlightr(MIT)는 NSTextView와 조합하는 더 가벼운 대안으로 남긴다. 잔여 리스크: CodeEditSourceEditor는 마지막 푸시 2026-04-20으로 4개월 정체이고 open issue 48개다. 이 리스크가 현실화하면 Highlightr 대안으로 후퇴한다. | P1 | user Q13 '추천 조합으로 가고' | resolved | R#: 워크벤치 구현 스택 / D-25(F2 깊이) 실현 수단 |
+| D-29 | decision | 운영 | 빌드와 배포 계약을 확정한다. 지원 OS는 macOS 14.0+(LSMinimumSystemVersion 14.0), CPU 타겟은 arm64 전용이다. 유니버설 바이너리는 비목표이며 근거는 Rust를 두 아키텍처로 빌드해 lipo로 합치는 파이프라인 이중화를 피하기 위함이다. Sparkle 자동 업데이트는 v1 비목표이고 배포는 GitHub Releases로 한다. 근거는 자동 업데이트가 서명된 appcast, 배포 서버, EdDSA 키 관리를 함께 요구하며 나중에 얹을 수 있기 때문이다. 패키징은 swiftc로 실행파일을 만들고 Contents/MacOS와 Info.plist로 .app 번들을 셸 스크립트로 조립한 뒤 codesign --force --deep -s -로 ad-hoc 서명한다. Apple Developer Program 가입과 공증은 v1 비목표이며, 사용자는 첫 실행 시 우클릭 후 열기로 Gatekeeper를 통과한다. 공증이 필요해지면 notarytool과 stapler가 CLT에 이미 있으므로 계정만 추가하면 된다. | P1 | user Q14 (1 macOS 14.0+, 2 arm64, 3 Sparkle 비목표, 4 최대한 간단한 것으로 위임) | resolved | R#: 빌드·배포 계약 / 비목표: 유니버설, Sparkle, 공증 |
+| D-30 | fact | 운영 | Xcode 없이 배포 가능한 .app을 만들 수 있음을 실측했다. (1) swiftc가 산출한 실행파일은 이미 ad-hoc 서명되어 있다(CodeDirectory flags=0x20002 adhoc,linker-signed). arm64 macOS는 모든 바이너리에 최소 ad-hoc 서명을 요구하므로 이는 필수 조건이며 자동으로 충족된다. (2) codesign(/usr/bin/codesign), notarytool(CLT 경로), stapler(/usr/bin/stapler), xcrun이 모두 Xcode 없이 사용 가능하다. (3) Contents/MacOS + Info.plist로 .app을 손조립하고 codesign --force --deep -s -로 재서명하면 Signature=adhoc, TeamIdentifier=not set 상태의 정상 번들이 된다. 따라서 D-18의 스파이크 4번 항목은 '서명 없는 .app이 실행되는가'로 좁혀지며, 패키징 가능성 자체는 이미 사실이다. | P0 | 로컬 실측 2026-08-28: codesign -dv, xcrun -f, .app 손조립 후 codesign --force --deep -s - | resolved | R#: D-29 성립 근거 / 스파이크 4번 항목 축소 근거 |
 
 ## Raw Q&A
 
