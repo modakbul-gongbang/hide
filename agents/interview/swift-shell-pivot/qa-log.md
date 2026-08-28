@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
-question_count: 20
+question_count: 21
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -22,11 +22,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-46
+- next_decision_id: D-47
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 6
+- last_materiality_sweep: checkpoint 7
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q30
+- next_checkpoint_at: Q31
 
 ## Transcript Sources
 
@@ -76,13 +76,14 @@ normalization_checkpoint_every: 10
 | D-36 | decision | 아키텍처 | src/openrouter.rs 541줄과 security-framework 의존을 삭제한다. 사용자가 삭제를 선택했다(선택지 나). 현재도 lib.rs가 모듈 선언만 하고 어디서도 호출하지 않는 미사용 코드이며, D-35로 v1에서 Keychain을 쓰지 않기로 했다. 나중에 Keychain 작업을 할 때는 D-22의 rust-native-final 태그에서 꺼낸다. | P2 | user Q19 '1. 나' | resolved | D-20 폐기 범위에 포함 |
 | D-37 | decision | 검증 | 검증 실행 환경을 둘로 나눈다. CI는 권한이 필요 없는 것만 돌린다: Rust 코어 cargo test, swiftc 빌드 통과, .app 번들 조립 성공. 로컬(사용자 맥)에서만 돌리는 것: peekaboo 기반 UX 시나리오 6개, 한글 IME 확인, 메모리 400MB 측정(D-14), 디자인 사람 판정(D-33). 근거는 peekaboo가 Screen Recording과 Accessibility 권한을 요구하는데 CI에는 그 권한도 로그인한 데스크톱 세션도 없기 때문이며, self-hosted runner에 권한을 상시 부여하는 비용이 얻는 것보다 크다(원칙 12). mini를 러너로 쓰는 안은 그 머신이 프로덕션 자동화를 돌리고 있어 기각한다. 수용한 비용: UI 회귀는 사용자가 로컬에서 돌려야 잡힌다. | P1 | user Q18 '가' | resolved | V#: 검증 실행 환경 / 선행 D-34 보완 |
 | D-38 | fact | 데이터/상태 | herdr-ide가 디스크에 남기는 영속 상태는 ~/Library/Application Support/Herdr IDE/navigator.json(1434B, schema_version 1, 트리 펼침·선택 상태) 하나뿐이다. shortcuts.json은 코드에 경로만 있고 파일이 없으며, pet.json은 테스트의 temp_dir 경로다. 진짜 사용자 상태(workspace, tab, pane, 세션)는 herdr가 소유하고 herdr-ide는 소켓으로 읽기만 하므로 이번 재작성으로 잃는 사용자 데이터가 없다. 별도로 ~/Library/Application Support/herdr-ide/(소문자)에 Electron 시절 잔재 5.5MB가 남아 있었고(Cache, GPUCache, Local Storage, Session Storage, Partitions, Trust Tokens, blob_storage, browser-profiles.json, pet-position.json, 전부 2026-08-26 생성), 사용자 지시로 삭제했다. 삭제 전 scratchpad/electron-leftovers-backup.tgz(51K)로 백업했다. | P1 | 로컬 실측 2026-08-28 + user Q19 'Electron 잔재들 다 지워버려' | resolved | R#: 마이그레이션 범위 = 없음 |
-| D-39 | decision | 데이터/상태 | navigator.json(~/Library/Application Support/Herdr IDE/, 1434B, 트리 펼침·선택 상태) 처리 방침. 버리고 새로 시작할지, 보존·이행할지 미정. 초기화 실패 시 백업과 복구 동작도 함께 정해야 한다. | P2 | 미확정 - 에이전트 기본값을 resolved로 기록했던 항목. Q20의 승인 범위는 Electron 잔재 삭제뿐 | open | 미정 - 사용자 확인 필요 |
+| D-39 | decision | 데이터/상태 | navigator.json을 이행하지 않고 버린다. SwiftUI 셸은 기존 Rust 포맷을 읽지 않고 같은 목적의 상태(트리 펼침·선택)를 자체 포맷으로 새로 저장한다. 첫 실행은 모든 노드가 접힌 기본 상태에서 시작하며, 사용자는 다시 펼치면 된다. 잃는 것이 UI 편의값뿐이라 백업이나 롤백 경로를 두지 않는다. 상태 파일 읽기가 실패하거나 손상된 경우에도 앱을 막지 않고 메모리 기본값으로 진행하며 그 사실을 로그로 남긴다(원칙 4). workspace, tab, pane, 세션 같은 실제 사용자 상태는 herdr가 소유하므로 이 결정으로 잃는 사용자 데이터는 없다(D-38). | P2 | user Q21 '버리고 새로 시작 ㅇㅇㅇ' | resolved | R#: 첫 실행·영속 상태 계약 |
 | D-40 | decision | UX/design | 브라우저는 herdr-ide가 열어주기만 한다. 버튼을 누르면 chromux default 프로필의 Chrome이 뜨거나(없으면 launch, 있으면 재사용) 앞으로 나오고, URL 입력은 Chrome 안에서 사용자가 한다. herdr-ide에 URL 입력창을 두지 않는다. 포커스된 pane의 cwd에서 dev 서버 포트를 추측해 여는 방식도 v1 비목표다(herdr official.browser 플러그인에 open-localhost 액션이 이미 있으므로 필요하면 그쪽을 쓴다). herdr-ide는 현재 열린 탭의 URL과 제목만 /json/list로 읽어 표시한다. 탭이 없으면 '열린 탭 없음'을 표시한다. | P1 | user Q19 '3. 가' | resolved | R#: 브라우저 열기 흐름 / 비목표: 앱 내 URL 입력 |
 | D-41 | decision | 검증 | 원격(mini) workspace 지원을 v1 릴리스 게이트에 포함한다. 사용자가 mini에 herdr가 이미 실행 중이므로 실제 검증이 가능하다고 판단했다. 선행 인터뷰 UX-04의 '머신 가용성에 따라 차단 가능한 항목'을 격상한다. 검증 항목: 원격 workspace가 사이드바에 표시됨, 원격 pane attach와 분할 동작, 원격 파일 탐색과 뷰어 표시, 인라인 편집 비활성 사유 표시, SSH 연결 끊김 시 조용한 빈 목록이 아니라 사유 표시와 재연결 시도. mini가 응답하지 않으면 v1을 완료로 판정하지 않는다. | P1 | user Q19 '4. 나 v1에 넣어.. 이미 herdr remote 켜져있어서 그거 쓰면 되잖아' | resolved | V#: 원격 v1 릴리스 게이트 / UX-04 |
 | D-42 | decision | 의존성 | 마크다운 렌더러는 swift-markdown-ui(gonzalezreal, MIT, star 3921) 하나로 확정한다. swiftlang/swift-markdown(Apache-2.0)은 파서라 렌더링을 자체 구현해야 하므로 기각한다. D-28의 병기 상태를 해소한다. | P1 | user Q19 '5. 가' | resolved | R#: Markdown 패키지 / D-28 확정 |
 | D-43 | decision | UX/design | herdr-ide가 chromux Chrome 창의 위치·크기를 자동 배치해 한 화면처럼 보이게 하는 것은 v1 비목표이며, 재검토 트리거는 'v1 실사용에서 창 두 개가 실제로 불편하다고 사용자가 느낄 때'다. D-27의 v2 후보 기록에 이 트리거를 부여한다. owner: 사용자. | P2 | user Q19 '6. 가' | resolved | v2 후보 / revisit trigger 기록 |
 | D-44 | fact | 운영 | Xcode 없이 SwiftPM으로 외부 Swift 의존성을 해석하고 빌드할 수 있음을 실측했다. Package.swift(swift-tools-version 5.10, platforms macOS v14)에 .package(url: migueldeicaza/SwiftTerm, exact: 1.20.0)을 선언하고 swift build를 실행해 SwiftTerm 전체 컴파일과 링크가 통과했다(Build complete! 81.60s, .build/arm64-apple-macosx/debug 산출). 따라서 빌드 구조는 XcodeGen과 xcodebuild가 아니라 SwiftPM Package.swift + Package.resolved(lockfile)이며, 의존성 버전은 exact로 고정한다. Rust는 staticlib으로 빌드해 linkerSettings의 unsafeFlags 또는 별도 링크 단계로 결합하고, 산출 실행파일을 D-29의 .app 조립 스크립트에 넣는다. Rust staticlib과의 실제 링크는 아직 검증하지 않았으며 D-18 스파이크 1번 항목에 포함된다. | P0 | 로컬 실측 2026-08-28: swift build로 SwiftTerm 1.20.0 해석 및 빌드 성공 | resolved | R#: Swift 빌드 구조 / 스파이크 리스크 해소 |
-| D-45 | decision | 아키텍처 | Rust 코어와 Swift 셸 사이 FFI 계약 초안. 함수 6개: herdr_core_create / dispatch / snapshot / on_change / free_bytes / destroy. 데이터는 양방향 JSON UTF-8 바이트이며 스냅샷은 FrameModel 계보를 잇는다(D-02). 소유권은 Rust가 Core와 모든 버퍼를 갖고 Swift가 free_bytes로 반환한다. create/dispatch/snapshot/destroy는 메인 스레드 전용이고, on_change 콜백은 임의 스레드에서 데이터 없이 변경 사실만 알리며 Swift가 메인으로 홉해 snapshot을 당겨간다. ctx는 Core보다 오래 살고 destroy는 콜백 해제 후 해제한다. dispatch는 패닉을 넘기지 않고 오류를 다음 스냅샷의 오류 필드로 표면화한다(원칙 4). 이 계약은 에이전트 제안이며 사용자 승인을 받지 않았다. D-18 스파이크 1번 항목의 산출물로 확정하고 PRD 확정 전에 결정한다. 스파이크 합격 기준: 원격 SSH 이벤트가 Rust 스레드에서 발생했을 때 Swift가 갱신된 스냅샷을 그리고 100회 반복에 크래시와 누수가 없다. owner: 사용자(스파이크 결과 검토 후). | P1 | 에이전트 제안 - 사용자 승인 또는 스파이크 산출물로 확정 필요 | deferred | D-18 스파이크 1번 항목 산출물 / PRD 확정 전 결정 |
+| D-45 | decision | 아키텍처 | Rust 코어와 Swift 셸 사이 FFI 계약을 이 초안으로 확정한다. 함수 6개: herdr_core_create(options_json) -> Core*, herdr_core_dispatch(Core*, event_json_bytes, len), herdr_core_snapshot(Core*) -> Bytes, herdr_core_on_change(Core*, cb, ctx), herdr_core_free_bytes(Bytes), herdr_core_destroy(Core*). 데이터는 양방향 모두 JSON UTF-8 바이트이고 스냅샷은 render.rs FrameModel의 계보를 잇는다(D-02). 소유권: Rust가 Core와 모든 버퍼를 소유하며 Swift는 받은 Bytes를 herdr_core_free_bytes로 반드시 반환한다. 스레드: create/dispatch/snapshot/destroy는 메인 스레드 전용이다. on_change 콜백은 임의 스레드에서 발생할 수 있고 데이터를 싣지 않으며 변경 사실만 알린다. Swift는 콜백 수신 후 메인 스레드로 홉해 snapshot을 당겨간다. 수명: ctx는 Core보다 오래 살아야 하고 destroy는 콜백을 해제한 뒤 해제한다. 오류: dispatch는 패닉을 FFI 경계 밖으로 넘기지 않고 오류를 다음 스냅샷의 오류 필드로 표면화하며(원칙 4) create는 실패 시 널을 반환한다. 스파이크(D-18 1번 항목)는 이 계약을 설계하는 것이 아니라 검증한다. 합격 기준: 원격 SSH 이벤트가 Rust 스레드에서 발생했을 때 Swift가 갱신된 스냅샷을 그리고, 100회 반복에 크래시와 누수가 없다. 불합격이면 계약을 재검토한다. | P1 | user Q21 '나. 이 초안으로 확정해' | resolved | R#: FFI 계약 / V1 합격 기준 |
+| D-46 | decision | 아키텍처 | 레거시 코드와 상태의 폐기를 광범위하게 승인받았다. D-20의 폐기 목록(app.rs의 AppKit/wgpu 부분, render.rs, terminal.rs, accessibility.rs, browser.rs, openrouter.rs와 wgpu/glyphon/bytemuck/raw-window-handle/objc2/alacritty_terminal/security-framework 의존)에 더해, 새 셸이 기존 포맷·구조를 계승해야 한다는 제약을 두지 않는다. 원칙 1(하위 호환 유지 안 함)을 이 전환 전체에 적용한다. 다만 실행 순서는 D-22를 유지한다: 0단계 스파이크 4항목을 통과한 뒤에 삭제하고, 삭제 직전 커밋에 rust-native-final 태그를 남긴다. 이는 되돌리기 지점을 위한 것이지 하위 호환을 위한 것이 아니다. | P1 | user Q21 '레거시 다 지워도 돼 최대한 새로 하려면 새로 해도 되니까' | resolved | R#: 폐기 방침 / D-20·D-22 보강 |
 
 ## Raw Q&A
 
@@ -1287,6 +1288,43 @@ normalization_checkpoint_every: 10
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
 - needs_normalization: false
 
+### Q21: 검증 매트릭스에 **V18(서버 재기동 복구)** 와 **V19(원격 재연결)** 를 추가했습니다 — 이건 이미 승인하신 결정에서
+- decision_ids: D-39, D-45, D-46
+- route: user-decision
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:5aae5963-eaf7-4921-8498-c088ae554aeb
+- asked: 검증 매트릭스에 **V18(서버 재기동 복구)** 와 **V19(원격 재연결)** 를 추가했습니다 — 이건 이미 승인하신 결정에서 나오는 거라 물을 필요가 없었습니다.
+  
+  ---
+  
+  # 마지막 두 개만 답해주세요
+  
+  ### ① `navigator.json` 어떻게 할까요?
+  
+  `~/Library/Application Support/Herdr IDE/navigator.json` (1434바이트). 내용은 **트리에서 뭘 펼쳐놨고 뭘 선택했는지**뿐입니다. workspace·pane·세션 같은 진짜 상태는 herdr가 갖고 있습니다.
+  
+  - **(가) 버리고 새로 시작** ← 추천. SwiftUI 셸이 자기 포맷으로 새로 저장합니다. 잃는 건 "트리 펼침 상태" 하나고, 첫 실행 때 다 접혀 있다가 다시 펼치면 끝입니다.
+  - (나) 읽어서 이행한다. Rust 포맷을 Swift가 파싱하는 코드를 씁니다.
+  
+  ### ② FFI 계약 — 지금 확정할까요, 스파이크 결과 보고 확정할까요?
+  
+  제가 초안을 썼습니다 (함수 6개, JSON 바이트, Rust가 소유권, 콜백은 "변경됐다"만 알리고 Swift가 메인 스레드에서 당겨감, 오류는 다음 스냅샷에 실림).
+  
+  - **(가) 스파이크 산출물로 미룬다** ← 추천. 지금 `deferred`로 돌려놨습니다. **스파이크에서 실제로 100번 왕복시켜보고** 확정합니다. 이게 이 프로젝트가 4번 넘어진 패턴("만들어보기 전에 확정")을 피하는 방식입니다.
+  - (나) 지금 이 초안으로 확정. 스파이크는 검증만.
+  
+  ---
+  
+  **①②만 답 주시면** 게이트를 다시 열고(선생님 답이 재개 근거가 됩니다) 마지막으로 돌리겠습니다.
+  
+  그리고 앞으로는 **제가 제안한 건 선생님이 명시적으로 답하기 전까지 `open`으로 두겠습니다.** 세 번 같은 실수를 했으니 방식을 바꾸는 게 맞습니다.
+- recommended: none
+- answer: 버리고 새로 시작 ㅇㅇㅇ 
+  레거시 다 ㅣ주어도돼 최대한 새로 하려면 새로해도되니까~~
+  
+  나. 이 초안으로 확정해
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 선행 인터뷰 herdr-ide-native-shell의 UX-01~UX-06을 이 런타임 결정에 맞춰 이식한다.
@@ -1440,6 +1478,13 @@ CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibilit
 - after_question: Q20
 - normalized_entries: Q19, Q20
 - register_changes: openrouter.rs 삭제 확정(D-36, 사용자 선택), 영속 상태 실측 + Electron 잔재 5.5MB 삭제(D-38/D-39), 브라우저 열기만(D-40), 원격 v1 게이트 승격(D-41), Markdown 단일 확정(D-42), Chrome 배치 revisit 트리거(D-43), SwiftPM 빌드 실측(D-44), FFI 최소 계약 + 스파이크 합격 기준(D-45). State/Recovery 매트릭스 신설, 검증 V12~V17 실패경로 추가.
+- reopened_decisions: 없음
+- highest_remaining_gap: D-19(IME 게이트 소유자)만 스파이크 대기.
+
+### Checkpoint 7
+- after_question: Q21
+- normalized_entries: Q21
+- register_changes: navigator.json 폐기 확정(D-39, 사용자 명시 승인), FFI 계약 초안 확정(D-45, 사용자 명시 승인 - 스파이크는 설계가 아니라 검증), 레거시 폐기 광범위 승인(D-46, 단 D-22의 스파이크 통과 후 삭제 순서 유지). 검증 V18(서버 재기동 복구) V19(원격 재연결) 추가.
 - reopened_decisions: 없음
 - highest_remaining_gap: D-19(IME 게이트 소유자)만 스파이크 대기.
 
