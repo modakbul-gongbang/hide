@@ -22,7 +22,7 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-52
+- next_decision_id: D-53
 - next_question: (owned by the live conversation until checkpoint)
 - last_materiality_sweep: checkpoint 8
 - outstanding_raw_entries: none
@@ -89,6 +89,7 @@ normalization_checkpoint_every: 10
 | D-49 | decision | 보안/운영 | herdr-ide는 OPENROUTER_API_KEY의 존재를 감지하지 않는다. 근거는 Finder로 실행한 앱이 launchd 환경을 받아 ~/.zshrc를 읽지 않으므로, 터미널 실행과 Finder 실행에서 결과가 달라지는 비결정적 상태가 되기 때문이다. 대신 요약 줄이 비어 있다는 사실만 표시하고 플러그인 설정 확인 안내를 단다. herdr-ide는 키 값을 읽지도 저장하지도 로그에 남기지도 않는다. 사용자가 프로젝트 루트 .env(94B, 미추적, 과거 커밋 이력 없음)에도 키를 두었다고 알렸으나 herdr-ide는 이를 읽지 않는다. 확인된 위생 문제: .env가 .gitignore에 없어 git add . 시 커밋될 수 있다. remote가 아직 없어 유출은 발생하지 않았다. 수정 여부는 사용자 승인 대기. revisit trigger: 사용자가 키 상태 표시를 요구할 때. | P1 | user Q22 '우선 키 감지하지 않는거로만 해줘 나중에 고칠게' | resolved | R#: OpenRouter 신호 / D-35 보완 / revisit: 나중에 |
 | D-50 | decision | 아키텍처 | D-45의 FFI 함수 계약에 데이터 스키마를 붙인다. 모든 페이로드는 최상위에 schema_version 정수를 갖는다. options_json: herdr 소켓 경로, 원격 타겟 목록, 상태 파일 경로. event: {schema_version, kind, payload} 형태이며 kind는 최소한 key, click, focus_pane, open_browser, create/close(workspace/tab/pane), file_open, file_save, retry_connect를 포함한다. snapshot: FrameModel 계보(navigator, overlay, tab, connection, zoomed, focused, editor)에 더해 status 객체를 신설한다. status는 herdr 연결 상태, 원격 연결 상태, chromux 가용성, 마지막 오류(kind, message, retryable, occurred_at)를 담는다. render.rs의 현 FrameModel에는 오류 필드가 없으므로 이번에 신설하는 것이다(원칙 4, 원칙 10). 알 수 없는 event kind는 무시하지 않고 status의 마지막 오류로 표면화한다. 스키마 버전이 맞지 않으면 조용히 진행하지 않고 명확히 실패한다. | P1 | user Q22의 FFI 확정(D-45)에 딸린 스키마 구체화 | resolved | R#: FFI 데이터 계약 / V1·V1b 합격 기준 |
 | D-51 | decision | 검증 | chromux default 프로필 삭제는 검증에서 금지한다. 프로필 부재 분기(V13)는 존재하지 않는 이름(herdr-ide-verify-absent)을 지정해 재현하며 어떤 프로필도 지우지 않는다. 근거는 D-47이 승인한 것이 서비스 중단 형태의 장애 주입이고 서비스는 재기동으로 복구되는 반면, default 프로필 삭제는 사용자의 Chrome 로그인 세션을 복구 불가능하게 잃게 하기 때문이다. chromux가 없는 프로필을 스스로 생성하지 않는다는 것은 D-12에서 실측으로 확인했으므로 같은 분기가 파괴 없이 재현된다. | P0 | 게이트 cycle3 지적 반영, D-47의 사용자 승인 범위 내 | resolved | V13 / D-47 경계 명확화 |
+| D-52 | decision | 보안/운영 | 환경변수 계약을 축소된 형태로 확정한다. herdr-core가 읽는 키를 한 곳에 열거 가능한 형태로 등록하되, 부팅 실패는 두지 않는다. 실측된 키의 성격: HOME은 사실상 항상 존재, HERDR_SOCKET_PATH는 선택(~/.config/herdr 기본 경로 존재), SSH_AUTH_SOCK은 선택이지만 원격 SSH 인증에 필요, TERM/LANG/LC_*는 PTY 전달용이다. 즉 없으면 앱이 뜰 수 없는 필수 키가 없으므로 부팅 실패는 과하다. 대신 SSH_AUTH_SOCK이 없으면 원격 기능만 사유와 함께 비활성화한다. 근거는 원격이 v1 릴리스 게이트(D-41)인데 Finder로 실행한 앱이 셸 환경을 상속하지 않아 이 키가 없을 수 있고, 조용히 실패하면 완료 판정이 막히기 때문이다(원칙 4, 원칙 10). 에이전트가 앞서 이를 부팅 실패 + 폴백 금지 정책으로 제안했으나 사용자가 축소안을 선택했다. | P1 | user (PRD 리뷰 중) '가' - 환경변수 계약 축소안 선택 | resolved | R#: 환경변수 레지스트리 / RISK: Finder 실행 시 원격 인증 |
 
 ## Raw Q&A
 

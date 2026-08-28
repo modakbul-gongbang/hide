@@ -50,7 +50,7 @@ Approval checklist:
 - SC1. 막힌 에이전트를 찾아 붙는다.
   Actors: 사용자 (herdr-ide 앞에 있음).
   Primary path: 사이드바 agents 목록에서 미확인 attention 표시를 보고 클릭하면 중앙 터미널이 그 pane의 PTY로 바뀌고, 답하면 표시가 사라진다. 항목은 2줄 구성이다(상태 심볼 + 라벨 + 에이전트 종류 / 요약 + 경과 시간).
-  Failure state: herdr 서버가 실행 중이 아니면 소켓 파일 없음과 무응답을 구분해 표시하고 서버 실행 버튼을 준다. 자동 기동하지 않는다. `OPENROUTER_API_KEY`가 없으면 요약 줄이 비는데, 빈 줄로 두지 않고 플러그인 설정 확인 안내를 단다.
+  Failure state: herdr 서버가 실행 중이 아니면 소켓 파일 없음과 무응답을 구분해 표시하고 서버 실행 버튼을 준다. 자동 기동하지 않는다. 플러그인이 발행하는 요약 토큰이 없거나 비어 있으면 빈 줄로 두지 않고 플러그인 설정 확인 안내를 단다. herdr-ide는 그 원인이 키 부재인지 추론하지 않는다.
   Recovery: 서버 실행 버튼으로 재기동하면 사이드바가 스냅샷을 다시 읽어 항목이 복원된다. 재기동이 실패하면 그 사유를 표시한다.
   Reach: herdr 서버가 실행 중이고 workspace와 pane이 최소 하나 있어야 한다. attention 상태를 만들려면 에이전트가 질문 상태여야 한다.
 
@@ -207,7 +207,7 @@ Approval checklist:
 
 - 가정: `agents/config.json`의 `delivery.mode: "local"`을 그대로 따르며 PR 자동화를 요구하지 않는다. 사용자가 PR 발행을 원하면 `/ship`으로 별도 처리한다.
 - 가정: `9.2`의 V12·V17은 사용자가 명시적으로 요구하지 않았으나 D-31과 SC2의 실패 상태를 증명하기 위해 필요하다고 판단해 추가했다.
-- 가정: `6` R11(환경변수 레지스트리)은 사용자가 요구하지 않았으나, D-41이 원격을 v1 게이트로 만든 결과 Finder 실행 시 `SSH_AUTH_SOCK` 부재로 인증이 조용히 실패할 수 있음을 발견해 추가했다. 원칙 4·10과 `practices/env.md` 규칙 3·4의 적용이다.
+- D-52 (사용자 결정): 환경변수 레지스트리를 축소된 형태로 확정. 부팅 실패는 두지 않고 `SSH_AUTH_SOCK` 부재 시 원격 기능만 사유와 함께 비활성화한다 → `6` R11, `7` AC11, `9.2` V14. 에이전트가 먼저 부팅 실패 + 폴백 금지 정책을 제안했으나 사용자가 축소안을 골랐고, 그 격상은 승인 없이 이루어진 것이었다.
 
 **원칙 인테이크**
 
@@ -233,16 +233,20 @@ Approval checklist:
 ## 6. Requirements
 
 - R1. SwiftUI 셸이 3열 레이아웃(사이드바+펫 / 터미널 / 워크벤치)을 제공하고, 창 크기 변경 시 레이아웃이 유지되며 패널 경계를 드래그로 조절할 수 있다.
-- R2. 사이드바가 herdr `session.snapshot`의 토큰을 읽어 항목당 2줄로 렌더한다. 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 작업 요약 + 경과 시간이다. 상태 7종(question, approval, error, working, unseen completion, idle, unknown)을 심볼로 표시하고 working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 `sort_rank`와 `activity` 토큰을 따른다.
+- R2. 사이드바가 herdr `session.snapshot`의 토큰을 읽어 항목당 2줄로 렌더한다. 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(`12s`/`4m`/`2h`/`3d` 형식)이다. 상태 7종(question, approval, error, working, unseen completion, idle, unknown)을 상태당 하나의 고정 심볼로 표시하고, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 막고 있는 순서를 따른다: 완료 미확인(에러 → 질문/승인 → 일반 완료) → 진행 중 → 이미 확인됨. 각 그룹 안의 동률은 `activity` 시계로 깨고 가장 최근 활동이 앞에 온다.
 - R3. 터미널 뷰가 SwiftTerm 1.20.0(정확 고정)이며, Rust 코어의 SSH/PTY 바이트를 `feed(byteArray:)`로 받고 사용자 입력을 `send(source:data:)` 델리게이트로 코어에 돌려준다. 한글 조합 입력이 터미널과 에디터 양쪽에서 동작한다.
 - R4. 워크벤치가 파일트리(SwiftUI `OutlineGroup`)와 뷰어를 제공한다. 이미지는 SwiftUI `Image`, 마크다운은 swift-markdown-ui, 코드는 CodeEditSourceEditor로 렌더하며 텍스트 파일은 인라인 편집과 저장을 지원한다. git diff는 Rust 코어가 계산한 결과를 표시한다.
 - R5. 브라우저 열기가 chromux CLI에 위임된다. `chromux ps --json`으로 상태를 확인해 running이 아니면 `chromux launch`하고, running이면 재사용하며 창을 앞으로 가져온다. `/json/list`를 읽기 전용으로 조회해 현재 탭의 URL과 제목을 표시한다. herdr-ide는 CDP로 페이지를 조작하지 않고, 없는 프로필을 생성하지 않으며, Chrome을 종료하지 않는다.
-- R6. Rust 코어가 C ABI 6함수를 노출하고 `5`가 정의한 소유권·스레드·수명·오류 규칙을 지킨다. 알 수 없는 이벤트 `kind`는 무시되지 않고 `status.last_error`로 표면화되며, `schema_version` 불일치는 조용히 진행하지 않고 명확히 실패한다.
+- R6. Rust 코어가 C ABI 6함수(`herdr_core_create` / `dispatch` / `snapshot` / `on_change` / `free_bytes` / `destroy`)를 노출하고 `5`가 정의한 소유권·스레드·수명·오류 규칙을 지킨다.
+- R6a. `options_json`은 `schema_version`, herdr 소켓 경로, 원격 타겟 목록, 앱 상태 파일 경로를 담는다.
+- R6b. 이벤트는 `{schema_version, kind, payload}` 형태이며 `kind`는 최소한 `key`, `click`, `focus_pane`, `open_browser`, `create_workspace`, `create_tab`, `create_pane`, `close_workspace`, `close_tab`, `close_pane`, `file_open`, `file_save`, `retry_connect`를 포함한다.
+- R6c. 스냅샷은 `schema_version`과 기존 `FrameModel` 필드(`navigator`, `overlay`, `tab`, `connection`, `zoomed`, `focused`, `editor`)에 더해 `status` 객체를 갖는다. `status`는 herdr 연결 상태, 원격 연결 상태, chromux 가용성, 그리고 `last_error(kind, message, retryable, occurred_at)`를 담는다.
+- R6d. 알 수 없는 이벤트 `kind`는 무시되지 않고 `status.last_error`로 표면화되며, `schema_version` 불일치는 조용히 진행하지 않고 명확히 실패한다.
 - R7. 원격 workspace가 사이드바에 표시되고 attach·분할·파일 탐색이 동작한다. 인라인 편집은 원격에서 비활성화되며 회색 공백이 아니라 사유가 표시된다. SSH 연결이 끊기면 조용한 빈 목록 대신 끊김 사실이 표시되고 재연결을 시도하며 결과를 알린다.
 - R8. 앱의 UI 상태(트리 펼침·선택)가 자체 포맷으로 저장·복원된다. 기존 `navigator.json`은 읽지 않는다. 상태 파일이 없거나 손상된 경우 앱을 막지 않고 기본값으로 진행하며 그 사실을 구조화된 로그로 남긴다.
 - R9. 빌드가 Xcode 없이 완결된다. SwiftPM이 의존성을 정확 버전으로 해석하고, Rust `staticlib`과 링크되며, macOS 14.0+ / arm64 `.app` 번들로 조립되고 ad-hoc 서명된다. 조립 스크립트를 두 번 실행해도 같은 결과로 수렴한다.
-- R10. herdr-ide는 `OPENROUTER_API_KEY` 값을 읽지도 저장하지도 로그에 남기지도 않는다. 요약 줄이 비어 있을 때 빈 줄로 두지 않고 플러그인 설정 확인 안내를 표시한다.
-- R11. `herdr-core`가 읽는 모든 환경변수가 한 곳에 열거 가능한 형태로 등록되고, 각 키가 필수/선택 구분·형태·부재 시 동작을 명시한다. 필수 키는 폴백을 갖지 않는다. 부팅 시 전부 검증하고 문제 키를 한 번에 보고하며, 오류 메시지에 값을 넣지 않는다. 애플리케이션 코드는 레지스트리를 통해서만 환경변수를 읽는다.
+- R10. herdr-ide는 `OPENROUTER_API_KEY`를 읽지도 저장하지도 로그에 남기지도 않으며, 키의 존재 여부를 추론하지도 않는다. 판단 근거는 herdr 스냅샷의 요약 토큰이 있는지뿐이다. 요약 토큰이 없거나 비어 있으면 빈 줄로 두지 않고 플러그인 설정 확인 안내를 표시한다.
+- R11. `herdr-core`가 읽는 모든 환경변수가 한 곳에 열거 가능한 형태로 등록되고, 각 키가 선택/필요 구분·형태·부재 시 동작을 명시한다. 부팅을 실패시키지 않는다. `SSH_AUTH_SOCK`이 없으면 원격 기능만 사유와 함께 비활성화하고 나머지 앱은 정상 동작한다. 애플리케이션 코드는 레지스트리를 통해서만 환경변수를 읽는다. 오류나 상태 메시지에 값을 넣지 않는다. (D-52)
 - R12. 모든 빈 상태·로딩·실패가 사유와 다음 행동을 함께 표시한다. `2.1`의 각 시나리오 Failure state가 회색 공백이나 조용한 무동작으로 나타나지 않는다.
 
 ## 7. Acceptance Criteria
@@ -257,7 +261,7 @@ Approval checklist:
 - AC8. workspace 7 / pane 11 구성에서 herdr-ide 프로세스 RSS가 400MB 이하다.
 - AC9. `9.3`의 UI 품질 6항목이 사람 리뷰를 통과한다.
 - AC10. 알 수 없는 이벤트 `kind`를 코어에 넣으면 무시되지 않고 다음 스냅샷의 `status.last_error`에 나타난다.
-- AC11. 필수 환경변수가 없을 때 앱이 기본값으로 조용히 동작하지 않고 부재 키 이름과 함께 실패하며, 그 메시지에 값이 포함되지 않는다.
+- AC11. `SSH_AUTH_SOCK`이 없는 상태에서 앱은 정상적으로 뜨고, 원격 기능만 비활성 상태로 그 사유가 화면에 보이며, 표시된 메시지에 환경변수 값이 포함되지 않는다.
 - AC12. Xcode가 설치되지 않은 상태에서 빌드 산출물이 macOS 14.0+ arm64 `.app`으로 실행된다.
 - AC13. 조립 스크립트를 연속 두 번 실행한 결과가 첫 실행 결과와 같다.
 - AC14. working 상태 pane을 닫으려 하면 확인 다이얼로그가 뜨고 그 프로세스에 무슨 일이 생기는지 문장으로 표시된다.
@@ -303,11 +307,13 @@ Approval checklist:
 
 | ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
 | --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R6, AC10 | 알 수 없는 이벤트 kind와 schema_version 불일치가 무시되지 않고 각각 status.last_error와 명확한 실패로 드러난다 | yes | no |
+| V1 | automated behavior | R6, R6d, AC10 | 알 수 없는 이벤트 kind와 schema_version 불일치가 무시되지 않고 각각 status.last_error와 명확한 실패로 드러난다 | yes | no |
 | V23 | browser/runtime | R6 | 링크된 실제 앱에서 Rust 스레드 이벤트 100회가 메인 스레드 홉을 거쳐 화면에 반영되고 크래시와 버퍼 누수가 없다 | yes | no |
 | V2 | browser/runtime | R3, SC1 | SSH/PTY 바이트가 SwiftTerm에 표시되고 사용자 입력이 코어를 거쳐 원격에 도달한다 | yes | no |
 | V3 | browser/runtime | R2, AC4, SC1 | 사이드바 항목 선택이 herdr가 보고하는 focused pane을 바꾸고, herdr 서버 부재가 소켓 없음과 무응답으로 구분 표시된다 | yes | no |
+| V26 | browser/runtime | R2 | 7개 상태 토큰을 담은 fixture에서 각 상태가 고유 심볼로, working과 unseen completion이 서로 다른 색으로 나타나고, 2줄 형식(30자 요약 + 경과 시간)과 막고 있는 순서 정렬 및 activity 동률 처리가 화면 순서로 확인된다 | yes | no |
 | V4 | browser/runtime | R4, AC15, SC2 | 파일 선택이 종류별로 렌더되고, 편집 저장이 디스크에 반영되며, 저장 실패 시 편집 내용이 유지되고 사유가 보이고, 외부 변경 충돌이 선택지를 제시한다 | yes | no |
+| V27 | browser/runtime | R4 | 알려진 내용의 git diff가 있는 파일에서 Rust 코어가 계산한 추가·삭제 라인이 화면에 그대로 표시된다 | yes | no |
 | V5 | browser/runtime | R5, AC6, SC3 | 브라우저 열기가 chromux Chrome을 띄우거나 재사용하고 현재 탭 URL이 표시된다 | yes | no |
 | V6 | browser/runtime | R5, AC5, SC3 | chromux 부재 시 버튼이 비활성이고 사유가 보이며 조용한 무동작이 없다 | yes | no |
 | V7 | browser/runtime | AC14, SC5 | working pane 닫기가 확인 다이얼로그와 결과 문장을 띄우고, idle pane은 확인 없이 닫힌다 | yes | no |
@@ -317,14 +323,16 @@ Approval checklist:
 | V11 | build/static | R9, AC12, AC13 | Xcode 없이 빌드·링크·`.app` 조립·ad-hoc 서명이 통과하고 실행되며, 조립 재실행이 같은 결과로 수렴한다 | yes | no |
 | V12 | browser/runtime | R5, SC3 | chromux 데몬이나 포트가 응답하지 않을 때 상태가 stale로 표시되고 마지막 확인 시각이 보인다 | yes | no |
 | V13 | browser/runtime | R5, SC3 | 존재하지 않는 프로필 이름을 지정하면 임의 생성 없이 안내가 표시된다 | yes | no |
-| V14 | automated behavior | R11, AC11 | 필수 환경변수 부재가 폴백 없이 실패하고 문제 키를 한 번에 보고하며 메시지에 값이 없다 | yes | no |
+| V14 | browser/runtime | R11, AC11 | SSH_AUTH_SOCK이 없는 환경에서 앱이 정상적으로 뜨고 원격 기능만 사유와 함께 비활성이며, 표시된 메시지에 환경변수 값이 없다 | yes | no |
 | V15 | browser/runtime | R12, SC1 | herdr protocol 미달이 부분 비활성화 없이 명확한 실패로 드러난다 | yes | no |
 | V16 | external/remote | R7, SC4 | mini 원격 workspace가 표시되고 attach·분할·파일 탐색이 동작하며 인라인 편집 비활성 사유가 보인다 | yes | no |
 | V17 | browser/runtime | R8 | 상태 파일이 없거나 손상돼도 앱이 기본값으로 뜨고 그 사실이 로그에 남는다 | yes | no |
+| V28 | browser/runtime | R8 | 트리 펼침·선택을 바꾸고 앱을 다시 띄우면 그 상태가 복원되며, sentinel 값을 넣은 레거시 navigator.json이 있어도 그 값이 화면에 나타나지 않는다 | yes | no |
 | V18 | browser/runtime | R12, SC1 | herdr 서버를 내린 뒤 서버 실행 버튼을 누르면 사이드바가 스냅샷을 다시 읽어 복원되거나 재기동 실패 사유가 표시된다 | yes | no |
 | V19 | external/remote | R7, AC7, SC4 | mini 연결을 끊으면 끊김이 표시되고 재연결 시도 결과가 성공 또는 명시적 실패로 드러난다 | yes | no |
-| V20 | browser/runtime | R10, SC1 | 요약 줄이 비었을 때 빈 줄이 아니라 플러그인 설정 확인 안내가 보이고, 앱이 키 값을 표시하거나 로그에 남기지 않는다 | yes | no |
-| V21 | build/static | R11 | `herdr-core`가 objc2·wgpu·glyphon 없이 빌드되고, 애플리케이션 코드에 레지스트리를 우회한 환경변수 직접 접근이 없다 | yes | no |
+| V20 | browser/runtime | R10, SC1 | 요약 토큰이 비었을 때 빈 줄이 아니라 플러그인 설정 확인 안내가 보이고, 화면과 로그 어디에도 키 값이 없다 | yes | no |
+| V25 | automated behavior | R10 | 소스 전체에 OPENROUTER_API_KEY 접근이 없고, sentinel 값을 넣고 앱을 돌려도 상태 파일과 로그 어디에도 그 값이 기록되지 않는다 | yes | no |
+| V21 | build/static | R11, R6a, R6b, R6c | `herdr-core`가 objc2·wgpu·glyphon 없이 빌드되고, 애플리케이션 코드에 레지스트리를 우회한 환경변수 직접 접근이 없으며, options·event·snapshot 스키마가 선언된 형태와 일치한다 | yes | no |
 | V22 | external/remote | SC4, R7 | Finder에서 실행한 앱에서도 원격 인증 경로가 동작하거나, `SSH_AUTH_SOCK` 부재가 조용한 실패가 아니라 사유와 함께 드러난다 | yes | no |
 | V24 | browser/runtime | SC6 | 펫이 herdr-ide 창이 뒤에 있을 때만 상태를 드러내고 앞에 있을 때는 사이드바가 알리며, 오프스크린 좌표가 주 디스플레이로 복구된다 | yes | no |
 
@@ -342,7 +350,7 @@ CI에서 돌리는 것은 V1, V11, V14, V21뿐이다. 나머지는 Screen Record
 ## 10. Risks And Open Decisions
 
 - RISK-1 (높음). 실패 주입 검증이 사용자의 실행 중인 herdr 세션과 mini 연결을 중단시킨다. 사용자가 알고 승인했다(D-47). 완화: 검증 시작을 사전 고지하고 종료 후 원상 복구하며, 파괴적 삭제는 `herdr-ide-verify-` fixture와 존재하지 않는 프로필 이름으로 대체한다(D-51).
-- RISK-2 (높음). Finder로 실행한 앱은 셸 환경을 상속하지 않으므로 `SSH_AUTH_SOCK`이 없을 수 있고, 원격이 v1 릴리스 게이트이므로 이것이 완료 판정을 막을 수 있다. 완화: R11의 레지스트리가 부팅 시 검증해 조용한 실패 대신 사유와 실행 방법을 표시한다. V22가 이를 증명한다. 근본 해결(launchd 환경 주입 또는 앱 자체 설정)은 스파이크 결과를 보고 판단한다.
+- RISK-2 (높음). Finder로 실행한 앱은 셸 환경을 상속하지 않으므로 `SSH_AUTH_SOCK`이 없을 수 있고, 원격이 v1 릴리스 게이트이므로 이것이 완료 판정을 막을 수 있다. 완화: R11의 레지스트리가 이 키의 부재를 조용한 실패 대신 원격 기능 비활성화와 사유 표시로 드러낸다(D-52). V22가 이를 증명한다. 근본 해결(launchd 환경 주입 또는 앱 자체 설정)은 스파이크 결과를 보고 판단한다.
 - RISK-3 (중간). CodeEditSourceEditor는 마지막 푸시가 2026-04-20으로 4개월 정체이고 open issue가 48개다. 완화: 현실화하면 `NSTextView` + Highlightr(MIT) 조합으로 후퇴한다(D-28).
 - RISK-4 (중간). 이번이 5번째 런타임 전환이며 이전 4번 중 3번이 결정 후에 그 결정을 죽일 요인을 만나 무산됐다. 완화: T1~T4 스파이크가 게이트이며 통과 전에는 삭제하지 않고, 삭제 직전 커밋에 `rust-native-final` 태그를 남긴다(D-18, D-22).
 - RISK-5 (낮음). herdrm은 GitHub 라이선스가 NONE(all rights reserved)이므로 코드를 복사할 수 없다. 완화: 읽고 접근법을 이해한 뒤 독립 구현만 한다. herdrm에 라이선스가 추가되면 재검토한다(D-24).
@@ -384,7 +392,7 @@ CI에서 돌리는 것은 V1, V11, V14, V21뿐이다. 나머지는 Screen Record
 - 스파이크 T1~T4 각각의 판정 결과와 T3의 IME 게이트 소유자 결정(OPEN-1 해소).
 - `rust-native-final` 태그의 커밋 해시와 삭제된 파일·의존 목록.
 - T1~T18 완료 상태.
-- R1~R12, AC1~AC15, V1~V24 커버리지.
+- R1~R12(R6a~R6d 포함), AC1~AC15, V1~V28 커버리지.
 - 모드별 검증 증거: CI 로그, peekaboo 스냅샷과 스크린샷, `ps` 메모리 측정, mini 원격 증거.
 - 추가·수정한 자동 테스트와 각각이 막는 회귀 위험. 테스트를 쓰지 않은 영역은 왜 다른 증명 모드가 더 강한지.
 - 환경변수 레지스트리의 최종 키 목록과 각 키의 필수/선택·부재 시 동작.
