@@ -238,9 +238,9 @@ Approval checklist:
 - R4. 워크벤치가 파일트리(SwiftUI `OutlineGroup`)와 뷰어를 제공한다. 이미지는 SwiftUI `Image`, 마크다운은 swift-markdown-ui, 코드는 CodeEditSourceEditor로 렌더하며 텍스트 파일은 인라인 편집과 저장을 지원한다. git diff는 Rust 코어가 계산한 결과를 표시한다.
 - R5. 브라우저 열기가 chromux CLI에 위임된다. `chromux ps --json`으로 상태를 확인해 running이 아니면 `chromux launch`하고, running이면 재사용하며 창을 앞으로 가져온다. `/json/list`를 읽기 전용으로 조회해 현재 탭의 URL과 제목을 표시한다. herdr-ide는 CDP로 페이지를 조작하지 않고, 없는 프로필을 생성하지 않으며, Chrome을 종료하지 않는다.
 - R6. Rust 코어가 C ABI 6함수(`herdr_core_create` / `dispatch` / `snapshot` / `on_change` / `free_bytes` / `destroy`)를 노출하고 `5`가 정의한 소유권·스레드·수명·오류 규칙을 지킨다.
-- R6a. `options_json`은 `schema_version`, herdr 소켓 경로, 원격 타겟 목록, 앱 상태 파일 경로를 담는다.
-- R6b. 이벤트는 `{schema_version, kind, payload}` 형태이며 `kind`는 최소한 `key`, `click`, `focus_pane`, `open_browser`, `create_workspace`, `create_tab`, `create_pane`, `close_workspace`, `close_tab`, `close_pane`, `file_open`, `file_save`, `retry_connect`를 포함한다.
-- R6c. 스냅샷은 `schema_version`과 기존 `FrameModel` 필드(`navigator`, `overlay`, `tab`, `connection`, `zoomed`, `focused`, `editor`)에 더해 `status` 객체를 갖는다. `status`는 herdr 연결 상태, 원격 연결 상태, chromux 가용성, 그리고 `last_error(kind, message, retryable, occurred_at)`를 담는다.
+- R6a. `options_json`은 `schema_version`, herdr 소켓 경로, 원격 타겟 목록, 앱 상태 파일 경로를 담는다. 각 필드의 정확한 타입과 nullable 여부는 T1 산출물로 확정한다(D-53).
+- R6b. 이벤트는 `{schema_version, kind, payload}` 형태이며 `kind`는 최소한 `key`, `click`, `focus_pane`, `open_browser`, `create_workspace`, `create_tab`, `create_pane`, `close_workspace`, `close_tab`, `close_pane`, `file_open`, `file_save`, `retry_connect`를 포함한다. 각 `kind`의 `payload` 필드 구성은 T1 산출물로 확정한다(D-53).
+- R6c. 스냅샷은 `schema_version`과 기존 `FrameModel` 필드(`navigator`, `overlay`, `tab`, `connection`, `zoomed`, `focused`, `editor`)에 더해 `status` 객체를 갖는다. `status`는 herdr 연결 상태, 원격 연결 상태, chromux 가용성, 그리고 `last_error(kind, message, retryable, occurred_at)`를 담는다. 전체 타입과 nullable 여부는 T1 산출물로 확정한다(D-53).
 - R6d. 알 수 없는 이벤트 `kind`는 무시되지 않고 `status.last_error`로 표면화되며, `schema_version` 불일치는 조용히 진행하지 않고 명확히 실패한다.
 - R7. 원격 workspace가 사이드바에 표시되고 attach·분할·파일 탐색이 동작한다. 인라인 편집은 원격에서 비활성화되며 회색 공백이 아니라 사유가 표시된다. SSH 연결이 끊기면 조용한 빈 목록 대신 끊김 사실이 표시되고 재연결을 시도하며 결과를 알린다.
 - R8. 앱의 UI 상태(트리 펼침·선택)가 자체 포맷으로 저장·복원된다. 기존 `navigator.json`은 읽지 않는다. 상태 파일이 없거나 손상된 경우 앱을 막지 않고 기본값으로 진행하며 그 사실을 구조화된 로그로 남긴다.
@@ -269,7 +269,7 @@ Approval checklist:
 
 ## 8. PRD-Level Tasks
 
-- T1. 0단계 스파이크: Rust `staticlib`과 Swift 간 FFI 왕복을 `5`의 계약대로 구현하고, 원격 SSH 이벤트가 Rust 스레드에서 발생했을 때 Swift가 갱신된 스냅샷을 그리는 것을 100회 반복해 크래시와 누수가 없음을 확인한다. `spikes/` 아래에서 수행하고 본 코드를 변경하지 않는다. Covers R6.
+- T1. 0단계 스파이크: Rust `staticlib`과 Swift 간 FFI 왕복을 `5`의 계약대로 구현하고, 원격 SSH 이벤트가 Rust 스레드에서 발생했을 때 Swift가 갱신된 스냅샷을 그리는 것을 100회 반복해 크래시와 누수가 없음을 확인한다. 이 과정에서 R6a~R6c의 payload 필드 구성과 스냅샷 전체 타입을 실물로 확정해 기록한다(D-53, OPEN-2 해소). `spikes/` 아래에서 수행하고 본 코드를 변경하지 않는다. Covers R6, R6a, R6b, R6c.
 - T2. 0단계 스파이크: Rust가 뽑은 SSH 바이트를 SwiftTerm `feed(byteArray:)`에 넣고 `send` 델리게이트로 되받는 왕복을 확인한다. Covers R3. Depends on: T1.
 - T3. 0단계 스파이크: 원격 SSH + 에이전트 TUI 환경에서 한글 조합 입력을 확인하고, `peekaboo type "gks"`가 "한"을 만드는지 판정해 IME 게이트 소유자를 확정한다. Covers R3, AC1, AC2, AC3. Depends on: T2.
 - T4. 0단계 스파이크: `xcodebuild` 없이 SwiftPM + Rust `staticlib` 링크 → `.app` 번들 조립 → ad-hoc 서명 → 실행까지 확인한다. Covers R9, AC12. Depends on: T1.
@@ -355,6 +355,7 @@ CI에서 돌리는 것은 V1, V11, V14, V21뿐이다. 나머지는 Screen Record
 - RISK-4 (중간). 이번이 5번째 런타임 전환이며 이전 4번 중 3번이 결정 후에 그 결정을 죽일 요인을 만나 무산됐다. 완화: T1~T4 스파이크가 게이트이며 통과 전에는 삭제하지 않고, 삭제 직전 커밋에 `rust-native-final` 태그를 남긴다(D-18, D-22).
 - RISK-5 (낮음). herdrm은 GitHub 라이선스가 NONE(all rights reserved)이므로 코드를 복사할 수 없다. 완화: 읽고 접근법을 이해한 뒤 독립 구현만 한다. herdrm에 라이선스가 추가되면 재검토한다(D-24).
 - RISK-6 (낮음). SwiftTerm은 사실상 개인 주도 프로젝트이고(open issue 75) 릴리스 변동이 잦다(1.19와 1.20이 같은 날 발행). 완화: 1.20.0 정확 고정, 업데이트는 수동 검증 후(D-23).
+- OPEN-2 (연기, blocking 아님). FFI 이벤트 payload 필드 구성과 스냅샷 전체 타입(nullable·중첩 포함)이 미정이다. T1에서 실물로 확정하고 구현 결과 보고서에 최종 시그니처를 기록한다. 상위 계약(함수 6개, 소유권, 스레드, 오류 규칙)은 D-45로 이미 확정되어 이 연기의 대상이 아니다. owner: 사용자(T1 결과 검토 후). (D-53)
 - OPEN-1 (연기, blocking 아님). 한글 IME 완료 게이트의 소유자가 사람인지 에이전트인지 미정이다. T3에서 `peekaboo type "gks"` 결과로 확정한다. 그때까지 V9는 사람 판정으로 둔다. owner: 사용자. (D-19)
 
 ## 11. Implementation Guardrails
@@ -388,6 +389,7 @@ CI에서 돌리는 것은 V1, V11, V14, V21뿐이다. 나머지는 Screen Record
 - 사용자에게 보이는 변화.
 - 변경된 주요 모듈·경계·데이터 형태: 크레이트 분리 결과, C ABI 실제 시그니처, 스냅샷 스키마 최종형.
 - 구현 중 선택한 실제 파일/모듈 구조와 각 책임 경계.
+- T1에서 확정한 FFI 실제 시그니처, 이벤트별 payload 필드 구성, 스냅샷 전체 타입(OPEN-2 해소).
 - 승인된 기술 구조를 따랐는지, 벗어났다면 무엇을 왜.
 - 스파이크 T1~T4 각각의 판정 결과와 T3의 IME 게이트 소유자 결정(OPEN-1 해소).
 - `rust-native-final` 태그의 커밋 해시와 삭제된 파일·의존 목록.
