@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, risk, operation, verification"
 created_at: "2026-08-28"
 updated_at: "2026-08-28"
-question_count: 21
+question_count: 22
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -22,11 +22,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-47
+- next_decision_id: D-51
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 7
+- last_materiality_sweep: checkpoint 8
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q31
+- next_checkpoint_at: Q32
 
 ## Transcript Sources
 
@@ -50,7 +50,7 @@ normalization_checkpoint_every: 10
 | D-10 | fact | 브라우저 | Swift에서 CEF 임베드에 실용 경로가 없다. 유일한 Swift 바인딩 lvsti/CEF.swift는 2021-11-01 이후 방치되고 릴리스가 0개다. CEF 자체는 SetAsChild(parent_nsview, rect)로 기존 NSView에 붙는 API가 있으나, CEF 포럼에 macOS 임베딩 시 빈 화면 렌더링, 부모 NSView 리사이즈 미추종, key window 하나 제약에 의한 포커스 문제가 반복 보고된다. Swift에서 쓰려면 C++/ObjC++/Swift 브리지를 자체 유지해야 한다. 선행 D-12가 Rust에 내린 판정과 동일하다. 조사 방식은 문서와 이슈 검토이며 실제 임베딩을 시도하지 않았다. | P0 | github.com/lvsti/CEF.swift API(마지막 push 2021-11-01, 릴리스 0, star 104), magpcss.org CEF 포럼 macOS 임베딩 스레드 다수 (2026-08-28 조사) | resolved | R#: 옵션 C 기각 근거 |
 | D-11 | decision | 아키텍처 | A-1 확정. herdr-ide는 브라우저를 임베드하지 않는다. src/browser.rs 721줄(CEF CDP 게이트웨이, attach_chromux/detach_chromux, capability 토큰)을 삭제한다. 선행 인터뷰의 D-11(브라우저 패널+grab), D-19(CDP 엔드포인트 노출), D-53(chromux 전제조건)을 무효화한다. D-16의 화면 구조에서 우측 패널의 브라우저 전환이 빠지고 워크벤치만 남는다. 수용한 비용은 브라우저가 herdr-ide 창 밖의 별도 Chrome 창이라는 것이다. | P0 | user Q5 | resolved | R#: 브라우저 경계 / 선행 D-11/D-19/D-53 무효화 |
 | D-12 | fact | 브라우저 | chromux는 headed(창 있는) 진짜 Chrome을 띄우고 loopback CDP를 외부에 노출한다. 실측: launchMode headed, headless false, port 9300, Chrome/151.0.7922.175, Protocol-Version 1.3, webSocketDebuggerUrl 제공, /json/list로 탭 목록 조회 가능. 포트는 chromux ps --json이 알려준다. 빈 Chrome 1개의 실측 자원은 프로세스 6개 / 렌더러 2개 / RSS 676MB다. 또한 chromux는 존재하지 않는 프로필을 스스로 만들지 않고 사용자 승인을 요구한다. | P0 | 로컬 실측 2026-08-28: chromux launch default + curl 127.0.0.1:9300/json/version, /json/list, chromux ps --json | resolved | R#: A-1 성립 근거 |
-| D-13 | decision | 브라우저 | herdr-ide는 브라우저 행동을 chromux CLI로 위임하고(chromux launch / open / ps --json, std::process::Command), 상태 표시는 GET http://127.0.0.1:<port>/json/list 읽기 전용으로만 한다. herdr-ide가 CDP로 직접 조작하는 것은 금지한다. 근거는 chromux가 그 Chrome의 데몬/세션/직렬화(serialQueue)/pause 잠금을 소유하고 있어, herdr-ide가 같은 포트로 명령하면 주인이 둘이 되어 에이전트 조작 도중 충돌이 나기 때문이다. Rust CDP 크레이트(chromiumoxide 0.9.1, headless_chrome 1.0.22)는 읽기 전용 GET 하나에 과하므로 채택하지 않는다. herdr-ide도 chromux의 프로필 생성 규칙을 따라 없는 프로필을 임의 생성하지 않는다. 예상 코드량은 100줄 안쪽이다. | P1 | user Q12 '1. 가' | resolved | R#: 브라우저 연동 방식 |
+| D-13 | decision | 브라우저 | herdr-ide의 chromux 연동 계약을 4개 조작으로 확정한다. (1) launch: chromux ps --json에 default 프로필이 running이 아니면 chromux launch default를 실행한다. (2) reuse: 이미 running이면 launch하지 않는다. (3) focus: 이미 running이면 그 Chrome 창을 앞으로 가져온다. (4) status: GET http://127.0.0.1:<port>/json/list로 현재 탭의 URL과 제목만 읽어 표시하고, 탭이 없으면 '열린 탭 없음'을 표시한다. URL을 herdr-ide가 받아서 여는 조작(browser_open(url))은 D-40에 따라 비목표이며 이 계약에서 제외한다. herdr-ide가 CDP로 페이지를 조작하는 것은 금지한다. 근거는 chromux가 데몬/세션/serialQueue/pause 잠금을 소유하고 있어 주인이 둘이 되면 에이전트 조작 도중 충돌이 나기 때문이다. Rust CDP 크레이트는 읽기 전용 GET 하나에 과하므로 쓰지 않는다. 없는 프로필을 임의 생성하지 않는다. 종료도 하지 않는다(D-31). 예상 코드량 100줄 안쪽. | P1 | user Q12 '1. 가' | resolved | R#: chromux 연동 방식 / D-40과 정합 |
 | D-14 | decision | 검증 | 메모리 인수 조건을 herdr-ide 프로세스만 400MB 이하로 재정의한다. 선행 D-41(브라우저 닫힘 400MB / 브라우저 열림 900MB)을 대체한다. 근거는 D-11로 브라우저가 앱 밖 별도 Chrome이 되어 우리가 통제할 수 없는 자원이 되었기 때문이며, 통제 못 하는 값으로 합격/불합격을 가르면 그 게이트는 곧 무시된다. 측정 시나리오는 D-41과 같이 workspace 7 / pane 11 실사용 규모를 유지하고 ps 기반 자동 판정도 유지한다. | P0 | user Q6 | resolved | V#: 메모리 인수 조건 / 선행 D-41 대체 |
 | D-15 | decision | 아키텍처 | SwiftUI + Rust 코어 하이브리드 전환을 확정한다. 합의 목표: herdr-ide의 macOS 셸을 SwiftUI + SwiftTerm으로 교체하고 SSH·herdr·도메인 로직은 Rust 코어로 남겨, 한글 IME와 UI 품질을 AppKit이 해결하게 한다. 브라우저는 앱 밖 chromux Chrome에 맡긴다. 단 D-18의 0단계 스파이크 4항목 통과가 선행 조건이며 실패 시 그 자리에서 멈추고 재검토한다. 기존 Rust 코드 삭제는 D-22에 따라 스파이크 통과 후 태그를 남기고 수행한다. | P0 | user Q12 '3. ㅇㅇㅇ' | resolved | R#: 전환 확정 / D-18 스파이크 조건부 |
 | D-16 | decision | 터미널 | 터미널 뷰로 SwiftTerm을 채택한다(버전은 D-23). 엔진과 뷰를 모두 SwiftTerm에 맡기고, Rust 코어는 SSH/PTY 바이트만 담당해 feed(byteArray:)로 넣고 send(source:data:) 델리게이트로 받는다. 결과로 alacritty_terminal 의존과 src/terminal.rs 755줄, src/render.rs 921줄이 폐기된다. 기각한 대안 둘: (1) libghostty - 1차 인터뷰 D-13이 채택했다가 D-14가 최상위 리스크로 걸었던 것으로, 2026-08-28 재확인 시점에도 Ghostty 공식 문서가 'not yet stabilized for general-purpose embedding, may change significantly between releases'라고 명시하며 유일한 검증 소비자가 Ghostty 자체 macOS 앱이다. 안정화 근접한 것은 파서인 libghostty-vt뿐이라 우리가 필요한 뷰를 대체하지 못한다. (2) NSTextView 위 alacritty_terminal 직접 구현 - 셀 렌더링/스크롤백/선택/링크/리사이즈를 자체 구현해야 하며 이는 현재 render.rs 921줄이 하는 일 그대로라 전환의 목적에 반한다. SwiftTerm 채택의 잔여 리스크: 사실상 개인 주도 프로젝트(open issue 75), 릴리스 변동 잦음. 완화책은 D-23의 정확 버전 고정과 D-24의 herdrm 참조 경로다. | P0 | user Q8 | resolved | R#: 터미널 뷰 / libghostty 기각 근거 포함 |
@@ -84,6 +84,10 @@ normalization_checkpoint_every: 10
 | D-44 | fact | 운영 | Xcode 없이 SwiftPM으로 외부 Swift 의존성을 해석하고 빌드할 수 있음을 실측했다. Package.swift(swift-tools-version 5.10, platforms macOS v14)에 .package(url: migueldeicaza/SwiftTerm, exact: 1.20.0)을 선언하고 swift build를 실행해 SwiftTerm 전체 컴파일과 링크가 통과했다(Build complete! 81.60s, .build/arm64-apple-macosx/debug 산출). 따라서 빌드 구조는 XcodeGen과 xcodebuild가 아니라 SwiftPM Package.swift + Package.resolved(lockfile)이며, 의존성 버전은 exact로 고정한다. Rust는 staticlib으로 빌드해 linkerSettings의 unsafeFlags 또는 별도 링크 단계로 결합하고, 산출 실행파일을 D-29의 .app 조립 스크립트에 넣는다. Rust staticlib과의 실제 링크는 아직 검증하지 않았으며 D-18 스파이크 1번 항목에 포함된다. | P0 | 로컬 실측 2026-08-28: swift build로 SwiftTerm 1.20.0 해석 및 빌드 성공 | resolved | R#: Swift 빌드 구조 / 스파이크 리스크 해소 |
 | D-45 | decision | 아키텍처 | Rust 코어와 Swift 셸 사이 FFI 계약을 이 초안으로 확정한다. 함수 6개: herdr_core_create(options_json) -> Core*, herdr_core_dispatch(Core*, event_json_bytes, len), herdr_core_snapshot(Core*) -> Bytes, herdr_core_on_change(Core*, cb, ctx), herdr_core_free_bytes(Bytes), herdr_core_destroy(Core*). 데이터는 양방향 모두 JSON UTF-8 바이트이고 스냅샷은 render.rs FrameModel의 계보를 잇는다(D-02). 소유권: Rust가 Core와 모든 버퍼를 소유하며 Swift는 받은 Bytes를 herdr_core_free_bytes로 반드시 반환한다. 스레드: create/dispatch/snapshot/destroy는 메인 스레드 전용이다. on_change 콜백은 임의 스레드에서 발생할 수 있고 데이터를 싣지 않으며 변경 사실만 알린다. Swift는 콜백 수신 후 메인 스레드로 홉해 snapshot을 당겨간다. 수명: ctx는 Core보다 오래 살아야 하고 destroy는 콜백을 해제한 뒤 해제한다. 오류: dispatch는 패닉을 FFI 경계 밖으로 넘기지 않고 오류를 다음 스냅샷의 오류 필드로 표면화하며(원칙 4) create는 실패 시 널을 반환한다. 스파이크(D-18 1번 항목)는 이 계약을 설계하는 것이 아니라 검증한다. 합격 기준: 원격 SSH 이벤트가 Rust 스레드에서 발생했을 때 Swift가 갱신된 스냅샷을 그리고, 100회 반복에 크래시와 누수가 없다. 불합격이면 계약을 재검토한다. | P1 | user Q21 '나. 이 초안으로 확정해' | resolved | R#: FFI 계약 / V1 합격 기준 |
 | D-46 | decision | 아키텍처 | 레거시 코드와 상태의 폐기를 광범위하게 승인받았다. D-20의 폐기 목록(app.rs의 AppKit/wgpu 부분, render.rs, terminal.rs, accessibility.rs, browser.rs, openrouter.rs와 wgpu/glyphon/bytemuck/raw-window-handle/objc2/alacritty_terminal/security-framework 의존)에 더해, 새 셸이 기존 포맷·구조를 계승해야 한다는 제약을 두지 않는다. 원칙 1(하위 호환 유지 안 함)을 이 전환 전체에 적용한다. 다만 실행 순서는 D-22를 유지한다: 0단계 스파이크 4항목을 통과한 뒤에 삭제하고, 삭제 직전 커밋에 rust-native-final 태그를 남긴다. 이는 되돌리기 지점을 위한 것이지 하위 호환을 위한 것이 아니다. | P1 | user Q21 '레거시 다 지워도 돼 최대한 새로 하려면 새로 해도 되니까' | resolved | R#: 폐기 방침 / D-20·D-22 보강 |
+| D-47 | decision | 검증 | 실패 경로 검증은 실제 서비스를 대상으로 해도 된다. 에이전트가 격리(전용 chromux 프로필, 가짜 herdr 소켓, SSH 터널만 끊기)를 권고했으나 사용자가 실제 서비스 사용을 명시적으로 승인했다. 대상에 포함되는 것: chromux default 프로필, 실행 중인 herdr 소켓, mini의 원격 herdr. 사용자에게 고지한 결과: 검증 실행 중 실제 작업이 중단될 수 있고, mini는 프로덕션 자동화가 도는 머신이며, default 프로필에는 사용자 로그인 세션이 있다. 사용자가 이를 알고 수용했다. 단 선행 D-56(파괴적 workspace/worktree 조작은 herdr-ide-verify- 접두어 fixture에서만 실행)은 별개 결정이며 그대로 유효하다. 이번 결정은 서비스 중단 형태의 장애 주입에 한하고, 사용자의 workspace나 worktree를 지우는 조작에는 적용되지 않는다. | P0 | user Q23 '실제 서비스 건드려도 돼' | resolved | V#: 실패 주입 격리 정책 / 사용자 수용 리스크 |
+| D-48 | fact | 데이터/상태 | Electron 잔재 백업(scratchpad/electron-leftovers-backup.tgz, 51K)을 사용자 지시로 삭제했다. Electron 시절 데이터는 시스템에 남아 있지 않다. 보존 정책 없음. | P1 | user Q23 '백업 지워' + 실행 확인 | resolved | D-38 종결 |
+| D-49 | decision | 보안/운영 | herdr-ide는 OPENROUTER_API_KEY의 존재를 감지하지 않는다. 근거는 Finder로 실행한 앱이 launchd 환경을 받아 ~/.zshrc를 읽지 않으므로, 터미널 실행과 Finder 실행에서 결과가 달라지는 비결정적 상태가 되기 때문이다. 대신 요약 줄이 비어 있다는 사실만 표시하고 플러그인 설정 확인 안내를 단다. herdr-ide는 키 값을 읽지도 저장하지도 로그에 남기지도 않는다. 사용자가 프로젝트 루트 .env(94B, 미추적, 과거 커밋 이력 없음)에도 키를 두었다고 알렸으나 herdr-ide는 이를 읽지 않는다. 확인된 위생 문제: .env가 .gitignore에 없어 git add . 시 커밋될 수 있다. remote가 아직 없어 유출은 발생하지 않았다. 수정 여부는 사용자 승인 대기. revisit trigger: 사용자가 키 상태 표시를 요구할 때. | P1 | user Q23 '우선 키 감지하지 않는거로만 해줘 나중에 고칠게' | resolved | R#: OpenRouter 신호 / D-35 보완 / revisit: 나중에 |
+| D-50 | decision | 아키텍처 | D-45의 FFI 함수 계약에 데이터 스키마를 붙인다. 모든 페이로드는 최상위에 schema_version 정수를 갖는다. options_json: herdr 소켓 경로, 원격 타겟 목록, 상태 파일 경로. event: {schema_version, kind, payload} 형태이며 kind는 최소한 key, click, focus_pane, open_browser, create/close(workspace/tab/pane), file_open, file_save, retry_connect를 포함한다. snapshot: FrameModel 계보(navigator, overlay, tab, connection, zoomed, focused, editor)에 더해 status 객체를 신설한다. status는 herdr 연결 상태, 원격 연결 상태, chromux 가용성, 마지막 오류(kind, message, retryable, occurred_at)를 담는다. render.rs의 현 FrameModel에는 오류 필드가 없으므로 이번에 신설하는 것이다(원칙 4, 원칙 10). 알 수 없는 event kind는 무시하지 않고 status의 마지막 오류로 표면화한다. 스키마 버전이 맞지 않으면 조용히 진행하지 않고 명확히 실패한다. | P1 | D-45의 사용자 확정에 딸린 스키마 구체화 (게이트 cycle3 지적 반영) | resolved | R#: FFI 데이터 계약 / V1·V1b 합격 기준 |
 
 ## Raw Q&A
 
@@ -1325,6 +1329,65 @@ normalization_checkpoint_every: 10
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
 - needs_normalization: false
 
+### Q22: 게이트가 **세 개의 진짜 구멍**을 찾았습니다. 특히 두 개는 제가 놓치면 사고가 날 것들입니다.
+- decision_ids: D-47, D-48, D-49
+- route: user-decision
+- source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:a96519e7-6c31-4bb6-bcc8-ab4dd209d465
+- asked: 게이트가 **세 개의 진짜 구멍**을 찾았습니다. 특히 두 개는 제가 놓치면 사고가 날 것들입니다.
+  
+  ## ⚠️ 위험한 것부터
+  
+  ### P0. 실패 테스트가 실제 서비스를 건드리게 써놨습니다
+  
+  제가 V12~V19에 이렇게 썼습니다:
+  - "mini 연결을 강제로 끊음(원격 herdr 정지)" ← **mini는 프로덕션 자동화가 도는 머신입니다**
+  - "default 프로필을 지운 상태" ← **선생님 Chrome 로그인이 들어있는 그 프로필입니다**
+  - "herdr 소켓을 내림" ← **지금 이 세션이 돌고 있는 herdr입니다**
+  
+  **이대로 검증을 돌리면 실제 작업을 죽입니다.** 게이트 지적이 맞습니다.
+  
+  **Q22-①. 실패 주입을 어떻게 격리할까요?**
+  - **(가) 검증 전용 리소스만 쓴다** ← 추천
+    - chromux: `herdr-ide-verify` 전용 프로필 (선생님 승인 후 `chromux profile new`로 1회 생성). `default`는 절대 안 건드림
+    - herdr: 실제 소켓 대신 **가짜 소켓 경로**로 herdr-ide를 띄워 "서버 없음" 분기를 만듦
+    - mini: 원격 herdr를 죽이지 않고 **SSH 터널만 끊어서** 연결 끊김을 재현
+    - chromux 부재: `PATH`만 가림 (이미 V6)
+  - (나) 실패 경로 검증을 v1 게이트에서 뺀다
+  
+  ### P0. Electron 백업을 제가 남겼습니다
+  
+  선생님은 "다 지워버려"라고 하셨는데 제가 `scratchpad/electron-leftovers-backup.tgz` (51K)를 남겼습니다.
+  
+  **Q22-②.** 지울까요? (**(가) 지운다** ← 추천 / (나) 스파이크 끝날 때까지 둔다)
+  
+  ---
+  
+  ### P1. OpenRouter 키 감지가 불가능합니다 — 이것도 좋은 지적입니다
+  
+  **Finder로 실행한 앱은 `~/.zshrc`를 읽지 않습니다.** launchd 환경을 받거든요. 즉 herdr-ide가 `OPENROUTER_API_KEY`를 **볼 수가 없습니다.** 터미널에서 띄우면 보이고 Finder로 띄우면 안 보이는, 실행 방법에 따라 달라지는 상태가 됩니다.
+  
+  **Q22-③. 어떻게 할까요?**
+  - **(가) 키를 감지하지 않는다** ← 추천. herdr-ide는 **요약 줄이 비었다는 사실만** 보여주고 "플러그인 설정 확인" 안내를 답니다. 키 유무를 herdr-ide가 알 필요가 없어집니다. 결정론적이고, 키를 앱이 만지지 않으니 노출 위험도 없습니다.
+  - (나) herdr 스냅샷의 플러그인 토큰으로 간접 판정
+  - (다) 앱이 `~/.zshrc`를 직접 파싱 → **비추천.** 셸 파일 파싱은 깨지기 쉽고 API 키를 앱이 읽게 됩니다
+  
+  ---
+  
+  ## 제가 고칠 것 (물을 필요 없음)
+  
+  - **chromux 계약 모순** — D-13에 `browser_open(url)`이 있는데 D-40이 "URL 입력 없음"이라 충돌합니다. `launch` / `reuse` / `focus` / `읽기 전용 탭 상태` 4개로 정리하겠습니다
+  - **FFI 스키마** — 함수 이름만 있고 options·event·snapshot 스키마와 오류 필드가 없습니다. `FrameModel`에 오류 필드도 실제로 없고요. 버전 붙인 스키마로 씁니다
+  - **V1 분리** — CI(계약 검사)와 로컬(콜백·메모리 100회)로 쪼갭니다
+  
+  **①②③만 답 주시면 마무리하겠습니다.** (재심 1회 남음)
+- recommended: none
+- answer: 실제 서비스 건드려도 돼 
+  백업 지워
+  openrouter key는 .env에 넣어놨으니 참고해
+  우선 키 감지하지 않는거로만 해줘 나중에 고칠게
+- immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 선행 인터뷰 herdr-ide-native-shell의 UX-01~UX-06을 이 런타임 결정에 맞춰 이식한다.
@@ -1402,7 +1465,8 @@ D-17(peekaboo), D-37(실행 환경), D-19(IME 게이트 미정)에 따른 시나
 
 | # | 대상 | 트리거 | 통과 판정 | 증거 | 환경 | 소유 |
 | --- | --- | --- | --- | --- | --- | --- |
-| V1 | FFI 왕복 | Swift가 herdr_core_dispatch 호출 후 snapshot 재조회 | 스냅샷 JSON이 기대 상태로 바뀜 | 스냅샷 JSON 덤프 | CI(코어) + 로컬 | 에이전트 |
+| V1a | FFI 계약(스키마) | 코어에 이벤트 JSON을 넣고 스냅샷을 받음 | schema_version 일치, 알 수 없는 kind가 status.last_error로 표면화, 버전 불일치 시 명확히 실패(D-50) | 스냅샷 JSON 덤프 | CI(Rust 단독) | 에이전트 |
+| V1b | FFI 수명·스레드 | arm64로 링크한 실제 앱에서 Rust 스레드 이벤트를 100회 발생 | 콜백이 임의 스레드에서 오고 Swift가 메인에서 snapshot을 당겨 그림. 100회 반복에 크래시 없음, free_bytes 누수 없음(leaks 또는 heap 계측) | 실행 로그 + 누수 계측 출력 | 로컬(링크된 .app) | 에이전트 |
 | V2 | SSH 바이트 왕복 | 원격 pane attach 후 키 입력 | SwiftTerm feed로 들어온 출력이 화면에 보이고 send 델리게이트가 Rust로 되돌아감 | 스크린샷 + herdr pane.read | 로컬 | 에이전트 |
 | V3 | UX-01 막힌 에이전트 | peekaboo click으로 사이드바 항목 선택 | herdr pane.get의 focused가 그 pane | peekaboo see JSON + pane.get | 로컬 | 에이전트 |
 | V4 | UX-02 파일 워크벤치 | peekaboo click으로 트리 노드 선택 | 뷰어에 내용 렌더, 편집 저장이 디스크에 반영 | 스크린샷 + 파일 해시 | 로컬 | 에이전트 |
@@ -1422,7 +1486,10 @@ D-17(peekaboo), D-37(실행 환경), D-19(IME 게이트 미정)에 따른 시나
 | V18 | UX-01 서버 재기동 복구 | herdr 소켓을 내린 뒤 peekaboo로 서버 실행 버튼 클릭 | 서버가 뜨고 사이드바가 스냅샷을 다시 읽어 항목이 복원됨. 실패 시 재기동 실패 사유가 표시됨 | 스크린샷 + herdr session.snapshot | 로컬 | 에이전트 |
 | V19 | 원격 재연결(D-41) | mini 연결을 강제로 끊음(네트워크 차단 또는 원격 herdr 정지) | 끊김 사실이 표시되고 재연결을 시도하며, 성공 시 목록이 복원되고 실패 시 사유가 표시됨. 조용한 빈 목록 금지 | 스크린샷 + herdr pane.list | 로컬(mini 필수) | 에이전트 |
 
-실패 경로는 가짜 chromux(PATH 가리기), 포트 차단, herdr 소켓 내림, herdr-ide-verify- 접두어 fixture로 재현한다(선행 D-56).
+실패 주입 정책(D-47): 사용자가 실제 서비스 대상 검증을 승인했다. chromux default 프로필, 실행 중인 herdr 소켓, mini의 원격 herdr를 직접 대상으로 삼을 수 있다.
+고지된 결과: 검증 실행 중 실제 작업이 중단될 수 있고, mini는 프로덕션 자동화가 도는 머신이며 default 프로필에는 사용자 로그인 세션이 있다.
+단 파괴적 workspace/worktree 조작(생성·삭제)은 이 승인에 포함되지 않으며 선행 D-56대로 herdr-ide-verify- 접두어 fixture에서만 실행한다.
+검증 실행 전에 사용자에게 시작을 알리고, 끝나면 중단시킨 서비스를 원상 복구한다.
 
 CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibility 권한과 로그인 데스크톱 세션이 필요하다(D-37).
 
@@ -1487,5 +1554,12 @@ CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibilit
 - register_changes: navigator.json 폐기 확정(D-39, 사용자 명시 승인), FFI 계약 초안 확정(D-45, 사용자 명시 승인 - 스파이크는 설계가 아니라 검증), 레거시 폐기 광범위 승인(D-46, 단 D-22의 스파이크 통과 후 삭제 순서 유지). 검증 V18(서버 재기동 복구) V19(원격 재연결) 추가.
 - reopened_decisions: 없음
 - highest_remaining_gap: D-19(IME 게이트 소유자)만 스파이크 대기.
+
+### Checkpoint 8
+- after_question: Q22
+- normalized_entries: Q22
+- register_changes: 실패 주입은 실제 서비스 대상 승인(D-47, 사용자 수용 리스크 명시), Electron 백업 삭제(D-48), OpenRouter 키 감지 안 함 + .env 위생 문제 기록(D-49), chromux 계약을 launch/reuse/focus/status 4개로 정리해 D-40과 모순 해소(D-13), FFI 데이터 스키마 신설(D-50, status.last_error 포함). V1을 V1a(CI 스키마)와 V1b(로컬 수명·스레드 100회)로 분리.
+- reopened_decisions: 없음
+- highest_remaining_gap: D-19(IME 게이트 소유자) 스파이크 대기. .gitignore에 .env 추가는 사용자 승인 대기.
 
 ## Audit History
