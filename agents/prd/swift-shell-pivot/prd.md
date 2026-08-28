@@ -116,12 +116,12 @@ Approval checklist:
 - **herdr-ide 내 URL 입력창과 dev 서버 포트 추측**. 열어주기만 한다. (D-40)
 - **`navigator.json` 이행**. 트리 펼침·선택 상태뿐이라 첫 실행은 접힌 상태로 시작한다. (D-39)
 - **Chrome 창 자동 배치**(v2 후보). 재검토 조건: 창 두 개가 실제로 불편할 때. (D-27, D-43)
-- **파일 조작**(새 파일·이름 변경·삭제·드래그 이동). 선행 인터뷰 D-25의 F3 비목표를 유지한다. 터미널이 항상 옆에 있어 `mv`/`rm`/`touch`가 이미 최소 경로다.
+- **파일 조작**(새 파일·이름 변경·삭제·드래그 이동). 선행 인터뷰 herdr-ide-native-shell의 워크벤치 깊이 결정(F3 비목표)을 유지한다. 터미널이 항상 옆에 있어 `mv`/`rm`/`touch`가 이미 최소 경로다.
 - **CI에서의 UI 자동 검증**. Screen Recording과 Accessibility 권한, 로그인 데스크톱 세션이 필요하다. self-hosted runner에 권한을 상시 부여하는 비용이 크다. (D-37)
 
 ### 선행 인터뷰와의 관계
 
-이 PRD는 선행 인터뷰 `herdr-ide-native-shell`(질문 44개)을 대체하지 않고 런타임 축만 개정한다(D-26). 무효화한 선행 결정은 D-11(브라우저 패널+grab), D-19(CDP 노출), D-34(chromux가 앱 CDP에 붙어 검증), D-41(400/900MB), D-53(chromux 전제조건)이며 각각 이 PRD의 비목표·D-17·D-14·D-13이 대체한다. 나머지 선행 결정(제품 정체성, 3열 구조, 워크벤치 깊이 F2, workspace/worktree 모델, 사이드바 계약, 생성·닫기 고지 정책, 원격 타겟 설정, herdr 버전 게이팅, pet 흡수, 공개 배포)은 그대로 유효하다.
+이 PRD는 선행 인터뷰 `herdr-ide-native-shell`(질문 44개)을 대체하지 않고 런타임 축만 개정한다(D-26). 무효화한 선행 결정은 herdr-ide-native-shell의 브라우저 패널+grab, CDP 엔드포인트 노출, chromux가 앱 CDP에 붙는 검증 방식, 400/900MB 메모리 예산, chromux 전제조건 다섯이며, 각각 이 PRD의 비목표와 D-17·D-14·D-13이 대체한다. 나머지 선행 결정(제품 정체성, 3열 구조, 워크벤치 깊이 F2, workspace/worktree 모델, 사이드바 계약, 생성·닫기 고지 정책, 원격 타겟 설정, herdr 버전 게이팅, pet 흡수, 공개 배포)은 그대로 유효하다.
 
 ## 4. Pre-Work And Required Decisions
 
