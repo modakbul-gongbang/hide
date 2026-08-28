@@ -1,0 +1,4136 @@
+diff --git a/docs/next/api/herdr-api.schema.json b/docs/next/api/herdr-api.schema.json
+index 69c2ac368baae338068b7c4e111377f6648b8869..ad24ae404f2c77c824dfa2b9f42dfa729383ef5f 100644
+--- a/docs/next/api/herdr-api.schema.json
++++ b/docs/next/api/herdr-api.schema.json
+@@ -1,6 +1,6 @@
+ {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+-  "protocol": 20,
++  "protocol": 21,
+   "schema_version": 1,
+   "schemas": {
+     "error_response": {
+@@ -39,6 +39,69 @@
+     },
+     "event": {
+       "$defs": {
++        "AgentLineageInfo": {
++          "properties": {
++            "agent_instance_id": {
++              "type": "string"
++            },
++            "host": {
++              "$ref": "#/schemas/event/$defs/HostScope"
++            },
++            "idempotency_key": {
++              "type": "string"
++            },
++            "kind": {
++              "type": "string"
++            },
++            "name": {
++              "type": "string"
++            },
++            "pane_id": {
++              "type": "string"
++            },
++            "parent_agent_instance_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "spawned_from_pane_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "state": {
++              "$ref": "#/schemas/event/$defs/AgentLineageState"
++            },
++            "tab_id": {
++              "type": "string"
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "agent_instance_id",
++            "idempotency_key",
++            "name",
++            "kind",
++            "host",
++            "workspace_id",
++            "tab_id",
++            "pane_id",
++            "state"
++          ],
++          "type": "object"
++        },
++        "AgentLineageState": {
++          "enum": [
++            "active",
++            "ended",
++            "orphaned"
++          ],
++          "type": "string"
++        },
+         "AgentSessionInfo": {
+           "properties": {
+             "agent": {
+@@ -495,6 +558,22 @@
+               ],
+               "type": "object"
+             },
++            {
++              "properties": {
++                "lineage": {
++                  "$ref": "#/schemas/event/$defs/AgentLineageInfo"
++                },
++                "type": {
++                  "const": "agent_lineage_changed",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "lineage"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "pane_id": {
+@@ -753,10 +832,27 @@
+             "pane_exited",
+             "pane_agent_detected",
+             "pane_agent_status_changed",
+-            "layout_updated"
++            "layout_updated",
++            "agent_lineage_changed"
+           ],
+           "type": "string"
+         },
++        "HostScope": {
++          "description": "Identifies the Herdr service that owns public resource IDs.\n\nPublic pane IDs are durable inside this scope. Runtime IDs such as a\nterminal ID may change when the service restores a session.",
++          "properties": {
++            "host_id": {
++              "type": "string"
++            },
++            "session_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "host_id",
++            "session_id"
++          ],
++          "type": "object"
++        },
+         "PaneInfo": {
+           "properties": {
+             "agent": {
+@@ -829,10 +925,10 @@
+               },
+               "type": "object"
+             },
+-            "tab_id": {
+-              "type": "string"
++            "surface": {
++              "$ref": "#/schemas/event/$defs/PaneSurface"
+             },
+-            "terminal_id": {
++            "tab_id": {
+               "type": "string"
+             },
+             "terminal_title": {
+@@ -869,7 +965,7 @@
+           },
+           "required": [
+             "pane_id",
+-            "terminal_id",
++            "surface",
+             "workspace_id",
+             "tab_id",
+             "focused",
+@@ -1022,6 +1118,68 @@
+           ],
+           "type": "object"
+         },
++        "PaneSurface": {
++          "oneOf": [
++            {
++              "properties": {
++                "agent_instance_id": {
++                  "type": [
++                    "string",
++                    "null"
++                  ]
++                },
++                "attach": {
++                  "$ref": "#/schemas/event/$defs/TerminalAttachEndpoint"
++                },
++                "kind": {
++                  "const": "terminal",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "kind",
++                "attach"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "editor_id": {
++                  "type": "string"
++                },
++                "kind": {
++                  "const": "editor",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "kind",
++                "editor_id"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "kind": {
++                  "const": "browser",
++                  "type": "string"
++                },
++                "source_pane_id": {
++                  "type": "string"
++                },
++                "view_id": {
++                  "type": "string"
++                }
++              },
++              "required": [
++                "kind",
++                "view_id",
++                "source_pane_id"
++              ],
++              "type": "object"
++            }
++          ]
++        },
+         "SplitDirection": {
+           "enum": [
+             "right",
+@@ -1068,6 +1226,38 @@
+           ],
+           "type": "object"
+         },
++        "TerminalAttachEndpoint": {
++          "description": "A fresh endpoint for attaching to the terminal runtime behind a pane.\n\nThe host connection registry resolves `host` to a local socket or an SSH\ntunnel. Persisted clients must refresh this endpoint from a snapshot after\nreconnect because `terminal_id` is a runtime identity.",
++          "properties": {
++            "host": {
++              "$ref": "#/schemas/event/$defs/HostScope"
++            },
++            "protocol": {
++              "format": "uint32",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "terminal_id": {
++              "type": "string"
++            },
++            "transport": {
++              "$ref": "#/schemas/event/$defs/TerminalAttachTransport"
++            }
++          },
++          "required": [
++            "host",
++            "transport",
++            "protocol",
++            "terminal_id"
++          ],
++          "type": "object"
++        },
++        "TerminalAttachTransport": {
++          "enum": [
++            "herdr_client"
++          ],
++          "type": "string"
++        },
+         "WorkspaceInfo": {
+           "properties": {
+             "active_tab_id": {
+@@ -1222,6 +1412,63 @@
+     },
+     "request": {
+       "$defs": {
++        "AgentNewParams": {
++          "properties": {
++            "args": {
++              "items": {
++                "type": "string"
++              },
++              "type": "array"
++            },
++            "cwd": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "direction": {
++              "$ref": "#/schemas/request/$defs/SplitDirection",
++              "default": "right"
++            },
++            "focus": {
++              "default": false,
++              "type": "boolean"
++            },
++            "kind": {
++              "type": "string"
++            },
++            "name": {
++              "type": "string"
++            },
++            "operation": {
++              "$ref": "#/schemas/request/$defs/OperationContext"
++            },
++            "spawned_from_pane_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "target_pane_id": {
++              "type": "string"
++            },
++            "timeout_ms": {
++              "format": "uint64",
++              "minimum": 0,
++              "type": [
++                "integer",
++                "null"
++              ]
++            }
++          },
++          "required": [
++            "operation",
++            "name",
++            "kind",
++            "target_pane_id"
++          ],
++          "type": "object"
++        },
+         "AgentPromptParams": {
+           "properties": {
+             "target": {
+@@ -2061,6 +2308,12 @@
+         },
+         "EventsSubscribeParams": {
+           "properties": {
++            "after_sequence": {
++              "description": "Resume strictly after this domain event sequence.",
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            },
+             "subscriptions": {
+               "items": {
+                 "$ref": "#/schemas/request/$defs/Subscription"
+@@ -2069,6 +2322,7 @@
+             }
+           },
+           "required": [
++            "after_sequence",
+             "subscriptions"
+           ],
+           "type": "object"
+@@ -2333,6 +2587,18 @@
+           ],
+           "type": "string"
+         },
++        "OperationContext": {
++          "description": "Retry identity for a mutation that must converge when submitted twice.\n\nEach method that supports replay embeds this context in its params. The\nrequest correlation `id` is intentionally separate and is never used as an\nidempotency key.",
++          "properties": {
++            "idempotency_key": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "idempotency_key"
++          ],
++          "type": "object"
++        },
+         "OutputMatch": {
+           "oneOf": [
+             {
+@@ -4046,6 +4312,18 @@
+                 "type"
+               ],
+               "type": "object"
++            },
++            {
++              "properties": {
++                "type": {
++                  "const": "agent.lineage_changed",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type"
++              ],
++              "type": "object"
+             }
+           ]
+         },
+@@ -5067,6 +5345,22 @@
+           ],
+           "type": "object"
+         },
++        {
++          "properties": {
++            "method": {
++              "const": "agent.new",
++              "type": "string"
++            },
++            "params": {
++              "$ref": "#/schemas/request/$defs/AgentNewParams"
++            }
++          },
++          "required": [
++            "method",
++            "params"
++          ],
++          "type": "object"
++        },
+         {
+           "properties": {
+             "method": {
+@@ -6118,6 +6412,12 @@
+                 "null"
+               ]
+             },
++            "agent_instance_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
+             "agent_session": {
+               "anyOf": [
+                 {
+@@ -6178,6 +6478,12 @@
+             "pane_id": {
+               "type": "string"
+             },
++            "parent_agent_instance_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
+             "revision": {
+               "format": "uint64",
+               "minimum": 0,
+@@ -6186,6 +6492,12 @@
+             "screen_detection_skipped": {
+               "type": "boolean"
+             },
++            "spawned_from_pane_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
+             "state_change_seq": {
+               "default": 0,
+               "format": "uint64",
+@@ -6247,6 +6559,69 @@
+           ],
+           "type": "object"
+         },
++        "AgentLineageInfo": {
++          "properties": {
++            "agent_instance_id": {
++              "type": "string"
++            },
++            "host": {
++              "$ref": "#/schemas/success_response/$defs/HostScope"
++            },
++            "idempotency_key": {
++              "type": "string"
++            },
++            "kind": {
++              "type": "string"
++            },
++            "name": {
++              "type": "string"
++            },
++            "pane_id": {
++              "type": "string"
++            },
++            "parent_agent_instance_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "spawned_from_pane_id": {
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "state": {
++              "$ref": "#/schemas/success_response/$defs/AgentLineageState"
++            },
++            "tab_id": {
++              "type": "string"
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "agent_instance_id",
++            "idempotency_key",
++            "name",
++            "kind",
++            "host",
++            "workspace_id",
++            "tab_id",
++            "pane_id",
++            "state"
++          ],
++          "type": "object"
++        },
++        "AgentLineageState": {
++          "enum": [
++            "active",
++            "ended",
++            "orphaned"
++          ],
++          "type": "string"
++        },
+         "AgentManifestInfo": {
+           "properties": {
+             "active_version": {
+@@ -6804,6 +7179,22 @@
+               ],
+               "type": "object"
+             },
++            {
++              "properties": {
++                "lineage": {
++                  "$ref": "#/schemas/success_response/$defs/AgentLineageInfo"
++                },
++                "type": {
++                  "const": "agent_lineage_changed",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "lineage"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "pane_id": {
+@@ -7077,10 +7468,27 @@
+             "pane_exited",
+             "pane_agent_detected",
+             "pane_agent_status_changed",
+-            "layout_updated"
++            "layout_updated",
++            "agent_lineage_changed"
+           ],
+           "type": "string"
+         },
++        "HostScope": {
++          "description": "Identifies the Herdr service that owns public resource IDs.\n\nPublic pane IDs are durable inside this scope. Runtime IDs such as a\nterminal ID may change when the service restores a session.",
++          "properties": {
++            "host_id": {
++              "type": "string"
++            },
++            "session_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "host_id",
++            "session_id"
++          ],
++          "type": "object"
++        },
+         "InstalledPluginInfo": {
+           "properties": {
+             "actions": {
+@@ -7498,10 +7906,10 @@
+               },
+               "type": "object"
+             },
+-            "tab_id": {
+-              "type": "string"
++            "surface": {
++              "$ref": "#/schemas/success_response/$defs/PaneSurface"
+             },
+-            "terminal_id": {
++            "tab_id": {
+               "type": "string"
+             },
+             "terminal_title": {
+@@ -7538,7 +7946,7 @@
+           },
+           "required": [
+             "pane_id",
+-            "terminal_id",
++            "surface",
+             "workspace_id",
+             "tab_id",
+             "focused",
+@@ -7973,6 +8381,68 @@
+           ],
+           "type": "object"
+         },
++        "PaneSurface": {
++          "oneOf": [
++            {
++              "properties": {
++                "agent_instance_id": {
++                  "type": [
++                    "string",
++                    "null"
++                  ]
++                },
++                "attach": {
++                  "$ref": "#/schemas/success_response/$defs/TerminalAttachEndpoint"
++                },
++                "kind": {
++                  "const": "terminal",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "kind",
++                "attach"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "editor_id": {
++                  "type": "string"
++                },
++                "kind": {
++                  "const": "editor",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "kind",
++                "editor_id"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "kind": {
++                  "const": "browser",
++                  "type": "string"
++                },
++                "source_pane_id": {
++                  "type": "string"
++                },
++                "view_id": {
++                  "type": "string"
++                }
++              },
++              "required": [
++                "kind",
++                "view_id",
++                "source_pane_id"
++              ],
++              "type": "object"
++            }
++          ]
++        },
+         "PaneSwapReason": {
+           "enum": [
+             "no_neighbor",
+@@ -8967,6 +9437,37 @@
+               ],
+               "type": "object"
+             },
++            {
++              "properties": {
++                "agent": {
++                  "$ref": "#/schemas/success_response/$defs/AgentInfo"
++                },
++                "argv": {
++                  "items": {
++                    "type": "string"
++                  },
++                  "type": "array"
++                },
++                "lineage": {
++                  "$ref": "#/schemas/success_response/$defs/AgentLineageInfo"
++                },
++                "replayed": {
++                  "type": "boolean"
++                },
++                "type": {
++                  "const": "agent_created",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "agent",
++                "lineage",
++                "argv",
++                "replayed"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "agent": {
+@@ -9407,13 +9908,29 @@
+             },
+             {
+               "properties": {
++                "host": {
++                  "$ref": "#/schemas/success_response/$defs/HostScope"
++                },
++                "oldest_available_sequence": {
++                  "format": "uint64",
++                  "minimum": 0,
++                  "type": "integer"
++                },
++                "sequence": {
++                  "format": "uint64",
++                  "minimum": 0,
++                  "type": "integer"
++                },
+                 "type": {
+                   "const": "subscription_started",
+                   "type": "string"
+                 }
+               },
+               "required": [
+-                "type"
++                "type",
++                "host",
++                "sequence",
++                "oldest_available_sequence"
+               ],
+               "type": "object"
+             },
+@@ -9854,6 +10371,12 @@
+               },
+               "type": "array"
+             },
++            "event_sequence": {
++              "description": "Last domain event included in this snapshot.",
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            },
+             "focused_pane_id": {
+               "type": [
+                 "string",
+@@ -9872,12 +10395,21 @@
+                 "null"
+               ]
+             },
++            "host": {
++              "$ref": "#/schemas/success_response/$defs/HostScope"
++            },
+             "layouts": {
+               "items": {
+                 "$ref": "#/schemas/success_response/$defs/PaneLayoutSnapshot"
+               },
+               "type": "array"
+             },
++            "lineage": {
++              "items": {
++                "$ref": "#/schemas/success_response/$defs/AgentLineageInfo"
++              },
++              "type": "array"
++            },
+             "panes": {
+               "items": {
+                 "$ref": "#/schemas/success_response/$defs/PaneInfo"
+@@ -9908,11 +10440,14 @@
+           "required": [
+             "version",
+             "protocol",
++            "host",
++            "event_sequence",
+             "workspaces",
+             "tabs",
+             "panes",
+             "layouts",
+-            "agents"
++            "agents",
++            "lineage"
+           ],
+           "type": "object"
+         },
+@@ -9962,6 +10497,38 @@
+           ],
+           "type": "object"
+         },
++        "TerminalAttachEndpoint": {
++          "description": "A fresh endpoint for attaching to the terminal runtime behind a pane.\n\nThe host connection registry resolves `host` to a local socket or an SSH\ntunnel. Persisted clients must refresh this endpoint from a snapshot after\nreconnect because `terminal_id` is a runtime identity.",
++          "properties": {
++            "host": {
++              "$ref": "#/schemas/success_response/$defs/HostScope"
++            },
++            "protocol": {
++              "format": "uint32",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "terminal_id": {
++              "type": "string"
++            },
++            "transport": {
++              "$ref": "#/schemas/success_response/$defs/TerminalAttachTransport"
++            }
++          },
++          "required": [
++            "host",
++            "transport",
++            "protocol",
++            "terminal_id"
++          ],
++          "type": "object"
++        },
++        "TerminalAttachTransport": {
++          "enum": [
++            "herdr_client"
++          ],
++          "type": "string"
++        },
+         "WorkspaceInfo": {
+           "properties": {
+             "active_tab_id": {
+diff --git a/docs/next/website/src/content/docs/ja/socket-api.mdx b/docs/next/website/src/content/docs/ja/socket-api.mdx
+index 7fbe2e881f149e788e6c3a688e5097791662b60f..e2bc8c35e2c88b4df51e8ed5463c61943671fa44 100644
+--- a/docs/next/website/src/content/docs/ja/socket-api.mdx
++++ b/docs/next/website/src/content/docs/ja/socket-api.mdx
+@@ -628,6 +628,7 @@ workspace の get/list 応答は結果の `tokens` マップを公開し、ス
+   "id": "sub_1",
+   "method": "events.subscribe",
+   "params": {
++    "after_sequence": 42,
+     "subscriptions": [
+       { "type": "pane.agent_status_changed", "pane_id": "w1:p1", "agent_status": "blocked" }
+     ]
+@@ -635,7 +636,10 @@ workspace の get/list 応答は結果の `tokens` マップを公開し、ス
+ }
+ ```
+ 
+-最初のレスポンスは購読の確認応答です。以降の行はプッシュされるイベントです。
++最初のレスポンスは現在の `sequence` と `oldest_available_sequence` を含む購読確認です。
++各ドメインイベントには単調増加する `sequence`、プロトコルリビジョン、ホストスコープが含まれます。
++新しいスナップショットの後は `after_sequence` に `session.snapshot.event_sequence` を指定し、再接続時は最後に処理したイベントシーケンスを指定してください。
++カーソルが保持済みジャーナルの範囲外なら Herdr は `event_gap` を返します。新しい `session.snapshot` を取得し、プロジェクションを置き換えて、その `event_sequence` から再購読してください。
+ 
+ ワークスペースのイベント購読には `workspace.created`、`workspace.updated`、`workspace.metadata_updated`、`workspace.renamed`、`workspace.moved`、`workspace.reordered`、`workspace.closed`、`workspace.focused` があります。`workspace.metadata_updated` はプラグインイベントフックを実行せずにトークン変更と TTL 失効を報告します。その他のワークスペースイベントは Herdr の UI/ランタイムのライフサイクルを記述します。ワークスペースが worktree グループに属している場合、`workspace.created` は任意の `workspace.worktree` 出自情報を含みます。`workspace.moved` は、移動した `workspace_id`、要求された `insert_index`、更新済みの順序付き `workspaces` リストを含みます。`workspace.reordered` は、アトミックに移動した `workspace_ids`、省略可能な `before_workspace_id`、サーバーが確定した順序付き `workspaces` リストを含みます。削除前に Herdr がまだ識別できる場合、`workspace.closed` は最終的な `workspace` スナップショットを含みます。
+ タブのイベント購読には `tab.created`、`tab.closed`、`tab.focused`、`tab.renamed`、`tab.moved` があります。`tab.moved` は、移動した `tab_id`、`workspace_id`、要求された `insert_index`、そのワークスペースの更新済みの順序付き `tabs` リストを含みます。
+diff --git a/docs/next/website/src/content/docs/socket-api.mdx b/docs/next/website/src/content/docs/socket-api.mdx
+index 46eac4cc0c80d05b35ba076c1ee1a6aeb73adf95..09d4883c0ecae97b9c1c0c15f343f50248cd926f 100644
+--- a/docs/next/website/src/content/docs/socket-api.mdx
++++ b/docs/next/website/src/content/docs/socket-api.mdx
+@@ -117,6 +117,7 @@ Raw socket method names use dot notation:
+ 
+ `session.snapshot` returns a one-time bootstrap snapshot for clients that keep
+ their own local runtime cache. The response includes version/protocol metadata,
++the owning host scope, the event journal sequence used for resumption,
+ focused workspace/tab/pane ids, workspace records, tab records, pane records,
+ tab layout snapshots, and agent records. It is not a subscription; after reading
+ it, subscribe to resource events and update the local cache from those events.
+@@ -154,6 +155,11 @@ like `ctrl+h`, `control+j`, `alt+x`, and `shift+tab`, function keys like
+ Herdr returns that pane. When it is omitted, Herdr returns the active focused
+ pane.
+ 
++Every `PaneInfo` has a stable `pane_id` and a typed `surface`.
++Terminal surfaces include an optional `agent_instance_id` plus a required, refreshable `attach` endpoint.
++Editor and Browser surfaces carry their own kind-specific identities instead of pretending to be terminals.
++Use `herdr pane attach <pane-id>` to resolve a fresh terminal endpoint before attaching; agent-only operations against a plain terminal fail with `not_agent_backed`.
++
+ `pane.input.set` sets `right_click` to `herdr` or `pane` for one pane. `herdr`
+ is the default. `pane` forwards unmodified right-click hold and drag gestures
+ when the application requests terminal mouse reporting; otherwise Herdr falls
+@@ -797,6 +803,7 @@ Subscribe to events when you need a long-lived stream:
+   "id": "sub_1",
+   "method": "events.subscribe",
+   "params": {
++    "after_sequence": 42,
+     "subscriptions": [
+       { "type": "pane.agent_status_changed", "pane_id": "w1:p1", "agent_status": "blocked" }
+     ]
+@@ -804,7 +811,11 @@ Subscribe to events when you need a long-lived stream:
+ }
+ ```
+ 
+-The first response acknowledges the subscription. Later lines are pushed events.
++The first response acknowledges the subscription with the current `sequence` and `oldest_available_sequence`.
++Every domain event carries its monotonic `sequence`, protocol revision, and host scope.
++Set `after_sequence` to `session.snapshot.event_sequence` after a fresh snapshot, or to the last event sequence processed after reconnect.
++If that cursor is outside the retained journal, Herdr returns `event_gap`; fetch a new `session.snapshot`, replace the projection, and resubscribe from its `event_sequence`.
++Polling subscriptions such as `pane.output_matched` and `pane.scroll_changed` retain their specialized event envelopes.
+ 
+ Workspace event subscriptions include `workspace.created`, `workspace.updated`, `workspace.metadata_updated`, `workspace.renamed`, `workspace.moved`, `workspace.reordered`, `workspace.closed`, and `workspace.focused`. `workspace.metadata_updated` reports token changes and TTL expiry without invoking plugin event hooks. Other workspace events describe Herdr UI/runtime lifecycle. `workspace.created` includes optional `workspace.worktree` provenance when the workspace belongs to a worktree group. `workspace.moved` includes the moved `workspace_id`, requested `insert_index`, and updated ordered `workspaces` list. `workspace.reordered` includes the atomically moved `workspace_ids`, optional `before_workspace_id`, and authoritative ordered `workspaces` list. `workspace.closed` includes a final `workspace` snapshot when Herdr can still identify it before removal.
+ Tab event subscriptions include `tab.created`, `tab.closed`, `tab.focused`,
+@@ -863,7 +874,16 @@ Successful responses look like this:
+     "type": "pane_info",
+     "pane": {
+       "pane_id": "w1:p1",
+-      "terminal_id": "term_abc123",
++      "surface": {
++        "kind": "terminal",
++        "agent_instance_id": "codex:session_123",
++        "attach": {
++          "host": {"host_id": "macbook", "session_id": "default"},
++          "transport": "herdr_client",
++          "protocol": 21,
++          "terminal_id": "term_abc123"
++        }
++      },
+       "workspace_id": "w1",
+       "tab_id": "w1:t1",
+       "focused": true,
+diff --git a/docs/next/website/src/content/docs/zh-cn/socket-api.mdx b/docs/next/website/src/content/docs/zh-cn/socket-api.mdx
+index e1c01db08325b708af2346cce9305237f18f76e9..6a5e9cc845e6bebc505e74b0708293c6e5402b00 100644
+--- a/docs/next/website/src/content/docs/zh-cn/socket-api.mdx
++++ b/docs/next/website/src/content/docs/zh-cn/socket-api.mdx
+@@ -624,6 +624,7 @@ workspace 的 get/list 响应会公开生成的 `tokens` 映射,空间侧边栏
+   "id": "sub_1",
+   "method": "events.subscribe",
+   "params": {
++    "after_sequence": 42,
+     "subscriptions": [
+       { "type": "pane.agent_status_changed", "pane_id": "w1:p1", "agent_status": "blocked" }
+     ]
+@@ -631,7 +632,10 @@ workspace 的 get/list 响应会公开生成的 `tokens` 映射,空间侧边栏
+ }
+ ```
+ 
+-第一个响应确认订阅。之后的行是推送的事件。
++第一个响应会用当前 `sequence` 和 `oldest_available_sequence` 确认订阅。
++每个领域事件都带有单调递增的 `sequence`、协议版本和主机范围。
++取得新快照后把 `after_sequence` 设为 `session.snapshot.event_sequence`;重连时则使用最后处理的事件序号。
++如果游标超出保留日志范围,Herdr 会返回 `event_gap`;请获取新的 `session.snapshot`,替换投影,并从其 `event_sequence` 重新订阅。
+ 
+ 工作区事件订阅包括 `workspace.created`、`workspace.updated`、`workspace.metadata_updated`、`workspace.renamed`、`workspace.moved`、`workspace.reordered`、`workspace.closed` 和 `workspace.focused`。`workspace.metadata_updated` 报告令牌变更和 TTL 到期,但不会调用插件事件钩子。其他工作区事件描述 Herdr UI/运行时的生命周期。当工作区属于 worktree 组时,`workspace.created` 包含可选的 `workspace.worktree` 来源信息。`workspace.moved` 包含被移动的 `workspace_id`、请求的 `insert_index` 和更新后的有序 `workspaces` 列表。`workspace.reordered` 包含原子移动的 `workspace_ids`、可选的 `before_workspace_id` 和服务器确认的有序 `workspaces` 列表。在移除前 Herdr 仍能识别时,`workspace.closed` 包含最终的 `workspace` 快照。
+ 标签页事件订阅包括 `tab.created`、`tab.closed`、`tab.focused`、`tab.renamed` 和 `tab.moved`。`tab.moved` 包含被移动的 `tab_id`、`workspace_id`、请求的 `insert_index` 和该工作区更新后的有序 `tabs` 列表。
+diff --git a/src/api/event_hub.rs b/src/api/event_hub.rs
+index 42cf47a20bd0b8056a1c324d83105f7795f574f6..1185aa554f498673cc958f34757abf7e3cb780a4 100644
+--- a/src/api/event_hub.rs
++++ b/src/api/event_hub.rs
+@@ -3,6 +3,25 @@ pub struct EventHub {
+     inner: std::sync::Arc<std::sync::Mutex<EventHubState>>,
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct EventSequenceWindow {
++    pub oldest_available: u64,
++    pub latest: u64,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct EventGap {
++    pub requested_after: u64,
++    pub oldest_available: u64,
++    pub latest: u64,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum EventReadError {
++    Gap(EventGap),
++    Unavailable,
++}
++
+ #[derive(Default)]
+ struct EventHubState {
+     next_sequence: u64,
+@@ -14,6 +33,7 @@ impl EventHub {
+ 
+     pub fn push(&self, event: crate::api::schema::EventEnvelope) {
+         let Ok(mut state) = self.inner.lock() else {
++            tracing::error!("event journal lock poisoned; domain event was not recorded");
+             return;
+         };
+         state.next_sequence += 1;
+@@ -38,9 +58,133 @@ impl EventHub {
+     }
+ 
+     pub fn current_sequence(&self) -> u64 {
+-        let Ok(state) = self.inner.lock() else {
+-            return 0;
++        match self.current_sequence_result() {
++            Ok(sequence) => sequence,
++            Err(EventReadError::Unavailable) => {
++                tracing::error!("event journal lock poisoned; current sequence unavailable");
++                0
++            }
++            Err(EventReadError::Gap(_)) => unreachable!("reading the current sequence cannot gap"),
++        }
++    }
++
++    pub fn current_sequence_result(&self) -> Result<u64, EventReadError> {
++        self.inner
++            .lock()
++            .map(|state| state.next_sequence)
++            .map_err(|_| EventReadError::Unavailable)
++    }
++
++    pub fn sequence_window(&self) -> Result<EventSequenceWindow, EventReadError> {
++        let state = self.inner.lock().map_err(|_| EventReadError::Unavailable)?;
++        let oldest_available = state
++            .events
++            .first()
++            .map(|(sequence, _)| *sequence)
++            .unwrap_or_else(|| state.next_sequence.saturating_add(1));
++        Ok(EventSequenceWindow {
++            oldest_available,
++            latest: state.next_sequence,
++        })
++    }
++
++    pub fn read_after(
++        &self,
++        requested_after: u64,
++    ) -> Result<Vec<crate::api::schema::SequencedEventEnvelope>, EventReadError> {
++        let state = self.inner.lock().map_err(|_| EventReadError::Unavailable)?;
++        let oldest_available = state
++            .events
++            .first()
++            .map(|(sequence, _)| *sequence)
++            .unwrap_or_else(|| state.next_sequence.saturating_add(1));
++        let earliest_valid_cursor = oldest_available.saturating_sub(1);
++        if requested_after < earliest_valid_cursor || requested_after > state.next_sequence {
++            return Err(EventReadError::Gap(EventGap {
++                requested_after,
++                oldest_available,
++                latest: state.next_sequence,
++            }));
++        }
++
++        let host = crate::api::host_scope();
++        Ok(state
++            .events
++            .iter()
++            .filter(|(sequence, _)| *sequence > requested_after)
++            .map(
++                |(sequence, event)| crate::api::schema::SequencedEventEnvelope {
++                    protocol: crate::protocol::PROTOCOL_VERSION,
++                    host: host.clone(),
++                    sequence: *sequence,
++                    event: event.event,
++                    data: event.data.clone(),
++                },
++            )
++            .collect())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::api::schema::{EventData, EventEnvelope, EventKind};
++
++    fn event(index: u64) -> EventEnvelope {
++        EventEnvelope {
++            event: EventKind::PaneClosed,
++            data: EventData::PaneClosed {
++                pane_id: format!("pane_{index}"),
++                workspace_id: "workspace_1".into(),
++            },
++        }
++    }
++
++    #[test]
++    fn read_after_returns_monotonic_sequenced_events() {
++        let hub = EventHub::default();
++        hub.push(event(1));
++        hub.push(event(2));
++
++        let events = hub.read_after(0).expect("ordered events");
++        assert_eq!(
++            events
++                .iter()
++                .map(|event| event.sequence)
++                .collect::<Vec<_>>(),
++            vec![1, 2]
++        );
++        assert_eq!(events[0].data, event(1).data);
++        assert_eq!(events[1].data, event(2).data);
++    }
++
++    #[test]
++    fn read_after_reports_gap_after_retention_overflow() {
++        let hub = EventHub::default();
++        for index in 0..=(EventHub::MAX_EVENTS as u64) {
++            hub.push(event(index));
++        }
++
++        let Err(EventReadError::Gap(gap)) = hub.read_after(0) else {
++            panic!("expected explicit event gap");
+         };
+-        state.next_sequence
++        assert_eq!(gap.requested_after, 0);
++        assert_eq!(gap.oldest_available, 2);
++        assert_eq!(gap.latest, EventHub::MAX_EVENTS as u64 + 1);
++    }
++
++    #[test]
++    fn read_after_rejects_future_cursor() {
++        let hub = EventHub::default();
++        hub.push(event(1));
++
++        assert!(matches!(
++            hub.read_after(2),
++            Err(EventReadError::Gap(EventGap {
++                requested_after: 2,
++                oldest_available: 1,
++                latest: 1,
++            }))
++        ));
+     }
+ }
+diff --git a/src/api/mod.rs b/src/api/mod.rs
+index b4a5d26210d3e3b45e397c883f18ed8cf74a47ab..a6d8c0654b445c12d2b022f3f3ac16c983f250eb 100644
+--- a/src/api/mod.rs
++++ b/src/api/mod.rs
+@@ -6,7 +6,7 @@ mod status;
+ mod subscriptions;
+ mod wait;
+ 
+-pub use event_hub::EventHub;
++pub use event_hub::{EventHub, EventReadError};
+ pub(crate) use server::start_server_with_stop_control;
+ pub use server::{start_server_with_capabilities, ServerHandle};
+ pub use status::{read_runtime_status_at, RuntimeStatus};
+@@ -47,6 +47,7 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
+             | Method::AgentViewClear(_)
+             | Method::AgentFocus(_)
+             | Method::AgentStart(_)
++            | Method::AgentNew(_)
+             | Method::AgentPrompt(_)
+             | Method::AgentSendKeys(_)
+             | Method::PaneSplit(_)
+@@ -93,3 +94,15 @@ pub type ApiRequestSender = mpsc::UnboundedSender<ApiRequestMessage>;
+ pub fn socket_path() -> PathBuf {
+     crate::session::active_api_socket_path()
+ }
++
++/// Stable scope for public resource IDs exposed by this Herdr service.
++///
++/// Pane/workspace IDs are stable within a named session but may collide on a
++/// different machine or session. Clients must retain this scope alongside
++/// every public ID instead of treating values such as `w1:p1` as global.
++pub fn host_scope() -> crate::api::schema::HostScope {
++    crate::api::schema::HostScope {
++        host_id: crate::platform::hostname().unwrap_or_else(|| "unknown-host".to_string()),
++        session_id: crate::session::active_name().unwrap_or_else(|| "default".to_string()),
++    }
++}
+diff --git a/src/api/schema.rs b/src/api/schema.rs
+index 6f76e3d3d4e5a2cba9d1cdad1664d9965e828542..24893751e8463ac46ae1e1836a93e5de07373f0a 100644
+--- a/src/api/schema.rs
++++ b/src/api/schema.rs
+@@ -123,6 +123,8 @@ pub enum Method {
+     AgentFocus(AgentTarget),
+     #[serde(rename = "agent.start")]
+     AgentStart(AgentStartParams),
++    #[serde(rename = "agent.new")]
++    AgentNew(AgentNewParams),
+     #[serde(rename = "agent.prompt")]
+     AgentPrompt(AgentPromptParams),
+     #[serde(rename = "agent.wait")]
+diff --git a/src/api/schema/agents.rs b/src/api/schema/agents.rs
+index 8877fc23cd569cd6948a3e36d969f8de0b756431..c67a35b2e82a26c59ce438593f4c6bc7ca53e3ac 100644
+--- a/src/api/schema/agents.rs
++++ b/src/api/schema/agents.rs
+@@ -2,7 +2,8 @@ use std::collections::HashMap;
+ 
+ use serde::{Deserialize, Serialize};
+ 
+-use super::common::{AgentStatus, ReadFormat, ReadSource};
++use super::common::{AgentStatus, OperationContext, ReadFormat, ReadSource, SplitDirection};
++use super::panes::HostScope;
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct AgentReadParams {
+@@ -172,6 +173,51 @@ pub struct AgentStartParams {
+     pub timeout_ms: Option<u64>,
+ }
+ 
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct AgentNewParams {
++    pub operation: OperationContext,
++    pub name: String,
++    pub kind: String,
++    pub target_pane_id: String,
++    #[serde(default)]
++    pub direction: SplitDirection,
++    #[serde(default)]
++    pub focus: bool,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub cwd: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub spawned_from_pane_id: Option<String>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub args: Vec<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub timeout_ms: Option<u64>,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentLineageState {
++    Active,
++    Ended,
++    Orphaned,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct AgentLineageInfo {
++    pub agent_instance_id: String,
++    pub idempotency_key: String,
++    pub name: String,
++    pub kind: String,
++    pub host: HostScope,
++    pub workspace_id: String,
++    pub tab_id: String,
++    pub pane_id: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub parent_agent_instance_id: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub spawned_from_pane_id: Option<String>,
++    pub state: AgentLineageState,
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct AgentPromptParams {
+     pub target: String,
+@@ -182,6 +228,12 @@ pub struct AgentPromptParams {
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct AgentInfo {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub agent_instance_id: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub parent_agent_instance_id: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub spawned_from_pane_id: Option<String>,
+     pub terminal_id: String,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub name: Option<String>,
+diff --git a/src/api/schema/common.rs b/src/api/schema/common.rs
+index 7313002cda2210fbfa29a8be5fa2167b4bfd8c98..b1b925050eb9a0b41eda38d7a15643fbc37af1fc 100644
+--- a/src/api/schema/common.rs
++++ b/src/api/schema/common.rs
+@@ -25,6 +25,37 @@ pub(super) fn metadata_token_values_schema(
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+ pub struct EmptyParams {}
+ 
++/// Retry identity for a mutation that must converge when submitted twice.
++///
++/// Each method that supports replay embeds this context in its params. The
++/// request correlation `id` is intentionally separate and is never used as an
++/// idempotency key.
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct OperationContext {
++    pub idempotency_key: String,
++}
++
++impl OperationContext {
++    pub const MAX_KEY_BYTES: usize = 128;
++
++    pub fn validate(&self) -> Result<(), &'static str> {
++        let key = self.idempotency_key.as_str();
++        if key.is_empty() {
++            return Err("idempotency_key must not be empty");
++        }
++        if key.len() > Self::MAX_KEY_BYTES {
++            return Err("idempotency_key is too long");
++        }
++        if !key
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
++        {
++            return Err("idempotency_key contains unsupported characters");
++        }
++        Ok(())
++    }
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct WorkspaceTarget {
+     pub workspace_id: String,
+@@ -50,9 +81,10 @@ pub struct ClientWindowTitleSetParams {
+     pub title: String,
+ }
+ 
+-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+ #[serde(rename_all = "snake_case")]
+ pub enum SplitDirection {
++    #[default]
+     Right,
+     Down,
+ }
+diff --git a/src/api/schema/events.rs b/src/api/schema/events.rs
+index 52ac6c96a5ebbfa4dcf04170225d778cc5050273..25745821b9da220a56d51871fc05a9f9156eec98 100644
+--- a/src/api/schema/events.rs
++++ b/src/api/schema/events.rs
+@@ -2,14 +2,17 @@ use std::collections::HashMap;
+ 
+ use serde::{Deserialize, Serialize};
+ 
++use super::agents::AgentLineageInfo;
+ use super::common::{AgentStatus, ReadSource};
+-use super::panes::{PaneInfo, PaneReadResult, PaneScrollInfo};
++use super::panes::{HostScope, PaneInfo, PaneReadResult, PaneScrollInfo};
+ use super::tabs::TabInfo;
+ use super::workspaces::WorkspaceInfo;
+ use super::worktrees::WorktreeInfo;
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct EventsSubscribeParams {
++    /// Resume strictly after this domain event sequence.
++    pub after_sequence: u64,
+     pub subscriptions: Vec<Subscription>,
+ }
+ 
+@@ -82,6 +85,63 @@ pub enum Subscription {
+     PaneScrollChanged { pane_id: String },
+     #[serde(rename = "layout.updated")]
+     LayoutUpdated {},
++    #[serde(rename = "agent.lineage_changed")]
++    AgentLineageChanged {},
++}
++
++impl Subscription {
++    pub fn is_domain_event_filter(&self) -> bool {
++        !matches!(
++            self,
++            Self::PaneOutputMatched { .. } | Self::PaneScrollChanged { .. }
++        )
++    }
++
++    pub fn matches_domain_event(&self, event: &EventEnvelope) -> bool {
++        match self {
++            Self::WorkspaceCreated {} => event.event == EventKind::WorkspaceCreated,
++            Self::WorkspaceUpdated {} => event.event == EventKind::WorkspaceUpdated,
++            Self::WorkspaceMetadataUpdated {} => event.event == EventKind::WorkspaceMetadataUpdated,
++            Self::WorkspaceRenamed {} => event.event == EventKind::WorkspaceRenamed,
++            Self::WorkspaceMoved {} => event.event == EventKind::WorkspaceMoved,
++            Self::WorkspaceReordered {} => event.event == EventKind::WorkspaceReordered,
++            Self::WorkspaceClosed {} => event.event == EventKind::WorkspaceClosed,
++            Self::WorkspaceFocused {} => event.event == EventKind::WorkspaceFocused,
++            Self::WorktreeCreated {} => event.event == EventKind::WorktreeCreated,
++            Self::WorktreeOpened {} => event.event == EventKind::WorktreeOpened,
++            Self::WorktreeRemoved {} => event.event == EventKind::WorktreeRemoved,
++            Self::TabCreated {} => event.event == EventKind::TabCreated,
++            Self::TabClosed {} => event.event == EventKind::TabClosed,
++            Self::TabFocused {} => event.event == EventKind::TabFocused,
++            Self::TabRenamed {} => event.event == EventKind::TabRenamed,
++            Self::TabMoved {} => event.event == EventKind::TabMoved,
++            Self::PaneCreated {} => event.event == EventKind::PaneCreated,
++            Self::PaneClosed {} => event.event == EventKind::PaneClosed,
++            Self::PaneUpdated {} => event.event == EventKind::PaneUpdated,
++            Self::PaneFocused {} => event.event == EventKind::PaneFocused,
++            Self::PaneMoved {} => event.event == EventKind::PaneMoved,
++            Self::PaneExited {} => event.event == EventKind::PaneExited,
++            Self::PaneAgentDetected {} => event.event == EventKind::PaneAgentDetected,
++            Self::LayoutUpdated {} => event.event == EventKind::LayoutUpdated,
++            Self::AgentLineageChanged {} => event.event == EventKind::AgentLineageChanged,
++            Self::PaneAgentStatusChanged {
++                pane_id,
++                agent_status,
++            } => match &event.data {
++                EventData::PaneAgentStatusChanged {
++                    pane_id: event_pane_id,
++                    agent_status: event_status,
++                    ..
++                } => {
++                    event.event == EventKind::PaneAgentStatusChanged
++                        && pane_id == event_pane_id
++                        && agent_status.map_or(true, |wanted| wanted == *event_status)
++                }
++                _ => false,
++            },
++            Self::PaneOutputMatched { .. } | Self::PaneScrollChanged { .. } => false,
++        }
++    }
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+@@ -218,6 +278,7 @@ pub enum EventKind {
+     PaneAgentDetected,
+     PaneAgentStatusChanged,
+     LayoutUpdated,
++    AgentLineageChanged,
+ }
+ 
+ impl EventKind {
+@@ -249,6 +310,7 @@ impl EventKind {
+             EventKind::PaneAgentDetected => "pane.agent_detected",
+             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
+             EventKind::LayoutUpdated => "layout.updated",
++            EventKind::AgentLineageChanged => "agent.lineage_changed",
+         }
+     }
+ }
+@@ -281,6 +343,7 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
+     EventKind::PaneAgentDetected,
+     EventKind::PaneAgentStatusChanged,
+     EventKind::LayoutUpdated,
++    EventKind::AgentLineageChanged,
+ ];
+ 
+ pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
+@@ -306,6 +369,7 @@ pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
+     EventKind::PaneExited,
+     EventKind::PaneAgentDetected,
+     EventKind::PaneAgentStatusChanged,
++    EventKind::AgentLineageChanged,
+ ];
+ 
+ #[cfg(test)]
+@@ -364,6 +428,17 @@ pub struct EventEnvelope {
+     pub data: EventData,
+ }
+ 
++/// Domain event with the service scope and monotonic ordering cursor needed
++/// for exact reconnect and snapshot resynchronization.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct SequencedEventEnvelope {
++    pub protocol: u32,
++    pub host: HostScope,
++    pub sequence: u64,
++    pub event: EventKind,
++    pub data: EventData,
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub enum SubscriptionEventKind {
+     #[serde(rename = "pane.output_matched")]
+@@ -500,6 +575,9 @@ pub enum EventData {
+     PaneUpdated {
+         pane: PaneInfo,
+     },
++    AgentLineageChanged {
++        lineage: AgentLineageInfo,
++    },
+     PaneFocused {
+         pane_id: String,
+         workspace_id: String,
+diff --git a/src/api/schema/panes.rs b/src/api/schema/panes.rs
+index 6435a422e3ccc3537121d4b50ddce5d454d02573..25dbe7a707fe2ffec6949296dbc9f781f146a15e 100644
+--- a/src/api/schema/panes.rs
++++ b/src/api/schema/panes.rs
+@@ -13,6 +13,61 @@ pub(crate) const PANE_GRAPHICS_PRIMARY_LAYER_ID: &str = "primary";
+ use super::agents::AgentSessionInfo;
+ use super::common::{AgentStatus, PaneAgentState, ReadFormat, ReadSource, SplitDirection};
+ 
++/// Identifies the Herdr service that owns public resource IDs.
++///
++/// Public pane IDs are durable inside this scope. Runtime IDs such as a
++/// terminal ID may change when the service restores a session.
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct HostScope {
++    pub host_id: String,
++    pub session_id: String,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum TerminalAttachTransport {
++    HerdrClient,
++}
++
++/// A fresh endpoint for attaching to the terminal runtime behind a pane.
++///
++/// The host connection registry resolves `host` to a local socket or an SSH
++/// tunnel. Persisted clients must refresh this endpoint from a snapshot after
++/// reconnect because `terminal_id` is a runtime identity.
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct TerminalAttachEndpoint {
++    pub host: HostScope,
++    pub transport: TerminalAttachTransport,
++    pub protocol: u32,
++    pub terminal_id: String,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[serde(tag = "kind", rename_all = "snake_case")]
++pub enum PaneSurface {
++    Terminal {
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        agent_instance_id: Option<String>,
++        attach: TerminalAttachEndpoint,
++    },
++    Editor {
++        editor_id: String,
++    },
++    Browser {
++        view_id: String,
++        source_pane_id: String,
++    },
++}
++
++impl PaneSurface {
++    pub fn terminal_attach(&self) -> Option<&TerminalAttachEndpoint> {
++        match self {
++            Self::Terminal { attach, .. } => Some(attach),
++            Self::Editor { .. } | Self::Browser { .. } => None,
++        }
++    }
++}
++
+ #[derive(
+     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default,
+ )]
+@@ -446,7 +501,7 @@ pub struct PaneReleaseAgentParams {
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct PaneInfo {
+     pub pane_id: String,
+-    pub terminal_id: String,
++    pub surface: PaneSurface,
+     pub workspace_id: String,
+     pub tab_id: String,
+     pub focused: bool,
+diff --git a/src/api/schema/response.rs b/src/api/schema/response.rs
+index da2813a6c36476240cb4db1aead9278354f7fb2d..822b6f9f297a50c3fcbe64292891ab9c4d5f45d8 100644
+--- a/src/api/schema/response.rs
++++ b/src/api/schema/response.rs
+@@ -1,15 +1,15 @@
+ use serde::{Deserialize, Serialize};
+ 
+-use super::agents::AgentInfo;
++use super::agents::{AgentInfo, AgentLineageInfo};
+ use super::common::{ClientWindowTitleReason, NotificationShowReason};
+ use super::events::EventEnvelope;
+ use super::integrations::{
+     IntegrationInstallResult, IntegrationTarget, IntegrationUninstallResult,
+ };
+ use super::panes::{
+-    LayoutDescription, PaneEdgesResult, PaneFocusDirectionResult, PaneInfo, PaneLayoutSnapshot,
+-    PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult, PaneResizeResult,
+-    PaneSwapResult, PaneZoomResult,
++    HostScope, LayoutDescription, PaneEdgesResult, PaneFocusDirectionResult, PaneInfo,
++    PaneLayoutSnapshot, PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult,
++    PaneResizeResult, PaneSwapResult, PaneZoomResult,
+ };
+ use super::plugins::{
+     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
+@@ -101,6 +101,12 @@ pub enum ResponseResult {
+         agent: AgentInfo,
+         argv: Vec<String>,
+     },
++    AgentCreated {
++        agent: AgentInfo,
++        lineage: AgentLineageInfo,
++        argv: Vec<String>,
++        replayed: bool,
++    },
+     AgentPrompted {
+         agent: AgentInfo,
+     },
+@@ -192,7 +198,11 @@ pub enum ResponseResult {
+     AgentExplain {
+         explain: serde_json::Value,
+     },
+-    SubscriptionStarted {},
++    SubscriptionStarted {
++        host: HostScope,
++        sequence: u64,
++        oldest_available_sequence: u64,
++    },
+     WaitMatched {
+         event: EventEnvelope,
+     },
+diff --git a/src/api/schema/session.rs b/src/api/schema/session.rs
+index 63fd8e09449843ba2ce7a2a0ddac0f379841cfb9..bc2d7eb2cf7724cec7f56b8acc06632bba71e665 100644
+--- a/src/api/schema/session.rs
++++ b/src/api/schema/session.rs
+@@ -1,7 +1,7 @@
+ use serde::{Deserialize, Serialize};
+ 
+-use super::agents::AgentInfo;
+-use super::panes::{PaneInfo, PaneLayoutSnapshot};
++use super::agents::{AgentInfo, AgentLineageInfo};
++use super::panes::{HostScope, PaneInfo, PaneLayoutSnapshot};
+ use super::tabs::TabInfo;
+ use super::workspaces::WorkspaceInfo;
+ 
+@@ -9,6 +9,9 @@ use super::workspaces::WorkspaceInfo;
+ pub struct SessionSnapshot {
+     pub version: String,
+     pub protocol: u32,
++    pub host: HostScope,
++    /// Last domain event included in this snapshot.
++    pub event_sequence: u64,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub focused_workspace_id: Option<String>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+@@ -20,4 +23,5 @@ pub struct SessionSnapshot {
+     pub panes: Vec<PaneInfo>,
+     pub layouts: Vec<PaneLayoutSnapshot>,
+     pub agents: Vec<AgentInfo>,
++    pub lineage: Vec<AgentLineageInfo>,
+ }
+diff --git a/src/api/schema/tests.rs b/src/api/schema/tests.rs
+index 5fe6dd27bee1ecacd18d886abc917779939fbc96..65312adf03a5f0429b5cf6050029f20d110ba3b1 100644
+--- a/src/api/schema/tests.rs
++++ b/src/api/schema/tests.rs
+@@ -122,6 +122,30 @@ fn agent_start_and_prompt_requests_round_trip() {
+     );
+ }
+ 
++#[test]
++fn agent_new_request_round_trips_with_operation_and_layout() {
++    let request = Request {
++        id: "req_agent_new".into(),
++        method: Method::AgentNew(AgentNewParams {
++            operation: OperationContext {
++                idempotency_key: "retry-1".into(),
++            },
++            name: "child".into(),
++            kind: "codex".into(),
++            target_pane_id: "w1:p1".into(),
++            direction: SplitDirection::Down,
++            focus: false,
++            cwd: None,
++            spawned_from_pane_id: Some("w1:p1".into()),
++            args: vec!["--quiet".into()],
++            timeout_ms: Some(30_000),
++        }),
++    };
++    let json = serde_json::to_string(&request).unwrap();
++    assert!(json.contains("\"method\":\"agent.new\""));
++    assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
++}
++
+ #[test]
+ fn bundled_protocol_schema_refs_resolve_inside_bundle() {
+     fn assert_no_standalone_refs(value: &serde_json::Value) {
+@@ -533,6 +557,7 @@ fn subscribe_request_parses_parameterized_subscriptions() {
+         "id": "sub_1",
+         "method": "events.subscribe",
+         "params": {
++            "after_sequence": 0,
+             "subscriptions": [
+                 {
+                     "type": "pane.output_matched",
+@@ -666,6 +691,11 @@ fn session_snapshot_request_and_response_round_trip() {
+             snapshot: Box::new(SessionSnapshot {
+                 version: "0.1.2".into(),
+                 protocol: 16,
++                host: HostScope {
++                    host_id: "test-host".into(),
++                    session_id: "default".into(),
++                },
++                event_sequence: 42,
+                 focused_workspace_id: None,
+                 focused_tab_id: None,
+                 focused_pane_id: None,
+@@ -674,6 +704,7 @@ fn session_snapshot_request_and_response_round_trip() {
+                 panes: Vec::new(),
+                 layouts: Vec::new(),
+                 agents: Vec::new(),
++                lineage: Vec::new(),
+             }),
+         },
+     };
+@@ -731,7 +762,18 @@ fn worktree_request_and_response_round_trip() {
+             },
+             root_pane: PaneInfo {
+                 pane_id: "w_1-1".into(),
+-                terminal_id: "term_1".into(),
++                surface: PaneSurface::Terminal {
++                    agent_instance_id: None,
++                    attach: TerminalAttachEndpoint {
++                        host: HostScope {
++                            host_id: "test-host".into(),
++                            session_id: "test".into(),
++                        },
++                        transport: TerminalAttachTransport::HerdrClient,
++                        protocol: crate::protocol::PROTOCOL_VERSION,
++                        terminal_id: "term_1".into(),
++                    },
++                },
+                 workspace_id: "w_1".into(),
+                 tab_id: "w_1:1".into(),
+                 focused: true,
+@@ -774,6 +816,7 @@ fn worktree_lifecycle_events_round_trip() {
+     let subscription = Request {
+         id: "sub_worktrees".into(),
+         method: Method::EventsSubscribe(EventsSubscribeParams {
++            after_sequence: 0,
+             subscriptions: vec![
+                 Subscription::WorktreeCreated {},
+                 Subscription::WorktreeOpened {},
+@@ -1126,6 +1169,7 @@ fn authority_mutation_requests_round_trip() {
+     let subscription = Request {
+         id: "sub_moves".into(),
+         method: Method::EventsSubscribe(EventsSubscribeParams {
++            after_sequence: 42,
+             subscriptions: vec![
+                 Subscription::WorkspaceMoved {},
+                 Subscription::WorkspaceReordered {},
+@@ -1159,7 +1203,18 @@ fn create_response_round_trips_with_root_pane() {
+             },
+             root_pane: PaneInfo {
+                 pane_id: "w_1-3".into(),
+-                terminal_id: "term_example".into(),
++                surface: PaneSurface::Terminal {
++                    agent_instance_id: None,
++                    attach: TerminalAttachEndpoint {
++                        host: HostScope {
++                            host_id: "test-host".into(),
++                            session_id: "test".into(),
++                        },
++                        transport: TerminalAttachTransport::HerdrClient,
++                        protocol: crate::protocol::PROTOCOL_VERSION,
++                        terminal_id: "term_example".into(),
++                    },
++                },
+                 workspace_id: "w_1".into(),
+                 tab_id: "w_1:2".into(),
+                 focused: false,
+@@ -1318,3 +1373,113 @@ fn popup_close_request_round_trips() {
+     assert_eq!(json["method"], "popup.close");
+     assert_eq!(json["params"], serde_json::json!({}));
+ }
++
++#[test]
++fn typed_pane_surfaces_round_trip_without_kind_payload_mismatch() {
++    let host = HostScope {
++        host_id: "mac-mini".into(),
++        session_id: "default".into(),
++    };
++    let surfaces = vec![
++        PaneSurface::Terminal {
++            agent_instance_id: Some("herdr:codex:agent-1".into()),
++            attach: TerminalAttachEndpoint {
++                host: host.clone(),
++                transport: TerminalAttachTransport::HerdrClient,
++                protocol: crate::protocol::PROTOCOL_VERSION,
++                terminal_id: "term_runtime_1".into(),
++            },
++        },
++        PaneSurface::Editor {
++            editor_id: "editor_1".into(),
++        },
++        PaneSurface::Browser {
++            view_id: "browser_1".into(),
++            source_pane_id: "w1:p1".into(),
++        },
++    ];
++
++    for surface in surfaces {
++        let value = serde_json::to_value(&surface).unwrap();
++        let restored: PaneSurface = serde_json::from_value(value).unwrap();
++        assert_eq!(restored, surface);
++    }
++}
++
++#[test]
++fn terminal_surface_exposes_required_attach_and_optional_agent_instance() {
++    let surface = PaneSurface::Terminal {
++        agent_instance_id: Some("agent-instance".into()),
++        attach: TerminalAttachEndpoint {
++            host: HostScope {
++                host_id: "local".into(),
++                session_id: "default".into(),
++            },
++            transport: TerminalAttachTransport::HerdrClient,
++            protocol: crate::protocol::PROTOCOL_VERSION,
++            terminal_id: "term_1".into(),
++        },
++    };
++
++    let PaneSurface::Terminal {
++        agent_instance_id, ..
++    } = &surface
++    else {
++        panic!("expected terminal surface");
++    };
++    assert_eq!(agent_instance_id.as_deref(), Some("agent-instance"));
++    assert_eq!(surface.terminal_attach().unwrap().terminal_id, "term_1");
++}
++
++#[test]
++fn event_subscription_requires_resume_cursor() {
++    let missing_cursor = serde_json::json!({
++        "id": "sub",
++        "method": "events.subscribe",
++        "params": { "subscriptions": [{ "type": "pane.updated" }] }
++    });
++    assert!(serde_json::from_value::<Request>(missing_cursor).is_err());
++}
++
++#[test]
++fn sequenced_event_carries_host_and_cursor() {
++    let event = SequencedEventEnvelope {
++        protocol: crate::protocol::PROTOCOL_VERSION,
++        host: HostScope {
++            host_id: "local".into(),
++            session_id: "default".into(),
++        },
++        sequence: 9,
++        event: EventKind::PaneClosed,
++        data: EventData::PaneClosed {
++            pane_id: "w1:p1".into(),
++            workspace_id: "w1".into(),
++        },
++    };
++
++    let json = serde_json::to_value(&event).unwrap();
++    assert_eq!(json["sequence"], 9);
++    assert_eq!(json["host"]["host_id"], "local");
++    assert_eq!(
++        serde_json::from_value::<SequencedEventEnvelope>(json).unwrap(),
++        event
++    );
++}
++
++#[test]
++fn operation_context_validates_retry_identity() {
++    let valid = OperationContext {
++        idempotency_key: "agent.new:request-1".into(),
++    };
++    assert_eq!(valid.validate(), Ok(()));
++    assert!(OperationContext {
++        idempotency_key: "bad key".into(),
++    }
++    .validate()
++    .is_err());
++    assert!(OperationContext {
++        idempotency_key: "x".repeat(OperationContext::MAX_KEY_BYTES + 1),
++    }
++    .validate()
++    .is_err());
++}
+diff --git a/src/api/server.rs b/src/api/server.rs
+index 3af8051f43470427d29e8bb1f17d7491cb72fac7..1154cfea55ec8c8bb15677102a6643bb5b774680 100644
+--- a/src/api/server.rs
++++ b/src/api/server.rs
+@@ -421,6 +421,7 @@ fn api_method_name(method: &Method) -> &'static str {
+         Method::AgentViewClear(_) => "agent.view.clear",
+         Method::AgentFocus(_) => "agent.focus",
+         Method::AgentStart(_) => "agent.start",
++        Method::AgentNew(_) => "agent.new",
+         Method::AgentPrompt(_) => "agent.prompt",
+         Method::AgentWait(_) => "agent.wait",
+         Method::PaneSplit(_) => "pane.split",
+@@ -691,8 +692,37 @@ fn stream_subscriptions(
+     event_hub: &EventHub,
+     running: &Arc<AtomicBool>,
+ ) -> std::io::Result<()> {
++    let initial_events = match event_hub.read_after(params.after_sequence) {
++        Ok(events) => events,
++        Err(error) => {
++            return write_subscription_read_error(&mut stream, &request_id, error);
++        }
++    };
++    let window = match event_hub.sequence_window() {
++        Ok(window) => window,
++        Err(error) => {
++            return write_subscription_read_error(&mut stream, &request_id, error);
++        }
++    };
++
++    let mut domain_filters = Vec::new();
+     let mut subscriptions = Vec::with_capacity(params.subscriptions.len());
+     for (index, subscription) in params.subscriptions.into_iter().enumerate() {
++        let subscription = match crate::api::subscriptions::normalize_domain_subscription(
++            subscription,
++            &request_id,
++            index,
++            api_tx,
++        ) {
++            Ok(subscription) => subscription,
++            Err(response) => {
++                return write_json_line_allow_disconnect(&mut stream, &response);
++            }
++        };
++        if subscription.is_domain_event_filter() {
++            domain_filters.push(subscription);
++            continue;
++        }
+         let active =
+             match ActiveSubscription::new(subscription, &request_id, index, api_tx, event_hub) {
+                 Ok(active) => active,
+@@ -712,8 +742,12 @@ fn stream_subscriptions(
+     if let Err(err) = write_json_line(
+         &mut stream,
+         &SuccessResponse {
+-            id: request_id,
+-            result: ResponseResult::SubscriptionStarted {},
++            id: request_id.clone(),
++            result: ResponseResult::SubscriptionStarted {
++                host: crate::api::host_scope(),
++                sequence: window.latest,
++                oldest_available_sequence: window.oldest_available,
++            },
+         },
+     ) {
+         if is_connection_closed_error(&err) {
+@@ -722,11 +756,40 @@ fn stream_subscriptions(
+         return Err(err);
+     }
+ 
++    let mut domain_cursor = params.after_sequence;
++    let mut pending_domain_events = initial_events;
+     loop {
+         if should_stop_connection(&mut stream, running)? {
+             return Ok(());
+         }
+ 
++        if pending_domain_events.is_empty() && !domain_filters.is_empty() {
++            pending_domain_events = match event_hub.read_after(domain_cursor) {
++                Ok(events) => events,
++                Err(error) => {
++                    return write_subscription_read_error(&mut stream, &request_id, error);
++                }
++            };
++        }
++        for event in pending_domain_events.drain(..) {
++            domain_cursor = event.sequence;
++            let envelope = crate::api::schema::EventEnvelope {
++                event: event.event,
++                data: event.data.clone(),
++            };
++            if domain_filters
++                .iter()
++                .any(|filter| filter.matches_domain_event(&envelope))
++            {
++                if let Err(err) = write_json_line(&mut stream, &event) {
++                    if is_connection_closed_error(&err) {
++                        return Ok(());
++                    }
++                    return Err(err);
++                }
++            }
++        }
++
+         for subscription in &mut subscriptions {
+             if let Some(event) = subscription.poll(api_tx, event_hub) {
+                 if let Err(err) = write_json_line(&mut stream, &event) {
+@@ -741,6 +804,36 @@ fn stream_subscriptions(
+     }
+ }
+ 
++fn write_subscription_read_error(
++    stream: &mut LocalStream,
++    request_id: &str,
++    error: crate::api::EventReadError,
++) -> std::io::Result<()> {
++    let (code, message) = match error {
++        crate::api::EventReadError::Gap(gap) => (
++            "event_gap",
++            format!(
++                "event cursor {} is outside the retained range; oldest_available={} latest={}; fetch session.snapshot and resubscribe after snapshot.event_sequence",
++                gap.requested_after, gap.oldest_available, gap.latest
++            ),
++        ),
++        crate::api::EventReadError::Unavailable => (
++            "event_journal_unavailable",
++            "event journal is unavailable; fetch session.snapshot after reconnect".to_string(),
++        ),
++    };
++    write_json_line_allow_disconnect(
++        stream,
++        &ErrorResponse {
++            id: request_id.to_string(),
++            error: ErrorBody {
++                code: code.into(),
++                message,
++            },
++        },
++    )
++}
++
+ fn write_text_line(stream: &mut LocalStream, value: &str) -> std::io::Result<()> {
+     stream.write_all(value.as_bytes())?;
+     stream.write_all(b"\n")?;
+@@ -933,7 +1026,18 @@ mod tests {
+     ) -> crate::api::schema::PaneInfo {
+         crate::api::schema::PaneInfo {
+             pane_id: pane_id.into(),
+-            terminal_id: "term_1".into(),
++            surface: crate::api::schema::PaneSurface::Terminal {
++                agent_instance_id: None,
++                attach: crate::api::schema::TerminalAttachEndpoint {
++                    host: crate::api::schema::HostScope {
++                        host_id: "test-host".into(),
++                        session_id: "test".into(),
++                    },
++                    transport: crate::api::schema::TerminalAttachTransport::HerdrClient,
++                    protocol: crate::protocol::PROTOCOL_VERSION,
++                    terminal_id: "term_1".into(),
++                },
++            },
+             workspace_id: "ws_1".into(),
+             tab_id: "tab_1".into(),
+             focused: true,
+@@ -1374,7 +1478,7 @@ mod tests {
+         let (mut client, server, _path) = local_stream_pair("api-sub-disconnect");
+         client
+             .write_all(
+-                br#"{"id":"sub_1","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"}]}}"#,
++                br#"{"id":"sub_1","method":"events.subscribe","params":{"after_sequence":0,"subscriptions":[{"type":"workspace.created"}]}}"#,
+             )
+             .unwrap();
+         client.write_all(b"\n").unwrap();
+@@ -1406,7 +1510,7 @@ mod tests {
+         let (mut client, server, _path) = local_stream_pair("api-sub-shutdown");
+         client
+             .write_all(
+-                br#"{"id":"sub_2","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"}]}}"#,
++                br#"{"id":"sub_2","method":"events.subscribe","params":{"after_sequence":0,"subscriptions":[{"type":"workspace.created"}]}}"#,
+             )
+             .unwrap();
+         client.write_all(b"\n").unwrap();
+@@ -1431,6 +1535,102 @@ mod tests {
+         assert!(result.is_ok());
+         server_thread.join().unwrap();
+     }
++
++    #[test]
++    fn subscriptions_stream_domain_events_in_global_sequence_order() {
++        let (api_tx, _api_rx) = mpsc::unbounded_channel::<ApiRequestMessage>();
++        let (mut client, server, _path) = local_stream_pair("api-sub-ordered");
++        client
++            .write_all(
++                br#"{"id":"sub_ordered","method":"events.subscribe","params":{"after_sequence":0,"subscriptions":[{"type":"workspace.focused"},{"type":"pane.closed"}]}}"#,
++            )
++            .unwrap();
++        client.write_all(b"\n").unwrap();
++        client.flush().unwrap();
++
++        let event_hub = EventHub::default();
++        event_hub.push(crate::api::schema::EventEnvelope {
++            event: crate::api::schema::EventKind::PaneClosed,
++            data: crate::api::schema::EventData::PaneClosed {
++                pane_id: "w1:p1".into(),
++                workspace_id: "w1".into(),
++            },
++        });
++        event_hub.push(crate::api::schema::EventEnvelope {
++            event: crate::api::schema::EventKind::WorkspaceFocused,
++            data: crate::api::schema::EventData::WorkspaceFocused {
++                workspace_id: "w2".into(),
++            },
++        });
++
++        let running = Arc::new(AtomicBool::new(true));
++        let server_running = Arc::clone(&running);
++        let server_events = event_hub.clone();
++        let (done_tx, done_rx) = std::sync::mpsc::channel();
++        let server_thread = std::thread::spawn(move || {
++            let result = handle_connection(server, &api_tx, &server_events, &server_running, None);
++            done_tx.send(result).unwrap();
++        });
++
++        let mut reader = BufReader::new(&mut client);
++        let mut line = String::new();
++        reader.read_line(&mut line).unwrap();
++        let ack: serde_json::Value = serde_json::from_str(&line).unwrap();
++        assert_eq!(ack["result"]["type"], "subscription_started");
++        assert_eq!(ack["result"]["sequence"], 2);
++        line.clear();
++        reader.read_line(&mut line).unwrap();
++        let first: serde_json::Value = serde_json::from_str(&line).unwrap();
++        line.clear();
++        reader.read_line(&mut line).unwrap();
++        let second: serde_json::Value = serde_json::from_str(&line).unwrap();
++        assert_eq!(first["sequence"], 1);
++        assert_eq!(first["event"], "pane_closed");
++        assert_eq!(second["sequence"], 2);
++        assert_eq!(second["event"], "workspace_focused");
++
++        drop(reader);
++        drop(client);
++        assert!(done_rx
++            .recv_timeout(Duration::from_secs(2))
++            .unwrap()
++            .is_ok());
++        server_thread.join().unwrap();
++    }
++
++    #[test]
++    fn subscriptions_return_typed_gap_before_streaming() {
++        let (api_tx, _api_rx) = mpsc::unbounded_channel::<ApiRequestMessage>();
++        let (mut client, server, _path) = local_stream_pair("api-sub-gap");
++        client
++            .write_all(
++                br#"{"id":"sub_gap","method":"events.subscribe","params":{"after_sequence":0,"subscriptions":[{"type":"pane.closed"}]}}"#,
++            )
++            .unwrap();
++        client.write_all(b"\n").unwrap();
++        client.flush().unwrap();
++
++        let event_hub = EventHub::default();
++        for index in 0..513 {
++            event_hub.push(crate::api::schema::EventEnvelope {
++                event: crate::api::schema::EventKind::PaneClosed,
++                data: crate::api::schema::EventData::PaneClosed {
++                    pane_id: format!("w1:p{index}"),
++                    workspace_id: "w1".into(),
++                },
++            });
++        }
++        let running = Arc::new(AtomicBool::new(true));
++        handle_connection(server, &api_tx, &event_hub, &running, None).unwrap();
++
++        let error: serde_json::Value = serde_json::from_str(&read_line(&mut client)).unwrap();
++        assert_eq!(error["id"], "sub_gap");
++        assert_eq!(error["error"]["code"], "event_gap");
++        assert!(error["error"]["message"]
++            .as_str()
++            .unwrap()
++            .contains("oldest_available=2 latest=513"));
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/api/subscriptions.rs b/src/api/subscriptions.rs
+index 8d2f84ec35319c7386eea6186873b16510335415..ba3d807cae8e2e2161bb86d108a3134c240b0601 100644
+--- a/src/api/subscriptions.rs
++++ b/src/api/subscriptions.rs
+@@ -69,6 +69,31 @@ struct PanePresentationSnapshot {
+     state_labels: std::collections::HashMap<String, String>,
+ }
+ 
++pub(super) fn normalize_domain_subscription(
++    subscription: Subscription,
++    request_id: &str,
++    index: usize,
++    api_tx: &ApiRequestSender,
++) -> Result<Subscription, ErrorResponse> {
++    match subscription {
++        Subscription::PaneAgentStatusChanged {
++            pane_id,
++            agent_status,
++        } => {
++            let pane = pane_get(
++                format!("{request_id}:sub:{index}:normalize"),
++                &pane_id,
++                api_tx,
++            )?;
++            Ok(Subscription::PaneAgentStatusChanged {
++                pane_id: pane.pane_id,
++                agent_status,
++            })
++        }
++        subscription => Ok(subscription),
++    }
++}
++
+ impl PanePresentationSnapshot {
+     fn from(pane: &crate::api::schema::PaneInfo) -> Self {
+         Self {
+@@ -116,6 +141,10 @@ impl ActiveSubscription {
+                 event_kind: crate::api::schema::EventKind::WorkspaceCreated,
+                 last_sequence: 0,
+             })),
++            Subscription::AgentLineageChanged {} => Ok(Self::Event(ActiveEventSubscription {
++                event_kind: crate::api::schema::EventKind::AgentLineageChanged,
++                last_sequence: 0,
++            })),
+             Subscription::WorkspaceUpdated {} => Ok(Self::Event(ActiveEventSubscription {
+                 event_kind: crate::api::schema::EventKind::WorkspaceUpdated,
+                 last_sequence: 0,
+@@ -655,7 +684,18 @@ mod tests {
+     fn pane_info_with_scroll(scroll: Option<PaneScrollInfo>) -> PaneInfo {
+         PaneInfo {
+             pane_id: "pane_1".into(),
+-            terminal_id: "terminal_1".into(),
++            surface: crate::api::schema::PaneSurface::Terminal {
++                agent_instance_id: None,
++                attach: crate::api::schema::TerminalAttachEndpoint {
++                    host: crate::api::schema::HostScope {
++                        host_id: "test-host".into(),
++                        session_id: "test".into(),
++                    },
++                    transport: crate::api::schema::TerminalAttachTransport::HerdrClient,
++                    protocol: crate::protocol::PROTOCOL_VERSION,
++                    terminal_id: "terminal_1".into(),
++                },
++            },
+             workspace_id: "workspace_1".into(),
+             tab_id: "tab_1".into(),
+             focused: true,
+diff --git a/src/app/agents.rs b/src/app/agents.rs
+index 2752cebee989f40a8deeb1fc621727470477d5f6..cdad8055d580bb2cdfed2688538e7ebd88ec064d 100644
+--- a/src/app/agents.rs
++++ b/src/app/agents.rs
+@@ -1,6 +1,7 @@
+ use std::time::{Duration, Instant};
+ 
+ use bytes::Bytes;
++use sha2::{Digest, Sha256};
+ 
+ use super::{terminal_targets::TerminalTargetError, App};
+ use crate::api::schema::AgentStartParams;
+@@ -111,6 +112,15 @@ impl App {
+             }
+         }
+ 
++        let public_pane_id = self.public_pane_id(resolved.ws_idx, resolved.pane_id);
++        let has_lineage = self.state.workspaces[resolved.ws_idx]
++            .agent_lineage
++            .values()
++            .any(|record| {
++                public_pane_id
++                    .as_ref()
++                    .is_some_and(|pane_id| record.pane_id == *pane_id)
++            });
+         let Some(terminal) = self
+             .state
+             .terminals
+@@ -124,13 +134,26 @@ impl App {
+         if terminal.managed_agent_launch_pending() {
+             return Err(AgentRenameError::PendingLaunch);
+         }
+-        if terminal.effective_agent_label().is_none() {
++        if terminal.effective_agent_label().is_none() && !has_lineage {
+             return Err(AgentRenameError::NotAgent);
+         }
+-        match normalized_name {
++        match normalized_name.clone() {
+             Some(name) => terminal.set_agent_name(name),
+             None => terminal.clear_agent_name(),
+         }
++        if let Some(record) = self.state.workspaces[resolved.ws_idx]
++            .agent_lineage
++            .values_mut()
++            .find(|record| {
++                public_pane_id
++                    .as_ref()
++                    .is_some_and(|pane_id| record.pane_id == *pane_id)
++            })
++        {
++            if let Some(name) = normalized_name {
++                record.name = name;
++            }
++        }
+         self.state.mark_session_dirty();
+         self.schedule_session_save();
+         self.emit_pane_updated(resolved.ws_idx, resolved.pane_id);
+@@ -294,6 +317,10 @@ impl App {
+                 code: "agent_not_found".into(),
+                 message: format!("agent target {target} not found"),
+             },
++            TerminalTargetError::NotAgentBacked { target } => crate::api::schema::ErrorBody {
++                code: "not_agent_backed".into(),
++                message: format!("pane {target} is a terminal surface without an agent instance"),
++            },
+             TerminalTargetError::Ambiguous { target, candidates } => {
+                 crate::api::schema::ErrorBody {
+                     code: "agent_target_ambiguous".into(),
+@@ -366,7 +393,8 @@ impl App {
+         let ws = self.state.workspaces.get(ws_idx)?;
+         let pane_state = ws.pane_state(pane_id)?;
+         let terminal = self.state.terminals.get(&pane_state.attached_terminal_id)?;
+-        if !terminal.is_agent_terminal() {
++        let lineage = self.agent_lineage_for_pane(ws_idx, pane_id);
++        if !terminal.is_agent_terminal() && lineage.is_none() {
+             return None;
+         }
+         let pane = self.pane_info(ws_idx, pane_id)?;
+@@ -376,9 +404,18 @@ impl App {
+             pane.cwd.as_deref(),
+         );
+         Some(crate::api::schema::AgentInfo {
+-            terminal_id: pane.terminal_id,
+-            name: terminal.agent_name.clone(),
+-            agent: pane.agent,
++            agent_instance_id: lineage.map(|record| record.agent_instance_id.clone()),
++            parent_agent_instance_id: lineage
++                .and_then(|record| record.parent_agent_instance_id.clone()),
++            spawned_from_pane_id: lineage.and_then(|record| record.spawned_from_pane_id.clone()),
++            terminal_id: terminal.id.to_string(),
++            name: terminal
++                .agent_name
++                .clone()
++                .or_else(|| lineage.map(|record| record.name.clone())),
++            agent: pane
++                .agent
++                .or_else(|| lineage.map(|record| record.kind.clone())),
+             title: pane.title,
+             terminal_title: pane.terminal_title,
+             terminal_title_stripped: pane.terminal_title_stripped,
+@@ -402,6 +439,271 @@ impl App {
+         })
+     }
+ 
++    pub(super) fn agent_lineage_for_pane(
++        &self,
++        ws_idx: usize,
++        pane_id: crate::layout::PaneId,
++    ) -> Option<&crate::workspace::AgentLineageRecord> {
++        let public_pane_id = self.public_pane_id(ws_idx, pane_id)?;
++        self.state
++            .workspaces
++            .get(ws_idx)?
++            .agent_lineage
++            .values()
++            .find(|record| record.pane_id == public_pane_id)
++    }
++
++    pub(super) fn collect_agent_lineage(&self) -> Vec<crate::api::schema::AgentLineageInfo> {
++        let mut lineage = self
++            .state
++            .workspaces
++            .iter()
++            .flat_map(|workspace| {
++                workspace
++                    .agent_lineage
++                    .values()
++                    .map(move |record| self.agent_lineage_info(workspace, record))
++            })
++            .collect::<Vec<_>>();
++        lineage.sort_by(|left, right| left.agent_instance_id.cmp(&right.agent_instance_id));
++        lineage
++    }
++
++    fn agent_lineage_info(
++        &self,
++        workspace: &crate::workspace::Workspace,
++        record: &crate::workspace::AgentLineageRecord,
++    ) -> crate::api::schema::AgentLineageInfo {
++        let active = self
++            .parse_pane_id(&record.pane_id)
++            .is_some_and(|(ws_idx, pane_id)| {
++                self.agent_info_without_lineage(ws_idx, pane_id).is_some()
++            });
++        let parent_exists = record
++            .parent_agent_instance_id
++            .as_ref()
++            .is_none_or(|parent| {
++                self.state
++                    .workspaces
++                    .iter()
++                    .any(|ws| ws.agent_lineage.contains_key(parent))
++            });
++        crate::api::schema::AgentLineageInfo {
++            agent_instance_id: record.agent_instance_id.clone(),
++            idempotency_key: record.idempotency_key.clone(),
++            name: record.name.clone(),
++            kind: record.kind.clone(),
++            host: crate::api::host_scope(),
++            workspace_id: workspace.id.clone(),
++            tab_id: record.tab_id.clone(),
++            pane_id: record.pane_id.clone(),
++            parent_agent_instance_id: record.parent_agent_instance_id.clone(),
++            spawned_from_pane_id: record.spawned_from_pane_id.clone(),
++            state: if !parent_exists {
++                crate::api::schema::AgentLineageState::Orphaned
++            } else if active {
++                crate::api::schema::AgentLineageState::Active
++            } else {
++                crate::api::schema::AgentLineageState::Ended
++            },
++        }
++    }
++
++    fn agent_info_without_lineage(
++        &self,
++        ws_idx: usize,
++        pane_id: crate::layout::PaneId,
++    ) -> Option<()> {
++        let workspace = self.state.workspaces.get(ws_idx)?;
++        let pane = workspace.pane_state(pane_id)?;
++        let terminal = self.state.terminals.get(&pane.attached_terminal_id)?;
++        (terminal.is_agent_terminal() || self.agent_lineage_for_pane(ws_idx, pane_id).is_some())
++            .then_some(())
++    }
++
++    pub(super) fn new_agent(
++        &mut self,
++        params: crate::api::schema::AgentNewParams,
++    ) -> Result<AgentNewResult, AgentNewError> {
++        params
++            .operation
++            .validate()
++            .map_err(|message| AgentNewError::InvalidOperation(message.to_string()))?;
++        let fingerprint = agent_new_fingerprint(&params);
++        for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
++            if let Some(record) = workspace
++                .agent_lineage
++                .values()
++                .find(|record| record.idempotency_key == params.operation.idempotency_key)
++            {
++                if record.request_fingerprint != fingerprint {
++                    return Err(AgentNewError::IdempotencyConflict);
++                }
++                let Some((record_ws_idx, pane_id)) = self.parse_pane_id(&record.pane_id) else {
++                    return Err(AgentNewError::ReplayUnavailable(
++                        record.agent_instance_id.clone(),
++                    ));
++                };
++                if record_ws_idx != ws_idx {
++                    return Err(AgentNewError::ReplayUnavailable(
++                        record.agent_instance_id.clone(),
++                    ));
++                }
++                let agent = self.agent_info(record_ws_idx, pane_id).ok_or_else(|| {
++                    AgentNewError::ReplayUnavailable(record.agent_instance_id.clone())
++                })?;
++                let lineage = self.agent_lineage_info(workspace, record);
++                return Ok(AgentNewResult {
++                    ws_idx,
++                    tab_idx: self.state.workspaces[ws_idx]
++                        .find_tab_index_for_pane(pane_id)
++                        .unwrap_or(0),
++                    pane_id,
++                    agent,
++                    lineage,
++                    argv: record.argv.clone(),
++                    replayed: true,
++                });
++            }
++        }
++
++        if !valid_agent_name(&params.name) {
++            return Err(AgentNewError::Start(AgentStartError::InvalidName));
++        }
++        let Some(kind) = crate::detect::parse_agent_label(&params.kind) else {
++            return Err(AgentNewError::Start(AgentStartError::UnsupportedKind(
++                params.kind,
++            )));
++        };
++        if params
++            .args
++            .iter()
++            .any(|arg| arg.chars().any(char::is_control))
++        {
++            return Err(AgentNewError::Start(AgentStartError::InvalidArgument));
++        }
++        let conflicts = self.agent_name_conflicts(&params.name, "");
++        if !conflicts.is_empty() {
++            return Err(AgentNewError::Start(AgentStartError::DuplicateName {
++                name: params.name,
++                candidates: conflicts,
++            }));
++        }
++        let timeout = Duration::from_millis(
++            params
++                .timeout_ms
++                .unwrap_or(DEFAULT_AGENT_START_TIMEOUT.as_millis() as u64),
++        );
++        if timeout <= AGENT_START_SETTLE_DELAY || timeout > MAX_AGENT_START_TIMEOUT {
++            return Err(AgentNewError::Start(AgentStartError::InvalidTimeout));
++        }
++        let Some((ws_idx, target_pane_id)) =
++            self.parse_current_public_pane_id(&params.target_pane_id)
++        else {
++            return Err(AgentNewError::Start(AgentStartError::TargetNotFound(
++                params.target_pane_id,
++            )));
++        };
++        let spawned_from_pane_id = params
++            .spawned_from_pane_id
++            .clone()
++            .or_else(|| Some(self.public_pane_id(ws_idx, target_pane_id)?))
++            .ok_or_else(|| AgentNewError::TargetUnavailable("source pane not found".into()))?;
++        let parent_agent_instance_id = self
++            .state
++            .workspaces
++            .iter()
++            .flat_map(|workspace| workspace.agent_lineage.values())
++            .find(|record| record.pane_id == spawned_from_pane_id)
++            .map(|record| record.agent_instance_id.clone());
++
++        let mut argv = vec![crate::detect::interactive_agent_executable(kind).to_string()];
++        argv.extend(params.args.clone());
++        let (rows, cols) = self.state.estimate_pane_size();
++        let cwd = params.cwd.map(std::path::PathBuf::from).or_else(|| {
++            let follow = self.launch_cwd_for_pane_in_workspace(ws_idx, target_pane_id);
++            Some(self.resolve_new_terminal_cwd(follow))
++        });
++        let direction = match params.direction {
++            crate::api::schema::SplitDirection::Right => ratatui::layout::Direction::Horizontal,
++            crate::api::schema::SplitDirection::Down => ratatui::layout::Direction::Vertical,
++        };
++        let previous_focus = self.state.current_pane_focus_target();
++        let split = self.state.workspaces[ws_idx]
++            .split_pane_argv_command(
++                target_pane_id,
++                direction,
++                rows,
++                cols,
++                cwd,
++                &argv,
++                Vec::new(),
++                self.state.pane_scrollback_limit_bytes,
++                self.state.host_terminal_theme,
++                self.state.host_terminal_appearance,
++                params.focus,
++            )
++            .ok_or_else(|| AgentNewError::TargetUnavailable("target pane not found".into()))?
++            .map_err(|error| AgentNewError::SpawnFailed(error.to_string()))?;
++        let (tab_idx, mut new_pane) = split;
++        // Unlike agent.start, the argv process is the pane's direct child. A
++        // successful PTY spawn is therefore the atomic start boundary; there
++        // is no intermediate shell command whose foreground acquisition must
++        // be polled before the lineage record can commit.
++        new_pane
++            .terminal
++            .restore_managed_agent(params.name.clone(), kind);
++        let pane_id = new_pane.pane_id;
++        let terminal_id = new_pane.terminal.id.clone();
++        self.terminal_runtimes
++            .insert(terminal_id.clone(), new_pane.runtime);
++        self.state.terminals.insert(terminal_id, new_pane.terminal);
++        self.state.remove_alias_shadowed_by_new_pane(pane_id);
++        if params.focus {
++            self.state.switch_workspace_tab(ws_idx, tab_idx);
++            self.state
++                .record_pane_focus_change(previous_focus, ws_idx, pane_id);
++            self.state.settle_terminal_mode_after_focus();
++        }
++        let pane_public_id = self.public_pane_id(ws_idx, pane_id).ok_or_else(|| {
++            AgentNewError::TargetUnavailable("new pane identity unavailable".into())
++        })?;
++        let tab_id = self.public_tab_id(ws_idx, tab_idx).ok_or_else(|| {
++            AgentNewError::TargetUnavailable("new tab identity unavailable".into())
++        })?;
++        let agent_instance_id = new_agent_instance_id();
++        let record = crate::workspace::AgentLineageRecord {
++            agent_instance_id: agent_instance_id.clone(),
++            idempotency_key: params.operation.idempotency_key,
++            request_fingerprint: fingerprint,
++            name: params.name,
++            kind: crate::detect::agent_label(kind).to_string(),
++            tab_id,
++            pane_id: pane_public_id,
++            parent_agent_instance_id,
++            spawned_from_pane_id: Some(spawned_from_pane_id),
++            argv: argv.clone(),
++        };
++        self.state.workspaces[ws_idx]
++            .agent_lineage
++            .insert(agent_instance_id, record.clone());
++        self.state.mark_session_dirty();
++        self.schedule_session_save();
++        let agent = self
++            .agent_info(ws_idx, pane_id)
++            .ok_or_else(|| AgentNewError::TargetUnavailable("new agent unavailable".into()))?;
++        let lineage = self.agent_lineage_info(&self.state.workspaces[ws_idx], &record);
++        Ok(AgentNewResult {
++            ws_idx,
++            tab_idx,
++            pane_id,
++            agent,
++            lineage,
++            argv,
++            replayed: false,
++        })
++    }
++
+     /// Populates `AgentInfo.ambient` when the ambient reader is enabled
+     /// (`[experimental] ambient_reader`) and this pane has an identifiable
+     /// Claude/Codex session. Reads only from this pane's own process HOME
+@@ -424,7 +726,13 @@ impl App {
+         let job = crate::detect::foreground_job(shell_pid)?;
+         let (_, agent_pid) = crate::detect::identify_agent_pid_in_job(&job)?;
+         let home = crate::platform::process_home(agent_pid)?;
+-        super::ambient::compute_ambient(&self.ambient_reader, &session.agent, &session.value, cwd, &home)
++        super::ambient::compute_ambient(
++            &self.ambient_reader,
++            &session.agent,
++            &session.value,
++            cwd,
++            &home,
++        )
+     }
+ 
+     fn agent_name_conflicts(
+@@ -441,6 +749,54 @@ impl App {
+     }
+ }
+ 
++pub(super) struct AgentNewResult {
++    pub ws_idx: usize,
++    pub tab_idx: usize,
++    pub pane_id: crate::layout::PaneId,
++    pub agent: crate::api::schema::AgentInfo,
++    pub lineage: crate::api::schema::AgentLineageInfo,
++    pub argv: Vec<String>,
++    pub replayed: bool,
++}
++
++pub(super) enum AgentNewError {
++    InvalidOperation(String),
++    IdempotencyConflict,
++    ReplayUnavailable(String),
++    TargetUnavailable(String),
++    SpawnFailed(String),
++    Start(AgentStartError),
++}
++
++fn agent_new_fingerprint(params: &crate::api::schema::AgentNewParams) -> String {
++    let value = serde_json::json!({
++        "name": params.name,
++        "kind": params.kind,
++        "target_pane_id": params.target_pane_id,
++        "direction": params.direction,
++        "focus": params.focus,
++        "cwd": params.cwd,
++        "spawned_from_pane_id": params.spawned_from_pane_id,
++        "args": params.args,
++        "timeout_ms": params.timeout_ms,
++    });
++    format!(
++        "{:x}",
++        Sha256::digest(serde_json::to_vec(&value).unwrap_or_default())
++    )
++}
++
++fn new_agent_instance_id() -> String {
++    use std::sync::atomic::{AtomicU64, Ordering};
++    static NEXT: AtomicU64 = AtomicU64::new(1);
++    let counter = NEXT.fetch_add(1, Ordering::Relaxed);
++    let nanos = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map(|duration| duration.as_nanos())
++        .unwrap_or_default();
++    format!("agent-{nanos:x}-{counter:x}")
++}
++
+ fn available_shell_name(runtime: &crate::terminal::TerminalRuntime) -> Option<String> {
+     #[cfg(test)]
+     if runtime.child_pid().is_none() {
+diff --git a/src/app/api.rs b/src/app/api.rs
+index 92d9596fb7fa5f61f6d46ba208a526f22cee2d78..bf96d09480f023b8c71bbcfe07651812b9a42f9e 100644
+--- a/src/app/api.rs
++++ b/src/app/api.rs
+@@ -1067,6 +1067,7 @@ impl App {
+                 return self.handle_agent_view_clear(request.id, params)
+             }
+             Method::AgentStart(params) => return self.handle_agent_start(request.id, params),
++            Method::AgentNew(params) => return self.handle_agent_new(request.id, params),
+             Method::AgentPrompt(params) => return self.handle_agent_prompt(request.id, params),
+             Method::AgentWait(_) => {
+                 return responses::encode_error(
+diff --git a/src/app/api/agents.rs b/src/app/api/agents.rs
+index 1ed13efcaa6f9e236ec81f55f8e5d27895fce2ad..c9acf10f6672cfa6c1e0e46712cde271e498ea72 100644
+--- a/src/app/api/agents.rs
++++ b/src/app/api/agents.rs
+@@ -3,8 +3,8 @@ use std::time::Duration;
+ use bytes::Bytes;
+ 
+ use crate::api::schema::{
+-    AgentPromptParams, AgentRenameParams, AgentSendKeysParams, AgentStartParams, AgentTarget,
+-    PaneReadResult, ResponseResult,
++    AgentNewParams, AgentPromptParams, AgentRenameParams, AgentSendKeysParams, AgentStartParams,
++    AgentTarget, EventData, EventEnvelope, EventKind, PaneReadResult, ResponseResult,
+ };
+ use crate::app::App;
+ 
+@@ -59,6 +59,74 @@ impl App {
+         encode_success(id, ResponseResult::AgentStarted { agent, argv })
+     }
+ 
++    pub(super) fn handle_agent_new(&mut self, id: String, params: AgentNewParams) -> String {
++        let created = match self.new_agent(params) {
++            Ok(created) => created,
++            Err(err) => {
++                let body = match err {
++                    super::super::agents::AgentNewError::InvalidOperation(message) => {
++                        crate::api::schema::ErrorBody {
++                            code: "invalid_idempotency_key".into(),
++                            message,
++                        }
++                    }
++                    super::super::agents::AgentNewError::IdempotencyConflict => {
++                        crate::api::schema::ErrorBody {
++                            code: "idempotency_conflict".into(),
++                            message: "idempotency key was already used for a different agent.new request".into(),
++                        }
++                    }
++                    super::super::agents::AgentNewError::ReplayUnavailable(agent_instance_id) => {
++                        crate::api::schema::ErrorBody {
++                            code: "idempotency_result_ended".into(),
++                            message: format!("agent.new result {agent_instance_id} exists but its pane is no longer active"),
++                        }
++                    }
++                    super::super::agents::AgentNewError::TargetUnavailable(message) => {
++                        crate::api::schema::ErrorBody {
++                            code: "agent_new_target_unavailable".into(),
++                            message,
++                        }
++                    }
++                    super::super::agents::AgentNewError::SpawnFailed(message) => {
++                        crate::api::schema::ErrorBody {
++                            code: "agent_new_spawn_failed".into(),
++                            message,
++                        }
++                    }
++                    super::super::agents::AgentNewError::Start(err) => {
++                        self.agent_start_error_body(err)
++                    }
++                };
++                return encode_error_body(id, body);
++            }
++        };
++        if !created.replayed {
++            if let Some(pane) = self.pane_info(created.ws_idx, created.pane_id) {
++                self.emit_event(EventEnvelope {
++                    event: EventKind::PaneCreated,
++                    data: EventData::PaneCreated { pane },
++                });
++            }
++            self.emit_layout_updated_event(created.ws_idx, created.tab_idx);
++            self.emit_event(EventEnvelope {
++                event: EventKind::AgentLineageChanged,
++                data: EventData::AgentLineageChanged {
++                    lineage: created.lineage.clone(),
++                },
++            });
++        }
++        encode_success(
++            id,
++            ResponseResult::AgentCreated {
++                agent: created.agent,
++                lineage: created.lineage,
++                argv: created.argv,
++                replayed: created.replayed,
++            },
++        )
++    }
++
+     pub(super) fn handle_agent_prompt(&mut self, id: String, params: AgentPromptParams) -> String {
+         if params.text.is_empty() {
+             return encode_error(id, "empty_agent_prompt", "agent prompt must not be empty");
+diff --git a/src/app/api/panes.rs b/src/app/api/panes.rs
+index 6615fa0a198eeac5bba0671c78ba99573d2f2be2..c3c91b7dddea814b4e81299d841cd080169336af 100644
+--- a/src/app/api/panes.rs
++++ b/src/app/api/panes.rs
+@@ -2626,7 +2626,15 @@ mod tests {
+         assert_eq!(move_result.previous_tab_id, source_tab_public);
+         assert_eq!(move_result.pane.pane_id, move_result.previous_pane_id);
+         assert_eq!(move_result.pane.tab_id, target_tab_public);
+-        assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
++        assert_eq!(
++            move_result
++                .pane
++                .surface
++                .terminal_attach()
++                .unwrap()
++                .terminal_id,
++            source_terminal.to_string()
++        );
+         assert_eq!(move_result.closed_tab_id, Some(source_tab_public));
+         assert_eq!(move_result.closed_workspace_id, None);
+         assert_eq!(move_result.target_layout.panes.len(), 2);
+@@ -2806,7 +2814,15 @@ mod tests {
+             .starts_with(&format!("{target_workspace_id}:p")));
+         assert_eq!(move_result.pane.workspace_id, target_workspace_id);
+         assert_eq!(move_result.pane.tab_id, target_tab_id);
+-        assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
++        assert_eq!(
++            move_result
++                .pane
++                .surface
++                .terminal_attach()
++                .unwrap()
++                .terminal_id,
++            source_terminal.to_string()
++        );
+         assert_eq!(app.state.workspaces.len(), 1);
+         assert_eq!(
+             app.state.workspaces[0].tabs[0].terminal_id(source),
+@@ -2860,7 +2876,15 @@ mod tests {
+         assert_eq!(move_result.closed_workspace_id, Some(source_workspace_id));
+         assert_eq!(move_result.pane.workspace_id, target_workspace_id);
+         assert_eq!(move_result.pane.tab_id, target_tab_id);
+-        assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
++        assert_eq!(
++            move_result
++                .pane
++                .surface
++                .terminal_attach()
++                .unwrap()
++                .terminal_id,
++            source_terminal.to_string()
++        );
+         assert_eq!(
+             app.state.workspaces[0].tabs[0].terminal_id(source),
+             Some(&source_terminal)
+@@ -2909,7 +2933,15 @@ mod tests {
+         );
+         assert_eq!(move_result.closed_tab_id, None);
+         assert_eq!(move_result.pane.pane_id, source_public);
+-        assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
++        assert_eq!(
++            move_result
++                .pane
++                .surface
++                .terminal_attach()
++                .unwrap()
++                .terminal_id,
++            source_terminal.to_string()
++        );
+         assert_eq!(app.state.workspaces[0].tabs.len(), 2);
+         assert!(app.state.workspaces[0].tabs[0].terminal_id(right).is_some());
+         assert_eq!(
+@@ -3033,7 +3065,15 @@ mod tests {
+             Some(true)
+         );
+         assert_ne!(move_result.pane.pane_id, source_public);
+-        assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
++        assert_eq!(
++            move_result
++                .pane
++                .surface
++                .terminal_attach()
++                .unwrap()
++                .terminal_id,
++            source_terminal.to_string()
++        );
+         assert_eq!(app.state.workspaces.len(), 1);
+         assert_eq!(
+             app.state.workspaces[0].tabs[0].terminal_id(source),
+diff --git a/src/app/api/plugins/context.rs b/src/app/api/plugins/context.rs
+index efef83b9f72301dd36930112314e8ec6d0a0381c..54e7dac2c44bb747c3e86e434eb13e1efa7c3289 100644
+--- a/src/app/api/plugins/context.rs
++++ b/src/app/api/plugins/context.rs
+@@ -142,6 +142,14 @@ impl App {
+             EventData::PaneCreated { pane } | EventData::PaneUpdated { pane } => {
+                 self.plugin_context_for_pane_info(pane, correlation_id)
+             }
++            EventData::AgentLineageChanged { lineage } => self
++                .plugin_context_for_workspace_id(&lineage.workspace_id, correlation_id)
++                .unwrap_or_else(|| {
++                    let mut context = empty_plugin_context(correlation_id);
++                    context.workspace_id = Some(lineage.workspace_id.clone());
++                    context.focused_pane_id = Some(lineage.pane_id.clone());
++                    context
++                }),
+             EventData::PaneMoved { pane, .. } => {
+                 self.plugin_context_for_pane_info(pane.as_ref(), correlation_id)
+             }
+diff --git a/src/app/api/session.rs b/src/app/api/session.rs
+index b2238faac44ac8fdf1ec84b79c507f58fda53c55..73928b6ef7d714df299ced9a1ad759b9d332495e 100644
+--- a/src/app/api/session.rs
++++ b/src/app/api/session.rs
+@@ -5,15 +5,19 @@ use super::responses::encode_success;
+ 
+ impl App {
+     pub(super) fn handle_session_snapshot(&mut self, id: String) -> String {
++        let snapshot = match self.session_snapshot() {
++            Ok(snapshot) => snapshot,
++            Err((code, message)) => return super::responses::encode_error(id, &code, message),
++        };
+         encode_success(
+             id,
+             ResponseResult::SessionSnapshot {
+-                snapshot: Box::new(self.session_snapshot()),
++                snapshot: Box::new(snapshot),
+             },
+         )
+     }
+ 
+-    fn session_snapshot(&self) -> SessionSnapshot {
++    fn session_snapshot(&self) -> Result<SessionSnapshot, (String, String)> {
+         let focused_workspace_id = self
+             .state
+             .active
+@@ -42,18 +46,29 @@ impl App {
+             }
+         }
+ 
+-        SessionSnapshot {
++        let panes = self.collect_panes_for_workspace(None)?;
++        let event_sequence = self.event_hub.current_sequence_result().map_err(|_| {
++            (
++                "event_journal_unavailable".to_string(),
++                "event journal is unavailable; reconnect and request session.snapshot again"
++                    .to_string(),
++            )
++        })?;
++        Ok(SessionSnapshot {
+             version: crate::build_info::version(),
+             protocol: crate::protocol::PROTOCOL_VERSION,
++            host: crate::api::host_scope(),
++            event_sequence,
+             focused_workspace_id,
+             focused_tab_id,
+             focused_pane_id,
+             workspaces,
+             tabs,
+-            panes: self.collect_panes_for_workspace(None).unwrap_or_default(),
++            panes,
+             layouts,
+             agents: self.collect_agent_infos(),
+-        }
++            lineage: self.collect_agent_lineage(),
++        })
+     }
+ }
+ 
+diff --git a/src/app/creation.rs b/src/app/creation.rs
+index d531e7337084c8fca2235ceb4b37da6990271773..cd904b3b1c789374ac1d645b0025be33a5cf963e 100644
+--- a/src/app/creation.rs
++++ b/src/app/creation.rs
+@@ -291,14 +291,39 @@ impl App {
+                     format!("workspace {workspace_id} not found"),
+                 ));
+             };
+-            Ok(ws
++            let pane_ids = ws
+                 .tabs
+                 .iter()
+                 .flat_map(|tab| tab.layout.pane_ids().into_iter())
+-                .filter_map(|pane_id| self.pane_info(ws_idx, pane_id))
+-                .collect())
++                .collect::<Vec<_>>();
++            let panes = pane_ids
++                .iter()
++                .filter_map(|pane_id| self.pane_info(ws_idx, *pane_id))
++                .collect::<Vec<_>>();
++            if panes.len() != pane_ids.len() {
++                return Err((
++                    "snapshot_incomplete".into(),
++                    format!(
++                        "workspace {workspace_id} has {} layout leaves but only {} complete pane surfaces",
++                        pane_ids.len(),
++                        panes.len()
++                    ),
++                ));
++            }
++            Ok(panes)
+         } else {
+-            Ok(self
++            let expected = self
++                .state
++                .workspaces
++                .iter()
++                .map(|ws| {
++                    ws.tabs
++                        .iter()
++                        .flat_map(|tab| tab.layout.pane_ids().into_iter())
++                        .count()
++                })
++                .sum::<usize>();
++            let panes = self
+                 .state
+                 .workspaces
+                 .iter()
+@@ -309,7 +334,17 @@ impl App {
+                         .flat_map(|tab| tab.layout.pane_ids().into_iter())
+                         .filter_map(move |pane_id| self.pane_info(ws_idx, pane_id))
+                 })
+-                .collect())
++                .collect::<Vec<_>>();
++            if panes.len() != expected {
++                return Err((
++                    "snapshot_incomplete".into(),
++                    format!(
++                        "session has {expected} layout leaves but only {} complete pane surfaces",
++                        panes.len()
++                    ),
++                ));
++            }
++            Ok(panes)
+         }
+     }
+ 
+@@ -442,9 +477,27 @@ impl App {
+                 .focused_pane_id()
+                 .is_some_and(|focused| focused == pane_id);
+         let presentation = terminal.effective_presentation();
++        let agent_session = terminal_agent_session_info(terminal);
++        let agent_instance_id = self
++            .agent_lineage_for_pane(ws_idx, pane_id)
++            .map(|record| record.agent_instance_id.clone())
++            .or_else(|| {
++                agent_session
++                    .as_ref()
++                    .map(|session| format!("{}:{}", session.source, session.value))
++            });
++        let terminal_id = terminal.id.to_string();
+         Some(crate::api::schema::PaneInfo {
+             pane_id: self.public_pane_id(ws_idx, pane_id)?,
+-            terminal_id: terminal.id.to_string(),
++            surface: crate::api::schema::PaneSurface::Terminal {
++                agent_instance_id,
++                attach: crate::api::schema::TerminalAttachEndpoint {
++                    host: crate::api::host_scope(),
++                    transport: crate::api::schema::TerminalAttachTransport::HerdrClient,
++                    protocol: crate::protocol::PROTOCOL_VERSION,
++                    terminal_id,
++                },
++            },
+             workspace_id: self.public_workspace_id(ws_idx),
+             tab_id: self.public_tab_id(ws_idx, tab_idx)?,
+             focused,
+@@ -463,7 +516,7 @@ impl App {
+             agent_status: pane_agent_status(terminal.state, pane.seen),
+             state_labels: presentation.state_labels,
+             tokens: terminal.metadata_tokens.values(),
+-            agent_session: terminal_agent_session_info(terminal),
++            agent_session,
+             scroll,
+             revision: terminal.revision,
+         })
+diff --git a/src/app/mod.rs b/src/app/mod.rs
+index 69a06738c63694befdedb8fca1feee67b18aa25a..1da25f45b28af4a3fb1c740adecfb1ecc48cabac 100644
+--- a/src/app/mod.rs
++++ b/src/app/mod.rs
+@@ -6,9 +6,9 @@
+ 
+ pub(crate) mod actions;
+ mod agent_resume;
+-pub(crate) mod ambient;
+ pub(crate) mod agent_view;
+ mod agents;
++pub(crate) mod ambient;
+ pub(crate) use agents::{AGENT_START_SETTLE_DELAY, MAX_AGENT_START_TIMEOUT};
+ mod api;
+ mod api_helpers;
+@@ -4082,8 +4082,9 @@ mod tests {
+         assert_eq!(tab.workspace_id, workspace.workspace_id);
+         assert_eq!(root_pane.workspace_id, workspace.workspace_id);
+         assert_eq!(root_pane.tab_id, tab.tab_id);
+-        assert!(root_pane.terminal_id.starts_with("term_"));
+-        assert_ne!(root_pane.terminal_id, root_pane.pane_id);
++        let terminal_id = &root_pane.surface.terminal_attach().unwrap().terminal_id;
++        assert!(terminal_id.starts_with("term_"));
++        assert_ne!(terminal_id, &root_pane.pane_id);
+     }
+ 
+     #[test]
+@@ -4325,8 +4326,17 @@ mod tests {
+         assert!(app.resolve_terminal_target(&pane_id).is_ok());
+         assert!(matches!(
+             app.resolve_agent_target(&pane_id),
+-            Err(crate::app::terminal_targets::TerminalTargetError::NotFound { .. })
++            Err(crate::app::terminal_targets::TerminalTargetError::NotAgentBacked { .. })
+         ));
++
++        let response = app.handle_api_request(crate::api::schema::Request {
++            id: "plain-agent-get".into(),
++            method: crate::api::schema::Method::AgentGet(crate::api::schema::AgentTarget {
++                target: pane_id,
++            }),
++        });
++        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
++        assert_eq!(response["error"]["code"], "not_agent_backed");
+     }
+ 
+     #[test]
+diff --git a/src/app/terminal_targets.rs b/src/app/terminal_targets.rs
+index a8fe394a5f8ba6e925988d62376a47f06cc52bcb..ce05ffe179741b95fd31ff368a7052df9460cf30 100644
+--- a/src/app/terminal_targets.rs
++++ b/src/app/terminal_targets.rs
+@@ -23,6 +23,9 @@ pub(crate) enum TerminalTargetError {
+     NotFound {
+         target: String,
+     },
++    NotAgentBacked {
++        target: String,
++    },
+     Ambiguous {
+         target: String,
+         candidates: Vec<TerminalTargetCandidate>,
+@@ -77,11 +80,13 @@ impl App {
+         target: &str,
+     ) -> Result<TerminalTarget, TerminalTargetError> {
+         if let Some((ws_idx, pane_id)) = self.parse_current_public_pane_id(target) {
+-            if let Some(resolved) = self
+-                .terminal_target_for_pane(ws_idx, pane_id)
+-                .filter(|resolved| self.target_is_agent(resolved))
+-            {
+-                return Ok(resolved);
++            if let Some(resolved) = self.terminal_target_for_pane(ws_idx, pane_id) {
++                if self.target_is_agent(&resolved) {
++                    return Ok(resolved);
++                }
++                return Err(TerminalTargetError::NotAgentBacked {
++                    target: target.to_string(),
++                });
+             }
+         }
+ 
+diff --git a/src/cli/agent.rs b/src/cli/agent.rs
+index 306c3bd9fa9d926adc20a2dad233f8e4660a13ff..118fa01f1b811acdcb722f05c7d53570b19b3cf5 100644
+--- a/src/cli/agent.rs
++++ b/src/cli/agent.rs
+@@ -1,9 +1,10 @@
+ use std::time::{Duration, Instant};
+ 
+ use crate::api::schema::{
+-    AgentPromptParams, AgentPromptWaitOptions, AgentReadParams, AgentRenameParams,
++    AgentNewParams, AgentPromptParams, AgentPromptWaitOptions, AgentReadParams, AgentRenameParams,
+     AgentSendKeysParams, AgentStartParams, AgentTarget, AgentWaitParams, EmptyParams, Method,
+-    PaneProcessInfoParams, PaneTarget, ReadFormat, ReadSource, Request,
++    OperationContext, PaneProcessInfoParams, PaneTarget, ReadFormat, ReadSource, Request,
++    SplitDirection,
+ };
+ 
+ const AGENT_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
+@@ -26,6 +27,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
+         "wait" => agent_wait(&args[1..]),
+         "attach" => agent_attach(&args[1..]),
+         "start" => agent_start(&args[1..]),
++        "new" => agent_new(&args[1..]),
+         "explain" => agent_explain(&args[1..]),
+         "help" | "--help" | "-h" => {
+             print_agent_help();
+@@ -38,6 +40,104 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
+     }
+ }
+ 
++fn agent_new(args: &[String]) -> std::io::Result<i32> {
++    let Some(name) = args.first() else {
++        eprintln!("usage: herdr agent new <name> --kind KIND --pane ID --idempotency-key KEY [--direction right|down] [--from-pane ID] [--focus] [-- <agent-args...>]");
++        return Ok(2);
++    };
++    let separator = args
++        .iter()
++        .position(|arg| arg == "--")
++        .unwrap_or(args.len());
++    let mut kind = None;
++    let mut pane_id = None;
++    let mut idempotency_key = None;
++    let mut spawned_from_pane_id = std::env::var("HERDR_PANE_ID").ok();
++    let mut direction = SplitDirection::Right;
++    let mut focus = false;
++    let mut cwd = None;
++    let mut timeout_ms = None;
++    let mut index = 1;
++    while index < separator {
++        match args[index].as_str() {
++            "--kind" | "--pane" | "--idempotency-key" | "--from-pane" | "--direction" | "--cwd"
++            | "--timeout" => {
++                let Some(value) = args.get(index + 1).filter(|_| index + 1 < separator) else {
++                    eprintln!("missing value for {}", args[index]);
++                    return Ok(2);
++                };
++                match args[index].as_str() {
++                    "--kind" => kind = Some(value.clone()),
++                    "--pane" => pane_id = Some(super::normalize_pane_id(value)),
++                    "--idempotency-key" => idempotency_key = Some(value.clone()),
++                    "--from-pane" => spawned_from_pane_id = Some(super::normalize_pane_id(value)),
++                    "--direction" => match value.as_str() {
++                        "right" => direction = SplitDirection::Right,
++                        "down" => direction = SplitDirection::Down,
++                        _ => {
++                            eprintln!("invalid --direction: {value} (expected right or down)");
++                            return Ok(2);
++                        }
++                    },
++                    "--cwd" => cwd = Some(value.clone()),
++                    "--timeout" => {
++                        timeout_ms = match parse_timeout(value) {
++                            Ok(timeout) => Some(timeout),
++                            Err(exit_code) => return Ok(exit_code),
++                        }
++                    }
++                    _ => unreachable!(),
++                }
++                index += 2;
++            }
++            "--focus" => {
++                focus = true;
++                index += 1;
++            }
++            "--no-focus" => {
++                focus = false;
++                index += 1;
++            }
++            other => {
++                eprintln!("unknown option: {other}");
++                return Ok(2);
++            }
++        }
++    }
++    let Some(kind) = kind else {
++        eprintln!("missing required --kind");
++        return Ok(2);
++    };
++    let Some(target_pane_id) = pane_id else {
++        eprintln!("missing required --pane");
++        return Ok(2);
++    };
++    let Some(idempotency_key) = idempotency_key else {
++        eprintln!("missing required --idempotency-key");
++        return Ok(2);
++    };
++    let agent_args = if separator < args.len() {
++        args[separator + 1..].to_vec()
++    } else {
++        Vec::new()
++    };
++    super::print_response(&super::send_request(&Request {
++        id: format!("cli:agent:new:{idempotency_key}"),
++        method: Method::AgentNew(AgentNewParams {
++            operation: OperationContext { idempotency_key },
++            name: name.clone(),
++            kind,
++            target_pane_id,
++            direction,
++            focus,
++            cwd,
++            spawned_from_pane_id,
++            args: agent_args,
++            timeout_ms,
++        }),
++    })?)
++}
++
+ fn agent_explain(args: &[String]) -> std::io::Result<i32> {
+     let mut file = None;
+     let mut agent = None;
+@@ -624,9 +724,11 @@ fn pane_terminal_id(pane_id: &str) -> std::io::Result<Option<String>> {
+             pane_id: pane_id.to_owned(),
+         }),
+     })?;
+-    Ok(response["result"]["pane"]["terminal_id"]
+-        .as_str()
+-        .map(str::to_owned))
++    Ok(
++        response["result"]["pane"]["surface"]["attach"]["terminal_id"]
++            .as_str()
++            .map(str::to_owned),
++    )
+ }
+ 
+ fn pane_shell_is_initializing(pane_id: &str) -> std::io::Result<bool> {
+diff --git a/src/cli/pane.rs b/src/cli/pane.rs
+index 363a2e052cc55ef2eea8a6efc4347d64a3ad8163..110ddb6283b5035b14dab083ce3c1111c083a6dc 100644
+--- a/src/cli/pane.rs
++++ b/src/cli/pane.rs
+@@ -6,7 +6,7 @@ use crate::api::schema::{
+     PaneReportMetadataParams, PaneResizeParams, PaneRightClickTarget, PaneSendInputParams,
+     PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget,
+     PaneWaitForOutputParams, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
+-    SplitDirection,
++    ResponseResult, SplitDirection, SuccessResponse,
+ };
+ 
+ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
+@@ -19,6 +19,7 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
+         "list" => pane_list(&args[1..]),
+         "current" => pane_current(&args[1..]),
+         "get" => pane_get(&args[1..]),
++        "attach" => pane_attach(&args[1..]),
+         "layout" => pane_layout(&args[1..]),
+         "process-info" => pane_process_info(&args[1..]),
+         "neighbor" => pane_neighbor(&args[1..]),
+@@ -97,6 +98,50 @@ fn pane_get(args: &[String]) -> std::io::Result<i32> {
+     })?)
+ }
+ 
++fn pane_attach(args: &[String]) -> std::io::Result<i32> {
++    let (raw_pane_id, takeover) =
++        match super::parse_attach_target(args, "usage: herdr pane attach <pane_id> [--takeover]") {
++            Ok(parsed) => parsed,
++            Err(code) => return Ok(code),
++        };
++    let pane_id = super::normalize_pane_id(&raw_pane_id);
++    let response = super::send_request(&Request {
++        id: "cli:pane:attach:resolve".into(),
++        method: Method::PaneGet(PaneTarget {
++            pane_id: pane_id.clone(),
++        }),
++    })?;
++    if response.get("error").is_some() {
++        eprintln!("{response}");
++        return Ok(1);
++    }
++    let success: SuccessResponse = serde_json::from_value(response).map_err(|error| {
++        std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            format!("invalid pane.get response: {error}"),
++        )
++    })?;
++    let ResponseResult::PaneInfo { pane } = success.result else {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidData,
++            "pane.get returned an unexpected response type",
++        ));
++    };
++    let Some(attach) = pane.surface.terminal_attach() else {
++        let error = serde_json::json!({
++            "id": "cli:pane:attach:resolve",
++            "error": {
++                "code": "surface_kind_mismatch",
++                "message": format!("pane {pane_id} is not a terminal surface")
++            }
++        });
++        eprintln!("{error}");
++        return Ok(1);
++    };
++    crate::client::run_terminal_attach(attach.terminal_id.clone(), takeover)?;
++    Ok(0)
++}
++
+ fn pane_current(args: &[String]) -> std::io::Result<i32> {
+     let env_pane_id = std::env::var("HERDR_PANE_ID")
+         .ok()
+@@ -1630,6 +1675,7 @@ fn print_pane_help() {
+     eprintln!("  herdr pane list [--workspace <workspace_id>]");
+     eprintln!("  herdr pane current [--pane ID|--current]");
+     eprintln!("  herdr pane get <pane_id>");
++    eprintln!("  herdr pane attach <pane_id> [--takeover]");
+     eprintln!("  herdr pane layout [--pane ID|--current]");
+     eprintln!("  herdr pane process-info [--pane ID|--current]");
+     eprintln!("  herdr pane neighbor --direction left|right|up|down [--pane ID|--current]");
+diff --git a/src/cli/spec.rs b/src/cli/spec.rs
+index 134bf0bf94f76bedac3bc0940ff15b02ee917f8c..4a43859cfb1317e14d021e3df70336ea39fa4b33 100644
+--- a/src/cli/spec.rs
++++ b/src/cli/spec.rs
+@@ -404,6 +404,22 @@ fn agent_command() -> Command {
+                 .arg(required("target", "TARGET"))
+                 .arg(flag("takeover")),
+         )
++        .subcommand(
++            Command::new("new")
++                .about("Atomically create a pane and start an agent")
++                .override_usage("herdr agent new <NAME> --kind <KIND> --pane <ID> --idempotency-key <KEY> [OPTIONS] [-- [AGENT_ARG]...]")
++                .arg(required("name", "NAME"))
++                .arg(option("kind", "KIND").required(true).value_parser(agent_kind_values()))
++                .arg(option("pane", "ID").required(true).help("Pane to split"))
++                .arg(option("idempotency-key", "KEY").required(true))
++                .arg(option("from-pane", "ID").help("Source pane used to derive parent lineage"))
++                .arg(option("direction", "DIRECTION").value_parser(["right", "down"]).default_value("right"))
++                .arg(path_option("cwd", "PATH"))
++                .arg(option("timeout", "MS"))
++                .arg(flag("focus"))
++                .arg(flag("no-focus"))
++                .arg(Arg::new("agent_args").value_name("AGENT_ARG").num_args(0..).last(true)),
++        )
+         .subcommand(
+             Command::new("start")
+                 .about("Start a supported interactive agent in an existing pane")
+@@ -474,6 +490,13 @@ fn pane_command() -> Command {
+                 .args(current_pane_args()),
+         )
+         .subcommand(id_command("get", "pane_id", "Show a pane"))
++        .subcommand(
++            Command::new("attach")
++                .about("Attach directly to a terminal pane")
++                .override_usage("herdr pane attach <PANE_ID> [OPTIONS]")
++                .arg(required("pane_id", "PANE_ID"))
++                .arg(flag("takeover")),
++        )
+         .subcommand(
+             Command::new("layout")
+                 .about("Show pane layout information")
+diff --git a/src/persist/restore.rs b/src/persist/restore.rs
+index 3c5775c9e146418a89629dd585c891a462829cc8..d46c5d8d3fc3d6aab5c84aa446c4891d2952ae90 100644
+--- a/src/persist/restore.rs
++++ b/src/persist/restore.rs
+@@ -420,6 +420,7 @@ fn restore_workspace(
+             worktree_space,
+             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+             metadata_token_sequences: HashMap::new(),
++            agent_lineage: snap.agent_lineage.clone(),
+             public_pane_numbers,
+             next_public_pane_number,
+             next_public_tab_number,
+@@ -1177,6 +1178,7 @@ mod tests {
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::new(),
+                 next_public_pane_number: 0,
+                 public_tab_numbers: Vec::new(),
+@@ -1257,6 +1259,7 @@ mod tests {
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::from([(10, 1), (20, 3)]),
+                 next_public_pane_number: 4,
+                 public_tab_numbers: vec![5],
+@@ -1366,6 +1369,7 @@ mod tests {
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::from([(10, 1), (11, 2), (12, 3), (13, 4)]),
+                 next_public_pane_number: 5,
+                 public_tab_numbers: vec![1, 3, 4, 5],
+@@ -1449,6 +1453,7 @@ mod tests {
+             custom_name: None,
+             identity_cwd: cwd,
+             worktree_space: None,
++            agent_lineage: HashMap::new(),
+             public_pane_numbers: HashMap::new(),
+             next_public_pane_number: 0,
+             public_tab_numbers: Vec::new(),
+@@ -1488,6 +1493,7 @@ mod tests {
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::new(),
+                 next_public_pane_number: 0,
+                 public_tab_numbers: Vec::new(),
+@@ -1697,6 +1703,7 @@ mod tests {
+                 custom_name: None,
+                 identity_cwd: cwd,
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::new(),
+                 next_public_pane_number: 0,
+                 public_tab_numbers: Vec::new(),
+diff --git a/src/persist/snapshot.rs b/src/persist/snapshot.rs
+index 39f790ddda1884ac49ec7106d3f382cb6cd880db..2588b2bede43c69da7e8b9f38e9a32cd9cc979d1 100644
+--- a/src/persist/snapshot.rs
++++ b/src/persist/snapshot.rs
+@@ -56,6 +56,8 @@ pub struct WorkspaceSnapshot {
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
+     #[serde(default)]
++    pub agent_lineage: HashMap<String, crate::workspace::AgentLineageRecord>,
++    #[serde(default)]
+     pub public_pane_numbers: HashMap<u32, usize>,
+     #[serde(default)]
+     pub next_public_pane_number: usize,
+@@ -158,6 +160,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
+             custom_name: snap.custom_name,
+             identity_cwd,
+             worktree_space: None,
++            agent_lineage: HashMap::new(),
+             public_pane_numbers: HashMap::new(),
+             next_public_pane_number: 0,
+             public_tab_numbers: Vec::new(),
+@@ -291,6 +294,7 @@ fn capture_workspace(
+             .resolved_identity_cwd_from(terminals, terminal_runtimes)
+             .unwrap_or_else(|| ws.identity_cwd.clone()),
+         worktree_space: ws.worktree_space.clone(),
++        agent_lineage: ws.agent_lineage.clone(),
+         public_pane_numbers: ws
+             .public_pane_numbers
+             .iter()
+@@ -668,6 +672,7 @@ mod tests {
+                 custom_name: Some("pi-mono".to_string()),
+                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
+                 next_public_pane_number: 3,
+                 public_tab_numbers: vec![1],
+@@ -1182,6 +1187,34 @@ mod tests {
+         assert_eq!(snap.version, 0);
+     }
+ 
++    #[test]
++    fn agent_lineage_round_trips_with_workspace_snapshot() {
++        let mut state = state_with_workspaces(&["lineage"]);
++        state.workspaces[0].agent_lineage.insert(
++            "agent-stable-1".into(),
++            crate::workspace::AgentLineageRecord {
++                agent_instance_id: "agent-stable-1".into(),
++                idempotency_key: "retry-1".into(),
++                request_fingerprint: "fingerprint".into(),
++                name: "child".into(),
++                kind: "pi".into(),
++                tab_id: "w1:t1".into(),
++                pane_id: "w1:p2".into(),
++                parent_agent_instance_id: Some("agent-parent".into()),
++                spawned_from_pane_id: Some("w1:p1".into()),
++                argv: vec!["pi".into()],
++            },
++        );
++
++        let snapshot = capture_from_state(&state);
++        let json = serde_json::to_string(&snapshot).unwrap();
++        let restored = parse_snapshot(&json).unwrap();
++        assert_eq!(
++            restored.workspaces[0].agent_lineage["agent-stable-1"],
++            state.workspaces[0].agent_lineage["agent-stable-1"]
++        );
++    }
++
+     #[test]
+     fn future_version_is_rejected() {
+         let json = r#"{"version":999,"workspaces":[],"active":null,"selected":0}"#;
+@@ -1230,6 +1263,7 @@ mod tests {
+                 custom_name: Some("fallback test".to_string()),
+                 identity_cwd: PathBuf::from("/tmp"),
+                 worktree_space: None,
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers: HashMap::new(),
+                 next_public_pane_number: 0,
+                 public_tab_numbers: Vec::new(),
+diff --git a/src/protocol/wire.rs b/src/protocol/wire.rs
+index 4a445361f5fdb24c7485643bfea654450118f5e6..fbbb29a4fe3676413b7daae453db070ca306fa6f 100644
+--- a/src/protocol/wire.rs
++++ b/src/protocol/wire.rs
+@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
+ // ---------------------------------------------------------------------------
+ 
+ /// Current protocol version. Bumped when wire format changes incompatibly.
+-pub const PROTOCOL_VERSION: u32 = 20;
++pub const PROTOCOL_VERSION: u32 = 21;
+ 
+ /// Maximum allowed frame payload size (2 MB). Frames larger than this are
+ /// rejected to prevent denial-of-service via oversized length prefixes.
+@@ -1184,7 +1184,7 @@ mod tests {
+             ],
+         };
+         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+-        // Freeze the protocol 20 input envelope before it is published.
++        // Freeze the protocol 21 input envelope before it is published.
+         assert_eq!(
+             encoded,
+             vec![
+diff --git a/src/workspace.rs b/src/workspace.rs
+index 0a719ab1d1418621140fcabe2a05ae75bbe7e736..79430f6bf090185bc574c04a7d01a413e347a86c 100644
+--- a/src/workspace.rs
++++ b/src/workspace.rs
+@@ -175,6 +175,20 @@ pub(crate) fn reserve_workspace_ids(workspaces: &[Workspace]) {
+ }
+ 
+ /// A named workspace containing tabs.
++#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
++pub struct AgentLineageRecord {
++    pub agent_instance_id: String,
++    pub idempotency_key: String,
++    pub request_fingerprint: String,
++    pub name: String,
++    pub kind: String,
++    pub tab_id: String,
++    pub pane_id: String,
++    pub parent_agent_instance_id: Option<String>,
++    pub spawned_from_pane_id: Option<String>,
++    pub argv: Vec<String>,
++}
++
+ pub struct Workspace {
+     /// Stable public workspace identity, independent of display order.
+     pub id: String,
+@@ -198,6 +212,9 @@ pub struct Workspace {
+     pub worktree_space: Option<WorktreeSpaceMembership>,
+     pub(crate) metadata_tokens: crate::metadata_tokens::MetadataTokens,
+     pub(crate) metadata_token_sequences: HashMap<String, u64>,
++    /// Durable identity and parentage for agents created through `agent.new`.
++    /// Records intentionally outlive their pane so ended parents remain visible.
++    pub agent_lineage: HashMap<String, AgentLineageRecord>,
+     /// Public pane numbers within this workspace. Closed pane numbers are not reused.
+     pub public_pane_numbers: HashMap<PaneId, usize>,
+     pub(crate) next_public_pane_number: usize,
+@@ -264,6 +281,7 @@ impl Workspace {
+             worktree_space: None,
+             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+             metadata_token_sequences: HashMap::new(),
++            agent_lineage: HashMap::new(),
+             public_pane_numbers,
+             next_public_pane_number: 2,
+             next_public_tab_number: 2,
+@@ -463,6 +481,7 @@ impl Workspace {
+                 worktree_space: None,
+                 metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+                 metadata_token_sequences: HashMap::new(),
++                agent_lineage: HashMap::new(),
+                 public_pane_numbers,
+                 next_public_pane_number: 2,
+                 next_public_tab_number: 2,
+@@ -1301,6 +1320,7 @@ impl Workspace {
+             worktree_space: None,
+             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+             metadata_token_sequences: HashMap::new(),
++            agent_lineage: HashMap::new(),
+             public_pane_numbers,
+             next_public_pane_number: 2,
+             next_public_tab_number: 2,
+diff --git a/tests/api_ping.rs b/tests/api_ping.rs
+index bfecc27af371e3f9399f341bb332e965be2c3a00..5aea676e0f1941a6d23c3a9b8f8571c814a0ec6c 100644
+--- a/tests/api_ping.rs
++++ b/tests/api_ping.rs
+@@ -218,6 +218,15 @@ fn send_request(socket_path: &Path, json: &str) -> serde_json::Value {
+     reader.read_json_line(Duration::from_secs(5))
+ }
+ 
++fn session_event_sequence(socket_path: &Path) -> u64 {
++    send_request(
++        socket_path,
++        r#"{"id":"test_snapshot_cursor","method":"session.snapshot","params":{}}"#,
++    )["result"]["snapshot"]["event_sequence"]
++        .as_u64()
++        .expect("session snapshot event sequence")
++}
++
+ fn open_subscription(socket_path: &Path, json: &str) -> JsonLineReader {
+     let mut reader = JsonLineReader::connect(socket_path);
+     reader.send_line(json);
+@@ -304,7 +313,7 @@ fn ping_over_socket_returns_version() {
+     assert_eq!(value["result"]["version"], env!("CARGO_PKG_VERSION"));
+     // Intentionally hardcoded so wire protocol bumps require updating this test.
+     // Changing this value means old clients/servers are no longer compatible.
+-    assert_eq!(value["result"]["protocol"], 20);
++    assert_eq!(value["result"]["protocol"], 21);
+ 
+     cleanup_spawned_herdr(child, base);
+ }
+@@ -395,7 +404,7 @@ fn workspace_list_and_create_round_trip() {
+         .as_str()
+         .unwrap()
+         .to_string();
+-    let root_terminal_id = created["result"]["root_pane"]["terminal_id"]
++    let root_terminal_id = created["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .unwrap()
+         .to_string();
+@@ -455,7 +464,10 @@ fn workspace_list_and_create_round_trip() {
+     assert_eq!(panes[0]["tab_id"], active_tab_id);
+     let pane_id = panes[0]["pane_id"].as_str().unwrap().to_string();
+     assert_eq!(pane_id, root_pane_id);
+-    assert_eq!(panes[0]["terminal_id"], root_terminal_id);
++    assert_eq!(
++        panes[0]["surface"]["attach"]["terminal_id"],
++        root_terminal_id
++    );
+     let legacy_pane_id = format!("{workspace_id}-1");
+ 
+     let pane = send_request(
+@@ -466,7 +478,10 @@ fn workspace_list_and_create_round_trip() {
+         ),
+     );
+     assert_eq!(pane["result"]["pane"]["pane_id"], pane_id);
+-    assert_eq!(pane["result"]["pane"]["terminal_id"], root_terminal_id);
++    assert_eq!(
++        pane["result"]["pane"]["surface"]["attach"]["terminal_id"],
++        root_terminal_id
++    );
+ 
+     let read = send_request(
+         &socket_path,
+@@ -639,7 +654,8 @@ fn tab_methods_round_trip_over_socket() {
+         .as_str()
+         .unwrap()
+         .to_string();
+-    let second_root_terminal_id = tab_created["result"]["root_pane"]["terminal_id"]
++    let second_root_terminal_id = tab_created["result"]["root_pane"]["surface"]["attach"]
++        ["terminal_id"]
+         .as_str()
+         .unwrap()
+         .to_string();
+@@ -669,7 +685,8 @@ fn tab_methods_round_trip_over_socket() {
+     );
+     let panes = panes["result"]["panes"].as_array().unwrap();
+     assert!(panes.iter().any(|pane| {
+-        pane["pane_id"] == second_root_pane_id && pane["terminal_id"] == second_root_terminal_id
++        pane["pane_id"] == second_root_pane_id
++            && pane["surface"]["attach"]["terminal_id"] == second_root_terminal_id
+     }));
+     assert_eq!(tabs[1]["tab_id"], second_tab_id);
+ 
+@@ -1040,7 +1057,7 @@ fn agent_start_targets_existing_pane_over_socket() {
+         .as_str()
+         .unwrap()
+         .to_string();
+-    let terminal_id = workspace["result"]["root_pane"]["terminal_id"]
++    let terminal_id = workspace["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .unwrap()
+         .to_string();
+@@ -1091,6 +1108,195 @@ fn agent_start_targets_existing_pane_over_socket() {
+     cleanup_spawned_herdr(child, base);
+ }
+ 
++#[test]
++fn agent_new_is_atomic_idempotent_and_reports_durable_lineage() {
++    use std::os::unix::fs::PermissionsExt;
++
++    let _lock = test_lock();
++    let base = unique_test_dir();
++    let config_home = base.join("config");
++    let runtime_dir = base.join("runtime");
++    let socket_path = runtime_dir.join("herdr.sock");
++    let bin = base.join("bin");
++    fs::create_dir_all(&bin).unwrap();
++    let fake_pi = bin.join("pi");
++    fs::write(&fake_pi, "#!/bin/sh\nHERDR_AGENT=pi exec /bin/sleep 20\n").unwrap();
++    fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
++
++    let child = spawn_herdr_with_path(&config_home, &runtime_dir, &socket_path, Some(&bin));
++    wait_for_socket(&socket_path, Duration::from_secs(5));
++    let workspace = send_request(
++        &socket_path,
++        &serde_json::json!({
++            "id": "lineage_workspace",
++            "method": "workspace.create",
++            "params": { "cwd": base.display().to_string(), "focus": false }
++        })
++        .to_string(),
++    );
++    let root_pane = workspace["result"]["root_pane"]["pane_id"]
++        .as_str()
++        .unwrap()
++        .to_string();
++
++    let parent_request = serde_json::json!({
++        "id": "parent_new",
++        "method": "agent.new",
++        "params": {
++            "operation": { "idempotency_key": "test-parent-1" },
++            "name": "parent",
++            "kind": "pi",
++            "target_pane_id": root_pane,
++            "spawned_from_pane_id": root_pane,
++            "direction": "right",
++            "focus": false,
++            "args": ["20"],
++            "timeout_ms": 8_000
++        }
++    });
++    let parent = send_request(&socket_path, &parent_request.to_string());
++    assert_eq!(parent["result"]["type"], "agent_created");
++    assert_eq!(parent["result"]["replayed"], false);
++    let parent_id = parent["result"]["lineage"]["agent_instance_id"]
++        .as_str()
++        .unwrap()
++        .to_string();
++    let parent_pane = parent["result"]["agent"]["pane_id"]
++        .as_str()
++        .unwrap()
++        .to_string();
++
++    let replay = send_request(&socket_path, &parent_request.to_string());
++    assert_eq!(
++        replay["result"]["replayed"], true,
++        "unexpected replay response: {replay}"
++    );
++    assert_eq!(replay["result"]["lineage"]["agent_instance_id"], parent_id);
++    assert_eq!(replay["result"]["agent"]["pane_id"], parent_pane);
++
++    let child_agent = send_request(
++        &socket_path,
++        &serde_json::json!({
++            "id": "child_new",
++            "method": "agent.new",
++            "params": {
++                "operation": { "idempotency_key": "test-child-1" },
++                "name": "child",
++                "kind": "pi",
++                "target_pane_id": parent_pane,
++                "spawned_from_pane_id": parent_pane,
++                "direction": "down",
++                "focus": false,
++                "args": ["20"],
++                "timeout_ms": 8_000
++            }
++        })
++        .to_string(),
++    );
++    assert_eq!(
++        child_agent["result"]["lineage"]["parent_agent_instance_id"],
++        parent_id
++    );
++    assert_eq!(
++        child_agent["result"]["lineage"]["spawned_from_pane_id"],
++        parent_pane
++    );
++
++    let panes = send_request(
++        &socket_path,
++        r#"{"id":"lineage_panes","method":"pane.list","params":{}}"#,
++    );
++    assert_eq!(panes["result"]["panes"].as_array().unwrap().len(), 3);
++    let snapshot = send_request(
++        &socket_path,
++        r#"{"id":"lineage_snapshot","method":"session.snapshot","params":{}}"#,
++    );
++    let lineage = snapshot["result"]["snapshot"]["lineage"]
++        .as_array()
++        .unwrap();
++    assert_eq!(lineage.len(), 2);
++    assert!(lineage
++        .iter()
++        .any(|record| { record["agent_instance_id"] == parent_id && record["state"] == "active" }));
++
++    let renamed = send_request(
++        &socket_path,
++        &serde_json::json!({
++            "id": "rename_parent",
++            "method": "agent.rename",
++            "params": { "target": parent_pane, "name": "parent-renamed" }
++        })
++        .to_string(),
++    );
++    assert_eq!(
++        renamed["result"]["agent"]["name"], "parent-renamed",
++        "unexpected rename response: {renamed}"
++    );
++    let closed = send_request(
++        &socket_path,
++        &serde_json::json!({
++            "id": "close_parent",
++            "method": "pane.close",
++            "params": { "pane_id": parent_pane }
++        })
++        .to_string(),
++    );
++    assert_eq!(closed["result"]["type"], "ok");
++    let ended_snapshot = send_request(
++        &socket_path,
++        r#"{"id":"ended_snapshot","method":"session.snapshot","params":{}}"#,
++    );
++    let ended_lineage = ended_snapshot["result"]["snapshot"]["lineage"]
++        .as_array()
++        .unwrap();
++    assert!(ended_lineage.iter().any(|record| {
++        record["agent_instance_id"] == parent_id
++            && record["name"] == "parent-renamed"
++            && record["state"] == "ended"
++    }));
++    assert!(ended_lineage.iter().any(|record| {
++        record["parent_agent_instance_id"] == parent_id && record["state"] == "active"
++    }));
++
++    let pane_count_before_failed_spawn = send_request(
++        &socket_path,
++        r#"{"id":"before_failed_spawn","method":"pane.list","params":{}}"#,
++    )["result"]["panes"]
++        .as_array()
++        .unwrap()
++        .len();
++    let failed_spawn = send_request(
++        &socket_path,
++        &serde_json::json!({
++            "id": "failed_new",
++            "method": "agent.new",
++            "params": {
++                "operation": { "idempotency_key": "test-missing-binary" },
++                "name": "missing",
++                "kind": "claude",
++                "target_pane_id": root_pane,
++                "direction": "right",
++                "focus": false
++            }
++        })
++        .to_string(),
++    );
++    assert_eq!(failed_spawn["error"]["code"], "agent_new_spawn_failed");
++    let pane_count_after_failed_spawn = send_request(
++        &socket_path,
++        r#"{"id":"after_failed_spawn","method":"pane.list","params":{}}"#,
++    )["result"]["panes"]
++        .as_array()
++        .unwrap()
++        .len();
++    assert_eq!(
++        pane_count_after_failed_spawn,
++        pane_count_before_failed_spawn
++    );
++
++    cleanup_spawned_herdr(child, base);
++}
++
+ #[test]
+ fn agent_methods_round_trip_over_socket() {
+     let _lock = test_lock();
+@@ -1117,7 +1323,7 @@ fn agent_methods_round_trip_over_socket() {
+         .as_str()
+         .unwrap()
+         .to_string();
+-    let terminal_id = created["result"]["root_pane"]["terminal_id"]
++    let terminal_id = created["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .unwrap()
+         .to_string();
+@@ -1203,7 +1409,7 @@ fn agent_methods_round_trip_over_socket() {
+     let second_pane_id = tab_created["result"]["root_pane"]["pane_id"]
+         .as_str()
+         .unwrap();
+-    let second_terminal_id = tab_created["result"]["root_pane"]["terminal_id"]
++    let second_terminal_id = tab_created["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .unwrap();
+ 
+@@ -1350,7 +1556,7 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
+ 
+     let mut reader = open_subscription(
+         &socket_path,
+-        r#"{"id":"sub_life_a","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"},{"type":"workspace.focused"},{"type":"tab.created"},{"type":"tab.focused"},{"type":"tab.renamed"},{"type":"pane.created"},{"type":"pane.focused"},{"type":"pane.agent_detected"}]}}"#,
++        r#"{"id":"sub_life_a","method":"events.subscribe","params":{"after_sequence":0,"subscriptions":[{"type":"workspace.created"},{"type":"workspace.focused"},{"type":"tab.created"},{"type":"tab.focused"},{"type":"tab.renamed"},{"type":"pane.created"},{"type":"pane.focused"},{"type":"pane.agent_detected"}]}}"#,
+     );
+ 
+     let ack = reader.read_json_line(Duration::from_secs(2));
+@@ -1486,9 +1692,12 @@ fn events_subscribe_streams_pane_split_and_close_events() {
+         .unwrap()
+         .to_string();
+ 
++    let cursor = session_event_sequence(&socket_path);
+     let mut reader = open_subscription(
+         &socket_path,
+-        r#"{"id":"sub_life_b","method":"events.subscribe","params":{"subscriptions":[{"type":"pane.created"},{"type":"pane.closed"}]}}"#,
++        &format!(
++            r#"{{"id":"sub_life_b","method":"events.subscribe","params":{{"after_sequence":{cursor},"subscriptions":[{{"type":"pane.created"}},{{"type":"pane.closed"}}]}}}}"#
++        ),
+     );
+ 
+     let ack = reader.read_json_line(Duration::from_secs(2));
+@@ -1571,9 +1780,12 @@ fn events_subscribe_streams_tab_and_workspace_close_events() {
+         .unwrap()
+         .to_string();
+ 
++    let cursor = session_event_sequence(&socket_path);
+     let mut reader = open_subscription(
+         &socket_path,
+-        r#"{"id":"sub_life_c","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.renamed"},{"type":"tab.closed"},{"type":"workspace.closed"}]}}"#,
++        &format!(
++            r#"{{"id":"sub_life_c","method":"events.subscribe","params":{{"after_sequence":{cursor},"subscriptions":[{{"type":"workspace.renamed"}},{{"type":"tab.closed"}},{{"type":"workspace.closed"}}]}}}}"#
++        ),
+     );
+ 
+     let ack = reader.read_json_line(Duration::from_secs(2));
+@@ -2219,10 +2431,11 @@ fn events_subscribe_streams_output_and_agent_status_events() {
+         .to_string();
+     let legacy_pane_id = format!("{workspace_id}-1");
+ 
++    let cursor = session_event_sequence(&socket_path);
+     let mut reader = open_subscription(
+         &socket_path,
+         &format!(
+-            r#"{{"id":"sub_1","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.output_matched","pane_id":"{}","source":"recent","lines":40,"match":{{"type":"substring","value":"hello from socket"}}}},{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"idle"}}]}}}}"#,
++            r#"{{"id":"sub_1","method":"events.subscribe","params":{{"after_sequence":{cursor},"subscriptions":[{{"type":"pane.output_matched","pane_id":"{}","source":"recent","lines":40,"match":{{"type":"substring","value":"hello from socket"}}}},{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"idle"}}]}}}}"#,
+             legacy_pane_id, legacy_pane_id,
+         ),
+     );
+@@ -2279,7 +2492,7 @@ fn events_subscribe_streams_output_and_agent_status_events() {
+     assert_eq!(send_enter["result"]["type"], "ok");
+ 
+     let agent_idle = reader.read_json_line(Duration::from_secs(8));
+-    assert_eq!(agent_idle["event"], "pane.agent_status_changed");
++    assert_eq!(agent_idle["event"], "pane_agent_status_changed");
+     assert_eq!(agent_idle["data"]["pane_id"], pane_id);
+     assert_eq!(agent_idle["data"]["agent_status"], "idle");
+     assert_eq!(agent_idle["data"]["agent"], "pi");
+@@ -2350,10 +2563,11 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
+     );
+     assert_eq!(tab_created["result"]["type"], "tab_created");
+ 
++    let cursor = session_event_sequence(&socket_path);
+     let mut reader = open_subscription(
+         &socket_path,
+         &format!(
+-            r#"{{"id":"sub_status","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
++            r#"{{"id":"sub_status","method":"events.subscribe","params":{{"after_sequence":{cursor},"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
+             background_pane_id,
+         ),
+     );
+@@ -2379,7 +2593,7 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
+     assert_eq!(send_enter["result"]["type"], "ok");
+ 
+     let status_event = reader.read_json_line(Duration::from_secs(12));
+-    assert_eq!(status_event["event"], "pane.agent_status_changed");
++    assert_eq!(status_event["event"], "pane_agent_status_changed");
+     assert_eq!(status_event["data"]["pane_id"], background_pane_id);
+     assert_eq!(status_event["data"]["agent_status"], "done");
+     assert_eq!(status_event["data"]["agent"], "pi");
+@@ -2393,10 +2607,11 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
+     );
+     assert_eq!(pane["result"]["pane"]["agent_status"], "done");
+ 
++    let resume_cursor = session_event_sequence(&socket_path);
+     let mut already_done_reader = open_subscription(
+         &socket_path,
+         &format!(
+-            r#"{{"id":"sub_status_already_done","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
++            r#"{{"id":"sub_status_already_done","method":"events.subscribe","params":{{"after_sequence":{resume_cursor},"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
+             background_pane_id,
+         ),
+     );
+@@ -2404,11 +2619,12 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
+     assert_eq!(ack["id"], "sub_status_already_done");
+     assert_eq!(ack["result"]["type"], "subscription_started");
+ 
+-    let initial_status_event = already_done_reader.read_json_line(Duration::from_secs(2));
+-    assert_eq!(initial_status_event["event"], "pane.agent_status_changed");
+-    assert_eq!(initial_status_event["data"]["pane_id"], background_pane_id);
+-    assert_eq!(initial_status_event["data"]["agent_status"], "done");
+-    assert_eq!(initial_status_event["data"]["agent"], "pi");
++    assert!(
++        already_done_reader
++            .try_read_json_line(Duration::from_millis(500))
++            .is_none(),
++        "resuming from the snapshot cursor must not replay an already applied status"
++    );
+ 
+     let focused_tab_id = created["result"]["workspace"]["active_tab_id"]
+         .as_str()
+@@ -2469,10 +2685,11 @@ fn metadata_status_subscription_filter_and_ttl_expiry_are_observable() {
+     );
+     assert_eq!(report_agent["result"]["type"], "ok");
+ 
++    let done_cursor = session_event_sequence(&socket_path);
+     let mut done_reader = open_subscription(
+         &socket_path,
+         &format!(
+-            r#"{{"id":"sub_meta_done","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
++            r#"{{"id":"sub_meta_done","method":"events.subscribe","params":{{"after_sequence":{done_cursor},"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
+             pane_id,
+         ),
+     );
+@@ -2495,10 +2712,11 @@ fn metadata_status_subscription_filter_and_ttl_expiry_are_observable() {
+         "done-filtered subscription emitted for a working metadata-only change"
+     );
+ 
++    let cursor = session_event_sequence(&socket_path);
+     let mut reader = open_subscription(
+         &socket_path,
+         &format!(
+-            r#"{{"id":"sub_meta_ttl","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}"}}]}}}}"#,
++            r#"{{"id":"sub_meta_ttl","method":"events.subscribe","params":{{"after_sequence":{cursor},"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}"}}]}}}}"#,
+             pane_id,
+         ),
+     );
+@@ -2516,14 +2734,14 @@ fn metadata_status_subscription_filter_and_ttl_expiry_are_observable() {
+     assert_eq!(metadata["result"]["type"], "ok");
+ 
+     let set_event = reader.read_json_line(Duration::from_secs(2));
+-    assert_eq!(set_event["event"], "pane.agent_status_changed");
++    assert_eq!(set_event["event"], "pane_agent_status_changed");
+     assert_eq!(set_event["data"]["pane_id"], pane_id);
+     assert_eq!(set_event["data"]["agent_status"], "working");
+     assert_eq!(set_event["data"]["agent"], "pi");
+     assert_eq!(set_event["data"]["title"], "short lived");
+ 
+     let expiry_event = reader.read_json_line(Duration::from_secs(3));
+-    assert_eq!(expiry_event["event"], "pane.agent_status_changed");
++    assert_eq!(expiry_event["event"], "pane_agent_status_changed");
+     assert_eq!(expiry_event["data"]["pane_id"], pane_id);
+     assert_eq!(expiry_event["data"]["agent_status"], "working");
+     assert_eq!(expiry_event["data"]["agent"], "pi");
+diff --git a/tests/cli/agents.rs b/tests/cli/agents.rs
+index 3164b8021b598a38b1e3b77d775515e8912d8651..38c7f45d5081278f4c75161de3777967db812a72 100644
+--- a/tests/cli/agents.rs
++++ b/tests/cli/agents.rs
+@@ -67,7 +67,7 @@ fn agent_start_waits_for_a_new_pane_shell_to_finish_initializing() {
+         ],
+     );
+     let pane_id = created["result"]["root_pane"]["pane_id"].as_str().unwrap();
+-    let terminal_id = created["result"]["root_pane"]["terminal_id"]
++    let terminal_id = created["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .unwrap();
+     assert!(!created["result"]["root_pane"]["focused"].as_bool().unwrap());
+@@ -825,7 +825,7 @@ fn agent_commands_work() {
+         .as_str()
+         .unwrap()
+         .to_string();
+-    let terminal_id = created_json["result"]["root_pane"]["terminal_id"]
++    let terminal_id = created_json["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .unwrap()
+         .to_string();
+diff --git a/tests/cli/harness.rs b/tests/cli/harness.rs
+index 91dab149a2ecdb929407d9b6fe443550c0b1b49b..c4f0f2b1ed4ca46fe8aefd7ec1014b3e874b84c2 100644
+--- a/tests/cli/harness.rs
++++ b/tests/cli/harness.rs
+@@ -346,7 +346,7 @@ pub(super) fn pane_topology_snapshot(list_response: &serde_json::Value) -> Vec<s
+         .map(|pane| {
+             serde_json::json!({
+                 "pane_id": pane["pane_id"],
+-                "terminal_id": pane["terminal_id"],
++                "surface": pane["surface"],
+                 "workspace_id": pane["workspace_id"],
+                 "tab_id": pane["tab_id"],
+                 "focused": pane["focused"],
+diff --git a/tests/cli/sessions.rs b/tests/cli/sessions.rs
+index d86de44a65a485b8e95991a88f6dc3c95b11cd0b..1f7e3c0b8be17b1ee51cc1b84f482f931e4b9359 100644
+--- a/tests/cli/sessions.rs
++++ b/tests/cli/sessions.rs
+@@ -389,7 +389,7 @@ fn status_commands_report_client_and_server_versions() {
+         "stdout: {full_stdout}"
+     );
+     assert!(
+-        full_stdout.contains("  protocol: 20"),
++        full_stdout.contains("  protocol: 21"),
+         "stdout: {full_stdout}"
+     );
+     assert!(full_stdout.contains("server:\n"), "stdout: {full_stdout}");
+@@ -422,7 +422,7 @@ fn status_commands_report_client_and_server_versions() {
+         "stdout: {server_stdout}"
+     );
+     assert!(
+-        server_stdout.contains("protocol: 20"),
++        server_stdout.contains("protocol: 21"),
+         "stdout: {server_stdout}"
+     );
+ 
+@@ -434,7 +434,7 @@ fn status_commands_report_client_and_server_versions() {
+         "stdout: {client_stdout}"
+     );
+     assert!(
+-        client_stdout.contains("protocol: 20"),
++        client_stdout.contains("protocol: 21"),
+         "stdout: {client_stdout}"
+     );
+     assert!(
+@@ -444,7 +444,7 @@ fn status_commands_report_client_and_server_versions() {
+ 
+     let full_json = run_cli_json(&socket_path, &["status", "--json"]);
+     assert_eq!(full_json["client"]["version"], env!("CARGO_PKG_VERSION"));
+-    assert_eq!(full_json["client"]["protocol"], 20);
++    assert_eq!(full_json["client"]["protocol"], 21);
+     assert_eq!(full_json["server"]["status"], "running");
+     assert_eq!(full_json["server"]["running"], true);
+     assert_eq!(full_json["server"]["compatible"], true);
+@@ -458,12 +458,12 @@ fn status_commands_report_client_and_server_versions() {
+     let server_json = run_cli_json(&socket_path, &["status", "server", "--json"]);
+     assert_eq!(server_json["status"], "running");
+     assert_eq!(server_json["version"], env!("CARGO_PKG_VERSION"));
+-    assert_eq!(server_json["protocol"], 20);
++    assert_eq!(server_json["protocol"], 21);
+     assert_eq!(server_json["compatible"], true);
+ 
+     let client_json = run_cli_json(&socket_path, &["status", "client", "--json"]);
+     assert_eq!(client_json["version"], env!("CARGO_PKG_VERSION"));
+-    assert_eq!(client_json["protocol"], 20);
++    assert_eq!(client_json["protocol"], 21);
+     assert!(client_json["binary"]
+         .as_str()
+         .is_some_and(|path| !path.is_empty()));
+diff --git a/tests/client_mode.rs b/tests/client_mode.rs
+index 998df2be10d72cc0dd8514908afe0a279ce73b1d..fb564feba744cbd52848d3e948e728d7a241527d 100644
+--- a/tests/client_mode.rs
++++ b/tests/client_mode.rs
+@@ -419,7 +419,7 @@ fn direct_attach_initial_mouse_capture_follows_config() {
+         })
+         .to_string(),
+     );
+-    let terminal_id = created["result"]["root_pane"]["terminal_id"]
++    let terminal_id = created["result"]["root_pane"]["surface"]["attach"]["terminal_id"]
+         .as_str()
+         .expect("created terminal id")
+         .to_string();
+diff --git a/tests/support/mod.rs b/tests/support/mod.rs
+index f0ed100bcc079c5bbb9ff5377e94e56465836ac1..f295dbbe71586ba98a21f0ac2eb3d4ef2f29553d 100644
+--- a/tests/support/mod.rs
++++ b/tests/support/mod.rs
+@@ -15,7 +15,7 @@ static INIT: Once = Once::new();
+ static CLEANUP_GUARD: OnceLock<CleanupGuard> = OnceLock::new();
+ const WATCHDOG_SCAN_INTERVAL: Duration = Duration::from_secs(1);
+ const RUNTIME_OWNER_MARKER: &str = ".herdr-test-owner-pid";
+-pub const CURRENT_PROTOCOL: u32 = 20;
++pub const CURRENT_PROTOCOL: u32 = 21;
+ 
+ pub fn register_spawned_herdr_pid(pid: Option<u32>) {
+     let Some(pid) = pid else {

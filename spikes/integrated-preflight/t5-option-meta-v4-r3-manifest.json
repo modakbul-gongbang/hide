@@ -1,0 +1,77 @@
+{
+  "schema": "herdr.t1-preflight.manifest.v1",
+  "verification_profile": "t5-option-meta-v4",
+  "profile_instance": "t5-option-meta-v4-r3",
+  "run_id": "herdr-t5-option-meta-v4-r3-physical",
+  "output_dir": "target/evidence/t5-option-meta-v4-r3-physical",
+  "bundle": {
+    "identifier": "dev.herdr.integrated-preflight",
+    "main_executable": "Contents/MacOS/herdr-integrated-preflight",
+    "architectures": ["arm64"],
+    "executables": [
+      "Contents/MacOS/herdr-integrated-preflight",
+      "Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+    ],
+    "browser_executables": [
+      "Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)",
+      "Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+    ],
+    "required_rpaths": {},
+    "resources": [{"path": "Contents/Info.plist"}]
+  },
+  "runtime": {
+    "arguments": [
+      "--t1-preflight-phase",
+      "{phase}",
+      "--t1-browser-mode",
+      "{launch_mode}",
+      "--t1-browser-url",
+      "http://127.0.0.1:45773/",
+      "--t1-browser-profile",
+      "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/evidence/t5-option-meta-v4-r3-physical/browser-profile",
+      "--t1-remote-debugging-port",
+      "45774",
+      "--t1-preflight-events",
+      "{events_path}",
+      "--t1-preflight-run-id",
+      "herdr-t5-option-meta-v4-r3-physical",
+      "--t1-preflight-profile",
+      "t5-option-meta-v4",
+      "--t1-preflight-action-socket",
+      "{action_socket}"
+    ],
+    "phases": {
+      "clean_closed": {"launch_mode": "browser-closed"},
+      "warm_closed": {"launch_mode": "browser-closed"},
+      "browser_included": {
+        "launch_mode": "browser-included",
+        "profile_settle_ms": 5000
+      },
+      "relaunch_closed": {"launch_mode": "browser-closed"}
+    },
+    "scenario": "fixture/scenario-t5-option-meta-v4-r3.json",
+    "expected_ax_labels": [
+      "Workspaces navigator",
+      "Native spike tab",
+      "Terminal pane A",
+      "Editor pane B"
+    ],
+    "allowed_external_processes": ["/bin/zsh"],
+    "timeouts_ms": {"phase": 180000, "event": 15000, "exit": 10000},
+    "sampling": {"interval_ms": 500, "count": 10}
+  },
+  "budgets": {
+    "warm_usable_ms": 1000,
+    "terminal_input_to_present_p95_ms": 50,
+    "idle_cpu_percent": 1,
+    "browser_closed_rss_mb": 200,
+    "browser_included_rss_mb": 800
+  }
+}

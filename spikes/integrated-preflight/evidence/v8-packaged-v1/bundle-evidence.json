@@ -1,0 +1,527 @@
+{
+  "schema": "herdr.t1-preflight.bundle-evidence.v1",
+  "app_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app",
+  "bundle_identifier": "dev.herdr.integrated-preflight",
+  "bundle_executable": "herdr-integrated-preflight",
+  "bundle_version": "0.1.0",
+  "short_version": "0.1.0",
+  "info_plist_sha256": "2b7675a427ce8613fa51be42dd1b442757130f4d1d448cb7da0f1cdb12b3e7f1",
+  "signature_verified": true,
+  "executables": [
+    {
+      "path": "Contents/MacOS/herdr-integrated-preflight",
+      "sha256": "e6ba9f6f6bb4cabc332461c876b6cb48e7910f4dfb1b2edce572e798785018e4",
+      "architectures": [
+        "arm64"
+      ],
+      "rpaths": [],
+      "dependencies": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreData.framework/Versions/A/CoreData",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+        "/System/Library/Frameworks/CloudKit.framework/Versions/A/CloudKit",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libiconv.2.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper",
+      "sha256": "e43ef4f73792d964b0f43a1bc7837df5f916dbe8d29865b24d38bde2ffa0edef",
+      "architectures": [
+        "arm64"
+      ],
+      "rpaths": [],
+      "dependencies": [
+        "/usr/lib/libobjc.A.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)",
+      "sha256": "801938cd189cc8bbd55090cc22fde2ae2ff0060e799f59bc9d6d534e1e18c46e",
+      "architectures": [
+        "arm64"
+      ],
+      "rpaths": [],
+      "dependencies": [
+        "/usr/lib/libobjc.A.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)",
+      "sha256": "b90cc2bd9efc732de83634a4fb0b923754c1122030c33c759c3f2235983a4c85",
+      "architectures": [
+        "arm64"
+      ],
+      "rpaths": [],
+      "dependencies": [
+        "/usr/lib/libobjc.A.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)",
+      "sha256": "510cfebee8a355c2969506c4cc79f0c1a80a545fefbcac2f0716a2b23dc3a5ce",
+      "architectures": [
+        "arm64"
+      ],
+      "rpaths": [],
+      "dependencies": [
+        "/usr/lib/libobjc.A.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)",
+      "sha256": "df5acd0986c58113b30ec17579848398b6ed45fa0cedc7e26031f1c50eb92e8e",
+      "architectures": [
+        "arm64"
+      ],
+      "rpaths": [],
+      "dependencies": [
+        "/usr/lib/libobjc.A.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    }
+  ],
+  "discovered_helper_executables": [
+    "Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)",
+    "Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)",
+    "Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)",
+    "Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)",
+    "Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper"
+  ],
+  "resources": [
+    {
+      "path": "Contents/Info.plist",
+      "sha256": "2b7675a427ce8613fa51be42dd1b442757130f4d1d448cb7da0f1cdb12b3e7f1",
+      "size_bytes": 1458
+    }
+  ],
+  "commands": [
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "--verbose=4",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app\n\n\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/Chromium Embedded Framework.framework\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/Chromium Embedded Framework.framework\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app: valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app: satisfies its Designated Requirement\n",
+      "duration_ms": 180.8905
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "-d",
+        "--verbose=4",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "Executable=/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight\nIdentifier=dev.herdr.integrated-preflight\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=50999 flags=0x2(adhoc) hashes=1587+3 location=embedded\nVersionPlatform=1\nVersionMin=720896\nVersionSDK=983552\nHash type=sha256 size=32\nCandidateCDHash sha256=2028e8393bbb9f40a9744821f829f085a37ce9fc\nCandidateCDHashFull sha256=2028e8393bbb9f40a9744821f829f085a37ce9fc8879bc067c0442b64d87c00e\nHash choices=sha256\nCMSDigest=2028e8393bbb9f40a9744821f829f085a37ce9fc8879bc067c0442b64d87c00e\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=5996544\nExecutable Segment flags=0x1\nPage size=4096\nCDHash=2028e8393bbb9f40a9744821f829f085a37ce9fc\nSignature=adhoc\nInfo.plist entries=18\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=6\nInternal requirements count=0 size=12\n",
+      "duration_ms": 8.078792000000002
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "-d",
+        "--entitlements",
+        ":-",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "Executable=/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight\nwarning: Specifying ':' in the path is deprecated and will not work in a future release\n",
+      "duration_ms": 7.583499999999965
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "-b",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+      ],
+      "exit_code": 0,
+      "stdout": "Mach-O 64-bit executable arm64\n",
+      "stderr": "",
+      "duration_ms": 6.9192499999999875
+    },
+    {
+      "argv": [
+        "/usr/bin/lipo",
+        "-archs",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+      ],
+      "exit_code": 0,
+      "stdout": "arm64\n",
+      "stderr": "",
+      "duration_ms": 14.685459000000012
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--strict",
+        "--verbose=2",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app\n--prepared:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/Chromium Embedded Framework.framework\n--validated:/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/Chromium Embedded Framework.framework\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight: valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight: satisfies its Designated Requirement\n",
+      "duration_ms": 15.338416999999938
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--rpaths",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight:\n",
+      "stderr": "",
+      "duration_ms": 15.51475000000002
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--dylibs-used",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight:\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 3208.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.30.19)\n\t/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 1.5.0)\n\t/System/Library/Frameworks/CoreData.framework/Versions/A/CoreData (compatibility version 1.0.0, current version 1419.0.0)\n\t/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 844.2.0)\n\t/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage (compatibility version 1.0.1, current version 6.0.0)\n\t/System/Library/Frameworks/CloudKit.framework/Versions/A/CloudKit (compatibility version 1.0.0, current version 2230.24.0)\n\t/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1.11.0)\n\t/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 367.6.0)\n\t/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 1889.2.7)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 3208.0.0)\n\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n",
+      "stderr": "",
+      "duration_ms": 13.452374999999961
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "-b",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper"
+      ],
+      "exit_code": 0,
+      "stdout": "Mach-O 64-bit executable arm64\n",
+      "stderr": "",
+      "duration_ms": 5.047499999999983
+    },
+    {
+      "argv": [
+        "/usr/bin/lipo",
+        "-archs",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper"
+      ],
+      "exit_code": 0,
+      "stdout": "arm64\n",
+      "stderr": "",
+      "duration_ms": 11.672374999999956
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--strict",
+        "--verbose=2",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper: valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper: satisfies its Designated Requirement\n",
+      "duration_ms": 7.225707999999997
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--rpaths",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper:\n",
+      "stderr": "",
+      "duration_ms": 14.046041000000065
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--dylibs-used",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper.app/Contents/MacOS/herdr-integrated-preflight Helper:\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 3208.0.0)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.30.19)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+      "stderr": "",
+      "duration_ms": 27.963750000000065
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "-b",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)"
+      ],
+      "exit_code": 0,
+      "stdout": "Mach-O 64-bit executable arm64\n",
+      "stderr": "",
+      "duration_ms": 5.344958000000011
+    },
+    {
+      "argv": [
+        "/usr/bin/lipo",
+        "-archs",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)"
+      ],
+      "exit_code": 0,
+      "stdout": "arm64\n",
+      "stderr": "",
+      "duration_ms": 12.651124999999986
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--strict",
+        "--verbose=2",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts): valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts): satisfies its Designated Requirement\n",
+      "duration_ms": 7.784083999999969
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--rpaths",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts):\n",
+      "stderr": "",
+      "duration_ms": 15.177666999999895
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--dylibs-used",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Alerts).app/Contents/MacOS/herdr-integrated-preflight Helper (Alerts):\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 3208.0.0)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.30.19)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+      "stderr": "",
+      "duration_ms": 16.289416000000003
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "-b",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)"
+      ],
+      "exit_code": 0,
+      "stdout": "Mach-O 64-bit executable arm64\n",
+      "stderr": "",
+      "duration_ms": 4.9862079999999365
+    },
+    {
+      "argv": [
+        "/usr/bin/lipo",
+        "-archs",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)"
+      ],
+      "exit_code": 0,
+      "stdout": "arm64\n",
+      "stderr": "",
+      "duration_ms": 12.81208300000003
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--strict",
+        "--verbose=2",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU): valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU): satisfies its Designated Requirement\n",
+      "duration_ms": 7.264500000000007
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--rpaths",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU):\n",
+      "stderr": "",
+      "duration_ms": 14.171916000000007
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--dylibs-used",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (GPU).app/Contents/MacOS/herdr-integrated-preflight Helper (GPU):\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 3208.0.0)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.30.19)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+      "stderr": "",
+      "duration_ms": 14.002457999999995
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "-b",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)"
+      ],
+      "exit_code": 0,
+      "stdout": "Mach-O 64-bit executable arm64\n",
+      "stderr": "",
+      "duration_ms": 4.24733300000002
+    },
+    {
+      "argv": [
+        "/usr/bin/lipo",
+        "-archs",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)"
+      ],
+      "exit_code": 0,
+      "stdout": "arm64\n",
+      "stderr": "",
+      "duration_ms": 12.127792000000026
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--strict",
+        "--verbose=2",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin): valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin): satisfies its Designated Requirement\n",
+      "duration_ms": 7.841666999999997
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--rpaths",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin):\n",
+      "stderr": "",
+      "duration_ms": 13.474832999999965
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--dylibs-used",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Plugin).app/Contents/MacOS/herdr-integrated-preflight Helper (Plugin):\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 3208.0.0)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.30.19)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+      "stderr": "",
+      "duration_ms": 13.920125000000061
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "-b",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+      ],
+      "exit_code": 0,
+      "stdout": "Mach-O 64-bit executable arm64\n",
+      "stderr": "",
+      "duration_ms": 4.72570799999994
+    },
+    {
+      "argv": [
+        "/usr/bin/lipo",
+        "-archs",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+      ],
+      "exit_code": 0,
+      "stdout": "arm64\n",
+      "stderr": "",
+      "duration_ms": 12.263000000000023
+    },
+    {
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--strict",
+        "--verbose=2",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer): valid on disk\n/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer): satisfies its Designated Requirement\n",
+      "duration_ms": 7.832416000000064
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--rpaths",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer):\n",
+      "stderr": "",
+      "duration_ms": 14.15570799999999
+    },
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "llvm-objdump",
+        "--macho",
+        "--dylibs-used",
+        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer)"
+      ],
+      "exit_code": 0,
+      "stdout": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/Frameworks/herdr-integrated-preflight Helper (Renderer).app/Contents/MacOS/herdr-integrated-preflight Helper (Renderer):\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 3208.0.0)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.30.19)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+      "stderr": "",
+      "duration_ms": 13.136833999999986
+    }
+  ]
+}

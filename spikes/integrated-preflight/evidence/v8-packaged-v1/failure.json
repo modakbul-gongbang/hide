@@ -1,0 +1,177 @@
+{
+  "event": "t1_preflight.failed",
+  "code": "input.invalid_point",
+  "message": "click point must be on-screen",
+  "details": {
+    "x": -1060.3,
+    "y": 479.0,
+    "frontmost_application_timeline": [],
+    "session_event_taps": [
+      {
+        "tap_id": 294702567,
+        "tap_point": 1,
+        "listen_only": false,
+        "events_of_interest": "0xffc000fe",
+        "taps_keyboard": false,
+        "tapping_pid": 583,
+        "enabled": true,
+        "avg_usec_latency": 6237818.0,
+        "max_usec_latency": 6237818.0
+      },
+      {
+        "tap_id": 1303455736,
+        "tap_point": 1,
+        "listen_only": false,
+        "events_of_interest": "0x1000",
+        "taps_keyboard": true,
+        "tapping_pid": 4949,
+        "enabled": true,
+        "avg_usec_latency": 28119638.0,
+        "max_usec_latency": 28119638.0
+      },
+      {
+        "tap_id": 2044897763,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x1400",
+        "taps_keyboard": true,
+        "tapping_pid": 4946,
+        "enabled": true,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 1102520059,
+        "tap_point": 1,
+        "listen_only": false,
+        "events_of_interest": "0x1426",
+        "taps_keyboard": true,
+        "tapping_pid": 4949,
+        "enabled": true,
+        "avg_usec_latency": 26134.177734375,
+        "max_usec_latency": 26134.177734375
+      },
+      {
+        "tap_id": 783368690,
+        "tap_point": 1,
+        "listen_only": false,
+        "events_of_interest": "0x2",
+        "taps_keyboard": false,
+        "tapping_pid": 4949,
+        "enabled": true,
+        "avg_usec_latency": 11365377.0,
+        "max_usec_latency": 11365377.0
+      },
+      {
+        "tap_id": 1025202362,
+        "tap_point": 0,
+        "listen_only": false,
+        "events_of_interest": "0xffffffff",
+        "taps_keyboard": true,
+        "tapping_pid": 4898,
+        "enabled": true,
+        "avg_usec_latency": 101.8614730834961,
+        "max_usec_latency": 101.8614730834961
+      },
+      {
+        "tap_id": 1189641421,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x1c00",
+        "taps_keyboard": true,
+        "tapping_pid": 728,
+        "enabled": true,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 596516649,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x80000000",
+        "taps_keyboard": false,
+        "tapping_pid": 666,
+        "enabled": true,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 1649760492,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x1c00",
+        "taps_keyboard": true,
+        "tapping_pid": 573,
+        "enabled": false,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 719885386,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x80000e0",
+        "taps_keyboard": false,
+        "tapping_pid": 573,
+        "enabled": false,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 424238335,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x204000",
+        "taps_keyboard": false,
+        "tapping_pid": 573,
+        "enabled": true,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 1957747793,
+        "tap_point": 1,
+        "listen_only": false,
+        "events_of_interest": "0xf0400000",
+        "taps_keyboard": false,
+        "tapping_pid": 583,
+        "enabled": false,
+        "avg_usec_latency": 240702144512.0,
+        "max_usec_latency": 240702144512.0
+      },
+      {
+        "tap_id": 1714636915,
+        "tap_point": 1,
+        "listen_only": false,
+        "events_of_interest": "0x10400000",
+        "taps_keyboard": false,
+        "tapping_pid": 583,
+        "enabled": false,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 1681692777,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x1fc01cfe",
+        "taps_keyboard": true,
+        "tapping_pid": 583,
+        "enabled": true,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      },
+      {
+        "tap_id": 846930886,
+        "tap_point": 1,
+        "listen_only": true,
+        "events_of_interest": "0x1c00",
+        "taps_keyboard": true,
+        "tapping_pid": 583,
+        "enabled": false,
+        "avg_usec_latency": 0.0,
+        "max_usec_latency": 0.0
+      }
+    ]
+  }
+}

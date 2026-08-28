@@ -10,3 +10,14 @@ agents/runs/
 agents/quick/
 
 agents/interview/*/.cadence.json
+
+# Rust build output
+target
+target/
+spikes/*/target
+*.app/
+
+# stray CLI artifact
+--output
+__pycache__/
+*.pyc

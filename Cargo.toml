@@ -1,0 +1,44 @@
+[package]
+name = "herdr-ide"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "herdr_ide"
+path = "src/lib.rs"
+
+[[bin]]
+name = "herdr-ide"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "=1.0.100"
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "ede2ac144da4dec4c075bfa803aacf3b3739bce6" }
+bytemuck = { version = "=1.24.0", features = ["derive"] }
+glyphon = "=0.12.0"
+objc2 = "=0.6.4"
+objc2-app-kit = "=0.3.2"
+objc2-foundation = "=0.3.2"
+pollster = "=0.4.0"
+portable-pty = "=0.9.0"
+raw-window-handle = "=0.6.2"
+russh = { version = "=0.63.1", default-features = false, features = ["ring", "rsa"] }
+russh-config = "=0.58.0"
+russh-sftp = "=2.4.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.145"
+tokio = { version = "=1.53.1", features = ["io-util", "net", "rt-multi-thread", "sync", "time"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["metal", "parking_lot", "std", "wgsl"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+security-framework = "=3.7.0"
+
+[build-dependencies]
+serde_json = "=1.0.145"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
