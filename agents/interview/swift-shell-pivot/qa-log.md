@@ -22,11 +22,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-37
+- next_decision_id: D-38
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 4
-- outstanding_raw_entries: Q13, Q14, Q15, Q16, Q17, Q18
-- next_checkpoint_at: Q22
+- last_materiality_sweep: checkpoint 5
+- outstanding_raw_entries: none
+- next_checkpoint_at: Q28
 
 ## Transcript Sources
 
@@ -74,6 +74,7 @@ normalization_checkpoint_every: 10
 | D-34 | decision | UX/design | 사이드바 구성은 herdr-agent-context-labels(yansfil, 사용자 본인 제작) 플러그인의 레이아웃을 herdr-ide 네이티브로 적용한다. 확인된 구성: 항목당 2줄이며 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(12s/4m/2h/3d 형식)이다. 상태는 question, approval, error, working, unseen completion, idle, unknown을 컴팩트 심볼로 표시하고 상태당 심볼 하나를 고정하며, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 플러그인이 발행하는 sort_rank와 activity 토큰을 따라 막고 있는 순서대로(에러, 질문/승인, 완료 미확인, 진행 중, 확인됨) 두고 동률은 activity 시계로 깬다. 이는 선행 D-40(config.toml [ui.sidebar.agents] rows를 읽어 렌더)과 D-54(기본 레이아웃 내장)를 구체화한 것이다. | P1 | user Q16 'herdr-label 플러그인 그거의 구성도 잘 적용해서 함께 넣어주고' | resolved | R#: 사이드바 구성 / 선행 D-40·D-54 구체화 |
 | D-35 | decision | 데이터/상태 | OpenRouter API 키는 v1에서 기존 방식을 유지한다. 키는 ~/.zshrc의 OPENROUTER_API_KEY 환경변수에 남고, herdr-agent-context-labels 플러그인이 std::env::var로 읽는 현재 경로를 바꾸지 않는다. herdr-ide는 키 유무만 확인해 없을 때 안내를 표시한다. 조용히 빈 요약 줄을 두지 않는다(원칙 4). Keychain 입력 UI는 v1 비목표다. 근거는 실제 OpenRouter 호출 주체가 herdr-ide가 아니라 플러그인이고(선행 D-40의 구조: 플러그인이 토큰을 발행하고 herdr-ide는 session.snapshot에서 읽어 렌더), 플러그인이 herdr의 startup hook으로 실행되어 herdr-ide가 env를 주입할 지점이 없기 때문이다. 나중에 Keychain으로 옮기려면 플러그인이 Keychain 우선 env 폴백으로 읽도록 고쳐야 하며 사용자가 플러그인 소유자라 가능하다. revisit trigger: 사용자가 셸 프로필에서 키를 빼고 싶어질 때. | P1 | user Q17 '우선 다로 하자. 키가 없으면 안내만. Keychain은 나중에' | resolved | R#: OpenRouter 키 / 비목표(v1): Keychain 입력 UI |
 | D-36 | assumption | 아키텍처 | src/openrouter.rs 541줄(KeychainStore trait, MacKeychainStore, security-framework 의존)은 D-35로 v1에서 쓰이지 않는다. 현재도 lib.rs가 모듈로 선언만 하고 어디서도 호출하지 않는 미사용 코드다. D-20의 폐기 대상에 포함해 삭제하고 security-framework 의존도 제거한다. 되돌리기는 D-22의 rust-native-final 태그로 가능하므로 나중에 Keychain 작업을 할 때 꺼내 쓸 수 있다. 원칙 1(하위 호환 유지 안 함)과 원칙 2(현재 요구를 충족하는 가장 단순한 구현)에 따른다. 사용자가 유지를 원하면 되돌린다. | P2 | agent default - D-35의 귀결 | resolved | R#: 폐기 범위 보완 / revisit: Keychain 작업 착수 시 |
+| D-37 | decision | 검증 | 검증 실행 환경을 둘로 나눈다. CI는 권한이 필요 없는 것만 돌린다: Rust 코어 cargo test, swiftc 빌드 통과, .app 번들 조립 성공. 로컬(사용자 맥)에서만 돌리는 것: peekaboo 기반 UX 시나리오 6개, 한글 IME 확인, 메모리 400MB 측정(D-14), 디자인 사람 판정(D-33). 근거는 peekaboo가 Screen Recording과 Accessibility 권한을 요구하는데 CI에는 그 권한도 로그인한 데스크톱 세션도 없기 때문이며, self-hosted runner에 권한을 상시 부여하는 비용이 얻는 것보다 크다(원칙 12). mini를 러너로 쓰는 안은 그 머신이 프로덕션 자동화를 돌리고 있어 기각한다. 수용한 비용: UI 회귀는 사용자가 로컬에서 돌려야 잡힌다. | P1 | user Q18 '가' | resolved | V#: 검증 실행 환경 / 선행 D-34 보완 |
 
 ## Raw Q&A
 
@@ -898,8 +899,8 @@ normalization_checkpoint_every: 10
 - needs_normalization: false
 
 ### Q13: 마지막 게이트 라운드가 백그라운드에서 돌고 있습니다. 그동안 정리해 드립니다.
-- decision_ids: none
-- route: mixed
+- decision_ids: D-28
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:3e68a94a-1b05-4318-962d-bac6282bc739
 - asked: 마지막 게이트 라운드가 백그라운드에서 돌고 있습니다. 그동안 정리해 드립니다.
   
@@ -946,11 +947,11 @@ normalization_checkpoint_every: 10
 - recommended: none
 - answer: ㅇㅇㅇ 그렇게 하고 근데 File Tree + File View는 어떤거 붙여스는게 나을까?
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
-- needs_normalization: true
+- needs_normalization: false
 
 ### Q14: 조사 결과와 게이트 결과 둘 다 나왔습니다.
-- decision_ids: none
-- route: mixed
+- decision_ids: D-29, D-30
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:39b483b6-266f-4e92-ba36-27aec67453bc
 - asked: 조사 결과와 게이트 결과 둘 다 나왔습니다.
   
@@ -1021,11 +1022,11 @@ normalization_checkpoint_every: 10
 - recommended: none
 - answer: FIle Tree/Viewer는 추천ㄴ조합으로 가고 B로 하자
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
-- needs_normalization: true
+- needs_normalization: false
 
 ### Q15: 선행 인터뷰에 **UX 시나리오 카드 6장**이 상태·실패·복구·증명까지 다 있습니다. 게이트가 요구한 건 "참조하지 말고 옮겨
-- decision_ids: none
-- route: mixed
+- decision_ids: D-31, D-32
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:1cacfddd-02d4-47ce-b3a0-dd1ee1094cac
 - asked: 선행 인터뷰에 **UX 시나리오 카드 6장**이 상태·실패·복구·증명까지 다 있습니다. 게이트가 요구한 건 "참조하지 말고 옮겨 적어라"니, 그건 제가 하겠습니다 (증명 방식만 chromux→peekaboo로 바꾸고, 브라우저 카드는 새로 씁니다).
   
@@ -1057,11 +1058,11 @@ normalization_checkpoint_every: 10
   3. ㅇㅇㅇ 그렇게 ㄱㄱ
   4. 너가 최대한 간단하게 할 수 있는것으로 해서 해봐
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
-- needs_normalization: true
+- needs_normalization: false
 
 ### Q16: Q15. chromux 계약 (4개 묶음)
-- decision_ids: none
-- route: mixed
+- decision_ids: D-33, D-34
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:a66e5415-8c97-43d6-a2c2-91095d5a2992
 - asked: ### Q15. chromux 계약 (4개 묶음)
   
@@ -1091,11 +1092,11 @@ normalization_checkpoint_every: 10
   4. ㅇㅇ 우선 그렇게 해...
   ㅇㅇㅇ (참고로 chromux 내가만든거라 내가 걍 고치면되니까 고고)
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
-- needs_normalization: true
+- needs_normalization: false
 
 ### Q17: `docs/design-reference/`에 orca 스크린샷 3장이 있네요 (orca-02는 grab용이라 이제 무관).
-- decision_ids: none
-- route: mixed
+- decision_ids: D-35, D-36
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:fd833701-91c2-41d2-8577-047e1cae721e
 - asked: `docs/design-reference/`에 orca 스크린샷 3장이 있네요 (orca-02는 grab용이라 이제 무관).
   
@@ -1130,11 +1131,11 @@ normalization_checkpoint_every: 10
 - answer: ㅇㅇㅇ orca-01을 시각 기준선으로 + herdr-label 플러그인(내가 만든거) 그거의 구성도 잘 적용해서 함께 넣어주고 + openrouter key 입력받게 세팅도 하고 (이거 지금 ~/.zshrc에 이씅ㅁ) + 나로 우선 고고 
   여튼 디자인 좀 깔쌈하게
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
-- needs_normalization: true
+- needs_normalization: false
 
 ### Q18: 드리프트 경고가 떴습니다 (매 턴 결정을 쓰지 말고 체크포인트에 모으라는 것). 앞으로 모아서 쓰겠습니다.
-- decision_ids: none
-- route: mixed
+- decision_ids: D-37
+- route: user-decision
 - source_ref: claude:7084c601-ca0a-4883-9be8-6aedc1af55c9:ded93e63-44e9-423b-9823-a2c6e6576a7d
 - asked: 드리프트 경고가 떴습니다 (매 턴 결정을 쓰지 말고 체크포인트에 모으라는 것). 앞으로 모아서 쓰겠습니다.
   
@@ -1179,7 +1180,7 @@ normalization_checkpoint_every: 10
   키가 없으면 안내만!
   Keychain은 나중에~
 - immediate_notes: Imported verbatim from the session transcript; semantic normalization is pending.
-- needs_normalization: true
+- needs_normalization: false
 
 ## UX Scenario Cards
 
@@ -1235,6 +1236,26 @@ UX-03은 브라우저 패널과 grab이 D-08/D-11로 사라져 새로 작성했�
 - proof: peekaboo로 생성 조작을 실행한 뒤 herdr workspace.list / worktree.list / pane.list에 반영됐는지 확인한다. 파괴적 동작 검증은 herdr-ide-verify- 접두어 fixture에서만 돌린다(선행 D-56).
 - linked decisions: D-17, D-33
 
+## Verification Matrix
+
+D-17(peekaboo), D-37(실행 환경), D-19(IME 게이트 미정)에 따른 시나리오별 검증 계약.
+
+| # | 대상 | 트리거 | 통과 판정 | 증거 | 환경 | 소유 |
+| --- | --- | --- | --- | --- | --- | --- |
+| V1 | FFI 왕복 | Swift가 herdr_core_dispatch 호출 후 snapshot 재조회 | 스냅샷 JSON이 기대 상태로 바뀜 | 스냅샷 JSON 덤프 | CI(코어) + 로컬 | 에이전트 |
+| V2 | SSH 바이트 왕복 | 원격 pane attach 후 키 입력 | SwiftTerm feed로 들어온 출력이 화면에 보이고 send 델리게이트가 Rust로 되돌아감 | 스크린샷 + herdr pane.read | 로컬 | 에이전트 |
+| V3 | UX-01 막힌 에이전트 | peekaboo click으로 사이드바 항목 선택 | herdr pane.get의 focused가 그 pane | peekaboo see JSON + pane.get | 로컬 | 에이전트 |
+| V4 | UX-02 파일 워크벤치 | peekaboo click으로 트리 노드 선택 | 뷰어에 내용 렌더, 편집 저장이 디스크에 반영 | 스크린샷 + 파일 해시 | 로컬 | 에이전트 |
+| V5 | UX-03 브라우저 위임 | peekaboo click으로 브라우저 열기 | chromux ps --json status=running, /json/list에 기대 URL | 두 JSON | 로컬 | 에이전트 |
+| V6 | UX-03 chromux 부재 | PATH에서 chromux를 가림 | 버튼 비활성 + 사유 표시, 조용한 실패 없음 | 스크린샷 | 로컬 | 에이전트 |
+| V7 | UX-06 파괴적 동작 | working pane 닫기 시도 | 확인 다이얼로그가 뜨고 종료될 에이전트를 나열 | 스크린샷 | 로컬 (herdr-ide-verify- fixture 전용) | 에이전트 |
+| V8 | 메모리 예산 | workspace 7 / pane 11 구성 | herdr-ide 프로세스 RSS 400MB 이하 | ps 출력 | 로컬 | 에이전트 |
+| V9 | 한글 IME | 한글 IME 켜고 조합 입력 | 후보창이 커서를 따라옴 / 조합 중 백스페이스가 조합을 지움 / 2글자 이상 조합이 뒤 글자를 안 덮음 / 터미널과 에디터 양쪽 동작 | 스크린샷 | 로컬 | **D-19 미정: peekaboo type "gks"가 "한"을 만들면 에이전트, 아니면 사람** |
+| V10 | 디자인 인수 | 3a 완료 시점, v1 완료 시점 | D-33의 6항목 | 스크린샷 | 로컬 | **사람(사용자)** |
+| V11 | 빌드/패키징 | 릴리스 빌드 | swiftc 통과 + .app 조립 + codesign adhoc 성공 + 실행됨 | 빌드 로그 + codesign -dv | CI(조립까지) + 로컬(실행) | 에이전트 |
+
+CI에서 돌리지 않는 것과 이유: V2~V10은 Screen Recording/Accessibility 권한과 로그인 데스크톱 세션이 필요하다(D-37).
+
 ## Evidence From Code, Docs, Or Research
 
 ## Documented Domain Checks
@@ -1275,5 +1296,12 @@ UX-03은 브라우저 패널과 grab이 D-08/D-11로 사라져 새로 작성했�
 - register_changes: 게이트 BLOCK 대응: 동의 없이 resolved였던 D-13/D-15를 open으로 되돌린 뒤 사용자 확인을 받아 재확정. 윈도우 미지원 확정(D-25, deferred->resolved). Chrome 창 자동배치 v1 비목표(D-27). 선행 인터뷰와의 범위 경계 명시(D-26). Raw Q&A 12건 전부 decision_ids 연결.
 - reopened_decisions: D-13, D-15 (동의 미확인으로 open 복귀 후 Q12에서 재확정)
 - highest_remaining_gap: FFI 계약, 저장 상태 마이그레이션, chromux 실패 동작, xcodebuild 없는 빌드/배포 4건은 0단계 스파이크(D-18) 산출물로 PRD에서 확정한다.
+
+### Checkpoint 5
+- after_question: Q18
+- normalized_entries: Q13, Q14, Q15, Q16, Q17, Q18
+- register_changes: File Tree/Viewer 스택(D-28), 빌드·배포 계약 + Xcode 없는 패키징 실측(D-29/D-30), chromux 프로바이더 계약 + 사용자 소유 사실(D-31/D-32), UI 품질 인수 6항목(D-33), 사이드바 구성(D-34), OpenRouter 키 현행 유지(D-35), openrouter.rs 폐기(D-36), 검증 실행 환경 분리(D-37). UX 시나리오 카드 6장 이식(증명을 peekaboo로 교체, UX-03 신규). 검증 매트릭스 V1~V11 신설.
+- reopened_decisions: 없음
+- highest_remaining_gap: D-19(IME 게이트 소유자)만 스파이크 대기. 나머지 P1은 이번 사이클에서 해소.
 
 ## Audit History
