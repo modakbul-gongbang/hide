@@ -233,7 +233,7 @@ Approval checklist:
 ## 6. Requirements
 
 - R1. SwiftUI 셸이 3열 레이아웃(사이드바+펫 / 터미널 / 워크벤치)을 제공하고, 창 크기 변경 시 레이아웃이 유지되며 패널 경계를 드래그로 조절할 수 있다.
-- R2. 사이드바가 herdr `session.snapshot`의 토큰을 읽어 항목당 2줄로 렌더한다. 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(`12s`/`4m`/`2h`/`3d` 형식)이다. 상태 7종(question, approval, error, working, unseen completion, idle, unknown)을 상태당 하나의 고정 심볼로 표시하고, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 막고 있는 순서를 따른다: 완료 미확인(에러 → 질문/승인 → 일반 완료) → 진행 중 → 이미 확인됨. 각 그룹 안의 동률은 `activity` 시계로 깨고 가장 최근 활동이 앞에 온다.
+- R2. 사이드바가 herdr `session.snapshot`의 토큰을 읽어 항목당 2줄로 렌더한다. 1줄은 상태 심볼 + workspace 라벨 + 에이전트 종류, 2줄은 최대 30자 작업 요약 + 경과 시간(`12s`/`4m`/`2h`/`3d` 형식)이다. 상태 7종(question, approval, error, working, unseen completion, idle, unknown)을 상태당 하나의 고정 심볼로 표시하고, working과 unseen completion은 깜빡임이 아니라 색으로 구분한다. 정렬은 플러그인이 발행하는 `sort_rank` 토큰을 권위로 삼고 `activity` 시계를 동률 처리에 쓴다. herdr-ide가 순서를 자체 재계산하지 않는다. 그 계약이 표현하는 순서는 막고 있는 순서다: 완료 미확인(에러 → 질문/승인 → 일반 완료) → 진행 중 → 이미 확인됨.
 - R3. 터미널 뷰가 SwiftTerm 1.20.0(정확 고정)이며, Rust 코어의 SSH/PTY 바이트를 `feed(byteArray:)`로 받고 사용자 입력을 `send(source:data:)` 델리게이트로 코어에 돌려준다. 한글 조합 입력이 터미널과 에디터 양쪽에서 동작한다.
 - R4. 워크벤치가 파일트리(SwiftUI `OutlineGroup`)와 뷰어를 제공한다. 이미지는 SwiftUI `Image`, 마크다운은 swift-markdown-ui, 코드는 CodeEditSourceEditor로 렌더하며 텍스트 파일은 인라인 편집과 저장을 지원한다. git diff는 Rust 코어가 계산한 결과를 표시한다.
 - R5. 브라우저 열기가 chromux CLI에 위임된다. `chromux ps --json`으로 상태를 확인해 running이 아니면 `chromux launch`하고, running이면 재사용하며 창을 앞으로 가져온다. `/json/list`를 읽기 전용으로 조회해 현재 탭의 URL과 제목을 표시한다. herdr-ide는 CDP로 페이지를 조작하지 않고, 없는 프로필을 생성하지 않으며, Chrome을 종료하지 않는다.
@@ -247,7 +247,7 @@ Approval checklist:
 - R9. 빌드가 Xcode 없이 완결된다. SwiftPM이 의존성을 정확 버전으로 해석하고, Rust `staticlib`과 링크되며, macOS 14.0+ / arm64 `.app` 번들로 조립되고 ad-hoc 서명된다. 조립 스크립트를 두 번 실행해도 같은 결과로 수렴한다.
 - R10. herdr-ide는 `OPENROUTER_API_KEY`를 읽지도 저장하지도 로그에 남기지도 않으며, 키의 존재 여부를 추론하지도 않는다. 판단 근거는 herdr 스냅샷의 요약 토큰이 있는지뿐이다. 요약 토큰이 없거나 비어 있으면 빈 줄로 두지 않고 플러그인 설정 확인 안내를 표시한다.
 - R11. `herdr-core`가 읽는 모든 환경변수가 한 곳에 열거 가능한 형태로 등록되고, 각 키가 선택/필요 구분·형태·부재 시 동작을 명시한다. 부팅을 실패시키지 않는다. `SSH_AUTH_SOCK`이 없으면 원격 기능만 사유와 함께 비활성화하고 나머지 앱은 정상 동작한다. 애플리케이션 코드는 레지스트리를 통해서만 환경변수를 읽는다. 오류나 상태 메시지에 값을 넣지 않는다. (D-52)
-- R12. 모든 빈 상태·로딩·실패가 사유와 다음 행동을 함께 표시한다. `2.1`의 각 시나리오 Failure state가 회색 공백이나 조용한 무동작으로 나타나지 않는다.
+- R12. `2.1`의 각 시나리오 Failure state와 인터뷰 State/Recovery 매트릭스에 열거된 모든 빈 상태·로딩·실패가 사유와 다음 행동을 함께 표시한다. 회색 공백이나 조용한 무동작으로 나타나는 상태가 없다.
 
 ## 7. Acceptance Criteria
 
@@ -335,10 +335,14 @@ Approval checklist:
 | V21 | build/static | R11, R6a, R6b, R6c | `herdr-core`가 objc2·wgpu·glyphon 없이 빌드되고, 애플리케이션 코드에 레지스트리를 우회한 환경변수 직접 접근이 없으며, options·event·snapshot 스키마가 선언된 형태와 일치한다 | yes | no |
 | V22 | external/remote | SC4, R7 | Finder에서 실행한 앱에서도 원격 인증 경로가 동작하거나, `SSH_AUTH_SOCK` 부재가 조용한 실패가 아니라 사유와 함께 드러난다 | yes | no |
 | V24 | browser/runtime | SC6 | 펫이 herdr-ide 창이 뒤에 있을 때만 상태를 드러내고 앞에 있을 때는 사이드바가 알리며, 오프스크린 좌표가 주 디스플레이로 복구된다 | yes | no |
+| V29 | browser/runtime | R12 | 빈 상태들이 각각 사유와 다음 행동을 보인다: pane 미선택 시 선택 안내, workspace가 없는 첫 실행 시 만들기 안내, 요약 미도착 시 빈 줄이 아닌 대기 표시, 열린 탭 없음 표시 | yes | no |
+| V30 | browser/runtime | R12 | 실패 상태들이 각각 사유를 보인다: PTY 종료 시 종료 사실과 종료 코드, 바이너리 파일의 미리보기 불가 사유, 읽기 실패 시 경로와 사유 | yes | no |
+| V31 | browser/runtime | R12, SC5 | working pane 2개 이상을 가진 workspace를 닫으면 개별 확인이 아니라 집계 경고 하나가 뜨고 종료될 에이전트가 요약과 함께 나열된다 | yes | no |
+| V32 | browser/runtime | R11 | 레지스트리에 등록된 모든 키에 대해 존재·부재 시 동작이 선언과 일치하고, sentinel 값을 넣었을 때 스냅샷·오류·상태 메시지·로그 어디에도 그 값이 나타나지 않는다 | yes | no |
 
 실패 주입 정책: 사용자가 실제 서비스 대상 검증을 승인했다(D-47). chromux `default` 프로필, 실행 중인 herdr 소켓, mini의 원격 herdr를 직접 대상으로 삼을 수 있다. 고지된 결과는 검증 실행 중 실제 작업이 중단될 수 있다는 것이다. 단 파괴적 삭제는 이 승인에 포함되지 않는다. chromux `default` 프로필 삭제는 사용자 Chrome 로그인을 복구 불가능하게 잃게 하므로 금지하며 V13은 존재하지 않는 이름으로 재현한다(D-51). workspace/worktree 생성·삭제는 `herdr-ide-verify-` 접두어 fixture에서만 수행한다. 검증 시작을 사용자에게 알리고, 끝나면 중단시킨 서비스를 원상 복구한다.
 
-CI에서 돌리는 것은 V1, V11, V14, V21뿐이다. 나머지는 Screen Recording과 Accessibility 권한, 로그인 데스크톱 세션, mini 가용성이 필요하다(D-37).
+CI에서 돌리는 것은 V1, V11, V21뿐이다. V14는 앱을 띄우고 화면 결과를 보므로 로컬 데스크톱 레인에 속한다. AC11을 닫는 증거는 V14의 스크린샷이다. 나머지는 Screen Recording과 Accessibility 권한, 로그인 데스크톱 세션, mini 가용성이 필요하다(D-37).
 
 ### 9.3 Human Verification
 
@@ -394,7 +398,7 @@ CI에서 돌리는 것은 V1, V11, V14, V21뿐이다. 나머지는 Screen Record
 - 스파이크 T1~T4 각각의 판정 결과와 T3의 IME 게이트 소유자 결정(OPEN-1 해소).
 - `rust-native-final` 태그의 커밋 해시와 삭제된 파일·의존 목록.
 - T1~T18 완료 상태.
-- R1~R12(R6a~R6d 포함), AC1~AC15, V1~V28 커버리지.
+- R1~R12(R6a~R6d 포함), AC1~AC15, V1~V32 커버리지.
 - 모드별 검증 증거: CI 로그, peekaboo 스냅샷과 스크린샷, `ps` 메모리 측정, mini 원격 증거.
 - 추가·수정한 자동 테스트와 각각이 막는 회귀 위험. 테스트를 쓰지 않은 영역은 왜 다른 증명 모드가 더 강한지.
 - 환경변수 레지스트리의 최종 키 목록과 각 키의 필수/선택·부재 시 동작.
