@@ -1,0 +1,35 @@
+{
+  "schema": "herdr.ide.t14-e2e.manifest.v1",
+  "run_id": "t14-e2e-v3",
+  "verification_profile": "t14-native-e2e-v3",
+  "working_directory": ".",
+  "harness": "tools/t14-e2e/t14-e2e",
+  "app": {
+    "path": "spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app",
+    "executable": "spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+    "bundle_kind": "installed",
+    "bundle_identifier": "dev.herdr.integrated-preflight",
+    "sha256": "2ba524da76fe7eddeac2621587e3ec48cc1eb28f805407584d737f25aff5aa7b"
+  },
+  "scenario": {
+    "path": "tools/t14-e2e/fixtures/scenario-v3.json",
+    "sha256": "5935359653e110011cfa824ecb63bc78c3e51e8bee2a701b254680b117916964"
+  },
+  "output_dir": "spikes/integrated-preflight/target/evidence/t14-e2e-v3",
+  "telemetry_path": "spikes/integrated-preflight/target/evidence/t14-e2e-v3/runtime/events.jsonl",
+  "launch_arguments": [
+    "--t1-preflight-phase", "clean_closed",
+    "--t1-browser-mode", "browser-closed",
+    "--t1-preflight-events", "spikes/integrated-preflight/target/evidence/t14-e2e-v3/runtime/events.jsonl",
+    "--t1-preflight-run-id", "t14-e2e-v3",
+    "--t1-preflight-profile", "t14-native-e2e-v3"
+  ],
+  "ports": [45785, 45786],
+  "herdr_protocol": 21,
+  "herdr_snapshot_command": ["herdr", "api", "snapshot"],
+  "owned_resources": [
+    {"kind": "herdr.workspace", "id": "herdr-ide-e2e-t14-e2e-v3", "cleanup": "explicit-confirmation"},
+    {"kind": "herdr.tab", "id": "herdr-ide-e2e-tab-t14-e2e-v3", "cleanup": "explicit-confirmation"},
+    {"kind": "herdr.pane", "id": "herdr-ide-e2e-pane-t14-e2e-v3", "cleanup": "explicit-confirmation"}
+  ]
+}

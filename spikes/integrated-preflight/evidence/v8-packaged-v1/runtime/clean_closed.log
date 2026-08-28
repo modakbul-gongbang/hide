@@ -1,0 +1,10 @@
+event=browser.closed helpers_expected=0 cef_initialized=false
+event=app.launched architecture=aarch64 lifecycle=appkit ide_pixels=wgpu browser_pixels=closed terminal=portable-pty
+event=render.failed stage=draw retryable=true error="Render failed: stage=wgpu.present target=surface cause=temporarily-unavailable retryable=true"
+event=render.failed stage=draw retryable=true error="Render failed: stage=wgpu.present target=surface cause=temporarily-unavailable retryable=true"
+2026-08-27 23:34:56.929 herdr-integrated-preflight[15528:30010197] +[IMKClient subclass]: chose IMKClient_Modern
+2026-08-27 23:34:56.929 herdr-integrated-preflight[15528:30010197] +[IMKInputSession subclass]: chose IMKInputSession_Modern
+event=app.first-usable first_usable_ms=595.719 window_id=24215 adapter="Apple M4 Pro (Metal)"
+2026-08-27 23:34:57.006 herdr-integrated-preflight[15528:30010197] TSM AdjustCapsLockLEDForKeyTransitionHandling - _ISSetPhysicalKeyboardCapsLockLED Inhibit
+event=input.command.unhandled selector=Sel("moveRight:") retryable=false
+event=input.command.unhandled selector=Sel("moveRight:") retryable=false

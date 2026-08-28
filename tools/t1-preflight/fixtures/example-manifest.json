@@ -1,0 +1,63 @@
+{
+  "schema": "herdr.t1-preflight.manifest.v1",
+  "run_id": "t1-native-example",
+  "output_dir": ".artifacts/example-dry-run-v5",
+  "bundle": {
+    "identifier": "com.teamattention.herdr-ide",
+    "main_executable": "Contents/MacOS/herdr-ide",
+    "architectures": ["arm64"],
+    "executables": [
+      "Contents/MacOS/herdr-ide",
+      "Contents/Frameworks/Herdr Browser Helper.app/Contents/MacOS/Herdr Browser Helper"
+    ],
+    "browser_executables": [
+      "Contents/Frameworks/Herdr Browser Helper.app/Contents/MacOS/Herdr Browser Helper"
+    ],
+    "required_rpaths": {
+      "Contents/MacOS/herdr-ide": ["@executable_path/../Frameworks"]
+    },
+    "resources": [
+      {"path": "Contents/Info.plist"},
+      {"path": "Contents/Resources/pet/working-fire.webp"}
+    ]
+  },
+  "runtime": {
+    "arguments": [
+      "--t1-preflight-phase",
+      "{phase}",
+      "--t1-browser-mode",
+      "{launch_mode}",
+      "--t1-preflight-events",
+      "{events_path}",
+      "--t1-preflight-run-id",
+      "t1-native-example"
+    ],
+    "phases": {
+      "clean_closed": {"launch_mode": "browser-closed"},
+      "warm_closed": {"launch_mode": "browser-closed"},
+      "browser_included": {
+        "launch_mode": "browser-included",
+        "profile_settle_ms": 2000
+      },
+      "relaunch_closed": {"launch_mode": "browser-closed"}
+    },
+    "scenario": "example-scenario.json",
+    "expected_ax_labels": [
+      "Workspaces navigator",
+      "Terminal pane",
+      "Editor pane",
+      "Browser pane",
+      "Agent status"
+    ],
+    "allowed_external_processes": ["/bin/zsh"],
+    "timeouts_ms": {"phase": 90000, "event": 10000, "exit": 5000},
+    "sampling": {"interval_ms": 500, "count": 10}
+  },
+  "budgets": {
+    "warm_usable_ms": 1000,
+    "terminal_input_to_present_p95_ms": 50,
+    "idle_cpu_percent": 1,
+    "browser_closed_rss_mb": 200,
+    "browser_included_rss_mb": 800
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schema": "herdr.t1-preflight.scenario.v1",
+  "verification_profile": "t5-option-meta-v4",
+  "scenario_id": "herdr-t5-option-meta-v4-action-context-physical",
+  "run_id": "herdr-t5-option-meta-v4-action-context-physical",
+  "actions": [
+    {"action": "fixture.assert"},
+    {
+      "action": "terminal.native_input",
+      "target_point": "terminal",
+      "count": 32,
+      "prefix": "917"
+    },
+    {
+      "action": "terminal.plain_key_control",
+      "target_point": "terminal",
+      "key_code": 28,
+      "modifiers": [],
+      "repeat": 1,
+      "expected_bytes_hex": "38"
+    },
+    {
+      "action": "terminal.option_meta",
+      "target_point": "terminal",
+      "key_code": 3,
+      "modifiers": ["option"],
+      "repeat": 2,
+      "expected_bytes_hex": "1b 66",
+      "latency_budget_ms": 50
+    },
+    {"action": "profile.browser_closed", "settle_ms": 3000},
+    {"action": "ax.snapshot", "name": "split"},
+    {"action": "screenshot.capture", "name": "split"},
+    {"action": "zoom.shortcut", "key_code": 36},
+    {"action": "focus.click", "target_point": "editor"},
+    {"action": "window.resize", "width": 960, "height": 640},
+    {
+      "action": "ime.physical_keys",
+      "target_point": "terminal",
+      "input_source_id": "com.apple.inputmethod.Korean.2SetKorean",
+      "key_codes": [5, 40, 1, 15, 46, 3],
+      "expected_text": "한글",
+      "interval_ms": 40
+    },
+    {"action": "state.persist"}
+  ]
+}

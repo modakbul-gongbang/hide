@@ -1,0 +1,42 @@
+[package]
+name = "herdr-integrated-preflight"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.cef.bundle]
+helper_name = "herdr-integrated-preflight-helper"
+
+[[bin]]
+name = "herdr-integrated-preflight"
+path = "src/main.rs"
+
+[[bin]]
+name = "herdr-integrated-preflight-helper"
+path = "src/bin/herdr_integrated_preflight_helper.rs"
+
+[[bin]]
+name = "bundle-integrated-preflight"
+path = "src/bin/bundle_integrated_preflight.rs"
+
+[dependencies]
+anyhow = "=1.0.100"
+bytemuck = { version = "=1.24.0", features = ["derive"] }
+cef = { version = "=151.8.0+151.3.24", features = ["build-util", "sandbox"] }
+glyphon = "=0.12.0"
+objc2 = "=0.6.4"
+objc2-app-kit = "=0.3.2"
+objc2-foundation = "=0.3.2"
+pollster = "=0.4.0"
+portable-pty = "=0.9.0"
+raw-window-handle = "=0.6.2"
+semver = "=1.0.27"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+wgpu = { version = "=30.0.1", default-features = false, features = ["metal", "parking_lot", "std", "wgsl"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+

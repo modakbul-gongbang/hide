@@ -1,0 +1,8 @@
+{
+  "schema": "herdr.t1-preflight.output-owner.v1",
+  "run_id": "herdr-v8-packaged-v1",
+  "manifest_sha256": "51da3973c7aa73e892f69768fb484491c01ac31d4339f7324cfe3e243df49fee",
+  "app_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app",
+  "app_bundle_sha256": "2ba524da76fe7eddeac2621587e3ec48cc1eb28f805407584d737f25aff5aa7b",
+  "mode": "run"
+}
