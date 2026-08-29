@@ -583,6 +583,11 @@ struct CoreHerdrStatus: Decodable {
     }
 }
 
+private struct RuntimeStartupPreparation: Sendable {
+    let selection: HerdrRuntimeSelection?
+    let environment: [String: String]
+}
+
 struct CoreChromuxStatus: Decodable {
     let state: String
     let profile: String
@@ -639,13 +644,19 @@ struct CoreLastError: Decodable {
 final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
     @Published private(set) var bridgeError: String?
+    @Published private(set) var runtimeSelection: HerdrRuntimeSelection?
 
     let workspaceRoot: URL
     let isRemoteWorkspace: Bool
-    let runtimeSelection: HerdrRuntimeSelection?
 
     nonisolated(unsafe) private var core: OpaquePointer?
     private var launchedHerdrServer: Process?
+    private let statePath: String
+    private let fixtureMode: Bool
+    private var startupDiagnostic: String?
+    private var runtimeInitializationStarted = false
+    private var lastLoggedHerdrState: String?
+    private var lastLoggedErrorKind: String?
     private var lastTerminalSequence: UInt64 = 0
     private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
@@ -658,36 +669,33 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     init(arguments: [String] = CommandLine.arguments) {
+        let initStarted = Date()
+        HideLaunchTrace.mark("core_bridge.init.begin")
         isRemoteWorkspace = arguments.contains("--remote-workspace")
         workspaceRoot = LaunchArguments.value("--workspace-root", in: arguments)
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let statePath = LaunchArguments.value("--state-path", in: arguments)
+        let resolvedStatePath = LaunchArguments.value("--state-path", in: arguments)
             ?? (arguments.contains("--verification-ui-fixture")
                 ? "/tmp/herdr-ide-verify-ui-state.json"
                 : Self.defaultStatePath())
         // The verification fixture runs without any live herdr connection;
         // every other launch talks to the local herdr socket.
-        let fixtureMode = arguments.contains("--verification-ui-fixture")
-        runtimeSelection = fixtureMode ? nil : HerdrRuntimeResolver.resolve()
-        let options: [String: Any] = [
-            "schema_version": coreSchemaVersion,
-            "herdr_socket_path": fixtureMode ? NSNull() : Self.defaultHerdrSocketPath() as Any,
-            "herdr_bin_path": runtimeSelection.map { $0.path as Any } ?? NSNull(),
-            "remote_targets": [[
-                "id": "mini",
-                "label": "Mac mini",
-                "ssh_alias": "mini",
-            ]],
-            "app_state_path": statePath,
-        ]
-        guard
-            let data = try? JSONSerialization.data(withJSONObject: options),
-            let created = data.withUnsafeBytes({ buffer in
-                herdr_core_create(buffer.bindMemory(to: UInt8.self).baseAddress, data.count)
-            })
-        else {
+        let resolvedFixtureMode = arguments.contains("--verification-ui-fixture")
+        statePath = resolvedStatePath
+        fixtureMode = resolvedFixtureMode
+        runtimeSelection = nil
+        guard let created = Self.createCore(
+            herdrBinaryPath: nil,
+            fixtureMode: resolvedFixtureMode,
+            statePath: resolvedStatePath
+        ) else {
             bridgeError = "herdr_core_create returned null"
+            HideLaunchTrace.mark(
+                "core_bridge.init.failed",
+                detail: "core_create_null",
+                durationMilliseconds: Int(Date().timeIntervalSince(initStarted) * 1_000)
+            )
             return
         }
         core = created
@@ -703,12 +711,156 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             seedVerificationFixture()
         }
         #endif
-        if !fixtureMode {
-            launchedHerdrServer = HerdrRuntimeResolver.startServerIfNeeded(
-                selection: runtimeSelection,
-                socketPath: Self.defaultHerdrSocketPath()
-            )
+        if !resolvedFixtureMode {
+            startupDiagnostic = HideStartupDiagnostic.initializing
+            bridgeError = startupDiagnostic
         }
+        HideLaunchTrace.mark(
+            "core_bridge.init.ready",
+            detail: resolvedFixtureMode ? "fixture" : "initial_core_without_runtime",
+            durationMilliseconds: Int(Date().timeIntervalSince(initStarted) * 1_000)
+        )
+    }
+
+    /// Starts all external runtime discovery after the application has made
+    /// its first window visible. Finder launches therefore cannot lose their
+    /// first window to a slow shell or CLI subprocess.
+    func startRuntimeInitialization() {
+        guard !fixtureMode, !runtimeInitializationStarted else { return }
+        runtimeInitializationStarted = true
+        let bundlePath = Bundle.main.path(
+            forResource: "herdr",
+            ofType: nil,
+            inDirectory: "herdr-runtime"
+        )
+        let socketPath = Self.defaultHerdrSocketPath()
+        let startedAt = Date()
+        HideLaunchTrace.mark("runtime_initialization.begin")
+        Task { @MainActor [weak self] in
+            let preparation = await Task.detached(priority: .userInitiated) {
+                RuntimeStartupPreparation(
+                    selection: HerdrRuntimeResolver.resolve(bundlePath: bundlePath),
+                    environment: HideRuntimeEnvironment.childEnvironment()
+                )
+            }.value
+            guard let self else { return }
+            let detail = preparation.selection.map {
+                "selected_\($0.source)_v\($0.version)"
+            } ?? "no_runtime"
+            HideLaunchTrace.mark(
+                "runtime_initialization.resolved",
+                detail: detail,
+                durationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000)
+            )
+
+            let socketExists = FileManager.default.fileExists(atPath: socketPath)
+            guard self.replaceCore(with: preparation.selection) else {
+                HideLaunchTrace.mark("runtime_initialization.failed", detail: "core_replace_failed")
+                return
+            }
+            guard preparation.selection != nil || socketExists else {
+                self.setStartupDiagnostic(HideStartupDiagnostic.runtimeUnavailable)
+                HideLaunchTrace.mark("runtime_initialization.failed", detail: "runtime_unavailable")
+                return
+            }
+
+            self.setStartupDiagnostic(nil)
+            switch HerdrRuntimeResolver.startServerIfNeeded(
+                selection: preparation.selection,
+                socketPath: socketPath,
+                environment: preparation.environment
+            ) {
+            case .notNeeded:
+                HideLaunchTrace.mark("runtime_initialization.server_not_needed")
+            case .started(let process):
+                self.launchedHerdrServer = process
+                process.terminationHandler = { [weak self] process in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.launchedHerdrServer != nil else { return }
+                        self.launchedHerdrServer = nil
+                        self.setStartupDiagnostic(
+                            HideStartupDiagnostic.serverExited(status: process.terminationStatus)
+                        )
+                        HideLaunchTrace.mark(
+                            "runtime_initialization.server_exited",
+                            detail: "status_\(process.terminationStatus)"
+                        )
+                    }
+                }
+                HideLaunchTrace.mark("runtime_initialization.server_started")
+            case .failed(let message):
+                self.setStartupDiagnostic(message)
+                HideLaunchTrace.mark("runtime_initialization.server_failed", detail: "launch_error")
+            }
+        }
+    }
+
+    private static func createCore(
+        herdrBinaryPath: String?,
+        fixtureMode: Bool,
+        statePath: String
+    ) -> OpaquePointer? {
+        let options: [String: Any] = [
+            "schema_version": coreSchemaVersion,
+            "herdr_socket_path": fixtureMode ? NSNull() : Self.defaultHerdrSocketPath() as Any,
+            "herdr_bin_path": herdrBinaryPath.map { $0 as Any } ?? NSNull(),
+            "remote_targets": [[
+                "id": "mini",
+                "label": "Mac mini",
+                "ssh_alias": "mini",
+            ]],
+            "app_state_path": statePath,
+        ]
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: options),
+            let created = data.withUnsafeBytes({ buffer in
+                herdr_core_create(buffer.bindMemory(to: UInt8.self).baseAddress, data.count)
+            })
+        else {
+            return nil
+        }
+        return created
+    }
+
+    @discardableResult
+    private func replaceCore(with selection: HerdrRuntimeSelection?) -> Bool {
+        if let current = core {
+            herdr_core_on_change(current, nil, nil)
+            herdr_core_destroy(current)
+        }
+        core = nil
+        guard let created = Self.createCore(
+            herdrBinaryPath: selection?.path,
+            fixtureMode: fixtureMode,
+            statePath: statePath
+        ) else {
+            runtimeSelection = selection
+            setStartupDiagnostic("Hide could not initialize its Herdr connection. Reopen the app to retry.")
+            HideLaunchTrace.mark("core_bridge.replace.failed", detail: "core_create_null")
+            return false
+        }
+        core = created
+        herdr_core_on_change(
+            created,
+            coreChangeCallback,
+            Unmanaged.passUnretained(self).toOpaque()
+        )
+        runtimeSelection = selection
+        lastTerminalSequence = 0
+        pendingTerminalBytes.removeAll()
+        restoredPaneSelection = false
+        startupDiagnostic = nil
+        refreshSnapshot()
+        HideLaunchTrace.mark(
+            "core_bridge.replace.ready",
+            detail: selection.map { "runtime_\($0.source)" } ?? "socket_only"
+        )
+        return true
+    }
+
+    private func setStartupDiagnostic(_ message: String?) {
+        startupDiagnostic = message
+        bridgeError = message
     }
 
     deinit {
@@ -990,7 +1142,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func dispatch(kind: String, payload: [String: Any]) {
-        guard let core else { return }
+        guard let core else {
+            bridgeError = "Hide is still starting. Try again when the Herdr status is available."
+            return
+        }
         let envelope: [String: Any] = [
             "schema_version": coreSchemaVersion,
             "kind": kind,
@@ -1036,10 +1191,22 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         do {
             let data = Data(bytes: pointer, count: owned.len)
             let decoded = try JSONDecoder().decode(CoreSnapshot.self, from: data)
+            if decoded.status.herdr.state != lastLoggedHerdrState {
+                lastLoggedHerdrState = decoded.status.herdr.state
+                HideLaunchTrace.mark("herdr.status", detail: decoded.status.herdr.state)
+            }
+            if let lastError = decoded.status.lastError {
+                if lastError.kind != lastLoggedErrorKind {
+                    lastLoggedErrorKind = lastError.kind
+                    HideLaunchTrace.mark("core.error", detail: lastError.kind)
+                }
+            } else {
+                lastLoggedErrorKind = nil
+            }
             let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
                 ?? snapshot?.terminal.paneID
             snapshot = decoded
-            bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" }
+            bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" } ?? startupDiagnostic
             restorePaneSelectionIfNeeded(decoded)
             let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
                 ?? decoded.terminal.paneID
@@ -1150,9 +1317,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return base.appendingPathComponent("hide/state.json").path
     }
 
-    /// Compatibility entry point for existing callers. The resolver itself
-    /// uses the login-shell PATH and the release's live-socket/install/bundle
-    /// chain.
+    /// Compatibility entry point for existing callers. Runtime selection
+    /// uses the live-socket/install/bundle chain; child tools use the
+    /// login-shell PATH separately.
     static func resolveHerdrBinaryPath() -> String? {
         HerdrRuntimeResolver.resolve()?.path
     }

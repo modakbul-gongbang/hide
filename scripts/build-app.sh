@@ -10,6 +10,7 @@ project_root=${script_dir:h}
 macos_root="$project_root/macos"
 dist_root="$project_root/dist"
 bundle_path="$dist_root/hide.app"
+icon_path="$macos_root/Resources/hide.icns"
 archive_path="$dist_root/hide-v${HIDE_VERSION:-0.1.0}-macos-arm64.zip"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/hide-bundle.XXXXXX")
 temporary_bundle="$temporary_root/hide.app"
@@ -25,6 +26,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$project_root"
+[[ -f "$icon_path" ]] || { print -u2 "app icon is missing: $icon_path"; exit 1; }
 cargo build --release --locked -p herdr-core
 swift build --package-path "$macos_root" --configuration release --disable-keychain --disable-sandbox
 
@@ -38,6 +40,9 @@ install -m 755 \
 install -m 644 \
   "$macos_root/Resources/Info.plist" \
   "$temporary_bundle/Contents/Info.plist"
+install -m 644 \
+  "$icon_path" \
+  "$temporary_bundle/Contents/Resources/hide.icns"
 
 for resource_bundle in "$macos_root"/.build/arm64-apple-macosx/release/*.bundle; do
   if [[ -d "$resource_bundle" ]]; then

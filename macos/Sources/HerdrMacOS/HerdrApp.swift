@@ -4,15 +4,29 @@ import SwiftUI
 
 @MainActor
 final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
-    let model = ShellModel()
+    let model: ShellModel
     private var mainWindow: NSWindow?
     private var petWindowController: PetWindowController?
     private var petMenuBarController: PetMenuBarController?
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
     private var petVisibilityObservation: AnyCancellable?
 
+    override init() {
+        let startedAt = Date()
+        HideLaunchTrace.mark("delegate.init.begin")
+        model = ShellModel()
+        super.init()
+        HideLaunchTrace.mark(
+            "delegate.init.ready",
+            durationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000)
+        )
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard mainWindow == nil else { return }
+        let startedAt = Date()
+        HideLaunchTrace.mark("application.did_finish.begin")
+        NSApplication.shared.setActivationPolicy(.regular)
         let content = ShellView()
             .environmentObject(model)
             .frame(
@@ -43,6 +57,8 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        HideLaunchTrace.mark("main_window.visible")
+        model.core.startRuntimeInitialization()
         petWindowController = PetWindowController(mainWindow: window, model: model)
         petWindowController?.refreshVisibility()
 
@@ -90,6 +106,21 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             }
         }
         #endif
+        HideLaunchTrace.mark(
+            "application.did_finish.ready",
+            durationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000)
+        )
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let mainWindow else { return false }
+        if !flag || !mainWindow.isVisible {
+            mainWindow.makeKeyAndOrderFront(sender)
+        }
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        HideLaunchTrace.mark("application.reopen.handled", detail: flag ? "visible" : "restored")
+        return true
     }
 
     /// `herdr-ide://show|hide|toggle`. The retired app's `herdr-pet://`

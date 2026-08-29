@@ -1,4 +1,16 @@
 import Foundation
+import OSLog
+
+enum HideLaunchTrace {
+    private static let logger = Logger(subsystem: "me.grab.hide", category: "launch")
+
+    static func mark(_ event: String, detail: String = "", durationMilliseconds: Int? = nil) {
+        let duration = durationMilliseconds.map(String.init) ?? "-"
+        logger.info(
+            "event=\(event, privacy: .public) detail=\(detail, privacy: .public) duration_ms=\(duration, privacy: .public)"
+        )
+    }
+}
 
 struct HerdrRuntimeSelection: Equatable, Sendable {
     let path: String
@@ -8,12 +20,26 @@ struct HerdrRuntimeSelection: Equatable, Sendable {
     let guidance: String?
 }
 
+enum HideStartupDiagnostic {
+    static let initializing = "Starting Herdr…"
+    static let runtimeUnavailable = "Herdr is unavailable. Install Herdr or repair hide, then reopen the app."
+
+    static func serverStartFailed(_ reason: String) -> String {
+        "Herdr could not start: \(reason). Check the runtime installation and reopen hide."
+    }
+
+    static func serverExited(status: Int32) -> String {
+        "Herdr stopped before connecting (exit status \(status)). Check the runtime installation and reopen hide."
+    }
+}
+
 /// The Finder launch contract is intentionally small: only the login-shell
 /// PATH and non-secret process routing values are carried into child tools.
 /// No key, password, token, or passphrase is read, stored, or displayed.
 enum HideRuntimeEnvironment {
     static let bundledVersion = "0.8.2"
     static let bundledSHA256 = "bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328"
+    private static let loginShellTimeout: TimeInterval = 2
 
     static func loginShellPath() -> String? {
         let process = Process()
@@ -21,17 +47,34 @@ enum HideRuntimeEnvironment {
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-ilc", "printf '%s' \"$PATH\""]
         process.standardOutput = output
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
+            HideLaunchTrace.mark("login_shell_path.failed", detail: "launch_error")
             return nil
         }
-        guard process.terminationStatus == 0 else { return nil }
+        let deadline = Date().addingTimeInterval(loginShellTimeout)
+        while process.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        if process.isRunning {
+            process.terminate()
+            HideLaunchTrace.mark("login_shell_path.failed", detail: "timeout")
+            return nil
+        }
+        guard process.terminationStatus == 0 else {
+            HideLaunchTrace.mark("login_shell_path.failed", detail: "exit_\(process.terminationStatus)")
+            return nil
+        }
         let path = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return path.isEmpty ? nil : path
+        guard !path.isEmpty else {
+            HideLaunchTrace.mark("login_shell_path.failed", detail: "empty")
+            return nil
+        }
+        HideLaunchTrace.mark("login_shell_path.ready", detail: "available")
+        return path
     }
 
     static func pathEntries(loginPath: String?) -> [String] {
@@ -51,11 +94,20 @@ enum HideRuntimeEnvironment {
     }
 
     static func childEnvironment() -> [String: String] {
-        let inherited = ProcessInfo.processInfo.environment
+        childEnvironment(
+            inherited: ProcessInfo.processInfo.environment,
+            loginPath: loginShellPath()
+        )
+    }
+
+    static func childEnvironment(
+        inherited: [String: String],
+        loginPath: String?
+    ) -> [String: String] {
         var environment: [String: String] = [
             "HOME": inherited["HOME"] ?? NSHomeDirectory(),
             "USER": inherited["USER"] ?? NSUserName(),
-            "PATH": loginShellPath() ?? inherited["PATH"] ?? "/usr/bin:/bin",
+            "PATH": loginPath ?? inherited["PATH"] ?? "/usr/bin:/bin",
         ]
         if let socket = inherited["SSH_AUTH_SOCK"], !socket.isEmpty {
             environment["SSH_AUTH_SOCK"] = socket
@@ -74,17 +126,21 @@ enum HideRuntimeEnvironment {
 }
 
 enum HerdrRuntimeResolver {
+    private static let probeTimeout: TimeInterval = 2
+
     static func resolve(bundle: Bundle = .main) -> HerdrRuntimeSelection? {
-        let bundlePath = bundle.path(forResource: "herdr", ofType: nil, inDirectory: "herdr-runtime")
+        resolve(
+            bundlePath: bundle.path(forResource: "herdr", ofType: nil, inDirectory: "herdr-runtime")
+        )
+    }
+
+    static func resolve(bundlePath: String?) -> HerdrRuntimeSelection? {
         let hasLiveSocket = FileManager.default.fileExists(
             atPath: NSHomeDirectory() + "/.config/herdr/herdr.sock"
         )
-        let installedCandidates = [
-            NSHomeDirectory() + "/.local/bin/herdr",
-            "/opt/homebrew/bin/herdr",
-            "/usr/local/bin/herdr",
-        ] + HideRuntimeEnvironment.pathEntries(loginPath: HideRuntimeEnvironment.loginShellPath())
-            .map { URL(fileURLWithPath: $0).appendingPathComponent("herdr").path }
+        let installedCandidates = standardInstalledCandidates(homeDirectory: NSHomeDirectory())
+            + HideRuntimeEnvironment.pathEntries(loginPath: HideRuntimeEnvironment.loginShellPath())
+                .map { URL(fileURLWithPath: $0).appendingPathComponent("herdr").path }
 
         var oldInstalledVersion: String?
         var firstInstalled: (path: String, version: String)?
@@ -131,19 +187,32 @@ enum HerdrRuntimeResolver {
         return nil
     }
 
-    static func startServerIfNeeded(selection: HerdrRuntimeSelection?, socketPath: String) -> Process? {
-        guard !FileManager.default.fileExists(atPath: socketPath), let selection else { return nil }
+    static func standardInstalledCandidates(homeDirectory: String) -> [String] {
+        [
+            homeDirectory + "/.local/bin/herdr",
+            "/opt/homebrew/bin/herdr",
+            "/usr/local/bin/herdr",
+        ]
+    }
+
+    static func startServerIfNeeded(
+        selection: HerdrRuntimeSelection?,
+        socketPath: String,
+        environment: [String: String]? = nil
+    ) -> HerdrServerStartResult {
+        guard !FileManager.default.fileExists(atPath: socketPath) else { return .notNeeded }
+        guard let selection else { return .failed(HideStartupDiagnostic.runtimeUnavailable) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: selection.path)
         process.arguments = ["server"]
-        process.environment = HideRuntimeEnvironment.childEnvironment()
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        process.environment = environment ?? HideRuntimeEnvironment.childEnvironment()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
-            return process
+            return .started(process)
         } catch {
-            return nil
+            return .failed(HideStartupDiagnostic.serverStartFailed(error.localizedDescription))
         }
     }
 
@@ -153,14 +222,18 @@ enum HerdrRuntimeResolver {
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["--version"]
         process.standardOutput = output
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
-            process.waitUntilExit()
+            guard waitForExit(process, operation: "version_probe") else { return nil }
         } catch {
+            HideLaunchTrace.mark("version_probe.failed", detail: "launch_error")
             return nil
         }
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0 else {
+            HideLaunchTrace.mark("version_probe.failed", detail: "exit_\(process.terminationStatus)")
+            return nil
+        }
         let line = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return line.split(separator: " ").last.map(String.init)
@@ -172,18 +245,35 @@ enum HerdrRuntimeResolver {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
         process.arguments = ["-a", "256", path]
         process.standardOutput = output
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
-            process.waitUntilExit()
+            guard waitForExit(process, operation: "sha256_probe") else { return nil }
         } catch {
+            HideLaunchTrace.mark("sha256_probe.failed", detail: "launch_error")
             return nil
         }
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0 else {
+            HideLaunchTrace.mark("sha256_probe.failed", detail: "exit_\(process.terminationStatus)")
+            return nil
+        }
         return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .split(separator: " ")
             .first
             .map(String.init)
+    }
+
+    private static func waitForExit(_ process: Process, operation: String) -> Bool {
+        let deadline = Date().addingTimeInterval(probeTimeout)
+        while process.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        guard !process.isRunning else {
+            process.terminate()
+            HideLaunchTrace.mark("\(operation).failed", detail: "timeout")
+            return false
+        }
+        return true
     }
 
     private static func deduplicated(_ paths: [String]) -> [String] {
@@ -201,6 +291,12 @@ enum HerdrRuntimeResolver {
         }
         return .orderedSame
     }
+}
+
+enum HerdrServerStartResult {
+    case notNeeded
+    case started(Process)
+    case failed(String)
 }
 
 enum AgentCLIAvailability {

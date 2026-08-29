@@ -17,6 +17,62 @@ import Testing
     #expect(Set(HideRuntimeEnvironment.childEnvironment().keys).isSubset(of: allowedKeys))
 }
 
+@Test func finderLikeEnvironmentUsesAVisibleSafePATHFallback() {
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: ["HOME": "/tmp/hide-finder", "USER": "tester"],
+        loginPath: nil
+    )
+
+    #expect(environment["PATH"] == "/usr/bin:/bin")
+    #expect(Set(environment.keys).isSubset(of: ["HOME", "USER", "PATH", "SSH_AUTH_SOCK", "HERDR_CONFIG_PATH"]))
+}
+
+@Test func missingRuntimeReturnsAVisibleServerStartFailure() {
+    let result = HerdrRuntimeResolver.startServerIfNeeded(
+        selection: nil,
+        socketPath: "/private/tmp/hide-missing-runtime-verification.sock",
+        environment: [:]
+    )
+
+    guard case .failed(let message) = result else {
+        Issue.record("A missing runtime must return a visible failure instead of a silent no-op.")
+        return
+    }
+    #expect(message == HideStartupDiagnostic.runtimeUnavailable)
+}
+
+@Test func unlaunchableRuntimeReturnsItsLaunchFailureToTheCaller() {
+    let result = HerdrRuntimeResolver.startServerIfNeeded(
+        selection: HerdrRuntimeSelection(
+            path: "/private/tmp/hide-runtime-does-not-exist",
+            source: "test",
+            version: "0.8.2",
+            sha256: nil,
+            guidance: nil
+        ),
+        socketPath: "/private/tmp/hide-unlaunchable-runtime-verification.sock",
+        environment: [:]
+    )
+
+    guard case .failed(let message) = result else {
+        Issue.record("An unlaunchable runtime must return a visible launch failure.")
+        return
+    }
+    #expect(message.hasPrefix("Herdr could not start:"))
+}
+
+@Test @MainActor func coreBridgeHasAnImmediateSnapshotBeforeRuntimeResolution() {
+    let bridge = CoreBridge(arguments: [
+        "HerdrMacOS",
+        "--state-path",
+        "/tmp/hide-p0-startup-test-state.json",
+    ])
+
+    #expect(bridge.snapshot != nil)
+    #expect(bridge.runtimeSelection == nil)
+    #expect(bridge.bridgeError == HideStartupDiagnostic.initializing)
+}
+
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {
     let visible = CGRect(x: 0, y: 25, width: 1_440, height: 875)
     let resolved = PetPlacement.clampedOrigin(

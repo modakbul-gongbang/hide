@@ -14,6 +14,8 @@
 	<string>hide</string>
 	<key>CFBundleDisplayName</key>
 	<string>hide</string>
+	<key>CFBundleIconFile</key>
+	<string>hide.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
