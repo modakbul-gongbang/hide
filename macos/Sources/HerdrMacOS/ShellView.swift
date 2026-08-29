@@ -214,7 +214,8 @@ private struct TerminalPanel: View {
         let workspace = model.core.snapshot?.navigator.agents
             .first { $0.paneID == paneID }
             .map { " · \($0.workspaceLabel)" } ?? ""
-        return terminal.closed ? "\(paneID)\(workspace) · closed" : "\(paneID)\(workspace)"
+        let zoom = model.core.snapshot?.zoomed == paneID ? " · zoomed" : ""
+        return terminal.closed ? "\(paneID)\(workspace) · closed\(zoom)" : "\(paneID)\(workspace)\(zoom)"
     }
 
     var body: some View {

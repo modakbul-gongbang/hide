@@ -106,5 +106,24 @@ struct ShellCommands: Commands {
             }
             .keyboardShortcut("3", modifiers: .command)
         }
+
+        CommandMenu("Pane") {
+            Button("Split Right") {
+                model.splitCurrentPane(.right)
+            }
+            .keyboardShortcut("d", modifiers: .command)
+
+            Button("Split Down") {
+                model.splitCurrentPane(.down)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Toggle Zoom") {
+                model.toggleCurrentPaneZoom()
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .option])
+        }
     }
 }

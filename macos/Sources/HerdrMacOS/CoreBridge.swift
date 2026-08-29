@@ -12,6 +12,7 @@ private let coreChangeCallback: @convention(c) (UnsafeMutableRawPointer?) -> Voi
 struct CoreSnapshot: Decodable {
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
+    let zoomed: String?
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let uiState: CoreUIStateSnapshot
@@ -20,6 +21,7 @@ struct CoreSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case navigator
+        case zoomed
         case terminal
         case editor
         case uiState = "ui_state"
@@ -321,6 +323,27 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
         persistUIState(selectedPaneID: paneID)
         onRequestTerminalFocus?()
+    }
+
+    func splitCurrentPane(direction: PaneSplitDirection) {
+        guard let paneID = snapshot?.terminal.paneID else {
+            bridgeError = "pane.no_current_pane: Select a terminal pane before splitting"
+            return
+        }
+        dispatch(kind: "create_pane", payload: [
+            "tab_id": paneID,
+            "cwd": workspaceRoot.path,
+            "command": NSNull(),
+            "direction": direction.rawValue,
+        ])
+    }
+
+    func toggleCurrentPaneZoom() {
+        guard let paneID = snapshot?.terminal.paneID else {
+            bridgeError = "pane.no_current_pane: Select a terminal pane before toggling zoom"
+            return
+        }
+        dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
     }
 
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {

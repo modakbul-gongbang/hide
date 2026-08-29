@@ -18,6 +18,11 @@ enum ShellSurface: String, CaseIterable, Hashable {
     }
 }
 
+enum PaneSplitDirection: String {
+    case right
+    case down
+}
+
 @MainActor
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
@@ -60,6 +65,16 @@ final class ShellModel: ObservableObject {
 
     func focus(_ surface: ShellSurface) {
         activeSurface = surface
+    }
+
+    func splitCurrentPane(_ direction: PaneSplitDirection) {
+        core.splitCurrentPane(direction: direction)
+        focus(.terminal)
+    }
+
+    func toggleCurrentPaneZoom() {
+        core.toggleCurrentPaneZoom()
+        focus(.terminal)
     }
 
     func previewConsequence(_ kind: DestructiveTargetKind) {

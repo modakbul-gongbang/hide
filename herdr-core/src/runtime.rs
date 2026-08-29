@@ -4,7 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::live::{LiveContext, PaneAttach, SessionFetchError};
+use crate::live::{
+    LiveContext, PaneAttach, PaneControlAction, PaneSplitDirection, SessionFetchError,
+};
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, SCHEMA_VERSION, Snapshot, Surface,
     TerminalChunk, UiStateSnapshot,
@@ -85,6 +87,12 @@ struct CreatePanePayload {
     tab_id: String,
     cwd: String,
     command: Option<String>,
+    direction: PaneSplitDirection,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToggleZoomPayload {
+    pane_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +164,7 @@ enum ValidatedEvent {
     CreateWorkspace(CreateWorkspacePayload),
     CreateTab(CreateTabPayload),
     CreatePane(CreatePanePayload),
+    ToggleZoom(ToggleZoomPayload),
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
@@ -450,8 +459,92 @@ impl Runtime {
                 false
             }
             ValidatedEvent::CreatePane(payload) => {
-                let _ = (payload.tab_id, payload.cwd, payload.command);
-                false
+                if payload.command.is_some() {
+                    self.set_error(
+                        "pane.command_unsupported",
+                        "Pane split starts the configured shell; a command cannot be supplied",
+                        false,
+                    );
+                    return true;
+                }
+                let Some(pane_id) = self.snapshot.terminal.pane_id.clone() else {
+                    self.set_error(
+                        "pane.no_current_pane",
+                        "Select a terminal pane before splitting",
+                        false,
+                    );
+                    return true;
+                };
+                let _ = payload.tab_id;
+                let context = self.live.as_ref().cloned();
+                let Some(context) = context else {
+                    self.set_error(
+                        "pane.control_unavailable",
+                        "Pane split requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                match live::execute_pane_control(
+                    &context,
+                    PaneControlAction::Split {
+                        pane_id: &pane_id,
+                        direction: payload.direction,
+                        cwd: Some(&payload.cwd),
+                    },
+                ) {
+                    Ok(()) => {
+                        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                            kind: format!("pane.split.{}", payload.direction.as_str()),
+                            message: format!(
+                                "Pane {pane_id} split {} successfully",
+                                payload.direction.as_str()
+                            ),
+                            occurred_at: unix_milliseconds(),
+                        });
+                        true
+                    }
+                    Err(message) => {
+                        self.set_error("pane.split_failed", message, true);
+                        true
+                    }
+                }
+            }
+            ValidatedEvent::ToggleZoom(payload) => {
+                let context = self.live.as_ref().cloned();
+                let Some(context) = context else {
+                    self.set_error(
+                        "pane.control_unavailable",
+                        "Pane zoom requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                match live::execute_pane_control(
+                    &context,
+                    PaneControlAction::ToggleZoom {
+                        pane_id: &payload.pane_id,
+                    },
+                ) {
+                    Ok(()) => {
+                        let zoomed = self.snapshot.zoomed.as_deref() == Some(&payload.pane_id);
+                        self.snapshot.zoomed = (!zoomed).then_some(payload.pane_id.clone());
+                        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                            kind: "pane.zoom_toggled".to_owned(),
+                            message: format!(
+                                "Pane {} zoom is {}",
+                                payload.pane_id,
+                                if zoomed { "off" } else { "on" }
+                            ),
+                            occurred_at: unix_milliseconds(),
+                        });
+                        true
+                    }
+                    Err(message) => {
+                        self.set_error("pane.zoom_failed", message, true);
+                        true
+                    }
+                }
             }
             ValidatedEvent::CloseWorkspace(payload) => {
                 let _ = (payload.workspace_id, payload.confirmed);
@@ -688,6 +781,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "create_workspace" => decode!(CreateWorkspacePayload, CreateWorkspace),
         "create_tab" => decode!(CreateTabPayload, CreateTab),
         "create_pane" => decode!(CreatePanePayload, CreatePane),
+        "toggle_zoom" => decode!(ToggleZoomPayload, ToggleZoom),
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),

@@ -4,6 +4,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
@@ -31,6 +33,87 @@ pub struct LiveContext {
     pub herdr_bin: Option<PathBuf>,
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSplitDirection {
+    Right,
+    Down,
+}
+
+impl PaneSplitDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Right => "right",
+            Self::Down => "down",
+        }
+    }
+}
+
+pub enum PaneControlAction<'a> {
+    Split {
+        pane_id: &'a str,
+        direction: PaneSplitDirection,
+        cwd: Option<&'a str>,
+    },
+    ToggleZoom {
+        pane_id: &'a str,
+    },
+}
+
+pub fn execute_pane_control(
+    context: &LiveContext,
+    action: PaneControlAction<'_>,
+) -> Result<(), String> {
+    let Some(herdr_bin) = context.herdr_bin.as_ref() else {
+        return Err("herdr binary was not found; pane control is unavailable".to_owned());
+    };
+    let arguments = pane_control_arguments(action);
+    let output = Command::new(herdr_bin)
+        .args(&arguments)
+        .env("HERDR_SOCKET_PATH", &context.socket_path)
+        .output()
+        .map_err(|error| format!("herdr pane control could not start: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(if stderr.is_empty() {
+        format!("herdr pane control exited with {}", output.status)
+    } else {
+        stderr
+    })
+}
+
+fn pane_control_arguments(action: PaneControlAction<'_>) -> Vec<String> {
+    match action {
+        PaneControlAction::Split {
+            pane_id,
+            direction,
+            cwd,
+        } => {
+            let mut arguments = vec![
+                "pane".to_owned(),
+                "split".to_owned(),
+                pane_id.to_owned(),
+                "--direction".to_owned(),
+                direction.as_str().to_owned(),
+                "--no-focus".to_owned(),
+            ];
+            if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+                arguments.push("--cwd".to_owned());
+                arguments.push(cwd.to_owned());
+            }
+            arguments
+        }
+        PaneControlAction::ToggleZoom { pane_id } => vec![
+            "pane".to_owned(),
+            "zoom".to_owned(),
+            pane_id.to_owned(),
+            "--toggle".to_owned(),
+        ],
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -450,6 +533,46 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn pane_control_plans_right_down_and_zoom_without_shell_interpolation() {
+        assert_eq!(
+            pane_control_arguments(PaneControlAction::Split {
+                pane_id: "w1:p1",
+                direction: PaneSplitDirection::Right,
+                cwd: Some("/tmp/herdr-ide-verify-shortcuts"),
+            }),
+            [
+                "pane",
+                "split",
+                "w1:p1",
+                "--direction",
+                "right",
+                "--no-focus",
+                "--cwd",
+                "/tmp/herdr-ide-verify-shortcuts",
+            ]
+        );
+        assert_eq!(
+            pane_control_arguments(PaneControlAction::Split {
+                pane_id: "w1:p1",
+                direction: PaneSplitDirection::Down,
+                cwd: None,
+            }),
+            [
+                "pane",
+                "split",
+                "w1:p1",
+                "--direction",
+                "down",
+                "--no-focus",
+            ]
+        );
+        assert_eq!(
+            pane_control_arguments(PaneControlAction::ToggleZoom { pane_id: "w1:p1" }),
+            ["pane", "zoom", "w1:p1", "--toggle"]
+        );
+    }
 
     #[test]
     fn wire_snapshot_projects_agents_with_workspace_labels_and_verbatim_tokens() {

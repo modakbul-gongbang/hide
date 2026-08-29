@@ -53,7 +53,8 @@ focus_pane       { pane_id: String }
 open_browser     { profile: String }
 create_workspace { path: String, label: String, create_worktree: bool }
 create_tab       { workspace_id: String, label: String }
-create_pane      { tab_id: String, cwd: String, command: String? }
+create_pane      { tab_id: String, cwd: String, command: String?, direction: PaneSplitDirection }
+toggle_zoom      { pane_id: String }
 close_workspace  { workspace_id: String, confirmed: bool }
 close_tab        { tab_id: String, confirmed: bool }
 close_pane       { pane_id: String, confirmed: bool }
@@ -63,6 +64,7 @@ retry_connect    { target_id: String }
 
 Surface = sidebar | terminal | workbench | pet
 MouseButton = left | right
+PaneSplitDirection = right | down
 ```
 
 An unknown `kind` produces `status.last_error.kind = "event.unknown_kind"`.

@@ -189,6 +189,47 @@ fn malformed_payload_is_observable_and_valid_input_clears_it() {
     herdr_core_destroy(core);
 }
 
+#[test]
+fn pane_split_direction_and_zoom_events_reach_the_live_control_boundary() {
+    let core = create();
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "focus_pane", "payload": {"pane_id": "w1:p1"}}),
+    );
+    for direction in ["right", "down"] {
+        dispatch(
+            core,
+            json!({
+                "schema_version": 1,
+                "kind": "create_pane",
+                "payload": {
+                    "tab_id": "t1",
+                    "cwd": "/tmp/herdr-ide-verify-shortcuts",
+                    "command": null,
+                    "direction": direction
+                }
+            }),
+        );
+        assert_eq!(
+            snapshot(core)["status"]["last_error"]["kind"],
+            "pane.control_unavailable"
+        );
+    }
+    dispatch(
+        core,
+        json!({
+            "schema_version": 1,
+            "kind": "toggle_zoom",
+            "payload": {"pane_id": "w1:p1"}
+        }),
+    );
+    assert_eq!(
+        snapshot(core)["status"]["last_error"]["kind"],
+        "pane.control_unavailable"
+    );
+    herdr_core_destroy(core);
+}
+
 extern "C" fn count_change(context: *mut c_void) {
     let counter = unsafe { &*(context.cast::<AtomicUsize>()) };
     counter.fetch_add(1, Ordering::SeqCst);
