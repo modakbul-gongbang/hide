@@ -1,7 +1,7 @@
 ---
 topic: "hide 리브랜딩·패키징·사이드바 재설계"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"
 review_profile: "high-risk"
 review_rationale: "비공개 코드를 public GitHub 레포로 공개하는 비가역 외부 행위와 --dangerously-skip-permissions 실행 경로, SSH 원격 제어·타사 바이너리 번들이 포함된다."
 source_intake: "agents/interview/hide-rebrand/qa-log.md"
