@@ -22,6 +22,11 @@ struct TerminalHost: NSViewRepresentable {
         bridge.onTerminalBytes = { [weak terminal] bytes in
             precondition(Thread.isMainThread)
             terminal?.feed(byteArray: bytes[...])
+            // The caret advances on the next layout pass after a feed; keep
+            // an active composition overlay anchored to it.
+            DispatchQueue.main.async { [weak terminal] in
+                terminal?.refreshMarkedTextOverlayPosition()
+            }
         }
         bridge.onRequestTerminalFocus = { [weak terminal] in
             guard let terminal, let window = terminal.window else { return }

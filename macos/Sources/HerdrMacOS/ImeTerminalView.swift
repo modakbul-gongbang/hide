@@ -84,6 +84,28 @@ final class ImeTerminalView: TerminalView {
         super.interpretKeyEvents(eventArray)
     }
 
+    /// Repositions the marked-text (preedit) overlay to the current caret.
+    ///
+    /// SwiftTerm places the overlay only when the marked text itself changes,
+    /// using the caret position at that moment. Committed text in this app
+    /// round-trips through the pane PTY, so the caret advances a few
+    /// milliseconds later, after the echo is fed back - and the overlay for
+    /// the next syllable is left covering the character that was just
+    /// committed. Re-asserting the same marked text after terminal output
+    /// re-runs SwiftTerm's overlay layout against the advanced caret.
+    func refreshMarkedTextOverlayPosition() {
+        guard hasMarkedText() else { return }
+        let range = markedRange()
+        guard range.length > 0,
+              let marked = attributedSubstring(forProposedRange: range, actualRange: nil)
+        else { return }
+        super.setMarkedText(
+            marked,
+            selectedRange: NSRange(location: marked.length, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+    }
+
     override func insertText(_ string: Any, replacementRange: NSRange) {
         if CompositionInputPolicy.shouldDropCommit(
             composingAtEvent: composingAtEvent,
