@@ -141,6 +141,16 @@ final class ShellModel: ObservableObject {
         }
     }
 
+    /// Stores the pet's global shortcut. The registrar reports back whether
+    /// macOS accepted it, so a conflict is visible rather than a shortcut
+    /// that silently never fires.
+    func updatePetShortcut(_ accelerator: String?) {
+        core.updatePetShortcut(accelerator: accelerator, error: petShortcutRegistrar?(accelerator))
+    }
+
+    /// Set by the app delegate, which owns the Carbon registration.
+    var petShortcutRegistrar: ((String?) -> String?)?
+
     func previewConsequence(_ kind: DestructiveTargetKind) {
         pendingPaneCloseID = nil
         let agents = core.snapshot?.navigator.agents ?? []

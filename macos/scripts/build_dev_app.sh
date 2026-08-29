@@ -20,6 +20,10 @@ install -m 644 \
     "$macos_root/Resources/Info.plist" \
     "$app_root/Contents/Info.plist"
 
+# The pet resolves its theme from the bundle's own resources, so the art has
+# to travel with the app rather than being read out of the checkout.
+/usr/bin/ditto "$worktree_root/assets/pet-theme" "$app_root/Contents/Resources/pet-theme"
+
 for resource_bundle in "$macos_root"/.build/arm64-apple-macosx/debug/*.bundle; do
     if [[ -d "$resource_bundle" ]]; then
         /usr/bin/ditto "$resource_bundle" "$app_root/Contents/Resources/$(basename "$resource_bundle")"

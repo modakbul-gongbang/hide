@@ -18,6 +18,7 @@ struct CoreSnapshot: Decodable {
     let editor: CoreEditorSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
+    let pet: CorePetSnapshot
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -28,6 +29,93 @@ struct CoreSnapshot: Decodable {
         case editor
         case uiState = "ui_state"
         case status
+        case pet
+    }
+}
+
+struct CorePetSnapshot: Decodable, Equatable {
+    let visible: Bool
+    let connection: String
+    let connectionMessage: String?
+    let pose: String
+    let sleepPhase: String
+    let roamAllowed: Bool
+    let badges: CorePetBadges
+    let attentionPaneIDs: [String]
+    let origin: CorePetOrigin?
+    let shortcut: String?
+    let shortcutError: String?
+    let themeID: String
+    let lastClick: CorePetClick?
+
+    /// True while herdr is answering. Every other connection value is an
+    /// explicit failure the pet shows rather than posing idle through.
+    var isConnected: Bool { connection == "connected" }
+
+    enum CodingKeys: String, CodingKey {
+        case visible
+        case connection
+        case connectionMessage = "connection_message"
+        case pose
+        case sleepPhase = "sleep_phase"
+        case roamAllowed = "roam_allowed"
+        case badges
+        case attentionPaneIDs = "attention_pane_ids"
+        case origin
+        case shortcut
+        case shortcutError = "shortcut_error"
+        case themeID = "theme_id"
+        case lastClick = "last_click"
+    }
+}
+
+struct CorePetBadges: Decodable, Equatable {
+    let working: Int
+    let done: Int
+    let attention: Int
+    let error: Int
+    let disconnected: Int
+    let subagentsActive: UInt32
+    let backgroundRunning: UInt32
+    let backgroundFailed: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case working
+        case done
+        case attention
+        case error
+        case disconnected
+        case subagentsActive = "subagents_active"
+        case backgroundRunning = "background_running"
+        case backgroundFailed = "background_failed"
+    }
+
+    static let none = CorePetBadges(
+        working: 0,
+        done: 0,
+        attention: 0,
+        error: 0,
+        disconnected: 0,
+        subagentsActive: 0,
+        backgroundRunning: 0,
+        backgroundFailed: 0
+    )
+}
+
+struct CorePetOrigin: Decodable, Equatable {
+    let x: Double
+    let y: Double
+
+    var point: CGPoint { CGPoint(x: x, y: y) }
+}
+
+struct CorePetClick: Decodable, Equatable {
+    let selectedPaneID: String?
+    let atUnixMilliseconds: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case selectedPaneID = "selected_pane_id"
+        case atUnixMilliseconds = "at_unix_ms"
     }
 }
 
@@ -116,6 +204,7 @@ struct SidebarAgent: Decodable, Identifiable {
     let elapsed: String
     let sortRank: String
     let activity: String
+    let ambient: CoreAmbientSignal?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -128,6 +217,19 @@ struct SidebarAgent: Decodable, Identifiable {
         case elapsed
         case sortRank = "sort_rank"
         case activity
+        case ambient
+    }
+}
+
+struct CoreAmbientSignal: Decodable, Equatable {
+    let subagentsActive: UInt32
+    let backgroundRunning: UInt32
+    let backgroundFailed: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case subagentsActive = "subagents_active"
+        case backgroundRunning = "background_running"
+        case backgroundFailed = "background_failed"
     }
 }
 
@@ -419,6 +521,41 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func focusPane(_ paneID: String) {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
+    }
+
+    var pet: CorePetSnapshot? { snapshot?.pet }
+
+    /// The click the core resolves: it picks the oldest unseen pane and
+    /// focuses it, or reports none so the shell only raises its window.
+    func petClicked() {
+        dispatch(kind: "pet_click", payload: [:])
+    }
+
+    func setPetVisible(_ visible: Bool) {
+        dispatch(kind: "pet_set_visible", payload: ["visible": visible])
+    }
+
+    func togglePetVisible() {
+        dispatch(kind: "pet_toggle_visible", payload: [:])
+    }
+
+    func movePet(to origin: CGPoint) {
+        dispatch(kind: "pet_move", payload: ["x": origin.x, "y": origin.y])
+    }
+
+    func setPetDragging(_ dragging: Bool) {
+        dispatch(kind: "pet_drag", payload: ["dragging": dragging])
+    }
+
+    func notePetActivity() {
+        dispatch(kind: "pet_activity", payload: [:])
+    }
+
+    func updatePetShortcut(accelerator: String?, error: String?) {
+        dispatch(kind: "pet_shortcut_update", payload: [
+            "accelerator": accelerator.map { $0 as Any } ?? NSNull(),
+            "error": error.map { $0 as Any } ?? NSNull(),
+        ])
     }
 
     @discardableResult

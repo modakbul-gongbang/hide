@@ -245,7 +245,7 @@ final class PaneCommandWindow: NSWindow {
     }
 }
 
-struct KeyboardSettingsView: View {
+struct AppSettingsView: View {
     @ObservedObject var model: ShellModel
 
     var body: some View {
@@ -260,9 +260,10 @@ struct KeyboardSettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            PetSettingsSection(model: model)
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 330)
+        .frame(width: 520, height: 470)
         .padding(12)
     }
 }
