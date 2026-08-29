@@ -81,12 +81,17 @@ private struct ProcessReceipt: Sendable {
 /// Writes a verification receipt atomically and reports a write failure on
 /// stderr, so a receipt that never lands is visible instead of silently absent.
 enum VerificationReceipt {
+    /// Emits one JSON record as its own stderr line.
+    static func writeLine(_ data: Data) {
+        FileHandle.standardError.write(data)
+        FileHandle.standardError.write(Data("\n".utf8))
+    }
+
     static func write(_ data: Data, to path: String, failureKind: String) {
         do {
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
         } catch {
-            let message = "{\"kind\":\"\(failureKind)\",\"path\":\"\(path)\"}\n"
-            FileHandle.standardError.write(Data(message.utf8))
+            writeLine(Data("{\"kind\":\"\(failureKind)\",\"path\":\"\(path)\"}".utf8))
         }
     }
 }
@@ -383,8 +388,7 @@ final class BrowserRuntimeModel: ObservableObject {
 
     private static func log(_ receipt: BrowserRuntimeReceipt) {
         guard let data = try? JSONEncoder().encode(receipt) else { return }
-        FileHandle.standardError.write(data)
-        FileHandle.standardError.write(Data("\n".utf8))
+        VerificationReceipt.writeLine(data)
     }
 
     private func writeReceipt(_ receipt: BrowserRuntimeReceipt) {
@@ -473,8 +477,7 @@ final class RemoteRuntimeModel: ObservableObject {
             "checked_at": checkedAt,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
-        FileHandle.standardError.write(data)
-        FileHandle.standardError.write(Data("\n".utf8))
+        VerificationReceipt.writeLine(data)
     }
 }
 
@@ -502,9 +505,15 @@ struct ConsequenceNotice: Equatable, Identifiable, Sendable {
 }
 
 enum ConsequencePolicy {
+    /// The pane states that make a close destructive. `close_pane` in the core
+    /// requires `confirmed: true` for exactly this set, so the two must agree.
+    private static let attentionStates: Set<String> = [
+        "working", "question", "approval", "error", "unseen_completion",
+    ]
+
     static func notice(kind: DestructiveTargetKind, targets: [DestructiveTarget]) -> ConsequenceNotice {
         let risky = targets.filter { target in
-            ["working", "question", "approval", "error", "unseen_completion"].contains(target.state)
+            attentionStates.contains(target.state)
         }
         switch kind {
         case .pane:
@@ -531,7 +540,7 @@ enum ConsequencePolicy {
     }
 
     private static func aggregate(_ title: String, _ consequence: String, _ targets: [DestructiveTarget]) -> ConsequenceNotice {
-        let affected = targets.filter { ["working", "question", "approval", "error", "unseen_completion"].contains($0.state) }
+        let affected = targets.filter { attentionStates.contains($0.state) }
         return ConsequenceNotice(
             title: title,
             consequence: consequence,

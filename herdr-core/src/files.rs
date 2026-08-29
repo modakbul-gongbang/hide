@@ -119,10 +119,8 @@ pub fn save(
         .and_then(|_| output.sync_all())
         .map_err(|_| "The file could not be saved; the draft was preserved".to_owned())?;
     let modified = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
         .ok()
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .and_then(|metadata| modified_milliseconds(&metadata).ok())
         .unwrap_or(disk_modified);
     editor.contents_utf8 = Some(contents);
     editor.opened_modified_at_unix_ms = Some(modified);

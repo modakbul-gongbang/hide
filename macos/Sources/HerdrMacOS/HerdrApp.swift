@@ -101,41 +101,20 @@ struct ShellCommands: Commands {
         }
 
         CommandMenu("Pane") {
-            Button("Split Right") {
-                model.performPaneCommand(.splitRight)
-            }
-            .keyboardShortcut(
-                model.shortcut(for: .splitRight).keyEquivalent,
-                modifiers: model.shortcut(for: .splitRight).eventModifiers
-            )
-
-            Button("Split Down") {
-                model.performPaneCommand(.splitDown)
-            }
-            .keyboardShortcut(
-                model.shortcut(for: .splitDown).keyEquivalent,
-                modifiers: model.shortcut(for: .splitDown).eventModifiers
-            )
-
+            paneButton(.splitRight)
+            paneButton(.splitDown)
             Divider()
-
-            Button("Toggle Zoom") {
-                model.performPaneCommand(.toggleZoom)
-            }
-            .keyboardShortcut(
-                model.shortcut(for: .toggleZoom).keyEquivalent,
-                modifiers: model.shortcut(for: .toggleZoom).eventModifiers
-            )
-
+            paneButton(.toggleZoom)
             Divider()
-
-            Button("Close Pane") {
-                model.performPaneCommand(.closePane)
-            }
-            .keyboardShortcut(
-                model.shortcut(for: .closePane).keyEquivalent,
-                modifiers: model.shortcut(for: .closePane).eventModifiers
-            )
+            paneButton(.closePane)
         }
+    }
+
+    private func paneButton(_ command: PaneCommand) -> some View {
+        let shortcut = model.shortcut(for: command)
+        return Button(command.title) {
+            model.performPaneCommand(command)
+        }
+        .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.eventModifiers)
     }
 }

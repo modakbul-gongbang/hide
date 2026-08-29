@@ -93,15 +93,6 @@ indirect enum CorePaneLayoutNode: Decodable {
             first.paneIDs + second.paneIDs
         }
     }
-
-    func pane(_ paneID: String) -> CorePaneLayoutNode? {
-        switch self {
-        case let .pane(candidate):
-            candidate == paneID ? self : nil
-        case let .split(_, _, first, second):
-            first.pane(paneID) ?? second.pane(paneID)
-        }
-    }
 }
 
 struct CoreNavigatorSnapshot: Decodable {
