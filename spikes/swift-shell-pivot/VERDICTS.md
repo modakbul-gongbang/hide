@@ -2,12 +2,13 @@
 
 ## Overall status
 
-Status: BLOCKED at T3 human IME verification.
+Status: T1-T4 Stage 0 spike gate PASS; T5 deletion and V21 dependency-removal verification PASS, with the T5 checkpoint commit pending.
 Role marker: `mode=implementor`, `paneId=w2X:p8`, `agentKind=codex`.
 Working root: `/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot`.
 Verification window: 2026-08-28 19:39 through 2026-08-29 11:51 KST.
 Additive production work began only after the explicit user-directed dependency deviation recorded under T3.
-No repository source, evidence, or user file was deleted, no legacy delete target was moved, no `rust-native-final` tag was created, and the T5 deletion step was not started.
+The approved T5 source files and obsolete manifest dependencies were deleted only after the annotated `rust-native-final` tag was verified against the exact pre-deletion checkpoint.
+No evidence, user file, spike copy, or non-T5 source was deleted.
 SwiftPM automatically evicted obsolete ignored dependency cache entries under `macos/.build` when the pre-authorized editor fallback changed the package graph; no manual cleanup command ran and no generated build cache is part of the checkpoint.
 
 ## T1: PASS
@@ -27,27 +28,27 @@ Peekaboo typed `t2-probe` into the real SwiftTerm view.
 SwiftTerm's `send(source:data:)` delegate sent 9 input bytes to Rust, Rust wrote them to the SSH PTY, and the remote fixture echoed `INPUT_UTF8:t2-probe` back into SwiftTerm.
 Focused evidence is `evidence/runtime.json` and `evidence/final-running-app.png`.
 
-## T3: BLOCKED
+## T3: PASS
 
-The user performed physical-keyboard V9 checks against the SwiftTerm 1.20.0 spike.
+The user performed the final physical-keyboard V9 checks against the SwiftTerm 1.20.0 terminal on source checkpoint `b2582ade493bc6569af0e9719aa672751962df96`.
+The authoritative verdict is: `1,2,3,4 모두 잘 맞아 다 된다`.
 English input echoed immediately: PASS.
-The Korean candidate window followed the cursor: PASS.
+The Korean candidate window followed the terminal cursor: PASS.
+Backspace during Korean composition deleted the composition without leaking DEL: PASS.
 Two or more adjacent Korean characters did not overwrite the following character: PASS.
-Backspace during Korean composition remained broken: NOT PASS.
-The composing text could not be deleted correctly and the composition broke, so AC2 is unmet.
-The editor surface remains deferred by prior user agreement because this spike has only the terminal surface.
-T3 remains BLOCKED, and a fresh V9 physical-keyboard human retest is mandatory before v1 completion.
+The editor axis remains deferred by prior user agreement.
+Under that explicitly agreed terminal-axis gate, V9 PASS satisfies AC1, AC2, and AC3, closes T3, and makes T1, T2, T3, and T4 all PASS.
 
-The open root-cause candidate is coordinate mixing in SwiftTerm `MacTerminalView`: document-coordinate `NSTextInputClient` ranges versus marked-storage-relative coordinates.
-The app-side coordinate adapter and bounded trace hygiene remain preserved for the mandatory retry.
+The historical root-cause candidate was coordinate mixing in SwiftTerm `MacTerminalView`: document-coordinate `NSTextInputClient` ranges versus marked-storage-relative coordinates.
+The app-side coordinate adapter and bounded trace hygiene remain preserved as diagnosis evidence; the later human PASS supersedes the earlier retry requirement.
 The decisive real call stream is `evidence/v9-ime-call-stream-1.20.json`.
 Related diagnosis and boundary evidence is `evidence/v9-backspace-diagnosis.json`, `evidence/v9-swiftterm-1.19-1.20-source-diff.json`, and `evidence/v9-composition-coordinate-boundary-3.json`.
 The latest clean handoff and trace snapshots are `evidence/v9-backspace-adapter-human-retest-ready-2.json`, `evidence/v9-backspace-adapter-human-retest-trace-ready-empty-2.json`, and `evidence/v9-backspace-adapter-human-retest-ready-2.png`.
 Earlier automated input evidence remains diagnostic only and is not T3 acceptance evidence.
 
-On 2026-08-29 the user explicitly deferred the unresolved Backspace defect: "지금 원인은 모르겠는데 백스페이스 계속 안된다. 우선 이거 패스하고 다른거 작업부터 쭉 하게 하자".
-Starting additive downstream work before the Stage 0 spike gate completes is therefore an explicit user-directed dependency deviation.
-This deviation does not make Backspace PASS, does not satisfy AC2, and does not complete the spike gate.
+On 2026-08-29 the user initially deferred the unresolved Backspace defect: "지금 원인은 모르겠는데 백스페이스 계속 안된다. 우선 이거 패스하고 다른거 작업부터 쭉 하게 하자".
+Starting additive downstream work before the Stage 0 spike gate completed was therefore an explicit user-directed dependency deviation at that time.
+The later authoritative physical-keyboard verdict `1,2,3,4 모두 잘 맞아 다 된다` supersedes the earlier unresolved terminal-axis result and closes AC1, AC2, AC3, T3, and the Stage 0 spike gate.
 
 ## T4: PASS
 
@@ -99,12 +100,12 @@ The isolated alternate-screen SSH fixture represents the byte and IME behavior o
 The earlier interrupted Implementor left only empty spike directories, so no stale artifact was treated as completion evidence.
 No chromux profile was changed, no Chrome process was quit, and no real user workspace or worktree was touched.
 
-## Exact stopped gate and dependency deviation
+## Resolved gate and dependency deviation
 
-T3 remains open until the user performs the four V9 human IME checks.
-The user has stopped further Backspace retests for now and authorized additive downstream work that does not require deletion.
-T5 deletion and migration removal remain closed because T1-T4 are not all PASS and because T5 separately requires fresh human approval plus a verified `rust-native-final` tag.
-No `rust-native-final` tag may be created under the current authorization.
+The user completed the four V9 terminal checks with the authoritative verdict `1,2,3,4 모두 잘 맞아 다 된다`.
+The editor axis remains deferred by prior user agreement.
+T1-T4 are now all PASS, T3 and AC1-AC3 are satisfied, and the user explicitly authorized T5.
+The annotated `rust-native-final` tag was verified on the exact pre-deletion checkpoint before T5 began.
 External-service and live-system failure-injection verification may not be performed under the current authorization.
 Required in-process core tests for unknown kind, schema mismatch, malformed payload, invalid options, and off-owner behavior remain allowed.
 
@@ -509,5 +510,28 @@ Process memory was 118 MB against the 400 MB V8 bound.
 Screenshots and the bounded receipt are `evidence/live-initial.png`, `evidence/live-fixture-attach.png`, `evidence/live-input-proof.png`, and `evidence/pane-attach-ime-verification.json`.
 No real agent pane received input, the one pre-existing fixture-mode app instance was left running, and the fixture workspace and its /tmp directory were removed afterward.
 
-T3's gate is unchanged by machinery alone: the composition suppression is machine-verified, and a fresh physical-keyboard V9 human verdict in the live app remains mandatory.
-T5, tags, deletion, push, PR, and finalize remain NOT RUN.
+The machine verification was followed by the required physical-keyboard verdict: `1,2,3,4 모두 잘 맞아 다 된다`.
+The terminal V9 axis therefore passes, AC1-AC3 and T3 are satisfied, and the editor axis remains deferred by prior user agreement.
+T5 is now complete through deletion and focused V21/build/native evidence; push, PR, and finalize remain NOT RUN.
+
+## T5 deletion and V21 verification
+
+Before deletion, the annotated tag `rust-native-final` was created and verified with tag object `9f388c3378dcba3f23b07ba24f76b6b092d7bda7` and peeled commit `b2582ade493bc6569af0e9719aa672751962df96`.
+The approved root files `src/render.rs`, `src/terminal.rs`, `src/accessibility.rs`, `src/browser.rs`, and `src/openrouter.rs` were deleted.
+The retired AppKit/wgpu application implementation was removed from `src/app.rs`, leaving only a four-line historical module note, and its compile references were removed from `src/lib.rs`.
+The obsolete dependencies `wgpu`, `glyphon`, `bytemuck`, `raw-window-handle`, `objc2`, `objc2-app-kit`, `objc2-foundation`, `alacritty_terminal`, and `security-framework` were removed from `Cargo.toml` and `Cargo.lock`.
+No spike copy, evidence, user file, or source outside the approved T5 list was deleted.
+
+`cargo check --workspace --all-targets`, `cargo fmt --all -- --check`, `cargo clippy -p herdr-core --all-targets -- -D warnings`, `cargo clippy --workspace --all-targets`, `cargo test --workspace --all-targets`, and 17 Swift tests passed.
+The workspace tests passed 106 tests with zero failures and one pre-existing ignored live-fixture test.
+The strict workspace `clippy -D warnings` attempt correctly failed on nine retained legacy warnings outside the T5 scope; the ordinary workspace clippy and denied-warning `herdr-core` boundary both passed without hiding that result.
+Two unchanged-source app assemblies converged on bundle manifest SHA-256 `2935021416052171287be2aed2969633cbbe6d716844291425501eb853adcfc8` and executable SHA-256 `5d0027358d112b0294c758137e2f296b5421a5c8b5f84945ef94074a82c57964`.
+Strict deep codesign, arm64 architecture, and minimum macOS 14.0 passed.
+Exactly one owned app, PID 38574, rendered key, frontmost, and on-screen window 2767 for `evidence/t5-rust-native-deletion-native.png`, then the exact app and attach child were terminated.
+The structured receipt is `evidence/t5-native-removal-verification.json`.
+`cargo tree --workspace` and `Cargo.lock` contain no reachability for the nine removed packages; `herdr-core` remains free of objc2, wgpu, and glyphon.
+
+The user then directed: `검증은 내가 어느정도 다 했으니 마무리하는 식으로 얼른 가자.`
+Accordingly, later verification uses the shortest focused checks and retained evidence.
+Rows not actually executed are recorded either as `사용자 수동 검증으로 수용됨` only where that direction legitimately covers an observed product behavior, or as `미실행-pending`; no unexecuted row is presented as machine-verified.
+Live-service failure-injection rows V18 and V19 remain `미실행-pending`.
