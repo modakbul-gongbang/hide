@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, data, operation, verification"
 created_at: "2026-08-29"
 updated_at: "2026-08-30"
-question_count: 5
+question_count: 6
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -21,11 +21,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-16
+- next_decision_id: D-20
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 1
+- last_materiality_sweep: checkpoint 2
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q15
+- next_checkpoint_at: Q16
 
 ## Transcript Sources
 
@@ -37,7 +37,7 @@ normalization_checkpoint_every: 10
 
 | ID | Kind | Area | Decision / fact | Priority | Source / owner | Status | PRD mapping / revisit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D-01 | fact | architecture | herdr-ide는 herdr-pet(Rust+Tauri)을 대체하는 저장소다. 지식 문서(status-model, pet-window-macos, theme-contract, ambient-signals, pet-assets 등)는 이미 이식됐고, Rust 구현은 재사용하지 않기로 결정됐다(과거 인터뷰 D-14) | P0 | repo docs/PORTING.md:1-8 | resolved |  |
+| D-01 | fact | architecture | herdr-ide는 herdr-pet(Rust+Tauri)을 대체하는 저장소다. 지식 문서(status-model, pet-window-macos, theme-contract, ambient-signals, pet-assets 등)는 이미 이식됐고, 당시 결정(과거 인터뷰 D-14)은 'Rust 구현 재사용 안 함'이었다. 이 제약은 Electron 전제였고 본 인터뷰의 D-16이 공식 대체한다(코어 Rust 로직 이식 재개) | P0 | repo docs/PORTING.md:1-8 | resolved | 배경 fact. D-16이 일부 대체 |
 | D-02 | fact | architecture | herdr-pet 저장소 구성: apps/pet-app(Tauri 데스크톱 펫), crates/herdr-core, plugins/herdr-agent-pet(herdr plugin, pane metadata로 question payload 노출), themes/(펫 아트+theme.json), web/. 최근 커밋: 글로벌 단축키, ambient subagent/background-task 뱃지 | P0 | repo ../herdr-pet, plugins/herdr-agent-pet/herdr-plugin.toml | resolved |  |
 | D-03 | fact | UX/design | herdr-ide macos 셸에는 이미 PetWindow.swift(363줄: 화면 클램프, 타원 히트영역, 발자국 버튼 오버레이 - 자리표시자 수준)와 herdr-core model의 Pet 항목이 있다. herdr-pet의 애니메이션 펫/상태 뱃지/테마는 아직 없다 | P1 | repo macos/Sources/HerdrMacOS/PetWindow.swift, herdr-core/src/model.rs:119 | resolved |  |
 | D-04 | fact | operation | 현재 설치된 herdr(~/.local/bin/herdr) plugin 목록에 herdr-agent-pet은 없다(agent-context-labels, file-viewer, official.browser만 설치됨). 펫 에셋 원본은 herdr-ide/assets/pet-theme/default/에 이미 복사되어 있다(PORTING.md 4절) | P1 | herdr plugin list --json, docs/PORTING.md | resolved |  |
@@ -46,12 +46,16 @@ normalization_checkpoint_every: 10
 | D-07 | decision | scope | question payload(#8)는 이번 범위에서 제외. herdr-agent-pet은 herdr 쪽에 설치되는 플러그인이라 herdr-ide 안으로 흡수 불가하고, 현재 설치도 안 돼 있어 죽은 기능. 재방문 조건: 펫에서 에이전트 질문 보기를 다시 원하면 플러그인 소스 이사 + 설치로 되살린다 | P1 | user | resolved | non-goal + revisit: 질문 표시 기능 재요청 시 |
 | D-08 | decision | UX/design | 펫 클릭 = herdr-ide 메인 윈도우 포커스 + attention pane으로 점프. 복수 attention이면 가장 오래된 unseen부터. (기존 pid 기반 터미널 raise를 herdr-ide 문법으로 재해석) | P1 | user | resolved | R#/AC#: 클릭 동작 |
 | D-09 | decision | UX/design | 펫 표시 정책: herdr-ide 실행 시 자동 표시, 글로벌 단축키와 URL scheme으로 토글, 마지막 표시 상태 기억(꺼둔 채 종료 시 꺼진 채 시작) | P1 | user | resolved | R#/AC#: 표시/토글 |
-| D-10 | decision | UX/design | URL scheme은 herdr-pet:// 를 물려받지 않고 herdr-ide 앱의 scheme으로 개명한다 | P2 | user | resolved | R#: URL scheme |
-| D-11 | decision | UX/design | 테마: theme.json 로더 구조는 그대로 구현하되 이번엔 저장소에 이미 있는 default 테마 1개만 제공(assets/pet-theme/default/, 59개 에셋) | P2 | user | resolved | R#: 테마 로더 |
+| D-10 | decision | UX/design | URL scheme 계약: 새 scheme은 herdr-ide:// 로 하고 명령은 기존과 동일한 hide/show/toggle, 관용 파싱(뒤 슬래시·셸 정규화 표기 허용, herdr-pet main.rs:906-913 및 테스트가 규범)을 유지한다. 구 herdr-pet:// 는 등록하지 않는다(은퇴 앱 scheme, 의도적 미지원) | P1 | user | resolved | R#/AC#: URL scheme 계약 + 미지원 non-goal |
+| D-11 | decision | UX/design | 테마: theme.json 로더 구조는 그대로 구현하되 이번엔 저장소에 이미 있는 default 테마 1개만 제공(assets/pet-theme/default/, 59개 에셋). 검증: theme.json 로드·에셋 해석 단위 테스트 + 설치 번들에서 default 테마 아트가 실제 렌더된 스크린샷 | P2 | user | resolved | R#/V#: 테마 로더 테스트 + 번들 스크린샷 |
 | D-12 | decision | operation | 은퇴 절차: 이번 구현 범위는 herdr-ide 쪽 완성까지. 설치 번들 스크린샷 검증 통과 후 로컬 herdr-pet 앱 제거와 저장소 아카이브는 별도 후속으로 사용자 확인 후 진행. 이번 범위에 herdr-pet 저장소 변경 없음 | P1 | user | resolved | non-goal(이번 범위) + 후속 운영 절차 |
 | D-13 | fact | architecture | herdr-core는 이미 herdr 로컬 API 소켓으로 session snapshot polling과 pane.layout 조회를 한다(live.rs). 펫의 데이터 소스는 이 기존 경로를 공유한다. 단 _new 토큰 attention 판정과 상태 집계는 아직 없어 docs/ported-reference/herdr.rs, aggregate.rs, behavior.rs에서 Rust→Rust 이식이 필요하다 | P1 | repo herdr-core/src/live.rs:1-175, docs/ported-reference/ | resolved | T#: 코어 이식 작업 |
-| D-14 | assumption | UX/design | 글로벌 단축키는 herdr-pet과 같이 사용자 캡처(재설정 가능) 방식으로 하고, event.key가 아닌 event.code 기반 판정 함정(과거 D-49, hotkey.js)을 Swift 구현에서도 준수한다. 기본 조합은 기존 herdr-pet 설정을 따른다 | P2 | agent default + docs/ported-reference/hotkey.js | resolved | T#: 단축키 구현. revisit: 사용자가 기본 조합 변경 요청 시 |
+| D-14 | fact | UX/design | 글로벌 단축키의 herdr-pet 원 동작(패리티 계약): 사용자 캡처로 accelerator 문자열(예 'Alt+Cmd+P')을 설정 파일(v3)에 저장하고, 빈 값이면 아무 단축키도 등록하지 않는 것이 기본이다. 등록 충돌 시 명시적 오류 메시지. Swift 재구현은 이 동작을 따르고 event.code 기반 판정 함정(hotkey.js)을 준수한다 | P1 | repo ../herdr-pet/apps/pet-app/src-tauri/src/main.rs:74,1956, docs/ported-reference/hotkey.js | resolved | R#/T#: 단축키 패리티 |
 | D-15 | assumption | UX/design | 펫 아트는 animated webp 프레임이다(herdr-pet 커밋 'restore the animated webp frames'). SwiftUI/AppKit에서의 재생 방식(CGImageSource 프레임 분해 등)은 구현 초기 스파이크로 검증하고, 실패 시 프레임 시퀀스 변환으로 대체한다 | P2 | agent default + ../herdr-pet git log, assets/pet-theme/default/ | resolved | Risk/T#: 애니메이션 재생 스파이크. revisit: 스파이크 실패 시 |
+| D-16 | decision | architecture | 과거 인터뷰 D-14('herdr-pet Rust 구현 재사용 안 함')를 공식 뒤집는다: 그 결정은 Electron 전제였고, Swift 셸 + Rust 코어 피벗 이후에는 docs/ported-reference/의 코어 Rust 로직(pose 우선순위, 상태 집계, _new 판정, 테스트 포함)을 herdr-core로 이식 재개한다. UI는 여전히 SwiftUI로 재작성한다. D-01에 기록된 과거 제약을 대체한다 | P0 | user | resolved | ADR + T#: 코어 이식. D-01·D-13과 정합 |
+| D-17 | fact | data lifecycle | attention 수명주기: _new(unseen)→plain(acknowledged) 전환은 herdr 서버 소관이다 - 사용자가 pane을 보면 herdr가 토큰을 plain으로 바꾼다. 펫은 스냅샷을 소비만 하고 자체 seen 상태를 저장하지 않는다(stateless 재계산). unseen이 하나도 없으면 attention이 아니므로 클릭은 메인 윈도우 포커스만 한다. pane 소멸·스냅샷 후퇴도 매 폴링 재계산으로 자연 해소된다 | P1 | repo docs/status-model.md:6-19, agents/rules INV-herdr-unseen-token, docs/ported-reference/herdr.rs 테스트 | resolved | R#/AC#: attention 계약 + 회귀 테스트 |
+| D-18 | fact | states and recovery | 상태·복구 모델(패리티 계약): per-agent AgentStatus::Disconnected와 TopStatus::Disconnected가 herdr-pet aggregate.rs에 존재하고, disconnected 에이전트는 유지되되 waiting으로 집계되지 않는다. 소켓 부재는 live.rs의 명시 분기(서버 미실행)로 구분 표시한다. 일시 폴링 실패 시 마지막 유효 스냅샷 표시 + disconnected 승격은 이식되는 집계 로직이 결정한다. 로딩 초기 상태는 연결 전 disconnected 표기와 동일 취급 | P1 | repo ../herdr-pet/crates/herdr-core/src/aggregate.rs:12-61,222-252, herdr-core/src/live.rs:254-256 | resolved | R#/AC#: 상태 전이 + 테스트 |
+| D-19 | fact | UX/design | 펫 위치 영속(패리티 계약): herdr-pet은 위치를 설정 파일에 저장하고, 복원 시 연결된 모니터 위에 있을 때만 신뢰한다(RESTORE_MARGIN, window.rs:302-316). 사고 좌표 [542720,163840] 픽스처가 회귀 테스트에 고정되어 있다. 표시 상태 기억(D-09)과 같은 영속 계층에서 위치도 복원한다 | P1 | repo ../herdr-pet/crates/herdr-core/src/window.rs:302-316,469, docs/ported-reference/window.rs | resolved | R#/AC#: 위치 복원 + 클램프 테스트 |
 
 ## Raw Q&A
 
@@ -183,23 +187,41 @@ normalization_checkpoint_every: 10
 - immediate_notes: 4개 추천안 일괄 수락 → D-09, D-10, D-11, D-12. D-14(단축키 사용자 캡처 방식 + event.code 함정 준수)는 이 배치의 표시 정책에서 파생된 P2 가정으로 함께 기록.
 - needs_normalization: false
 
+### Q6: 마감 확인 - Rust 이식 재개 확정 + URL scheme herdr-ide://
+- decision_ids: D-16, D-10, D-11
+- route: user-decision
+- source_ref: claude:189f4c2b-415e-4f87-95da-04d6794f6040:e05be267-5c3a-4951-8838-0318b462b0cb
+- asked: 게이트 발견사항 대부분은 herdr-pet 코드에서 사실로 닫을 수 있음을 확인했습니다(단축키는 원래 사용자 설정 방식에 미설정이 기본, deep link 명령은 hide/show/toggle, 위치 저장·disconnected 상태 모델도 기존 코드에 존재). 사용자 확인이 정말 필요한 것만 2개 남았습니다.
+  
+  ---
+  
+  **Q6 (마지막 확인 2개).**
+  
+  1. **과거 결정 뒤집기 확정** - 이전 인터뷰에서 "herdr-pet의 Rust 구현은 재사용하지 않는다"(당시 D-14)고 정했는데, 그건 Electron으로 가던 시절 결정입니다. 지금은 Swift 셸 + Rust 코어라서, 코어 로직(pose 우선순위·상태 집계·`_new` 판정, 테스트 포함)을 `docs/ported-reference/`에서 herdr-core로 **이식 재개**하는 게 맞습니다. 이 뒤집기를 공식 확정할까요? *추천: 확정 (UI는 여전히 SwiftUI 재작성)*
+  
+  2. **URL scheme 이름** - 기존은 `herdr-pet://hide|show|toggle`이었습니다. 새 이름을 **`herdr-ide://`**로 하고 명령(hide/show/toggle)과 관용 파싱은 그대로, 구 `herdr-pet://`는 등록하지 않음(은퇴 앱 scheme이라 미지원)으로 할까요? *추천: 이대로*
+- recommended: 1) 과거 'Rust 재사용 안 함' 결정 공식 뒤집기(코어 이식 재개, UI는 SwiftUI 재작성) 2) 새 scheme herdr-ide:// + 명령 hide/show/toggle 유지 + 구 herdr-pet:// 미등록
+- answer: ㅇㅇㅇㅇㅇ 괜찮은ㄱ ㅓㅅ 같아 고고
+- immediate_notes: gap-audit 1차 BLOCK의 requiresHuman 발견 중 사용자 판단이 필요한 2건을 배치로 확인, 둘 다 추천안 수락 → D-16(D-01의 과거 제약 대체), D-10 구체화. 나머지 발견은 herdr-pet 코드·문서 증거로 fact(D-14 전환, D-17, D-18, D-19)와 검증 보강(D-11)으로 닫음.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 ### UX-01: 펫으로 에이전트 상태 인지 후 attention pane으로 점프
 - trigger: herdr-ide 사용 중 에이전트 pane에 unseen 이벤트(`_new` 토큰)가 생기거나 에이전트 상태가 바뀐다
 - happy path: 펫이 pose(일함/기다림/배회/잠)와 뱃지 행(파랑/초록/노랑/빨강 + ambient subagent/background-task)으로 상태를 반영한다 → 사용자가 펫을 클릭한다 → herdr-ide 메인 윈도우가 포커스되고 가장 오래된 unseen attention pane이 선택된다
-- state / failure: herdr 서버 미실행(소켓 부재)이면 펫이 연결 끊김 상태를 명시적으로 표시한다(live.rs의 socket-missing 분기를 그대로 노출, 조용한 기본값 금지). attention이 하나도 없을 때 클릭하면 메인 윈도우 포커스만 수행한다
-- recovery: 소켓이 다시 생기면 기존 polling 경로가 재개되어 펫 상태가 자동 복구된다
-- proof: 설치 번들 실행 후 screencapture 스크린샷으로 pose/뱃지 렌더 확인, 클릭 후 포커스된 pane 확인(스크린샷), `_new` 판정·집계는 ported-reference의 Rust 테스트를 herdr-core로 이식해 자동 검증
-- linked decisions: D-06, D-08, D-13
+- state / failure: herdr 서버 미실행(소켓 부재)이면 펫이 연결 끊김 상태를 명시적으로 표시한다(live.rs의 socket-missing 분기를 그대로 노출, 조용한 기본값 금지). 개별 에이전트의 Disconnected는 유지되되 waiting으로 집계되지 않는다(D-18). unseen이 하나도 없으면 attention이 아니므로 클릭은 메인 윈도우 포커스만 수행한다(D-17). `_new`→plain 전환은 herdr 서버 소관이고 펫은 스냅샷을 stateless로 재계산만 한다
+- recovery: 소켓이 다시 생기면 기존 polling 경로가 재개되어 펫 상태가 자동 복구된다. 일시 폴링 실패는 마지막 유효 스냅샷 표시 + 집계 로직의 disconnected 승격 규칙을 따른다
+- proof: 설치 번들 실행 후 screencapture 스크린샷으로 pose/뱃지 렌더와 default 테마 아트 확인, 클릭 후 포커스된 pane 확인(스크린샷), `_new` 판정·집계·상태 전이는 ported-reference의 Rust 테스트를 herdr-core로 이식해 자동 검증, theme.json 로더는 단위 테스트(D-11)
+- linked decisions: D-06, D-08, D-13, D-17, D-18, D-11
 
 ### UX-02: 펫 이동, 표시 토글, 재시작 복원
-- trigger: 펫 드래그, 글로벌 단축키 또는 URL scheme 호출, herdr-ide 재시작
-- happy path: 드래그로 원하는 위치에 두고, 단축키/URL scheme으로 숨기고 다시 부르며, 재시작하면 마지막 위치와 표시 상태가 그대로 복원된다
+- trigger: 펫 드래그, 글로벌 단축키(사용자 캡처 설정, 미설정 시 등록 없음 - D-14) 또는 `herdr-ide://hide|show|toggle` 호출(D-10), herdr-ide 재시작
+- happy path: 드래그로 원하는 위치에 두고, 단축키/URL scheme으로 숨기고 다시 부르며, 재시작하면 마지막 위치(연결된 모니터 위일 때만 신뢰 - D-19)와 표시 상태가 그대로 복원된다
 - state / failure: 저장된 위치가 오프스크린 좌표(실제 사고 좌표 [542720, 163840]가 회귀 테스트에 고정됨)라도 클램프가 가시 화면 안으로 되돌린다. 꺼둔 채 종료했으면 꺼진 채 시작한다
 - recovery: 클램프가 항상 가시 영역을 강제하므로 펫을 잃어버리는 상태가 존재하지 않는다
-- proof: 클램프 단위 테스트(사고 좌표 픽스처), 재시작 후 위치/표시 상태 스크린샷, 단축키·URL scheme 토글 동작 스크린샷
-- linked decisions: D-09, D-10, D-14, D-03
+- proof: 클램프·위치 신뢰 단위 테스트(사고 좌표 픽스처), 재시작 후 위치/표시 상태 스크린샷, 단축키 캡처·재설정과 `herdr-ide://` 각 명령의 동작 스크린샷(관용 파싱 테스트 포함)
+- linked decisions: D-09, D-10, D-14, D-19, D-03
 
 ## Evidence From Code, Docs, Or Research
 
@@ -210,6 +232,10 @@ normalization_checkpoint_every: 10
 - `assets/pet-theme/default/` - default 테마 원본 59개(theme.json + 아트), PORTING.md 4절
 - `../herdr-pet` - apps/pet-app(Tauri, UI는 HTML/JS: app.js, ambient-badges.js, hotkey.js), plugins/herdr-agent-pet(herdr-plugin.toml: pane metadata로 question payload 노출), 최근 커밋에 글로벌 단축키·URL scheme·ambient 뱃지
 - `herdr plugin list --json` (2026-08-29 실행) - 설치된 플러그인은 agent-context-labels, file-viewer, official.browser뿐. herdr-agent-pet 미설치
+- `../herdr-pet/apps/pet-app/src-tauri/src/main.rs:74,904-913,1956` - accelerator 설정 계약(빈 값 = 미등록), `herdr-pet://hide|show|toggle` deep link와 관용 파싱 테스트
+- `../herdr-pet/crates/herdr-core/src/aggregate.rs:12-61,222-252` - AgentStatus/TopStatus::Disconnected, disconnected는 waiting으로 집계되지 않음
+- `../herdr-pet/crates/herdr-core/src/window.rs:302-316,469` - 저장 위치는 연결된 모니터 위일 때만 신뢰(RESTORE_MARGIN)
+- `docs/status-model.md:6-51` - `_new`=unseen 계약, plain=acknowledged, pose 우선순위와 뱃지 행 의미
 
 ## Documented Domain Checks
 
@@ -228,5 +254,12 @@ normalization_checkpoint_every: 10
 - register_changes: D-05~D-15 신규: 통합 형태(A 완전 흡수), 전체 패리티 범위+층위 순서, #8 non-goal, 클릭 점프, 표시 정책, URL scheme 개명, default 테마, 은퇴 후속 분리, 소켓 데이터 소스 fact, 단축키 가정, webp 재생 가정
 - reopened_decisions: none
 - highest_remaining_gap: animated webp의 SwiftUI 재생 방식은 구현 스파이크로 확인 필요(D-15로 기록, 사용자 결정 불요)
+
+### Checkpoint 2
+- after_question: Q6
+- normalized_entries: Q6
+- register_changes: 게이트 1차 BLOCK 대응: D-16(과거 Rust 재사용 금지 공식 대체), D-10 구체화(herdr-ide:// 계약+구 scheme 미지원), D-14 fact 전환(단축키 패리티), D-17(attention 수명주기), D-18(상태·복구 모델), D-19(위치 영속), D-11 검증 보강, D-01 정합
+- reopened_decisions: none
+- highest_remaining_gap: 없음 - 남은 P2는 D-15 webp 재생 스파이크뿐
 
 ## Audit History
