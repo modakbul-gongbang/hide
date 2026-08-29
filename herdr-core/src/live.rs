@@ -406,6 +406,7 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
                     .and_then(Value::as_object)
                     .map(|tokens| tokens.clone().into_iter().collect())
                     .unwrap_or_default(),
+                ambient: agent.get("ambient").cloned(),
             })
         })
         .collect();
@@ -938,8 +939,11 @@ mod tests {
 
     #[test]
     fn focus_uses_the_direct_socket_contract_before_reading_authoritative_layout() {
-        let root =
-            std::env::temp_dir().join(format!("herdr-core-focus-contract-{}", std::process::id()));
+        // A Unix socket path is capped at ~104 bytes, so it cannot be built
+        // from TMPDIR: a sandboxed test runner points that at a deep path and
+        // the bind fails before the test has said anything about focus.
+        let root = std::path::PathBuf::from("/tmp")
+            .join(format!("herdr-core-focus-contract-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create socket directory");
         let socket_path = root.join("herdr.sock");
         let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
@@ -1033,7 +1037,7 @@ mod tests {
         // A workspace without a label entry falls back to its id.
         assert_eq!(payload.agents[1].workspace_label.as_deref(), Some("w9"));
 
-        let projected = crate::sidebar::project_agents(payload).expect("sidebar projection");
+        let projected = crate::sidebar::project_agents(payload).agents;
         assert_eq!(projected[0].state, "working");
         assert_eq!(projected[1].state, "idle");
     }

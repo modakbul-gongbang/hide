@@ -6,6 +6,7 @@ pub mod fixture;
 pub mod live;
 mod model;
 mod persistence;
+pub mod pet;
 mod runtime;
 mod sidebar;
 

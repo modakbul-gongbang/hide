@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{PaneLayoutDirection, SidebarAgentSnapshot};
+use crate::model::{AmbientSignal, PaneLayoutDirection, SidebarAgentSnapshot};
 
 #[derive(Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
@@ -62,6 +62,10 @@ pub struct SessionAgentPayload {
     pub agent_status: Option<String>,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
+    /// Passed through verbatim; the strict shape check lives in
+    /// [`parse_ambient`] so a broken record can never partially survive.
+    #[serde(default)]
+    pub ambient: Option<Value>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,15 +104,38 @@ impl AgentState {
     }
 }
 
-pub fn project_agents(
-    payload: SessionSnapshotPayload,
-) -> Result<Vec<SidebarAgentSnapshot>, String> {
-    let mut projected = payload
-        .agents
-        .into_iter()
-        .enumerate()
-        .map(|(source_index, agent)| project_agent(agent, source_index))
-        .collect::<Result<Vec<_>, _>>()?;
+/// One agent that could not be read out of an otherwise valid snapshot.
+///
+/// A single broken record excludes only itself; the surrounding agents are
+/// still projected, and the exclusion is reported rather than swallowed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentExclusion {
+    pub source_index: usize,
+    pub pane_id: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AgentProjection {
+    pub agents: Vec<SidebarAgentSnapshot>,
+    pub excluded: Vec<AgentExclusion>,
+}
+
+pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
+    let mut projected = Vec::with_capacity(payload.agents.len());
+    let mut excluded = Vec::new();
+    for (source_index, agent) in payload.agents.into_iter().enumerate() {
+        let pane_id = non_empty(agent.pane_id.as_deref().or(agent.id.as_deref()))
+            .map(str::to_owned);
+        match project_agent(agent, source_index) {
+            Ok(ranked) => projected.push(ranked),
+            Err(reason) => excluded.push(AgentExclusion {
+                source_index,
+                pane_id,
+                reason,
+            }),
+        }
+    }
 
     projected.sort_by(|left, right| {
         left.agent
@@ -117,7 +144,10 @@ pub fn project_agents(
             .then_with(|| right.agent.activity.cmp(&left.agent.activity))
             .then_with(|| left.source_index.cmp(&right.source_index))
     });
-    Ok(projected.into_iter().map(|item| item.agent).collect())
+    AgentProjection {
+        agents: projected.into_iter().map(|item| item.agent).collect(),
+        excluded,
+    }
 }
 
 struct RankedAgent {
@@ -136,6 +166,10 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
         .filter(|value| value.len() == 13 && value.bytes().all(|byte| byte.is_ascii_digit()))
         .ok_or_else(|| format!("agent {pane_id} has an invalid activity token"))?;
     let state = authoritative_state(&agent);
+    let ambient = match agent.ambient.as_ref() {
+        Some(raw) => parse_ambient(raw)?,
+        None => None,
+    };
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
             agent
@@ -169,8 +203,38 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
             elapsed,
             sort_rank,
             activity,
+            ambient,
         },
     })
+}
+
+/// Reads a pane's optional `ambient` object.
+///
+/// `null` means the server sent nothing for this pane. Any other unreadable
+/// shape excludes the whole record rather than partially extracting it, and
+/// unknown keys are dropped so nothing but the three counts can ever reach
+/// app state (see docs/ambient-signals.md).
+fn parse_ambient(raw: &Value) -> Result<Option<AmbientSignal>, String> {
+    if raw.is_null() {
+        return Ok(None);
+    }
+    let object = raw
+        .as_object()
+        .ok_or_else(|| "ambient signal is not an object".to_owned())?;
+    let count = |key: &str| -> Result<u32, String> {
+        match object.get(key) {
+            None => Ok(0),
+            Some(value) => value
+                .as_u64()
+                .and_then(|number| u32::try_from(number).ok())
+                .ok_or_else(|| format!("ambient signal {key} is not a count")),
+        }
+    };
+    Ok(Some(AmbientSignal {
+        subagents_active: count("subagents_active")?,
+        background_running: count("background_running")?,
+        background_failed: count("background_failed")?,
+    }))
 }
 
 fn authoritative_state(agent: &SessionAgentPayload) -> AgentState {
@@ -270,7 +334,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let projected = project_agents(payload(json!(agents))).expect("project states");
+        let projected = project_agents(payload(json!(agents))).agents;
         for (agent, (_, state, symbol)) in projected.iter().zip(states) {
             assert_eq!(agent.state, state);
             assert_eq!(agent.symbol, symbol);
@@ -286,8 +350,7 @@ mod tests {
                 "sort_rank": "10",
                 "activity": "0000000000001"
             }
-        }])))
-        .expect("project seen state");
+        }]))).agents;
         assert_eq!(seen[0].state, "idle");
     }
 
@@ -298,7 +361,7 @@ mod tests {
             {"pane_id":"later-rank","tokens":{"status_working":"●","sort_rank":"04","activity":"9999999999999"}},
             {"pane_id":"newer","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000002"}},
             {"pane_id":"first-rank","tokens":{"status_error_new":"×","sort_rank":"00","activity":"0000000000000"}}
-        ]))).expect("project sorted agents");
+        ]))).agents;
         assert_eq!(
             projected
                 .iter()
@@ -313,10 +376,89 @@ mod tests {
         let projected = project_agents(payload(json!([
             {"pane_id":"long","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"  one   two three four five six seven eight nine ten  ","elapsed":"4m"}},
             {"pane_id":"missing","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000000"}}
-        ]))).expect("project summaries");
+        ]))).agents;
         assert!(projected[0].summary.chars().count() <= 30);
         assert_eq!(projected[0].elapsed, "4m");
         assert_eq!(projected[1].summary, "Check agent-context-labels settings");
         assert_eq!(projected[1].elapsed, "0s");
+    }
+
+    #[test]
+    fn one_broken_agent_excludes_only_itself_and_names_why() {
+        let projection = project_agents(payload(json!([
+            {"pane_id":"good","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000002"}},
+            {"pane_id":"bad-rank","tokens":{"status_idle":"○","sort_rank":"oops","activity":"0000000000001"}},
+            {"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000000"}},
+            {"pane_id":"also-good","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000003"}}
+        ])));
+
+        assert_eq!(
+            projection
+                .agents
+                .iter()
+                .map(|agent| agent.pane_id.as_str())
+                .collect::<Vec<_>>(),
+            ["good", "also-good"]
+        );
+        assert_eq!(projection.excluded.len(), 2);
+        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("bad-rank"));
+        assert!(projection.excluded[0].reason.contains("sort_rank"));
+        assert_eq!(projection.excluded[1].pane_id, None);
+        assert!(projection.excluded[1].reason.contains("pane id"));
+    }
+
+    #[test]
+    fn ambient_counts_parse_and_unknown_keys_never_survive() {
+        let projection = project_agents(payload(json!([
+            {"pane_id":"legacy","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001"}},
+            {"pane_id":"counted","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000002"},
+             "ambient":{"subagents_active":2,"background_running":1,"background_failed":0,
+                        "task_name":"SENTINEL-do-not-leak","command":"SENTINEL-rm -rf /"}}
+        ])));
+
+        assert_eq!(projection.excluded, []);
+        let counted = projection
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == "counted")
+            .expect("counted agent");
+        let ambient = counted.ambient.expect("ambient present");
+        assert_eq!(ambient.subagents_active, 2);
+        assert_eq!(ambient.background_running, 1);
+        assert_eq!(
+            projection
+                .agents
+                .iter()
+                .find(|agent| agent.pane_id == "legacy")
+                .and_then(|agent| agent.ambient),
+            None,
+            "a snapshot without the key stays on the legacy path"
+        );
+        let serialized = serde_json::to_string(&projection.agents).expect("serialize agents");
+        assert!(
+            !serialized.contains("SENTINEL"),
+            "unknown ambient keys must never reach the projected agent: {serialized}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_ambient_record_excludes_only_that_agent() {
+        let projection = project_agents(payload(json!([
+            {"pane_id":"broken","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000002"},
+             "ambient":{"subagents_active":"not-a-number"}},
+            {"pane_id":"intact","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001"}}
+        ])));
+
+        assert_eq!(
+            projection
+                .agents
+                .iter()
+                .map(|agent| agent.pane_id.as_str())
+                .collect::<Vec<_>>(),
+            ["intact"]
+        );
+        assert_eq!(projection.excluded.len(), 1);
+        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("broken"));
+        assert!(projection.excluded[0].reason.contains("subagents_active"));
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::UiStateSnapshot;
+use crate::model::{PetOriginSnapshot, UiStateSnapshot};
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -17,6 +17,18 @@ struct StoredUiState {
     selected_pane_id: Option<String>,
     #[serde(default)]
     shortcut_bindings: BTreeMap<String, String>,
+    #[serde(default = "default_pet_visible")]
+    pet_visible: bool,
+    #[serde(default)]
+    pet_origin: Option<PetOriginSnapshot>,
+    #[serde(default)]
+    pet_shortcut: Option<String>,
+}
+
+/// A store written before the pet existed carries no visibility, and the pet
+/// shows itself by default (D-09).
+fn default_pet_visible() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,6 +61,9 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
+            pet_visible: stored.pet_visible,
+            pet_origin: stored.pet_origin,
+            pet_shortcut: stored.pet_shortcut,
         },
         LoadDisposition::Loaded,
     )
@@ -67,6 +82,9 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),
+        pet_visible: state.pet_visible,
+        pet_origin: state.pet_origin,
+        pet_shortcut: state.pet_shortcut.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -102,6 +120,40 @@ mod tests {
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
         assert!(state.shortcut_bindings.is_empty());
+        assert!(state.pet_visible, "a pre-pet store still shows the pet");
+        assert_eq!(state.pet_origin, None);
+        assert_eq!(state.pet_shortcut, None);
+    }
+
+    #[test]
+    fn pet_position_visibility_and_shortcut_survive_a_relaunch() {
+        let root = std::env::temp_dir().join(format!("herdr-core-pet-{}", std::process::id()));
+        let path = root.join("state.json");
+        let mut state = UiStateSnapshot {
+            pet_visible: false,
+            pet_origin: Some(PetOriginSnapshot { x: 120.0, y: 640.0 }),
+            pet_shortcut: Some("command+option+p".to_owned()),
+            ..UiStateSnapshot::default()
+        };
+
+        save(&path, &state).expect("persist pet state");
+        let (restored, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(!restored.pet_visible, "hidden at exit means hidden at start");
+        assert_eq!(
+            restored.pet_origin,
+            Some(PetOriginSnapshot { x: 120.0, y: 640.0 })
+        );
+        assert_eq!(restored.pet_shortcut.as_deref(), Some("command+option+p"));
+
+        // Saving the same state twice is a no-op the next load cannot tell apart.
+        state.pet_visible = false;
+        save(&path, &state).expect("persist pet state again");
+        assert_eq!(load(&path).0.pet_origin, restored.pet_origin);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
     }
 
     #[test]
