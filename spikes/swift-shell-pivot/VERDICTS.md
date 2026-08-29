@@ -232,3 +232,31 @@ The test practice uses durable core contracts and one real native screenshot ins
 No PRD, qa-log, legacy Sasu state, production checkout, live herdr, mini, chromux service, secret, tag, T5 deletion target, or unrelated file was changed.
 No external-service failure injection, human IME retest, commit push, PR, or delivery ran.
 The coherent source, test, and evidence checkpoint commit is `96a016b24dbabf14506cbca3219f6eb654cedb14`.
+
+## v6 canonical acceptance conversion and pipeline block
+
+The user explicitly authorized a narrow exception to the sealed-input rule for a mechanical v6 acceptance-table conversion.
+This section supersedes the earlier statement that the PRD remained byte-for-byte read-only during the prior batch.
+No criterion, requirement, task, verification row, dependency, pass intent, decision, guardrail, or qa-log text changed.
+
+Before mutation, the deterministic role helper returned `mode=implementor`, `paneId=w2X:p8`, and `agentKind=codex`.
+Installed Sasu reports contract version `0.8.0` and implement state schema `sasu.implement.state.v6`.
+PRD §7 was converted from list form to the canonical `ID | Criterion | Judgment | Evidence Declaration` table.
+A parser comparison proved all 15 AC IDs and all 15 criterion strings are character-for-character identical before and after.
+The PRD SHA-256 changed only for that table metadata conversion from `34ed6206e96830428e68051400cea8db26faf087a866c03b06e5c0c09c90f29d` to `ee92b7bd823b0f1ad0504642de4e00d66140d666ffacbc1de47c25bbe1f84a81`.
+The saved conversion evidence is `evidence/v6-prd-ac-conversion.json` and `evidence/v6-prd-ac-conversion.diff`.
+`sasu prd readiness` passed with 19 tasks, 15 acceptance criteria, 35 verification rows, zero blocking gaps, zero warnings, and judgment counts machine 4, judged 8, machine+gate:human 3.
+`git diff --check` passed before checkpointing the conversion.
+The conversion checkpoint is `9fb278f2ec38485bbc1566439febd08c89508806`.
+
+The required v6 specification reseal cannot be executed by this Implementor.
+Running the installed CLI with the structural role marker returned `implementor-spec-command-refused`: specification-stage gate `spec` belongs to the Spec Owner or Observer, and no state was written.
+A read-only status recheck proved gap-audit and spec remain `NOT_RUN`, both have zero attempts, the judge call count remains zero, and no gate is in flight.
+No v6 implement run was started, so no v6 workingRoot exists and none of the newly approved implementation or runtime-verification work began.
+
+There is a second lifecycle constraint after resealing: the main record tree still contains the active `sasu.implement.state.v5` run named `swift-shell-pivot`, while the current v6 CLI rejects that schema and `implement start` refuses an existing state path.
+The existing isolated worktree also already occupies the default `swift-shell-pivot` provisioning path.
+No state was hand-migrated, removed, renamed, or combined, and no alternate PRD slug was invented because the approved PRD remains the sole specification source.
+
+No app, fixture, browser profile, Chrome instance, workspace, worktree, remote process, or external service was created, focused, stopped, or changed during this v6 conversion step.
+The chromux and mini observations remained read-only, T3 Backspace remains unresolved with AC2 unmet, V9 remains pending human physical-keyboard judgment, T5 remains forbidden, and no tag, deletion, push, PR, or delivery occurred.
