@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-29T19:38:15+09:00",
+  "pre_deletion_checkpoint": "b2582ade493bc6569af0e9719aa672751962df96",
+  "rust_native_final": {
+    "type": "annotated",
+    "tag_object": "9f388c3378dcba3f23b07ba24f76b6b092d7bda7",
+    "peeled_commit": "b2582ade493bc6569af0e9719aa672751962df96",
+    "message": "Preserve final Rust-native shell before Swift migration cleanup"
+  },
+  "deleted_files": [
+    "src/accessibility.rs",
+    "src/browser.rs",
+    "src/openrouter.rs",
+    "src/render.rs",
+    "src/terminal.rs"
+  ],
+  "retired_appkit_surface": {
+    "path": "src/app.rs",
+    "removed_lines": 2412,
+    "retained_lines": 4,
+    "retained_purpose": "Document the Swift macOS and herdr-core ownership boundary without a compatibility implementation"
+  },
+  "removed_dependencies": [
+    "wgpu",
+    "glyphon",
+    "bytemuck",
+    "raw-window-handle",
+    "objc2",
+    "objc2-app-kit",
+    "objc2-foundation",
+    "alacritty_terminal",
+    "security-framework"
+  ],
+  "v21": {
+    "herdr_core_forbidden_dependency_reachability": [],
+    "cargo_lock_forbidden_package_entries": [],
+    "cargo_check_workspace_all_targets": "PASS"
+  },
+  "rust_verification": {
+    "cargo_fmt_all_check": "PASS",
+    "cargo_clippy_herdr_core_deny_warnings": "PASS",
+    "cargo_clippy_workspace": {
+      "result": "PASS_WITH_9_PRE_EXISTING_LEGACY_WARNINGS",
+      "scope_note": "The retained legacy Rust modules are outside the approved T5 deletion set"
+    },
+    "cargo_clippy_workspace_deny_warnings_initial_probe": {
+      "result": "FAIL",
+      "exit_code": 101,
+      "warning_count": 9,
+      "changed_in_response": false
+    },
+    "cargo_test_workspace_all_targets": {
+      "result": "PASS",
+      "herdr_core_unit_passed": 20,
+      "herdr_core_ffi_passed": 11,
+      "legacy_core_passed": 75,
+      "legacy_core_ignored": 1,
+      "failed": 0
+    }
+  },
+  "swift_verification": {
+    "command": "swift test --package-path macos --disable-keychain --disable-sandbox",
+    "result": "PASS",
+    "passed": 17,
+    "failed": 0
+  },
+  "assembly": {
+    "command": "/bin/bash macos/scripts/build_dev_app.sh",
+    "passes": 2,
+    "pass_1_bundle_manifest_sha256": "2935021416052171287be2aed2969633cbbe6d716844291425501eb853adcfc8",
+    "pass_2_bundle_manifest_sha256": "2935021416052171287be2aed2969633cbbe6d716844291425501eb853adcfc8",
+    "converged": true,
+    "binary_sha256": "5d0027358d112b0294c758137e2f296b5421a5c8b5f84945ef94074a82c57964",
+    "info_plist_sha256": "ad91f1cc110ad7f5f7646d518182474bda5aec78a5bc9516b75b3b147e314bc4",
+    "code_resources_sha256": "d1aca7710c83b87b65ec6a1db7cbc97c484498c1c29ec191dd9eebf11aa91949",
+    "codesign_deep_strict": "PASS",
+    "architecture": "arm64",
+    "minimum_macos": "14.0"
+  },
+  "native_runtime": {
+    "bundle": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
+    "pid": 38574,
+    "process_count": 1,
+    "window_id": 2767,
+    "title": "Herdr IDE",
+    "is_key": true,
+    "is_frontmost": true,
+    "is_on_screen": true,
+    "visible_structure": [
+      "Agents",
+      "Terminal",
+      "Workbench",
+      "Core schema v1"
+    ],
+    "screenshot": "spikes/swift-shell-pivot/evidence/t5-rust-native-deletion-native.png",
+    "screenshot_sha256": "d9dc6455a0393f18f3754a2b3c01484c26d15284f65c733139f1fcc52fd82dcf",
+    "attach_pid": 38629,
+    "attach_target": "w3B:p1",
+    "cleanup": {
+      "app_pid_alive": false,
+      "attach_pid_alive": false,
+      "remaining_herdr_ide_process_count": 0
+    }
+  },
+  "source_hashes": {
+    "Cargo.toml": "a1f26e95d4391e7e50feef817b6594f95724fdf74ce5367748a907b493e41361",
+    "Cargo.lock": "bdc22476718338c294c9bfa47e27642fad5af21ced9908f0814a8275165abf71",
+    "src/lib.rs": "6795e562286f8945f5814e75da5317dcc6a10afebf0649fba1cb09c8bb3bb06c",
+    "src/app.rs": "da2d84632058959af5e56a65c4c274c0422b2639de292da0e0a9a3231af29718"
+  },
+  "external_service_failure_injection": false
+}

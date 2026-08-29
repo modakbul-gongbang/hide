@@ -1,0 +1,80 @@
+{
+  "kind": "pane_grid_v8_diagnostic",
+  "captured_at": "2026-08-29T21:03:02+09:00",
+  "source_head": "b2670107dc152eaa67d448dce4d4681151170448",
+  "app": {
+    "pid": 23605,
+    "window_id": 3767,
+    "bundle_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
+    "binary_sha256": "b2c88ddeef5a96f0df835c6b90d605c0ad7b631f776b9945d322b7769e136388",
+    "strict_deep_codesign": "pass",
+    "architecture": "arm64"
+  },
+  "fixture": {
+    "manifest": "spikes/swift-shell-pivot/evidence/grid-shortcut-sidebar-diagnostic-manifest.json",
+    "workspace_id": "w3F",
+    "workspace_name": "herdr-ide-verify-grid-diagnostic-20260829-w01",
+    "ownership_verified": true,
+    "exact_eleven_pane_ids": [
+      "w3F:p1",
+      "w3F:p2",
+      "w3F:p3",
+      "w3F:p4",
+      "w3F:p5",
+      "w3F:p6",
+      "w3F:p7",
+      "w3F:p8",
+      "w3F:p9",
+      "w3F:pA",
+      "w3F:pB"
+    ],
+    "cleanup": {
+      "closed_workspace_ids": ["w3F"],
+      "manifest_retained": true,
+      "workspace_absent_after_cleanup": true,
+      "attach_processes_after_cleanup": 0
+    }
+  },
+  "results": {
+    "authoritative_recursive_layout": "pass",
+    "four_panes_visible_concurrently": "pass",
+    "zoom_single_pane_visible": "pass",
+    "zoom_off_restores_grid": "pass",
+    "eleven_panes_visible_concurrently": "pass",
+    "current_tab_attach_count": 11,
+    "app_rss_kb": 120976,
+    "attach_children_rss_kb": 99776,
+    "combined_rss_kb": 220752,
+    "budget_kb": 409600,
+    "memory_budget": "pass",
+    "lazy_attach_required": false
+  },
+  "termination_classification": {
+    "classification": "graceful AppKit termination, not crash",
+    "crash_report_found": false,
+    "log_evidence": "spikes/swift-shell-pivot/evidence/grid-diagnostic-graceful-termination.log",
+    "notes": "AppKit recorded performKeyEquivalent, sendAction, performClick, window close, termination approval, and termination complete. Two later panes appeared before termination, but the input source was not attributable, so those actions are excluded from shortcut acceptance evidence. The later explicit Peekaboo press request was rejected with mutation_dispatched=false."
+  },
+  "evidence": [
+    {
+      "path": "spikes/swift-shell-pivot/evidence/grid-shortcut-sidebar-diagnostic.png",
+      "sha256": "e9f0c1c69fd9c4278d360363afd35d076bcf78d1877606bef1c677cd4d5b511d"
+    },
+    {
+      "path": "spikes/swift-shell-pivot/evidence/grid-shortcut-sidebar-diagnostic-zoom.png",
+      "sha256": "d6cb2aee51b09bfedb8140de69f456d31929f8f4a61bb4f1dd4c72a715f702c5"
+    },
+    {
+      "path": "spikes/swift-shell-pivot/evidence/grid-shortcut-sidebar-diagnostic-restored.png",
+      "sha256": "1949f0fc10d4963e33673d2a068f04af6f6a19f79d254dd681e994ff26f2d1ab"
+    },
+    {
+      "path": "spikes/swift-shell-pivot/evidence/grid-v8-11-pane.png",
+      "sha256": "ac83c56c3a9c18b57ae412c99b1ac33a44632f1ba9f83f4333bb4c289b6837ed"
+    },
+    {
+      "path": "spikes/swift-shell-pivot/evidence/grid-diagnostic-graceful-termination.log",
+      "sha256": "faae514b451468e9f5f582d86742d33b0d3dcc22a15540f5523c872168f3b717"
+    }
+  ]
+}

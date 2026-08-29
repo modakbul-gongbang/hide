@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ownership_prefix": "herdr-ide-verify-",
+  "target": "local",
+  "cwd": "/tmp/herdr-ide-verify-shortcuts-20260829",
+  "workspaces": [
+    {
+      "workspace_name": "herdr-ide-verify-shortcuts-20260829-w01",
+      "workspace_id": "w3C",
+      "pane_ids": [
+        "w3C:p1"
+      ]
+    }
+  ]
+}

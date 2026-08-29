@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "target_application_info": {
+    "app_name": "Herdr IDE",
+    "bundle_id": "com.hoyeon.herdr-ide.swift-shell",
+    "pid": 62007
+  },
+  "inventory_completeness": "partial",
+  "windows": [
+    {
+      "window_id": 2582,
+      "window_title": "Herdr IDE",
+      "is_key": true,
+      "is_frontmost": true,
+      "is_on_screen": true,
+      "bounds": {
+        "height": 928,
+        "width": 1440,
+        "x": 144,
+        "y": 72
+      },
+      "layer": 0,
+      "subrole": "AXStandardWindow"
+    }
+  ]
+}

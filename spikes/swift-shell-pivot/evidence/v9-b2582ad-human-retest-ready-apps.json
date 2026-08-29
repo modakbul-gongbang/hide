@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "target": [
+    {
+      "pid": 62007,
+      "is_active": true,
+      "bundle_id": "com.hoyeon.herdr-ide.swift-shell",
+      "name": "Herdr IDE",
+      "process_start_identity_decimal": "1787988157355484"
+    }
+  ]
+}

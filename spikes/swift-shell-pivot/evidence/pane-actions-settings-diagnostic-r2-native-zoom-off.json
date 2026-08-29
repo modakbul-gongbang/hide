@@ -1,0 +1,31 @@
+{
+  "debug_logs" : [
+    "[2026-08-29T12:38:52.803Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "success" : true,
+  "effect" : "unverifiable",
+  "outcome" : {
+    "effect" : "unverifiable",
+    "retry_safety" : "unsafe",
+    "delivery_mechanism" : "composite",
+    "escalation" : "observe_before_retry",
+    "route" : "local",
+    "retry_safe" : false,
+    "state" : "dispatched_unverified",
+    "evidence" : "delivery_accepted",
+    "dispatch_state" : "dispatched",
+    "requires_fresh_observation" : true,
+    "delivery_mode" : "foreground",
+    "mutation_dispatched" : true,
+    "dispatched_unit_count" : 3
+  },
+  "data" : {
+    "keys" : [
+      "cmd+alt+return"
+    ],
+    "totalPresses" : 1,
+    "deliveryMode" : "foreground",
+    "executionTime" : 0.1315019130706787,
+    "count" : 1
+  }
+}

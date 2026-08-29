@@ -1,0 +1,40 @@
+{
+  "acceptance_scope" : "document-coordinate and ordinary-backspace AppKit boundary only; not a real IME verdict",
+  "base_selection" : {
+    "length" : 0,
+    "location" : 198
+  },
+  "explicit_marked_state" : {
+    "actual_range_length" : 2,
+    "actual_range_location" : 203,
+    "has_text" : true,
+    "range_length" : 2,
+    "range_location" : 203,
+    "selected_range_length" : 0,
+    "selected_range_location" : 205,
+    "text" : "가나"
+  },
+  "first_responder_is_terminal" : true,
+  "implicit_marked_state" : {
+    "actual_range_length" : 1,
+    "actual_range_location" : 198,
+    "has_text" : true,
+    "range_length" : 1,
+    "range_location" : 198,
+    "selected_range_length" : 0,
+    "selected_range_location" : 199,
+    "text" : "한"
+  },
+  "ordinary_delegate_bytes" : [
+    127
+  ],
+  "ordinary_delegate_event_delta" : 1,
+  "ordinary_rust_byte_delta" : 1,
+  "partial_actual_range" : {
+    "length" : 1,
+    "location" : 204
+  },
+  "partial_substring" : "나",
+  "passed" : true,
+  "window_is_key" : true
+}

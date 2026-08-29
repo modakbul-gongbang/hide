@@ -1,0 +1,31 @@
+{
+  "data" : {
+    "count" : 1,
+    "keys" : [
+      "cmd+w"
+    ],
+    "deliveryMode" : "foreground",
+    "executionTime" : 0.12053501605987549,
+    "totalPresses" : 1
+  },
+  "success" : true,
+  "outcome" : {
+    "retry_safe" : false,
+    "dispatched_unit_count" : 3,
+    "retry_safety" : "unsafe",
+    "delivery_mode" : "foreground",
+    "requires_fresh_observation" : true,
+    "mutation_dispatched" : true,
+    "effect" : "unverifiable",
+    "evidence" : "delivery_accepted",
+    "delivery_mechanism" : "composite",
+    "state" : "dispatched_unverified",
+    "escalation" : "observe_before_retry",
+    "route" : "local",
+    "dispatch_state" : "dispatched"
+  },
+  "debug_logs" : [
+    "[2026-08-29T12:40:00.572Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "effect" : "unverifiable"
+}
