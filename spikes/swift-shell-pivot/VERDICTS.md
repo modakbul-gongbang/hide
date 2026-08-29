@@ -231,4 +231,4 @@ The test practice uses durable core contracts and one real native screenshot ins
 
 No PRD, qa-log, legacy Sasu state, production checkout, live herdr, mini, chromux service, secret, tag, T5 deletion target, or unrelated file was changed.
 No external-service failure injection, human IME retest, commit push, PR, or delivery ran.
-The checkpoint source commit hash is recorded by the following metadata checkpoint after the source commit exists.
+The coherent source, test, and evidence checkpoint commit is `96a016b24dbabf14506cbca3219f6eb654cedb14`.
