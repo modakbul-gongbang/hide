@@ -28,6 +28,39 @@ import Testing
     #expect(first == second)
 }
 
+@Test func petHitRegionKeepsCenterInteractive() {
+    let frame = CGRect(x: 100, y: 200, width: 92, height: 92)
+
+    #expect(!PetHitRegion.ignoresMouseEvents(
+        screenPoint: CGPoint(x: frame.midX, y: frame.midY),
+        windowFrame: frame
+    ))
+}
+
+@Test func petHitRegionKeepsCircularEdgeInteractive() {
+    let frame = CGRect(x: 100, y: 200, width: 92, height: 92)
+    let edge = CGPoint(x: frame.maxX - PetHitRegion.contentInset, y: frame.midY)
+
+    #expect(!PetHitRegion.ignoresMouseEvents(screenPoint: edge, windowFrame: frame))
+}
+
+@Test func petHitRegionMakesTransparentCornerClickThrough() {
+    let frame = CGRect(x: 100, y: 200, width: 92, height: 92)
+    let transparentCorner = CGPoint(x: frame.maxX - 1, y: frame.maxY - 1)
+
+    #expect(PetHitRegion.ignoresMouseEvents(screenPoint: transparentCorner, windowFrame: frame))
+}
+
+@Test func petHitRegionDecisionIsStableWhenRepeated() {
+    let frame = CGRect(x: 100, y: 200, width: 92, height: 92)
+    let point = CGPoint(x: frame.minX + 1, y: frame.minY + 1)
+    let first = PetHitRegion.ignoresMouseEvents(screenPoint: point, windowFrame: frame)
+    let second = PetHitRegion.ignoresMouseEvents(screenPoint: point, windowFrame: frame)
+
+    #expect(first)
+    #expect(second == first)
+}
+
 @Test func workingPaneNoticeNamesTheTerminationConsequence() {
     let target = DestructiveTarget(
         id: "herdr-ide-verify-working",

@@ -105,7 +105,8 @@ T3 remains open until the user performs the four V9 human IME checks.
 The user has stopped further Backspace retests for now and authorized additive downstream work that does not require deletion.
 T5 deletion and migration removal remain closed because T1-T4 are not all PASS and because T5 separately requires fresh human approval plus a verified `rust-native-final` tag.
 No `rust-native-final` tag may be created under the current authorization.
-No failure-injection verification may be performed under the current authorization.
+External-service and live-system failure-injection verification may not be performed under the current authorization.
+Required in-process core tests for unknown kind, schema mismatch, malformed payload, invalid options, and off-owner behavior remain allowed.
 
 ## Sasu record state
 
@@ -277,7 +278,8 @@ The qa-log was not edited.
 ### T18: ADDITIVE IMPLEMENTATION AND NATIVE VERIFICATION PASS
 
 The pet surface is a 92 by 92 transparent, borderless, nonactivating floating `NSPanel` that joins all spaces and full-screen auxiliary spaces.
-The panel itself is the bounded pet hit region, `ignoresMouseEvents` is false only for that owned region, and every point outside the small panel remains outside the app window and therefore passes through normally.
+The panel uses a selective elliptical hit region aligned with the visible pet circle.
+`ignoresMouseEvents` is false at the pet center and circular edge, while transparent corners inside the 92 by 92 panel set it to true and pass clicks through.
 No global or local key monitor, CGEvent, IOHID, event posting, or event requeue path was added.
 Clicking the exact receipt-proven owned pet region changed the app from inactive with a non-key main window to active with the `Herdr IDE` main window key.
 The saved offscreen request at 1000000 by 1000000 was clamped to the visible primary-screen origin 1636 by 993.
@@ -445,4 +447,41 @@ The outcome-focused test practice asserts the caller-visible decoded title while
 
 No T3 human retest, keyboard automation, T5 action, file deletion, fixture workspace recreation, tag, push, PR, gate rerun, finalize, qa-log change, or external-service failure injection occurred.
 The source, regression test, runtime receipt, native screenshot, and verification-record checkpoint is `fdd3a7df9eaa4b259767e1f6191ca498decc75fd`.
+T3 remains BLOCKED with AC2 unmet and V9 pending human judgment, and T5 remains forbidden.
+
+## T18 selective pet hit-region correction
+
+The prior panel-wide `ignoresMouseEvents = false` policy let transparent corners inside the 92 by 92 window intercept clicks.
+A pure `PetHitRegion` ellipse now matches the visible circle after its four-point content inset and decides the AppKit window's mouse ownership from screen-space cursor location.
+The center and circular edge remain interactive, while the transparent corners and all points outside the ellipse set `NSWindow.ignoresMouseEvents` to true.
+No CGEvent tap, IOHID path, global or local event monitor, event posting, event requeue, or keyboard or mouse automation was added or used.
+
+The pre-fix focused run passed center and edge but failed transparent corner and repeated corner behavior with two issues across four tests.
+After the correction, the same four focused tests passed, and the full affected Swift suite passed all 11 tests.
+The existing offscreen recovery tests remain green and the signed runtime clamped the verification request to 1636 by 993.
+The development app assembled successfully and strict deep codesign verification passed.
+
+The visible pet owns at most one common-run-loop polling timer while shown.
+Repeated visibility refreshes cannot allocate a second timer, hiding the pet invalidates the timer, the timer closure retains the controller weakly, and the lifecycle owner invalidates the timer and unregisters notification observers during teardown.
+The runtime receipt shows one active polling instance, zero local or global monitors, zero event posting, center and edge `ignoresMouseEvents = false`, corner `ignoresMouseEvents = true`, and restoration to the real cursor-derived state without altering user input.
+That receipt is `evidence/t18-selective-hit-region-runtime.json`, and the combined verification record is `evidence/t18-selective-hit-region-verification.json`.
+
+Peekaboo permissions reported Screen Recording and Accessibility granted before observation.
+Exactly one assembled dev app ran from the current bundle as PID 55772, with main window ID 1978 and the pet frame at 1636 by 993 with size 92 by 92.
+The fresh read-only area capture at `evidence/v24-selective-hit-region-pet-visible.png` was visually inspected and shows the pet circle still rendered.
+Only owned app PID 55772 was terminated after capture, and the final exact-path audit found zero owned Herdr IDE processes.
+
+Engineering Principle 4 keeps the runtime state and receipt failures explicit.
+Engineering Principle 5 separates pure hit geometry, window ownership updates, lifecycle cleanup, and evidence recording.
+Engineering Principle 9 records the cursor-derived state, probe outcomes, and polling lifecycle needed for later diagnosis.
+Engineering Principle 10 exposes both `ignoresMouseEvents` outcomes outside the process in a bounded JSON receipt.
+Engineering Principle 11 makes repeated refresh and polling start or stop calls idempotent.
+Engineering Principle 12 prices the regression at the stable pure geometry boundary and reserves the signed native run for AppKit property and visibility evidence.
+Engineering Principle 13 fixes the full transparent-corner failure class rather than special-casing one coordinate.
+Design Principle 7 preserves the visible circular affordance while deriving the invisible click-through state from the same geometry.
+The outcome-focused test practice covers center, edge, corner, and repeat behavior without coupling tests to a live cursor.
+
+The corrected failure-injection boundary forbids external-service and live-system fault injection only.
+Required in-process core tests for unknown kind, schema mismatch, malformed payload, invalid options, and off-owner behavior remain allowed and are not reclassified as forbidden.
+No T3 human retest, keyboard or mouse automation, T5 action, source or evidence deletion, fixture recreation, tag, push, PR, gate rerun, finalize, qa-log change, or service disruption occurred.
 T3 remains BLOCKED with AC2 unmet and V9 pending human judgment, and T5 remains forbidden.

@@ -1,0 +1,53 @@
+{
+  "application_active" : false,
+  "main_window" : {
+    "key" : false,
+    "title" : "Herdr IDE",
+    "visible" : true
+  },
+  "pet_window" : {
+    "always_on_top" : true,
+    "event_posting_or_requeue" : false,
+    "frame" : {
+      "height" : 92,
+      "width" : 92,
+      "x" : 1636,
+      "y" : 993
+    },
+    "global_or_local_event_monitor" : false,
+    "ignores_mouse_events" : true,
+    "requested_origin" : {
+      "x" : 1636,
+      "y" : 993
+    },
+    "resolved_origin" : {
+      "x" : 1636,
+      "y" : 993
+    },
+    "selective_hit_region" : {
+      "active_polling_instances" : 1,
+      "content_inset" : 4,
+      "cursor_inside_pet" : false,
+      "last_cursor" : {
+        "x" : 1491.9296875,
+        "y" : 103.03515625
+      },
+      "polling_active" : true,
+      "polling_starts" : 1,
+      "polling_stops" : 0,
+      "probe" : {
+        "center_ignores_mouse_events" : false,
+        "corner_ignores_mouse_events" : true,
+        "edge_ignores_mouse_events" : false,
+        "ran_without_input_automation" : true,
+        "restored_to_cursor_state" : true
+      },
+      "shape" : "ellipse"
+    },
+    "style_borderless" : true,
+    "transparent" : true,
+    "visible" : true,
+    "window_uses_selective_hit_region" : true
+  },
+  "recorded_at" : "2026-08-29T05:57:59Z"
+}
