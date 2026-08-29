@@ -19,7 +19,7 @@ enum ShellMetrics {
     static let cardRadius: CGFloat = 10
 }
 
-struct ShellView: View {
+private struct LegacyShellView: View {
     @EnvironmentObject private var model: ShellModel
     @FocusState private var focusedSurface: ShellSurface?
 
@@ -348,7 +348,7 @@ struct PaneGridItem: Equatable {
     let isFocused: Bool
 }
 
-private struct PaneLayoutCanvas: View {
+struct PaneLayoutCanvas: View {
     let layout: CorePaneLayoutSnapshot
     @ObservedObject var bridge: CoreBridge
 
@@ -384,7 +384,7 @@ private struct PaneLayoutCanvas: View {
     }
 }
 
-private struct PaneTerminalCell: View {
+struct PaneTerminalCell: View {
     let paneID: String
     let focusedPaneID: String?
     @ObservedObject var bridge: CoreBridge

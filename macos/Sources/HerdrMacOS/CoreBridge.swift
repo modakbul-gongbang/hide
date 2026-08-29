@@ -185,11 +185,170 @@ indirect enum CorePaneLayoutNode: Decodable {
 
 struct CoreNavigatorSnapshot: Decodable {
     let rootPath: String?
+    let focusedDeviceID: String?
+    let focusedWorkspaceID: String?
+    let focusedCheckoutID: String?
+    let devices: [CoreDeviceSnapshot]
+    let workspaces: [CoreWorkspaceSnapshot]
     let agents: [SidebarAgent]
 
     enum CodingKeys: String, CodingKey {
         case rootPath = "root_path"
+        case focusedDeviceID = "focused_device_id"
+        case focusedWorkspaceID = "focused_workspace_id"
+        case focusedCheckoutID = "focused_checkout_id"
+        case devices
+        case workspaces
         case agents
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rootPath = try container.decodeIfPresent(String.self, forKey: .rootPath)
+        focusedDeviceID = try container.decodeIfPresent(String.self, forKey: .focusedDeviceID)
+        focusedWorkspaceID = try container.decodeIfPresent(String.self, forKey: .focusedWorkspaceID)
+        focusedCheckoutID = try container.decodeIfPresent(String.self, forKey: .focusedCheckoutID)
+        devices = try container.decodeIfPresent([CoreDeviceSnapshot].self, forKey: .devices) ?? []
+        workspaces = try container.decodeIfPresent([CoreWorkspaceSnapshot].self, forKey: .workspaces) ?? []
+        agents = try container.decodeIfPresent([SidebarAgent].self, forKey: .agents) ?? []
+    }
+}
+
+struct CoreDeviceSnapshot: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let kind: String
+    let state: String
+    let sshAlias: String?
+    let agentCount: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case kind
+        case state
+        case sshAlias = "ssh_alias"
+        case agentCount = "agent_count"
+    }
+}
+
+struct CoreWorkspaceSnapshot: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let path: String
+    let remoteTargetID: String?
+    let expanded: Bool
+    let deviceID: String
+    let repoName: String
+    let isGit: Bool
+    let defaultBranch: String?
+    let registered: Bool
+    let temporary: Bool
+    let checkouts: [CoreCheckoutSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case path
+        case remoteTargetID = "remote_target_id"
+        case expanded
+        case deviceID = "device_id"
+        case repoName = "repo_name"
+        case isGit = "is_git"
+        case defaultBranch = "default_branch"
+        case registered
+        case temporary
+        case checkouts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        path = try container.decode(String.self, forKey: .path)
+        remoteTargetID = try container.decodeIfPresent(String.self, forKey: .remoteTargetID)
+        expanded = try container.decodeIfPresent(Bool.self, forKey: .expanded) ?? true
+        deviceID = try container.decodeIfPresent(String.self, forKey: .deviceID) ?? "local"
+        repoName = try container.decodeIfPresent(String.self, forKey: .repoName) ?? label
+        isGit = try container.decodeIfPresent(Bool.self, forKey: .isGit) ?? false
+        defaultBranch = try container.decodeIfPresent(String.self, forKey: .defaultBranch)
+        registered = try container.decodeIfPresent(Bool.self, forKey: .registered) ?? true
+        temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+        checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
+    }
+}
+
+struct CoreCheckoutSnapshot: Decodable, Identifiable {
+    let id: String
+    let workspaceID: String
+    let label: String
+    let path: String
+    let branch: String?
+    let isWorktree: Bool
+    let exists: Bool
+    let temporary: Bool
+    let tabs: [CoreTabSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workspaceID = "workspace_id"
+        case label
+        case path
+        case branch
+        case isWorktree = "is_worktree"
+        case exists
+        case temporary
+        case tabs
+    }
+}
+
+struct CoreTabSnapshot: Decodable, Identifiable {
+    let id: String?
+    let workspaceID: String?
+    let checkoutID: String?
+    let label: String?
+    let empty: Bool
+    let panes: [CorePaneSnapshot]
+
+    var stableID: String {
+        id ?? "empty-\(checkoutID ?? workspaceID ?? label ?? "checkout")"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workspaceID = "workspace_id"
+        case checkoutID = "checkout_id"
+        case label
+        case empty
+        case panes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID)
+        checkoutID = try container.decodeIfPresent(String.self, forKey: .checkoutID)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        empty = try container.decodeIfPresent(Bool.self, forKey: .empty) ?? true
+        panes = try container.decodeIfPresent([CorePaneSnapshot].self, forKey: .panes) ?? []
+    }
+}
+
+struct CorePaneSnapshot: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let cwd: String
+    let state: String
+    let summary: String?
+    let activityAt: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case cwd
+        case state
+        case summary
+        case activityAt = "activity_at_unix_ms"
     }
 }
 
@@ -303,12 +462,26 @@ struct CoreUIStateSnapshot: Decodable {
     let selectedPath: String?
     let selectedPaneID: String?
     let shortcutBindings: [String: String]
+    let focusedDeviceID: String?
+    let focusedCheckoutID: String?
+    let workspaceRegistrations: [CoreWorkspaceRegistration]
+    let deviceRegistrations: [CoreDeviceRegistration]
+    let accentHex: String
+    let fontSize: Double
+    let bypassWarnings: Bool
 
     enum CodingKeys: String, CodingKey {
         case expandedPaths = "expanded_paths"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
         case shortcutBindings = "shortcut_bindings"
+        case focusedDeviceID = "focused_device_id"
+        case focusedCheckoutID = "focused_checkout_id"
+        case workspaceRegistrations = "workspace_registrations"
+        case deviceRegistrations = "device_registrations"
+        case accentHex = "accent_hex"
+        case fontSize = "font_size"
+        case bypassWarnings = "bypass_warnings"
     }
 
     init(from decoder: Decoder) throws {
@@ -320,6 +493,45 @@ struct CoreUIStateSnapshot: Decodable {
             [String: String].self,
             forKey: .shortcutBindings
         ) ?? [:]
+        focusedDeviceID = try container.decodeIfPresent(String.self, forKey: .focusedDeviceID)
+        focusedCheckoutID = try container.decodeIfPresent(String.self, forKey: .focusedCheckoutID)
+        workspaceRegistrations = try container.decodeIfPresent(
+            [CoreWorkspaceRegistration].self,
+            forKey: .workspaceRegistrations
+        ) ?? []
+        deviceRegistrations = try container.decodeIfPresent(
+            [CoreDeviceRegistration].self,
+            forKey: .deviceRegistrations
+        ) ?? []
+        accentHex = try container.decodeIfPresent(String.self, forKey: .accentHex) ?? "#B9FF66"
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
+        bypassWarnings = try container.decodeIfPresent(Bool.self, forKey: .bypassWarnings) ?? false
+    }
+}
+
+struct CoreWorkspaceRegistration: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let path: String
+    let deviceID: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case path
+        case deviceID = "device_id"
+    }
+}
+
+struct CoreDeviceRegistration: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let sshAlias: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case sshAlias = "ssh_alias"
     }
 }
 
@@ -430,8 +642,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     let workspaceRoot: URL
     let isRemoteWorkspace: Bool
+    let runtimeSelection: HerdrRuntimeSelection?
 
     nonisolated(unsafe) private var core: OpaquePointer?
+    private var launchedHerdrServer: Process?
     private var lastTerminalSequence: UInt64 = 0
     private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
@@ -449,14 +663,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let statePath = LaunchArguments.value("--state-path", in: arguments)
-            ?? "/tmp/herdr-ide-verify-ui-state.json"
+            ?? (arguments.contains("--verification-ui-fixture")
+                ? "/tmp/herdr-ide-verify-ui-state.json"
+                : Self.defaultStatePath())
         // The verification fixture runs without any live herdr connection;
         // every other launch talks to the local herdr socket.
         let fixtureMode = arguments.contains("--verification-ui-fixture")
+        runtimeSelection = fixtureMode ? nil : HerdrRuntimeResolver.resolve()
         let options: [String: Any] = [
             "schema_version": coreSchemaVersion,
             "herdr_socket_path": fixtureMode ? NSNull() : Self.defaultHerdrSocketPath() as Any,
-            "herdr_bin_path": Self.resolveHerdrBinaryPath().map { $0 as Any } ?? NSNull(),
+            "herdr_bin_path": runtimeSelection.map { $0.path as Any } ?? NSNull(),
             "remote_targets": [[
                 "id": "mini",
                 "label": "Mac mini",
@@ -486,6 +703,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             seedVerificationFixture()
         }
         #endif
+        if !fixtureMode {
+            launchedHerdrServer = HerdrRuntimeResolver.startServerIfNeeded(
+                selection: runtimeSelection,
+                socketPath: Self.defaultHerdrSocketPath()
+            )
+        }
     }
 
     deinit {
@@ -556,6 +779,83 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "accelerator": accelerator.map { $0 as Any } ?? NSNull(),
             "error": error.map { $0 as Any } ?? NSNull(),
         ])
+    }
+
+    func focusCheckout(workspaceID: String, checkoutID: String) {
+        dispatch(kind: "focus_checkout", payload: [
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID,
+        ])
+    }
+
+    func focusTab(workspaceID: String, checkoutID: String, tabID: String) {
+        dispatch(kind: "focus_tab", payload: [
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID,
+            "tab_id": tabID,
+        ])
+    }
+
+    func focusDevice(_ deviceID: String) {
+        dispatch(kind: "focus_device", payload: ["device_id": deviceID])
+    }
+
+    func createWorkspace(path: URL, label: String, initializeGit: Bool) {
+        dispatch(kind: "create_workspace", payload: [
+            "path": path.path,
+            "label": label,
+            "initialize_git": initializeGit,
+        ])
+    }
+
+    func removeWorkspace(_ workspaceID: String) {
+        dispatch(kind: "remove_workspace", payload: ["workspace_id": workspaceID])
+    }
+
+    func registerDevice(id: String, label: String, sshAlias: String) {
+        dispatch(kind: "register_device", payload: [
+            "id": id,
+            "label": label,
+            "ssh_alias": sshAlias,
+        ])
+    }
+
+    func removeDevice(_ deviceID: String) {
+        dispatch(kind: "remove_device", payload: ["device_id": deviceID])
+    }
+
+    func testDevice(_ deviceID: String) {
+        dispatch(kind: "test_device", payload: ["device_id": deviceID])
+    }
+
+    func createTab(workspaceID: String, checkoutID: String? = nil, label: String = "New tab") {
+        dispatch(kind: "create_tab", payload: [
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID.map { $0 as Any } ?? NSNull(),
+            "label": label,
+        ])
+    }
+
+    func startAgent(agent: String, checkoutPath: String, bypassWarnings: Bool) {
+        guard let runtimeSelection else {
+            bridgeError = "The verified bundled Herdr runtime is not available for this launch."
+            return
+        }
+        let paneID = paneID(for: checkoutPath)
+        let herdrPath = runtimeSelection.path
+        Task { @MainActor [weak self] in
+            let result = await Task.detached {
+                HerdrAgentLauncher.launch(
+                    herdrPath: herdrPath,
+                    agent: agent,
+                    checkoutPath: checkoutPath,
+                    paneID: paneID,
+                    bypassWarnings: bypassWarnings
+                )
+            }.value
+            guard let self else { return }
+            bridgeError = result.message
+        }
     }
 
     @discardableResult
@@ -653,7 +953,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         expandedPaths: [String]? = nil,
         selectedPath: String? = nil,
         selectedPaneID: String? = nil,
-        shortcutBindings: [String: String]? = nil
+        shortcutBindings: [String: String]? = nil,
+        accentHex: String? = nil,
+        fontSize: Double? = nil,
+        bypassWarnings: Bool? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -663,6 +966,26 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
             "selected_pane_id": effectivePaneID.map { $0 as Any } ?? NSNull(),
             "shortcut_bindings": shortcutBindings ?? current?.shortcutBindings ?? [:],
+            "focused_device_id": current?.focusedDeviceID.map { $0 as Any } ?? NSNull(),
+            "focused_checkout_id": current?.focusedCheckoutID.map { $0 as Any } ?? NSNull(),
+            "workspace_registrations": current?.workspaceRegistrations.map {
+                [
+                    "id": $0.id,
+                    "label": $0.label,
+                    "path": $0.path,
+                    "device_id": $0.deviceID,
+                ]
+            } ?? [],
+            "device_registrations": current?.deviceRegistrations.map {
+                [
+                    "id": $0.id,
+                    "label": $0.label,
+                    "ssh_alias": $0.sshAlias.map { $0 as Any } ?? NSNull(),
+                ]
+            } ?? [],
+            "accent_hex": accentHex ?? current?.accentHex ?? "#B9FF66",
+            "font_size": fontSize ?? current?.fontSize ?? 13,
+            "bypass_warnings": bypassWarnings ?? current?.bypassWarnings ?? false,
         ])
     }
 
@@ -684,6 +1007,22 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func environmentState(for key: String) -> String? {
         snapshot?.status.environment.first(where: { $0.key == key })?.state
+    }
+
+    private func paneID(for checkoutPath: String) -> String? {
+        let normalizedCheckout = URL(fileURLWithPath: checkoutPath, isDirectory: true)
+            .standardizedFileURL
+            .path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return snapshot?.navigator.workspaces
+            .flatMap { $0.checkouts }
+            .first(where: { checkout in
+                checkout.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == normalizedCheckout
+            })?
+            .tabs
+            .flatMap { $0.panes }
+            .first?
+            .id
     }
 
     private func refreshSnapshot() {
@@ -759,6 +1098,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             Self.fixtureAgent("unknown", "~", "10", "1755000001000", "Awaiting lifecycle token", "9m", "Other", "unknown", "status_unknown"),
         ]
         dispatch(kind: "session_snapshot", payload: ["agents": agents])
+        dispatch(kind: "create_workspace", payload: [
+            "path": workspaceRoot.path,
+            "label": "hide rebrand",
+            "initialize_git": false,
+        ])
         let banner = "\u{001B}[1;36mherdr-core ↔ SwiftTerm\u{001B}[0m\r\nLocal byte bridge ready. IME V9 remains blocked.\r\n\r\n"
         dispatch(kind: "terminal_output", payload: [
             "pane_id": "local-loopback",
@@ -800,15 +1144,16 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return NSHomeDirectory() + "/.config/herdr/herdr.sock"
     }
 
-    /// Finder launches carry no shell PATH, so the herdr binary is resolved
-    /// from its known install locations. A missing binary stays nil and pane
-    /// attach fails with explicit guidance instead of a silent no-op.
+    static func defaultStatePath() -> String {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("hide/state.json").path
+    }
+
+    /// Compatibility entry point for existing callers. The resolver itself
+    /// uses the login-shell PATH and the release's live-socket/install/bundle
+    /// chain.
     static func resolveHerdrBinaryPath() -> String? {
-        let candidates = [
-            NSHomeDirectory() + "/.local/bin/herdr",
-            "/opt/homebrew/bin/herdr",
-            "/usr/local/bin/herdr",
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        HerdrRuntimeResolver.resolve()?.path
     }
 }

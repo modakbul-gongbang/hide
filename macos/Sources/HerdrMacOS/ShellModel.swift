@@ -28,6 +28,16 @@ final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
+    @Published var showNewWorkspace = false
+    @Published var showNewAgent = false
+    @Published var showSearch = false
+    @Published var showSettings = false
+    @Published var workspaceToRemove: CoreWorkspaceSnapshot?
+    @Published var interactionNotice: String?
+    @Published var selectedAgentKind = "claude"
+    @Published var selectedAgentCheckoutID: String?
+    @Published var selectedAgentDeviceID = "local"
+    @Published var agentBypassWarnings = false
     @Published private(set) var paneShortcuts: [PaneCommand: PaneShortcut]
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
@@ -38,6 +48,7 @@ final class ShellModel: ObservableObject {
     private var browserSubscription: AnyCancellable?
     private var remoteSubscription: AnyCancellable?
     private var pendingPaneCloseID: String?
+    private var lastRemoteDevice: CoreDeviceSnapshot?
 
     init(
         core: CoreBridge = CoreBridge(),
@@ -47,6 +58,7 @@ final class ShellModel: ObservableObject {
         self.core = core
         self.browser = browser
         self.remote = remote
+        agentBypassWarnings = core.snapshot?.uiState.bypassWarnings ?? false
         let shortcutResolution = PaneShortcutPolicy.resolve(
             stored: core.snapshot?.uiState.shortcutBindings ?? [:]
         )
@@ -70,6 +82,191 @@ final class ShellModel: ObservableObject {
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
         }
+    }
+
+    var workspaces: [CoreWorkspaceSnapshot] {
+        core.snapshot?.navigator.workspaces ?? []
+    }
+
+    var devices: [CoreDeviceSnapshot] {
+        core.snapshot?.navigator.devices ?? []
+    }
+
+    var agents: [SidebarAgent] {
+        core.snapshot?.navigator.agents ?? []
+    }
+
+    var focusedWorkspace: CoreWorkspaceSnapshot? {
+        guard let id = core.snapshot?.navigator.focusedWorkspaceID else {
+            return workspaces.first
+        }
+        return workspaces.first(where: { $0.id == id }) ?? workspaces.first
+    }
+
+    var focusedCheckout: CoreCheckoutSnapshot? {
+        if let id = core.snapshot?.navigator.focusedCheckoutID,
+           let checkout = workspaces.lazy.compactMap({ workspace in
+               workspace.checkouts.first(where: { $0.id == id })
+           }).first {
+            return checkout
+        }
+        return focusedWorkspace?.checkouts.first
+    }
+
+    var focusedTabs: [CoreTabSnapshot] {
+        focusedCheckout?.tabs ?? []
+    }
+
+    var focusedPath: URL? {
+        guard let path = core.snapshot?.navigator.rootPath else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    var herdrIsConnected: Bool {
+        core.snapshot?.status.herdr.state == "connected"
+    }
+
+    func openNewWorkspace() {
+        showNewWorkspace = true
+        interactionNotice = nil
+    }
+
+    func openNewAgent(checkoutID: String? = nil) {
+        selectedAgentCheckoutID = checkoutID ?? focusedCheckout?.id
+        selectedAgentDeviceID = core.snapshot?.navigator.focusedDeviceID ?? "local"
+        showNewAgent = true
+        interactionNotice = nil
+    }
+
+    func openSearch() {
+        showSearch = true
+        interactionNotice = nil
+    }
+
+    func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
+        core.focusCheckout(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
+        focus(.terminal)
+    }
+
+    func selectDevice(_ device: CoreDeviceSnapshot) {
+        core.focusDevice(device.id)
+        guard device.kind == "remote", let alias = device.sshAlias else { return }
+        lastRemoteDevice = device
+        remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+    }
+
+    func selectAgent(_ agent: SidebarAgent) {
+        guard let workspace = workspaces.first(where: { $0.label == agent.workspaceLabel }),
+              let checkout = workspace.checkouts.first(where: { checkout in
+                  checkout.tabs.contains(where: { tab in tab.panes.contains(where: { $0.id == agent.paneID }) })
+              }) ?? workspace.checkouts.first
+        else {
+            interactionNotice = "The selected agent is not attached to a known checkout."
+            return
+        }
+        core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
+        core.focusPane(agent.paneID)
+        focus(.terminal)
+    }
+
+    func addWorkspace(path: URL, label: String, initializeGit: Bool) {
+        guard path.isFileURL else {
+            interactionNotice = "Choose a local folder before adding the workspace."
+            return
+        }
+        core.createWorkspace(path: path, label: label, initializeGit: initializeGit)
+        showNewWorkspace = false
+        interactionNotice = "Workspace registration requested. Files stay where they are."
+    }
+
+    func requestRemoveWorkspace(_ workspace: CoreWorkspaceSnapshot) {
+        workspaceToRemove = workspace
+    }
+
+    func confirmRemoveWorkspace() {
+        guard let workspace = workspaceToRemove else { return }
+        core.removeWorkspace(workspace.id)
+        workspaceToRemove = nil
+        interactionNotice = "Workspace removed from Hide. Its folder, repository, and worktrees were not changed."
+    }
+
+    func addTab() {
+        guard let workspace = focusedWorkspace else {
+            interactionNotice = "Create or register a workspace before adding a tab."
+            return
+        }
+        core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
+    }
+
+    func startAgent() {
+        guard let checkout = selectedAgentCheckout else {
+            interactionNotice = "Choose a checkout before starting an agent."
+            return
+        }
+        guard selectedAgentDeviceID == "local" else {
+            interactionNotice = "Remote agent start is delegated to the remote Herdr session in v1. Connect that device first."
+            return
+        }
+        core.startAgent(
+            agent: selectedAgentKind,
+            checkoutPath: checkout.path,
+            bypassWarnings: agentBypassWarnings
+        )
+        showNewAgent = false
+        interactionNotice = "Agent start requested. Hide does not handle credentials."
+    }
+
+    func updatePreferences(accentHex: String? = nil, fontSize: Double? = nil, bypassWarnings: Bool? = nil) {
+        core.persistUIState(
+            accentHex: accentHex,
+            fontSize: fontSize,
+            bypassWarnings: bypassWarnings
+        )
+    }
+
+    func clearInteractionNotice() {
+        interactionNotice = nil
+    }
+
+    func addDevice(label: String, alias: String) {
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = "device:\(trimmedAlias.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression))"
+        core.registerDevice(
+            id: id,
+            label: label.trimmingCharacters(in: .whitespacesAndNewlines),
+            sshAlias: trimmedAlias
+        )
+        interactionNotice = "Device registration requested. Hide will use your existing SSH environment."
+    }
+
+    func removeDevice(_ device: CoreDeviceSnapshot) {
+        core.removeDevice(device.id)
+        interactionNotice = "Device removed from Hide. The remote host and its sessions were not changed."
+    }
+
+    func testDevice(_ device: CoreDeviceSnapshot) {
+        core.testDevice(device.id)
+        lastRemoteDevice = device
+        if let alias = device.sshAlias {
+            remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+        }
+        interactionNotice = "Connection test requested for \(device.label). Authentication remains owned by SSH."
+    }
+
+    func retryRemote() {
+        guard let device = lastRemoteDevice ?? devices.first(where: { $0.kind == "remote" }),
+              let alias = device.sshAlias else {
+            interactionNotice = "Add an SSH device before retrying a remote connection."
+            return
+        }
+        remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+    }
+
+    var selectedAgentCheckout: CoreCheckoutSnapshot? {
+        guard let selectedAgentCheckoutID else { return focusedCheckout }
+        return workspaces.lazy.compactMap { workspace in
+            workspace.checkouts.first(where: { $0.id == selectedAgentCheckoutID })
+        }.first
     }
 
     func focus(_ surface: ShellSurface) {

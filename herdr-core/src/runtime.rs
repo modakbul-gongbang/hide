@@ -11,11 +11,11 @@ use crate::live::{
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PetBadgesSnapshot,
-    PetClickSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot, Surface,
-    TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    PaneSnapshot, PetClickSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot,
+    Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
-use crate::{chromux, environment, files, live, persistence, pet};
+use crate::{chromux, environment, files, live, persistence, pet, workspace};
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
 const PET_WAKING_MS: u64 = 1_200;
@@ -79,13 +79,56 @@ struct BrowserStatusPayload {
 struct CreateWorkspacePayload {
     path: String,
     label: String,
-    create_worktree: bool,
+    #[serde(alias = "create_worktree")]
+    initialize_git: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct CreateTabPayload {
     workspace_id: String,
+    #[serde(default)]
+    checkout_id: Option<String>,
     label: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FocusCheckoutPayload {
+    workspace_id: String,
+    checkout_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FocusTabPayload {
+    workspace_id: String,
+    checkout_id: String,
+    tab_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FocusDevicePayload {
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoveWorkspacePayload {
+    workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegisterDevicePayload {
+    id: String,
+    label: String,
+    ssh_alias: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoveDevicePayload {
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TestDevicePayload {
+    device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +191,20 @@ struct UiStateUpdatePayload {
     selected_pane_id: Option<String>,
     #[serde(default)]
     shortcut_bindings: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    focused_device_id: Option<Option<String>>,
+    #[serde(default)]
+    focused_checkout_id: Option<Option<String>>,
+    #[serde(default)]
+    workspace_registrations: Option<Vec<crate::model::WorkspaceRegistration>>,
+    #[serde(default)]
+    device_registrations: Option<Vec<crate::model::DeviceRegistration>>,
+    #[serde(default)]
+    accent_hex: Option<String>,
+    #[serde(default)]
+    font_size: Option<f32>,
+    #[serde(default)]
+    bypass_warnings: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,6 +256,13 @@ enum ValidatedEvent {
     BrowserStatus(BrowserStatusPayload),
     CreateWorkspace(CreateWorkspacePayload),
     CreateTab(CreateTabPayload),
+    FocusCheckout(FocusCheckoutPayload),
+    FocusTab(FocusTabPayload),
+    FocusDevice(FocusDevicePayload),
+    RemoveWorkspace(RemoveWorkspacePayload),
+    RegisterDevice(RegisterDevicePayload),
+    RemoveDevice(RemoveDevicePayload),
+    TestDevice(TestDevicePayload),
     CreatePane(CreatePanePayload),
     ToggleZoom(ToggleZoomPayload),
     CloseWorkspace(ConfirmedWorkspacePayload),
@@ -223,6 +287,7 @@ enum ValidatedEvent {
 pub struct Runtime {
     snapshot: Snapshot,
     state_path: PathBuf,
+    remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
     attaches: HashMap<String, PaneAttach>,
     attach_generations: HashMap<String, u64>,
@@ -242,6 +307,7 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
+        let remote_targets = options.remote_targets.clone();
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
         if !environment.remote_enabled {
@@ -255,6 +321,35 @@ impl Runtime {
         }
         let (ui_state, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
+        snapshot.navigator.devices =
+            workspace::devices(&remote_targets, &snapshot.ui_state.device_registrations);
+        snapshot.navigator.focused_device_id = Some(
+            snapshot
+                .ui_state
+                .focused_device_id
+                .clone()
+                .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned()),
+        );
+        snapshot.navigator.focused_checkout_id = snapshot.ui_state.focused_checkout_id.clone();
+        snapshot.navigator.workspaces =
+            workspace::build_catalog(&snapshot.ui_state.workspace_registrations, &[]);
+        snapshot.navigator.root_path = snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| {
+                snapshot.navigator.focused_checkout_id.as_deref() == Some(checkout.id.as_str())
+            })
+            .map(|checkout| checkout.path.clone())
+            .or_else(|| {
+                snapshot
+                    .navigator
+                    .workspaces
+                    .first()
+                    .and_then(|workspace| workspace.checkouts.first())
+                    .map(|checkout| checkout.path.clone())
+            });
         let diagnostic = match disposition {
             persistence::LoadDisposition::Loaded => None,
             persistence::LoadDisposition::Missing => Some((
@@ -285,6 +380,7 @@ impl Runtime {
         let mut runtime = Self {
             snapshot,
             state_path,
+            remote_targets,
             live: None,
             attaches: HashMap::new(),
             attach_generations: HashMap::new(),
@@ -308,6 +404,225 @@ impl Runtime {
         self.live = Some(context);
     }
 
+    /// Rebuilds the navigator from durable registrations and the current
+    /// session's pane working directories. Pane directories that are not
+    /// registered become clearly marked temporary workspaces for this
+    /// session; they are never persisted as registrations.
+    fn reconcile_session_catalog(&mut self, payload: &SessionSnapshotPayload) -> bool {
+        let temporary_paths = payload
+            .panes
+            .iter()
+            .filter_map(|pane| pane.cwd.clone())
+            .chain(payload.agents.iter().filter_map(|agent| agent.cwd.clone()))
+            .collect::<Vec<_>>();
+        let mut workspaces = workspace::build_catalog(
+            &self.snapshot.ui_state.workspace_registrations,
+            &temporary_paths,
+        );
+        let projected_agents = project_agents(payload.clone()).unwrap_or_default();
+
+        for layout in &payload.layouts {
+            let context_path = layout
+                .panes
+                .iter()
+                .filter_map(|pane| {
+                    payload
+                        .agents
+                        .iter()
+                        .find(|agent| {
+                            agent.pane_id.as_deref().or(agent.id.as_deref())
+                                == Some(pane.pane_id.as_str())
+                        })
+                        .and_then(|agent| agent.cwd.clone())
+                })
+                .next();
+            let Some(workspace_snapshot) = find_workspace_for_context(
+                &mut workspaces,
+                context_path.as_deref(),
+                &layout.workspace_id,
+            ) else {
+                continue;
+            };
+            let checkout_index = context_path.as_deref().and_then(|path| {
+                let normalized = Path::new(path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(path))
+                    .to_string_lossy()
+                    .trim_end_matches('/')
+                    .to_owned();
+                workspace_snapshot.checkouts.iter().position(|checkout| {
+                    let checkout_path = checkout.path.trim_end_matches('/').to_owned();
+                    normalized == checkout_path
+                        || normalized.starts_with(&format!("{checkout_path}/"))
+                })
+            });
+            let Some(checkout) = workspace_snapshot
+                .checkouts
+                .get_mut(checkout_index.unwrap_or(0))
+            else {
+                continue;
+            };
+            let panes = layout
+                .panes
+                .iter()
+                .map(|pane| {
+                    let agent = projected_agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.pane_id);
+                    let cwd = payload
+                        .panes
+                        .iter()
+                        .find(|source| source.pane_id == pane.pane_id)
+                        .and_then(|source| source.cwd.clone())
+                        .or_else(|| {
+                            payload
+                                .agents
+                                .iter()
+                                .find(|source| {
+                                    source.pane_id.as_deref().or(source.id.as_deref())
+                                        == Some(pane.pane_id.as_str())
+                                })
+                                .and_then(|source| source.cwd.clone())
+                        })
+                        .unwrap_or_else(|| checkout.path.clone());
+                    PaneSnapshot {
+                        id: pane.pane_id.clone(),
+                        label: agent
+                            .map(|agent| agent.workspace_label.clone())
+                            .unwrap_or_else(|| pane.pane_id.clone()),
+                        cwd,
+                        state: agent
+                            .map(|agent| agent.state.clone())
+                            .unwrap_or_else(|| "unknown".to_owned()),
+                        summary: agent.map(|agent| agent.summary.clone()),
+                        activity_at_unix_ms: agent.and_then(|agent| agent.activity.parse().ok()),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let tab = TabSnapshot {
+                id: Some(layout.tab_id.clone()),
+                workspace_id: Some(workspace_snapshot.id.clone()),
+                checkout_id: Some(checkout.id.clone()),
+                label: Some("Session".to_owned()),
+                empty: panes.is_empty(),
+                panes,
+            };
+            if let Some(existing) = checkout
+                .tabs
+                .iter_mut()
+                .find(|existing| existing.id == tab.id)
+            {
+                *existing = tab;
+            } else {
+                checkout.tabs.push(tab);
+            }
+        }
+
+        let previous = self.snapshot.navigator.clone();
+        self.snapshot.navigator.workspaces = workspaces;
+        self.snapshot.navigator.devices = workspace::devices(
+            &self.remote_targets,
+            &self.snapshot.ui_state.device_registrations,
+        );
+        for device in &mut self.snapshot.navigator.devices {
+            device.agent_count = projected_agents
+                .iter()
+                .filter(|agent| {
+                    self.snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.label == agent.workspace_label)
+                        .is_some_and(|workspace| workspace.device_id == device.id)
+                })
+                .count() as u32;
+        }
+        if self.snapshot.navigator.focused_device_id.is_none() {
+            self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+        }
+        let focused_checkout_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
+            workspace.checkouts.iter().any(|checkout| {
+                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
+            })
+        });
+        if !focused_checkout_exists {
+            self.snapshot.navigator.focused_checkout_id = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.checkouts.iter())
+                .find(|checkout| checkout.exists)
+                .map(|checkout| checkout.id.clone());
+        }
+        self.snapshot.navigator.focused_workspace_id = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.checkouts.iter().any(|checkout| {
+                    Some(checkout.id.as_str())
+                        == self.snapshot.navigator.focused_checkout_id.as_deref()
+                })
+            })
+            .map(|workspace| workspace.id.clone());
+        self.snapshot.navigator.root_path = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| {
+                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
+            })
+            .map(|checkout| checkout.path.clone());
+        self.sync_active_tab_projection();
+        previous != self.snapshot.navigator
+    }
+
+    fn sync_active_tab_projection(&mut self) {
+        let Some(focused_checkout_id) = self.snapshot.navigator.focused_checkout_id.as_deref()
+        else {
+            self.snapshot.tab = TabSnapshot {
+                id: None,
+                workspace_id: None,
+                checkout_id: None,
+                label: None,
+                empty: true,
+                panes: Vec::new(),
+            };
+            return;
+        };
+        let Some((workspace_id, checkout)) =
+            self.snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find_map(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .find(|checkout| checkout.id == focused_checkout_id)
+                        .map(|checkout| (workspace.id.clone(), checkout))
+                })
+        else {
+            return;
+        };
+        if let Some(tab) = checkout.tabs.first() {
+            self.snapshot.tab = tab.clone();
+        } else {
+            self.snapshot.tab = TabSnapshot {
+                id: None,
+                workspace_id: Some(workspace_id),
+                checkout_id: Some(checkout.id.clone()),
+                label: Some("No tabs".to_owned()),
+                empty: true,
+                panes: Vec::new(),
+            };
+        }
+    }
+
     /// Applies a live session poll result: projected agents on success, an
     /// explicit herdr status on failure. Returns whether the snapshot changed.
     pub fn ingest_session(
@@ -315,6 +630,10 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
     ) -> bool {
         let mut excluded = Vec::new();
+        let catalog_changed = fetched
+            .as_ref()
+            .map(|payload| self.reconcile_session_catalog(payload))
+            .unwrap_or(false);
         let (state, message, agents, layout) = match fetched {
             Ok(payload) => {
                 let selected_pane_id = self.snapshot.terminal.pane_id.as_deref().or(self
@@ -383,7 +702,7 @@ impl Runtime {
             );
         }
 
-        let mut changed = !excluded.is_empty();
+        let mut changed = catalog_changed || !excluded.is_empty();
         if self.snapshot.status.herdr.state != state
             || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
         {
@@ -877,6 +1196,112 @@ impl Runtime {
         });
     }
 
+    fn rebuild_catalog(&mut self, temporary_paths: &[String]) {
+        self.snapshot.navigator.workspaces = workspace::build_catalog(
+            &self.snapshot.ui_state.workspace_registrations,
+            temporary_paths,
+        );
+        self.snapshot.navigator.devices = workspace::devices(
+            &self.remote_targets,
+            &self.snapshot.ui_state.device_registrations,
+        );
+        let focused_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
+            workspace.checkouts.iter().any(|checkout| {
+                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
+            })
+        });
+        if !focused_exists {
+            self.snapshot.navigator.focused_checkout_id = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.checkouts.iter())
+                .find(|checkout| checkout.exists)
+                .map(|checkout| checkout.id.clone());
+        }
+        self.snapshot.navigator.focused_workspace_id = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.checkouts.iter().any(|checkout| {
+                    Some(checkout.id.as_str())
+                        == self.snapshot.navigator.focused_checkout_id.as_deref()
+                })
+            })
+            .map(|workspace| workspace.id.clone());
+        self.snapshot.navigator.root_path = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| {
+                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
+            })
+            .map(|checkout| checkout.path.clone());
+        self.sync_active_tab_projection();
+    }
+
+    fn persist_current_ui_state(&mut self) {
+        self.snapshot.ui_state.focused_device_id =
+            self.snapshot.navigator.focused_device_id.clone();
+        self.snapshot.ui_state.focused_checkout_id =
+            self.snapshot.navigator.focused_checkout_id.clone();
+        if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+            self.set_error("ui_state.save_failed", message, true);
+        }
+    }
+
+    fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
+        let Some(workspace_snapshot) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+        else {
+            self.set_error(
+                "checkout.unknown_workspace",
+                format!("Workspace {workspace_id} is not registered"),
+                false,
+            );
+            return true;
+        };
+        if !workspace_snapshot
+            .checkouts
+            .iter()
+            .any(|checkout| checkout.id == checkout_id)
+        {
+            self.set_error(
+                "checkout.unknown",
+                format!("Checkout {checkout_id} is not available in {workspace_id}"),
+                false,
+            );
+            return true;
+        }
+        self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
+        self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
+        self.snapshot.navigator.root_path = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+            })
+            .map(|checkout| checkout.path.clone());
+        self.sync_active_tab_projection();
+        self.persist_current_ui_state();
+        true
+    }
+
     pub fn dispatch_json(&mut self, bytes: &[u8]) -> bool {
         let event = match serde_json::from_slice::<EventEnvelope>(bytes) {
             Ok(event) => event,
@@ -1057,12 +1482,333 @@ impl Runtime {
                 }
             }
             ValidatedEvent::CreateWorkspace(payload) => {
-                let _ = (payload.path, payload.label, payload.create_worktree);
-                false
+                let registration = match workspace::registration(
+                    &payload.path,
+                    &payload.label,
+                    workspace::LOCAL_DEVICE_ID,
+                ) {
+                    Ok(registration) => registration,
+                    Err(message) => {
+                        self.set_error("workspace.invalid", message, false);
+                        return true;
+                    }
+                };
+                let path = Path::new(&registration.path);
+                if !path.exists() {
+                    self.set_error(
+                        "workspace.path_missing",
+                        format!("Workspace path does not exist: {}", registration.path),
+                        false,
+                    );
+                    return true;
+                }
+                if payload.initialize_git
+                    && let Err(message) = workspace::initialize_git(path)
+                {
+                    self.set_error("workspace.git_init_failed", message, true);
+                }
+                let checkout_id =
+                    workspace::build_catalog(std::slice::from_ref(&registration), &[])
+                        .first()
+                        .and_then(|workspace| workspace.checkouts.first())
+                        .map(|checkout| checkout.id.clone());
+                if !self
+                    .snapshot
+                    .ui_state
+                    .workspace_registrations
+                    .iter()
+                    .any(|existing| existing.id == registration.id)
+                {
+                    self.snapshot
+                        .ui_state
+                        .workspace_registrations
+                        .push(registration.clone());
+                }
+                self.rebuild_catalog(&[]);
+                self.snapshot.navigator.focused_device_id =
+                    Some(workspace::LOCAL_DEVICE_ID.to_owned());
+                if let Some(checkout_id) = checkout_id.or_else(|| {
+                    self.snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.id == registration.id)
+                        .and_then(|workspace| workspace.checkouts.first())
+                        .map(|checkout| checkout.id.clone())
+                }) {
+                    self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+                }
+                self.rebuild_catalog(&[]);
+                self.persist_current_ui_state();
+                self.push_diagnostic(
+                    "workspace.registered",
+                    format!("Registered workspace {}", registration.path),
+                );
+                true
             }
             ValidatedEvent::CreateTab(payload) => {
-                let _ = (payload.workspace_id, payload.label);
-                false
+                let Some(workspace_snapshot) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| workspace.id == payload.workspace_id)
+                else {
+                    self.set_error(
+                        "tab.unknown_workspace",
+                        format!("Workspace {} is not registered", payload.workspace_id),
+                        false,
+                    );
+                    return true;
+                };
+                let checkout_index = match payload.checkout_id.as_deref() {
+                    Some(checkout_id) => {
+                        let Some(index) = workspace_snapshot
+                            .checkouts
+                            .iter()
+                            .position(|checkout| checkout.id == checkout_id)
+                        else {
+                            self.set_error(
+                                "tab.unknown_checkout",
+                                format!("Checkout {checkout_id} is not available"),
+                                false,
+                            );
+                            return true;
+                        };
+                        index
+                    }
+                    None => 0,
+                };
+                let Some(checkout) = workspace_snapshot.checkouts.get_mut(checkout_index) else {
+                    self.set_error("tab.no_checkout", "Workspace has no checkout", false);
+                    return true;
+                };
+                let tab_number = checkout.tabs.len() + 1;
+                let tab_id = format!("{}:tab:{tab_number}", checkout.id);
+                checkout.tabs.push(TabSnapshot {
+                    id: Some(tab_id),
+                    workspace_id: Some(workspace_snapshot.id.clone()),
+                    checkout_id: Some(checkout.id.clone()),
+                    label: Some(if payload.label.trim().is_empty() {
+                        format!("Tab {tab_number}")
+                    } else {
+                        payload.label.trim().to_owned()
+                    }),
+                    empty: true,
+                    panes: Vec::new(),
+                });
+                self.snapshot.navigator.focused_workspace_id = Some(workspace_snapshot.id.clone());
+                self.snapshot.navigator.focused_checkout_id = Some(checkout.id.clone());
+                self.snapshot.navigator.root_path = Some(checkout.path.clone());
+                self.sync_active_tab_projection();
+                self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::FocusCheckout(payload) => {
+                self.focus_checkout(&payload.workspace_id, &payload.checkout_id)
+            }
+            ValidatedEvent::FocusTab(payload) => {
+                let Some(workspace_snapshot) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| workspace.id == payload.workspace_id)
+                else {
+                    self.set_error(
+                        "tab.unknown_workspace",
+                        format!("Workspace {} is not registered", payload.workspace_id),
+                        false,
+                    );
+                    return true;
+                };
+                let Some(checkout) = workspace_snapshot
+                    .checkouts
+                    .iter_mut()
+                    .find(|checkout| checkout.id == payload.checkout_id)
+                else {
+                    self.set_error(
+                        "tab.unknown_checkout",
+                        format!("Checkout {} is not available", payload.checkout_id),
+                        false,
+                    );
+                    return true;
+                };
+                let Some(index) = checkout
+                    .tabs
+                    .iter()
+                    .position(|tab| tab.id.as_deref() == Some(payload.tab_id.as_str()))
+                else {
+                    self.set_error(
+                        "tab.unknown",
+                        format!("Tab {} is not available", payload.tab_id),
+                        false,
+                    );
+                    return true;
+                };
+                if index != 0 {
+                    let tab = checkout.tabs.remove(index);
+                    checkout.tabs.insert(0, tab);
+                }
+                self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
+                self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id);
+                self.snapshot.navigator.root_path = Some(checkout.path.clone());
+                self.sync_active_tab_projection();
+                self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::FocusDevice(payload) => {
+                if !self
+                    .snapshot
+                    .navigator
+                    .devices
+                    .iter()
+                    .any(|device| device.id == payload.device_id)
+                {
+                    self.set_error(
+                        "device.unknown",
+                        format!("Device {} is not registered", payload.device_id),
+                        false,
+                    );
+                    return true;
+                }
+                self.snapshot.navigator.focused_device_id = Some(payload.device_id);
+                self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::RemoveWorkspace(payload) => {
+                let before = self.snapshot.ui_state.workspace_registrations.len();
+                self.snapshot
+                    .ui_state
+                    .workspace_registrations
+                    .retain(|registration| registration.id != payload.workspace_id);
+                if before == self.snapshot.ui_state.workspace_registrations.len() {
+                    self.set_error(
+                        "workspace.unknown",
+                        format!("Workspace {} is not registered", payload.workspace_id),
+                        false,
+                    );
+                    return true;
+                }
+                self.rebuild_catalog(&[]);
+                self.persist_current_ui_state();
+                self.push_diagnostic(
+                    "workspace.unregistered",
+                    format!(
+                        "Unregistered workspace {} without touching its files",
+                        payload.workspace_id
+                    ),
+                );
+                true
+            }
+            ValidatedEvent::RegisterDevice(payload) => {
+                let id = payload.id.trim().to_owned();
+                let label = payload.label.trim().to_owned();
+                let ssh_alias = payload.ssh_alias.trim().to_owned();
+                if id.is_empty() || label.is_empty() || ssh_alias.is_empty() {
+                    self.set_error(
+                        "device.invalid",
+                        "Device id, label, and SSH alias are required",
+                        false,
+                    );
+                    return true;
+                }
+                if id == workspace::LOCAL_DEVICE_ID
+                    || self.remote_targets.iter().any(|target| target.id == id)
+                    || self
+                        .snapshot
+                        .ui_state
+                        .device_registrations
+                        .iter()
+                        .any(|device| device.id == id)
+                {
+                    self.set_error(
+                        "device.duplicate",
+                        format!("Device {id} is already registered"),
+                        false,
+                    );
+                    return true;
+                }
+                self.snapshot.ui_state.device_registrations.push(
+                    crate::model::DeviceRegistration {
+                        id: id.clone(),
+                        label,
+                        ssh_alias: Some(ssh_alias.clone()),
+                    },
+                );
+                self.rebuild_catalog(&[]);
+                self.persist_current_ui_state();
+                self.push_diagnostic(
+                    "device.registered",
+                    format!("Registered SSH device {id} ({ssh_alias})"),
+                );
+                true
+            }
+            ValidatedEvent::RemoveDevice(payload) => {
+                if payload.device_id == workspace::LOCAL_DEVICE_ID {
+                    self.set_error(
+                        "device.local_remove_denied",
+                        "This Mac cannot be removed",
+                        false,
+                    );
+                    return true;
+                }
+                let before = self.snapshot.ui_state.device_registrations.len();
+                self.snapshot
+                    .ui_state
+                    .device_registrations
+                    .retain(|device| device.id != payload.device_id);
+                if before == self.snapshot.ui_state.device_registrations.len() {
+                    self.set_error(
+                        "device.unknown",
+                        format!("Device {} is not registered", payload.device_id),
+                        false,
+                    );
+                    return true;
+                }
+                self.rebuild_catalog(&[]);
+                self.persist_current_ui_state();
+                self.push_diagnostic(
+                    "device.unregistered",
+                    format!(
+                        "Unregistered device {} without touching its host",
+                        payload.device_id
+                    ),
+                );
+                true
+            }
+            ValidatedEvent::TestDevice(payload) => {
+                let known = self
+                    .snapshot
+                    .navigator
+                    .devices
+                    .iter()
+                    .any(|device| device.id == payload.device_id);
+                if !known {
+                    self.set_error(
+                        "device.unknown",
+                        format!("Device {} is not registered", payload.device_id),
+                        false,
+                    );
+                    return true;
+                }
+                self.push_diagnostic(
+                    "device.connection_test_requested",
+                    format!(
+                        "Connection test requested for {}; SSH credentials remain outside hide",
+                        payload.device_id
+                    ),
+                );
+                if let Some(device) = self
+                    .snapshot
+                    .navigator
+                    .devices
+                    .iter_mut()
+                    .find(|device| device.id == payload.device_id)
+                {
+                    device.state = "test_requested".to_owned();
+                }
+                true
             }
             ValidatedEvent::CreatePane(payload) => {
                 if payload.command.is_some() {
@@ -1257,6 +2003,7 @@ impl Runtime {
             ValidatedEvent::UiStateUpdate(payload) => {
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
+                let current = self.snapshot.ui_state.clone();
                 self.snapshot.ui_state = UiStateSnapshot {
                     expanded_paths: payload.expanded_paths,
                     selected_path: payload.selected_path,
@@ -1265,7 +2012,27 @@ impl Runtime {
                     pet_visible: self.snapshot.ui_state.pet_visible,
                     pet_origin: self.snapshot.ui_state.pet_origin,
                     pet_shortcut: self.snapshot.ui_state.pet_shortcut.clone(),
+                    focused_device_id: payload
+                        .focused_device_id
+                        .unwrap_or(current.focused_device_id),
+                    focused_checkout_id: payload
+                        .focused_checkout_id
+                        .unwrap_or(current.focused_checkout_id),
+                    workspace_registrations: payload
+                        .workspace_registrations
+                        .unwrap_or(current.workspace_registrations),
+                    device_registrations: payload
+                        .device_registrations
+                        .unwrap_or(current.device_registrations),
+                    accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
+                    font_size: payload.font_size.unwrap_or(current.font_size),
+                    bypass_warnings: payload.bypass_warnings.unwrap_or(current.bypass_warnings),
                 };
+                self.snapshot.navigator.focused_device_id =
+                    self.snapshot.ui_state.focused_device_id.clone();
+                self.snapshot.navigator.focused_checkout_id =
+                    self.snapshot.ui_state.focused_checkout_id.clone();
+                self.rebuild_catalog(&[]);
                 match persistence::save(&self.state_path, &self.snapshot.ui_state) {
                     Ok(()) => true,
                     Err(message) => {
@@ -1410,6 +2177,43 @@ impl Runtime {
     }
 }
 
+fn find_workspace_for_context<'a>(
+    workspaces: &'a mut Vec<crate::model::WorkspaceSnapshot>,
+    context_path: Option<&str>,
+    session_workspace_id: &str,
+) -> Option<&'a mut crate::model::WorkspaceSnapshot> {
+    if let Some(index) = workspaces
+        .iter()
+        .position(|workspace| workspace.id == session_workspace_id)
+    {
+        return workspaces.get_mut(index);
+    }
+    let Some(raw_path) = context_path else {
+        return None;
+    };
+    let path = Path::new(raw_path);
+    let root = workspace::git_root(path)
+        .or_else(|| path.canonicalize().ok())
+        .unwrap_or_else(|| path.to_path_buf());
+    let normalized = root.to_string_lossy().trim_end_matches('/').to_owned();
+    if let Some(index) = workspaces.iter().position(|workspace| {
+        let workspace_path = workspace.path.trim_end_matches('/');
+        normalized == workspace_path
+            || normalized.starts_with(&format!("{workspace_path}/"))
+            || workspace
+                .checkouts
+                .iter()
+                .any(|checkout| checkout.path == normalized)
+    }) {
+        return workspaces.get_mut(index);
+    }
+    workspaces.push(workspace::inspect_temporary(
+        &root,
+        workspace::LOCAL_DEVICE_ID,
+    ));
+    workspaces.last_mut()
+}
+
 struct EventValidationError {
     kind: &'static str,
     message: String,
@@ -1440,6 +2244,13 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "browser_status" => decode!(BrowserStatusPayload, BrowserStatus),
         "create_workspace" => decode!(CreateWorkspacePayload, CreateWorkspace),
         "create_tab" => decode!(CreateTabPayload, CreateTab),
+        "focus_checkout" => decode!(FocusCheckoutPayload, FocusCheckout),
+        "focus_tab" => decode!(FocusTabPayload, FocusTab),
+        "focus_device" => decode!(FocusDevicePayload, FocusDevice),
+        "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
+        "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
+        "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
+        "test_device" => decode!(TestDevicePayload, TestDevice),
         "create_pane" => decode!(CreatePanePayload, CreatePane),
         "toggle_zoom" => decode!(ToggleZoomPayload, ToggleZoom),
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),

@@ -30,7 +30,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Herdr IDE"
+        window.title = "hide"
         window.paneCommandModel = model
         window.minSize = NSSize(
             width: ShellMetrics.windowMinWidth,
@@ -151,7 +151,7 @@ struct HerdrApp: App {
 
     var body: some Scene {
         Settings {
-            AppSettingsView(model: appDelegate.model)
+            HideSettingsView(model: appDelegate.model)
         }
         .commands {
             ShellCommands(model: appDelegate.model)

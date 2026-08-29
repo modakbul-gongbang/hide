@@ -114,9 +114,9 @@ import Testing
 
 @Test func worktreeNoticeStatesTheCheckoutLossBoundary() {
     let notice = ConsequencePolicy.notice(kind: .worktree, targets: [])
-    #expect(notice.requiresConfirmation)
-    #expect(notice.consequence.contains("removed from disk"))
-    #expect(notice.consequence.contains("uncommitted files"))
+    #expect(!notice.requiresConfirmation)
+    #expect(notice.consequence.contains("registration"))
+    #expect(notice.consequence.contains("disk"))
 }
 
 @Test func cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing() throws {

@@ -420,37 +420,86 @@ private struct RemoteWorkspaceEnvelope: Decodable {
     let result: Result
 }
 
+private struct RemoteProbeResult: Sendable {
+    let version: ProcessReceipt
+    let workspaceList: ProcessReceipt?
+}
+
 @MainActor
 final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var phase: RuntimePhase = .idle
     @Published private(set) var message = "Remote mini has not been checked yet."
     @Published private(set) var workspaces: [RemoteWorkspaceSummary] = []
     @Published private(set) var checkedAt = "never"
+    @Published private(set) var targetLabel = "mini"
     var environmentStateProvider: ((String) -> String?)?
 
     func refreshMini() {
+        refresh(targetID: "mini", label: "mini", sshAlias: "mini")
+    }
+
+    func refresh(targetID: String, label: String, sshAlias: String) {
         guard environmentStateProvider?("SSH_AUTH_SOCK") == "available" else {
             phase = .unavailable
+            targetLabel = label
             message = "SSH_AUTH_SOCK is unavailable. Remote features are disabled; launch from a shell with the agent socket exported."
             checkedAt = ISO8601DateFormatter().string(from: Date())
             return
         }
         phase = .loading
-        message = "Connecting to mini and loading remote workspaces…"
+        targetLabel = label
+        message = "Connecting to \(label) and loading remote workspaces…"
         Task {
-            let result = await Task.detached {
-                SafeProcess.run(
+            let probe = await Task.detached { () -> RemoteProbeResult in
+                let version = SafeProcess.run(
                     executable: "/usr/bin/ssh",
-                    arguments: ["mini", "/Users/grab/.local/bin/herdr", "workspace", "list"]
+                    arguments: [sshAlias, "zsh", "-ilc", "herdr --version"]
+                )
+                guard version.status == 0 else {
+                    return RemoteProbeResult(version: version, workspaceList: nil)
+                }
+                return RemoteProbeResult(
+                    version: version,
+                    workspaceList: SafeProcess.run(
+                        executable: "/usr/bin/ssh",
+                        arguments: [sshAlias, "zsh", "-ilc", "herdr workspace list"]
+                    )
                 )
             }.value
             checkedAt = ISO8601DateFormatter().string(from: Date())
-            guard result.status == 0,
-                  let envelope = try? JSONDecoder().decode(RemoteWorkspaceEnvelope.self, from: result.stdout)
-            else {
+            guard probe.version.status == 0 else {
                 phase = .failed
-                let detail = String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                message = detail.isEmpty ? "mini workspace list failed. Retry after checking SSH and the remote Herdr service." : detail
+                message = remoteFailure(probe.version, label: label)
+                log(kind: "remote.refresh_failed")
+                return
+            }
+            guard let version = version(from: probe.version.stdout) else {
+                phase = .failed
+                message = "The Herdr version response from \(label) was not readable. Retry after checking the remote installation."
+                log(kind: "remote.refresh_failed")
+                return
+            }
+            if compare(version, with: HideRuntimeEnvironment.bundledVersion) == .orderedAscending {
+                phase = .stale
+                message = "Herdr \(version) on \(label) is below hide's supported \(HideRuntimeEnvironment.bundledVersion). Run `curl -fsSL https://herdr.dev/install.sh | sh` or `brew install herdr` on the remote host. Hide does not install or upgrade it."
+                log(kind: "remote.stale")
+                return
+            }
+            guard let workspaceList = probe.workspaceList else {
+                phase = .failed
+                message = "The remote workspace response from \(label) was not available. Retry after checking SSH and the remote Herdr service."
+                log(kind: "remote.refresh_failed")
+                return
+            }
+            guard workspaceList.status == 0 else {
+                phase = .failed
+                message = remoteFailure(workspaceList, label: label)
+                log(kind: "remote.refresh_failed")
+                return
+            }
+            guard let envelope = try? JSONDecoder().decode(RemoteWorkspaceEnvelope.self, from: workspaceList.stdout) else {
+                phase = .failed
+                message = "The remote workspace response from \(label) was malformed. Retry after checking the remote Herdr service."
                 log(kind: "remote.refresh_failed")
                 return
             }
@@ -462,16 +511,54 @@ final class RemoteRuntimeModel: ObservableObject {
             }
             phase = .ready
             message = workspaces.isEmpty
-                ? "mini is connected, but no remote workspace is open. Create one on mini and retry."
-                : "mini connected. Remote file viewing and terminal attach are available; inline editing stays disabled."
+                ? "\(label) is connected, but no remote workspace is open. Create one on \(label) and retry."
+                : "\(label) connected. Remote file viewing and terminal attach are available; inline editing stays disabled."
             log(kind: "remote.ready")
         }
+    }
+
+    private func version(from data: Data) -> String? {
+        let line = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return line.split(separator: " ").last.map(String.init)
+    }
+
+    private func compare(_ left: String, with right: String) -> ComparisonResult {
+        let leftParts = left.split(separator: ".").compactMap { Int($0) }
+        let rightParts = right.split(separator: ".").compactMap { Int($0) }
+        for index in 0 ..< max(leftParts.count, rightParts.count) {
+            let leftPart = index < leftParts.count ? leftParts[index] : 0
+            let rightPart = index < rightParts.count ? rightParts[index] : 0
+            if leftPart != rightPart {
+                return leftPart < rightPart ? .orderedAscending : .orderedDescending
+            }
+        }
+        return .orderedSame
+    }
+
+    private func remoteFailure(_ result: ProcessReceipt, label: String) -> String {
+        let detail = String(decoding: result.stderr, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = detail.lowercased()
+        if normalized.contains("command not found") || normalized.contains("no such file") {
+            return "Herdr is not installed on \(label). Run `curl -fsSL https://herdr.dev/install.sh | sh` or `brew install herdr` there. Hide does not install it."
+        }
+        if normalized.contains("permission denied") || normalized.contains("publickey") {
+            return "SSH authentication failed for \(label). Check the existing ssh-agent and SSH config; Hide does not collect credentials."
+        }
+        if normalized.contains("host key verification failed") {
+            return "SSH host-key verification failed for \(label). Verify the host in known_hosts, then retry."
+        }
+        if normalized.contains("could not resolve") || normalized.contains("connection refused") || normalized.contains("no route") {
+            return "SSH could not reach \(label). Check the alias and host availability, then retry."
+        }
+        return detail.isEmpty ? "\(label) workspace list failed. Retry after checking SSH and the remote Herdr service." : detail
     }
 
     private func log(kind: String) {
         let record: [String: Any] = [
             "kind": kind,
-            "target": "mini",
+            "target": targetLabel,
             "state": phase.rawValue,
             "workspace_count": workspaces.count,
             "checked_at": checkedAt,
@@ -531,10 +618,10 @@ enum ConsequencePolicy {
             return aggregate("Close this workspace?", "Closing the workspace terminates all listed working or attention panes and closes its tabs.", targets)
         case .worktree:
             return ConsequenceNotice(
-                title: "Remove this worktree checkout?",
-                consequence: "The checkout directory is removed from disk. The repository and branch remain, but uncommitted files in that checkout can be lost.",
+                title: "Remove this checkout from Hide?",
+                consequence: "Only Hide's registration is removed. The checkout directory on disk, repository, branch, and running processes remain untouched.",
                 affected: targets,
-                requiresConfirmation: true
+                requiresConfirmation: false
             )
         }
     }

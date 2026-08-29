@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    const SCHEMA_PATH: &str = "contracts/herdr-api.schema.json";
+    const SCHEMA_PATH: &str = "../contracts/herdr-api.schema.json";
 
     println!("cargo:rerun-if-changed={SCHEMA_PATH}");
     println!("cargo:rerun-if-changed=build.rs");

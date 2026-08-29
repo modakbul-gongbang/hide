@@ -54,6 +54,9 @@ struct WorkbenchPanel: View {
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
     private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
+    private var activeRoot: URL {
+        model.focusedPath ?? model.core.workspaceRoot
+    }
     private var effectiveReadonlyReason: String? {
         if model.core.isRemoteWorkspace {
             return "Remote inline editing is disabled in v1. Use the attached remote terminal so SSH remains the single write owner."
@@ -79,10 +82,13 @@ struct WorkbenchPanel: View {
         }
         .background(Color(nsColor: .controlBackgroundColor))
         .onAppear {
-            roots = WorkspaceTree.load(root: model.core.workspaceRoot)
+            roots = WorkspaceTree.load(root: activeRoot)
             if let restored = model.core.snapshot?.uiState.selectedPath {
                 model.core.openFile(URL(fileURLWithPath: restored))
             }
+        }
+        .onChange(of: activeRoot.path) { _, _ in
+            roots = WorkspaceTree.load(root: activeRoot)
         }
         .onChange(of: editor?.contentsUTF8) { _, contents in
             if let contents, contents != draft { draft = contents }

@@ -34,7 +34,7 @@ use tokio::runtime::{Builder, Runtime};
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
 };
-use crate::files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
+use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);

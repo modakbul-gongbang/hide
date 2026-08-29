@@ -20,12 +20,12 @@ use crate::model::{PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapsh
 use crate::runtime::Runtime;
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
-    SessionSnapshotPayload,
+    SessionPanePayload, SessionSnapshotPayload,
 };
 
 /// Herdr API protocol revision this core speaks. A mismatch is a hard,
 /// explicit failure instead of a partially working sidebar.
-pub const HERDR_PROTOCOL_REVISION: u64 = 21;
+pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
 
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -422,11 +422,27 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
         .get("focused_pane_id")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let panes = snapshot
+        .get("panes")
+        .and_then(Value::as_array)
+        .map(|panes| {
+            panes
+                .iter()
+                .filter_map(|pane| {
+                    Some(SessionPanePayload {
+                        pane_id: pane.get("pane_id")?.as_str()?.to_owned(),
+                        cwd: pane.get("cwd").and_then(Value::as_str).map(str::to_owned),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(SessionSnapshotPayload {
         focused_pane_id,
         layouts,
         agents,
+        panes,
     })
 }
 

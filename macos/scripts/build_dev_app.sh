@@ -3,7 +3,7 @@ set -euo pipefail
 
 macos_root="$(cd "$(dirname "$0")/.." && pwd)"
 worktree_root="$(cd "$macos_root/.." && pwd)"
-app_root="$macos_root/build/assembled/HerdrIDE.app"
+app_root="$macos_root/build/assembled/hide.app"
 
 cargo build --manifest-path "$worktree_root/herdr-core/Cargo.toml" --release
 rust_archive="$worktree_root/target/release/libherdr_core.a"

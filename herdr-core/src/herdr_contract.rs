@@ -4,7 +4,7 @@
 //! The build script derives constants from that artifact so production code
 //! never carries an independently maintained protocol number.
 
-pub const HERDR_API_SCHEMA_JSON: &str = include_str!("../contracts/herdr-api.schema.json");
+pub const HERDR_API_SCHEMA_JSON: &str = include_str!("../../contracts/herdr-api.schema.json");
 
 include!(concat!(env!("OUT_DIR"), "/herdr_contract.rs"));
 

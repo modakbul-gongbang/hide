@@ -87,12 +87,25 @@ pub struct PetClickSnapshot {
     pub at_unix_ms: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NavigatorSnapshot {
     pub root_path: Option<String>,
+    pub focused_device_id: Option<String>,
     pub focused_workspace_id: Option<String>,
+    pub focused_checkout_id: Option<String>,
+    pub devices: Vec<DeviceSnapshot>,
     pub workspaces: Vec<WorkspaceSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceSnapshot {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub state: String,
+    pub ssh_alias: Option<String>,
+    pub agent_count: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -120,13 +133,33 @@ pub struct AmbientSignal {
     pub background_failed: u32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
     pub id: String,
     pub label: String,
     pub path: String,
     pub remote_target_id: Option<String>,
     pub expanded: bool,
+    pub device_id: String,
+    pub repo_name: String,
+    pub is_git: bool,
+    pub default_branch: Option<String>,
+    pub registered: bool,
+    pub temporary: bool,
+    pub checkouts: Vec<CheckoutSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CheckoutSnapshot {
+    pub id: String,
+    pub workspace_id: String,
+    pub label: String,
+    pub path: String,
+    pub branch: Option<String>,
+    pub is_worktree: bool,
+    pub exists: bool,
+    pub temporary: bool,
+    pub tabs: Vec<TabSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -144,15 +177,17 @@ pub struct OverlayActionSnapshot {
     pub destructive: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabSnapshot {
     pub id: Option<String>,
     pub workspace_id: Option<String>,
+    pub checkout_id: Option<String>,
     pub label: Option<String>,
+    pub empty: bool,
     pub panes: Vec<PaneSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
     pub id: String,
     pub label: String,
@@ -279,6 +314,20 @@ pub struct UiStateSnapshot {
     pub pet_visible: bool,
     pub pet_origin: Option<PetOriginSnapshot>,
     pub pet_shortcut: Option<String>,
+    #[serde(default)]
+    pub focused_device_id: Option<String>,
+    #[serde(default)]
+    pub focused_checkout_id: Option<String>,
+    #[serde(default)]
+    pub workspace_registrations: Vec<WorkspaceRegistration>,
+    #[serde(default)]
+    pub device_registrations: Vec<DeviceRegistration>,
+    #[serde(default = "default_accent_hex")]
+    pub accent_hex: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    #[serde(default)]
+    pub bypass_warnings: bool,
 }
 
 impl Default for UiStateSnapshot {
@@ -293,8 +342,44 @@ impl Default for UiStateSnapshot {
             pet_visible: true,
             pet_origin: None,
             pet_shortcut: None,
+            focused_device_id: None,
+            focused_checkout_id: None,
+            workspace_registrations: Vec::new(),
+            device_registrations: Vec::new(),
+            accent_hex: default_accent_hex(),
+            font_size: default_font_size(),
+            bypass_warnings: false,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorkspaceRegistration {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+    #[serde(default = "default_local_device_id")]
+    pub device_id: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeviceRegistration {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub ssh_alias: Option<String>,
+}
+
+pub(crate) fn default_local_device_id() -> String {
+    "local".to_owned()
+}
+
+pub(crate) fn default_accent_hex() -> String {
+    "#B9FF66".to_owned()
+}
+
+pub(crate) fn default_font_size() -> f32 {
+    13.0
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -400,7 +485,17 @@ impl Snapshot {
             schema_version: SCHEMA_VERSION,
             navigator: NavigatorSnapshot {
                 root_path: None,
+                focused_device_id: None,
                 focused_workspace_id: None,
+                focused_checkout_id: None,
+                devices: vec![DeviceSnapshot {
+                    id: "local".to_owned(),
+                    label: "This Mac".to_owned(),
+                    kind: "local".to_owned(),
+                    state: "ready".to_owned(),
+                    ssh_alias: None,
+                    agent_count: 0,
+                }],
                 workspaces: Vec::new(),
                 agents: Vec::new(),
             },
@@ -413,7 +508,9 @@ impl Snapshot {
             tab: TabSnapshot {
                 id: None,
                 workspace_id: None,
+                checkout_id: None,
                 label: None,
+                empty: true,
                 panes: Vec::new(),
             },
             connection: ConnectionSnapshot {
