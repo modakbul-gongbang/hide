@@ -1,11 +1,11 @@
 ---
 topic: "herdr-pet을 herdr-ide로 완전 통합"
-status: "active"
+status: "complete"
 where: "brownfield"
 selected_packs: "ux, compatibility, data, operation, verification"
 created_at: "2026-08-29"
 updated_at: "2026-08-30"
-question_count: 6
+question_count: 7
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -21,11 +21,11 @@ normalization_checkpoint_every: 10
 
 ## Intake Cursor
 
-- next_decision_id: D-20
+- next_decision_id: D-22
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 2
+- last_materiality_sweep: checkpoint 3
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q16
+- next_checkpoint_at: Q17
 
 ## Transcript Sources
 
@@ -56,6 +56,8 @@ normalization_checkpoint_every: 10
 | D-17 | fact | data lifecycle | attention 수명주기: _new(unseen)→plain(acknowledged) 전환은 herdr 서버 소관이다 - 사용자가 pane을 보면 herdr가 토큰을 plain으로 바꾼다. 펫은 스냅샷을 소비만 하고 자체 seen 상태를 저장하지 않는다(stateless 재계산). unseen이 하나도 없으면 attention이 아니므로 클릭은 메인 윈도우 포커스만 한다. pane 소멸·스냅샷 후퇴도 매 폴링 재계산으로 자연 해소된다 | P1 | repo docs/status-model.md:6-19, agents/rules INV-herdr-unseen-token, docs/ported-reference/herdr.rs 테스트 | resolved | R#/AC#: attention 계약 + 회귀 테스트 |
 | D-18 | fact | states and recovery | 상태·복구 모델(패리티 계약): per-agent AgentStatus::Disconnected와 TopStatus::Disconnected가 herdr-pet aggregate.rs에 존재하고, disconnected 에이전트는 유지되되 waiting으로 집계되지 않는다. 소켓 부재는 live.rs의 명시 분기(서버 미실행)로 구분 표시한다. 일시 폴링 실패 시 마지막 유효 스냅샷 표시 + disconnected 승격은 이식되는 집계 로직이 결정한다. 로딩 초기 상태는 연결 전 disconnected 표기와 동일 취급 | P1 | repo ../herdr-pet/crates/herdr-core/src/aggregate.rs:12-61,222-252, herdr-core/src/live.rs:254-256 | resolved | R#/AC#: 상태 전이 + 테스트 |
 | D-19 | fact | UX/design | 펫 위치 영속(패리티 계약): herdr-pet은 위치를 설정 파일에 저장하고, 복원 시 연결된 모니터 위에 있을 때만 신뢰한다(RESTORE_MARGIN, window.rs:302-316). 사고 좌표 [542720,163840] 픽스처가 회귀 테스트에 고정되어 있다. 표시 상태 기억(D-09)과 같은 영속 계층에서 위치도 복원한다 | P1 | repo ../herdr-pet/crates/herdr-core/src/window.rs:302-316,469, docs/ported-reference/window.rs | resolved | R#/AC#: 위치 복원 + 클램프 테스트 |
+| D-20 | decision | states and recovery | 깨진 스냅샷 처리: 응답 전체가 깨진 JSON/프로토콜 위반이면 실패한 폴링과 동일 취급(마지막 유효 상태 유지, 연속 실패 시 disconnected 승격 - 집계 규칙 소관). 개별 에이전트 항목만 깨졌으면 그 항목만 제외하되(herdr-pet filter_map 패리티) 제외 사실을 로그에 남긴다(패리티 대비 한 단계 보강). 다음 유효 폴링에서 자동 복구 | P1 | user (herdr-pet herdr.rs:15-16,39,97 패리티 + 로그 보강 승인) | resolved | R#/AC#: 오류 처리 + 로그 |
+| D-21 | decision | data lifecycle | '가장 오래된 unseen' 판정 키: herdr 스냅샷에는 unseen 발생 시각이 없으므로, 펫 런타임이 각 pane의 unseen 상태를 처음 관찰한 시각을 메모리에 기록해 그 순서로 판정한다. 기록이 없거나(앱 재시작 직후) 동시각이면 스냅샷의 pane 순서로 결정론적 fallback. 영속하지 않는다(stateless 원칙 D-17과 정합) | P1 | user | resolved | AC#: 클릭 선택 결정론 + 테스트 |
 
 ## Raw Q&A
 
@@ -205,6 +207,26 @@ normalization_checkpoint_every: 10
 - immediate_notes: gap-audit 1차 BLOCK의 requiresHuman 발견 중 사용자 판단이 필요한 2건을 배치로 확인, 둘 다 추천안 수락 → D-16(D-01의 과거 제약 대체), D-10 구체화. 나머지 발견은 herdr-pet 코드·문서 증거로 fact(D-14 전환, D-17, D-18, D-19)와 검증 보강(D-11)으로 닫음.
 - needs_normalization: false
 
+### Q7: 게이트 마감 확인 - 깨진 스냅샷 처리 + oldest-unseen 판정 키
+- decision_ids: D-20, D-21
+- route: user-decision
+- source_ref: claude:189f4c2b-415e-4f87-95da-04d6794f6040:321f741a-637c-4727-a244-9ceda0168d66
+- asked: 확인됐습니다. 마지막으로 남은 2건만 여쭙겠습니다. 이 답을 받으면 게이트를 reopen해서 마감합니다.
+  
+  ---
+  
+  **Q7 (게이트 마감 확인 2개).**
+  
+  1. **깨진 스냅샷 처리** - herdr-pet의 원 동작은: 응답 전체가 깨진 JSON/프로토콜 위반이면 실패한 폴링과 동일 취급(마지막 유효 상태 유지, 연속 실패 시 disconnected 승격), 개별 에이전트 항목만 깨졌으면 그 항목만 조용히 제외(`filter_map`)입니다. 이 원 동작을 그대로 패리티로 가져가되, **개별 항목 제외는 로그에 남기도록** 한 단계 보강하는 걸 추천합니다. *추천: 이대로*
+  
+  2. **"가장 오래된 unseen"의 판정 기준** - herdr 스냅샷에는 unseen이 언제 생겼는지 시각 정보가 없습니다. 그래서: 펫이 폴링 중 각 pane의 unseen을 **처음 관찰한 시각을 메모리에 기록**해 그 순서로 "가장 오래된"을 판정하고, 앱 재시작 직후처럼 기록이 없으면 **스냅샷의 pane 순서**로 결정론적 fallback 하는 방식을 추천합니다. *추천: 이대로*
+  
+  이대로 갈까요?
+- recommended: 1) 깨진 스냅샷은 herdr-pet 패리티(전체 깨짐 = 실패 폴링 취급, 개별 항목 깨짐 = 해당 항목만 제외) + 제외 로그 보강 2) oldest-unseen은 최초 관찰 시각 메모리 기록 + 기록 부재 시 스냅샷 pane 순서 fallback
+- answer: ㅇㅇㅇ  ㄱㄱㄱ
+- immediate_notes: 마감 심사 BLOCK의 requiresHuman 2건을 배치 확인, 둘 다 추천안 수락 → D-20, D-21. 나머지 2건(requiresHuman=false 검증 절차)은 UX 카드 proof에 명시적 검증 항목으로 추가.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 ### UX-01: 펫으로 에이전트 상태 인지 후 attention pane으로 점프
@@ -212,7 +234,7 @@ normalization_checkpoint_every: 10
 - happy path: 펫이 pose(일함/기다림/배회/잠)와 뱃지 행(파랑/초록/노랑/빨강 + ambient subagent/background-task)으로 상태를 반영한다 → 사용자가 펫을 클릭한다 → herdr-ide 메인 윈도우가 포커스되고 가장 오래된 unseen attention pane이 선택된다
 - state / failure: herdr 서버 미실행(소켓 부재)이면 펫이 연결 끊김 상태를 명시적으로 표시한다(live.rs의 socket-missing 분기를 그대로 노출, 조용한 기본값 금지). 개별 에이전트의 Disconnected는 유지되되 waiting으로 집계되지 않는다(D-18). unseen이 하나도 없으면 attention이 아니므로 클릭은 메인 윈도우 포커스만 수행한다(D-17). `_new`→plain 전환은 herdr 서버 소관이고 펫은 스냅샷을 stateless로 재계산만 한다
 - recovery: 소켓이 다시 생기면 기존 polling 경로가 재개되어 펫 상태가 자동 복구된다. 일시 폴링 실패는 마지막 유효 스냅샷 표시 + 집계 로직의 disconnected 승격 규칙을 따른다
-- proof: 설치 번들 실행 후 screencapture 스크린샷으로 pose/뱃지 렌더와 default 테마 아트 확인, 클릭 후 포커스된 pane 확인(스크린샷), `_new` 판정·집계·상태 전이는 ported-reference의 Rust 테스트를 herdr-core로 이식해 자동 검증, theme.json 로더는 단위 테스트(D-11)
+- proof: 설치 번들 실행 후 screencapture 스크린샷으로 pose/뱃지 렌더와 default 테마 아트 확인, `_new` 판정·집계·상태 전이는 ported-reference의 Rust 테스트를 herdr-core로 이식해 자동 검증, theme.json 로더는 단위 테스트(D-11). 클릭 선택은 3개 케이스를 각각 검증: (a) 서로 다른 시각에 unseen이 생긴 복수 pane을 구성해 가장 먼저 관찰된 pane이 선택됨(D-21 판정 키 단위 테스트 + 설치 번들 확인), (b) 관찰 기록이 없는 재시작 직후 pane 순서 fallback(단위 테스트), (c) unseen이 없는 상태에서 클릭 시 메인 윈도우 포커스만 수행(설치 번들 확인). 연결 수명주기도 별도 검증: herdr 서버를 중단해 소켓 부재 표시 스크린샷 → 서버 재시작 후 자동 복구된 펫 상태 스크린샷, 깨진 스냅샷 주입 시 마지막 유효 상태 유지와 제외 로그(D-20 단위 테스트)
 - linked decisions: D-06, D-08, D-13, D-17, D-18, D-11
 
 ### UX-02: 펫 이동, 표시 토글, 재시작 복원
@@ -262,4 +284,42 @@ normalization_checkpoint_every: 10
 - reopened_decisions: none
 - highest_remaining_gap: 없음 - 남은 P2는 D-15 webp 재생 스파이크뿐
 
+### Checkpoint 3
+- after_question: Q7
+- normalized_entries: Q7
+- register_changes: 마감 심사 BLOCK 대응: D-20(깨진 스냅샷 패리티+제외 로그), D-21(oldest-unseen 판정 키+pane 순서 fallback), UX-01 proof에 클릭 3케이스·연결 수명주기·깨진 스냅샷 검증 명시
+- reopened_decisions: none
+- highest_remaining_gap: 없음
+
 ## Audit History
+
+### Audit 1
+- type: gap-audit-gate
+- result: fail
+- missing decision_ids: 10건 발견(cycle 1, 1차): URL scheme 계약, 위치 영속 근거, attention 수명주기, 상태·복구, 단축키 정책, Rust 재사용 충돌(D-01 vs D-13), 테마 검증 등
+- unsupported assumptions: D-14(단축키)가 사용자 승인 없는 확장으로 지적됨
+- UX or behavior gap: attention seen 전환, 상태 전이 표시
+- highest-risk blocker: 과거 'Rust 재사용 안 함' 결정과의 충돌
+- final-blocking-question: Q6 (Rust 이식 재개 + URL scheme)
+- PRD impact: D-16, D-10 구체화, D-14 fact 전환, D-17~D-19 신설
+
+### Audit 2
+- type: gap-audit-gate
+- result: fail
+- missing decision_ids: 4건 발견(cycle 1, 마감 심사): 깨진 스냅샷 처리, oldest-unseen 판정 키, 검증 절차 2건
+- unsupported assumptions: none
+- UX or behavior gap: 클릭 선택 결정론, 연결 수명주기 검증
+- highest-risk blocker: oldest-unseen 판정 키 부재
+- final-blocking-question: Q7 (깨진 스냅샷 + 판정 키)
+- PRD impact: D-20, D-21 신설, UX-01 proof 보강
+
+### Audit 3
+- type: gap-audit-gate
+- result: pass
+- missing decision_ids: none
+- unsupported assumptions: none
+- UX or behavior gap: none
+- highest-risk blocker: none
+- final-blocking-question: none
+- PRD impact: PASS 봉인(cycle 2). 남은 P2 advisory 없음
+
