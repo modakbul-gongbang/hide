@@ -94,6 +94,7 @@ final class ImeTerminalView: TerminalView {
     /// committed. Re-asserting the same marked text after terminal output
     /// re-runs SwiftTerm's overlay layout against the advanced caret.
     func refreshMarkedTextOverlayPosition() {
+        syncCaretVisibilityWithComposition()
         guard hasMarkedText() else { return }
         let range = markedRange()
         guard range.length > 0,
@@ -104,6 +105,16 @@ final class ImeTerminalView: TerminalView {
             selectedRange: NSRange(location: marked.length, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
+    }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        syncCaretVisibilityWithComposition()
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        syncCaretVisibilityWithComposition()
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -117,5 +128,16 @@ final class ImeTerminalView: TerminalView {
             return
         }
         super.insertText(string, replacementRange: replacementRange)
+        syncCaretVisibilityWithComposition()
+    }
+
+    /// While composing, only the underlined preedit should mark the input
+    /// position; the block caret reappears when the composition commits or
+    /// cancels. SwiftTerm keeps its caret view internal and never touches
+    /// `isHidden`, so the view is located by class name - an isolated
+    /// boundary heuristic to replace once SwiftTerm exposes caret visibility.
+    private func syncCaretVisibilityWithComposition() {
+        let caret = subviews.first { String(describing: type(of: $0)).contains("CaretView") }
+        caret?.isHidden = hasMarkedText()
     }
 }
