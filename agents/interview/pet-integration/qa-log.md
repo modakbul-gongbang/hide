@@ -5,7 +5,7 @@ where: "brownfield"
 selected_packs: "ux, compatibility, data, operation, verification"
 created_at: "2026-08-29"
 updated_at: "2026-08-30"
-question_count: 7
+question_count: 9
 normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
@@ -18,14 +18,15 @@ normalization_checkpoint_every: 10
 - 통합 형태는 네이티브 완전 흡수(D-05): 자리표시자 PetWindow를 실제 펫(애니메이션 pose, 뱃지 행, _new attention, 드래그+클램프, 클릭 점프, 테마, 단축키/URL scheme 토글)으로 채운다. 범위는 전체 패리티, 작업 순서만 코어 5개 → 부가 2개 층위(D-06).
 - 구현 성격: 코어 로직(pose 우선순위, 상태 집계, herdr 소켓 파싱)은 docs/ported-reference/의 Rust 원본을 herdr-core로 이식(테스트 포함), UI는 Tauri 웹뷰 JS를 SwiftUI로 재작성. 데이터 소스는 herdr-core가 이미 쓰는 herdr 로컬 API 소켓 polling 경로를 공유(D-13).
 - question payload(#8)는 명시적 non-goal(D-07, 재방문 조건 기록). herdr-pet 저장소 정리는 설치 번들 스크린샷 검증 통과 후 별도 후속(D-12).
+- 마감 후 사용자 변경 요청으로 추가된 표면: Settings의 Pet on/off 토글(D-22)과 메뉴바 펫 아이콘(D-23, 메뉴는 Show/Hide Pet + Pet Settings, Quit 제외). 두 표면 모두 D-09의 단일 표시 상태를 공유한다.
 
 ## Intake Cursor
 
-- next_decision_id: D-22
+- next_decision_id: D-25
 - next_question: (owned by the live conversation until checkpoint)
-- last_materiality_sweep: checkpoint 3
+- last_materiality_sweep: checkpoint 4
 - outstanding_raw_entries: none
-- next_checkpoint_at: Q17
+- next_checkpoint_at: Q19
 
 ## Transcript Sources
 
@@ -58,6 +59,9 @@ normalization_checkpoint_every: 10
 | D-19 | fact | UX/design | 펫 위치 영속(패리티 계약): herdr-pet은 위치를 설정 파일에 저장하고, 복원 시 연결된 모니터 위에 있을 때만 신뢰한다(RESTORE_MARGIN, window.rs:302-316). 사고 좌표 [542720,163840] 픽스처가 회귀 테스트에 고정되어 있다. 표시 상태 기억(D-09)과 같은 영속 계층에서 위치도 복원한다 | P1 | repo ../herdr-pet/crates/herdr-core/src/window.rs:302-316,469, docs/ported-reference/window.rs | resolved | R#/AC#: 위치 복원 + 클램프 테스트 |
 | D-20 | decision | states and recovery | 깨진 스냅샷 처리: 응답 전체가 깨진 JSON/프로토콜 위반이면 실패한 폴링과 동일 취급(마지막 유효 상태 유지, 연속 실패 시 disconnected 승격 - 집계 규칙 소관). 개별 에이전트 항목만 깨졌으면 그 항목만 제외하되(herdr-pet filter_map 패리티) 제외 사실을 로그에 남긴다(패리티 대비 한 단계 보강). 다음 유효 폴링에서 자동 복구 | P1 | user (herdr-pet herdr.rs:15-16,39,97 패리티 + 로그 보강 승인) | resolved | R#/AC#: 오류 처리 + 로그 |
 | D-21 | decision | data lifecycle | '가장 오래된 unseen' 판정 키: herdr 스냅샷에는 unseen 발생 시각이 없으므로, 펫 런타임이 각 pane의 unseen 상태를 처음 관찰한 시각을 메모리에 기록해 그 순서로 판정한다. 기록이 없거나(앱 재시작 직후) 동시각이면 스냅샷의 pane 순서로 결정론적 fallback. 영속하지 않는다(stateless 원칙 D-17과 정합) | P1 | user | resolved | AC#: 클릭 선택 결정론 + 테스트 |
+| D-22 | decision | UX/design | Settings 펫 토글: herdr-ide의 기존 SwiftUI Settings 씬에 Pet 섹션을 추가하고 펫 표시 on/off 토글을 둔다. 토글은 D-09의 '기억되는 표시 상태'와 동일한 단일 상태를 공유해 Settings에서 켜면 즉시 펫이 뜨고, 단축키/URL scheme 토글과 항상 일치한다 | P1 | user | resolved | R#/AC#: Settings 토글 |
+| D-23 | decision | UX/design | 상태바(메뉴바) 아이콘 이식: herdr-ide가 메뉴바에 펫 트레이 아이콘을 두고, 메뉴는 Show/Hide Pet + Pet Settings 열기로 구성한다. herdr-pet 트레이의 Quit 항목은 IDE 전체 종료가 되므로 의도적으로 제외한다(패리티 예외). 아이콘은 herdr-pet과 같이 정적 템플릿 아이콘이며 상태 표시는 하지 않는다 | P1 | user | resolved | R#/AC#: 메뉴바 제어점. Quit 제외는 non-goal |
+| D-24 | fact | UX/design | herdr-pet 트레이 원형: TrayIconBuilder('herdr-pet-tray'), 정적 템플릿 아이콘, 좌클릭 메뉴(Show/Hide/Settings/Quit), 상태 표시 없음. herdr-ide에는 SwiftUI Settings 씬이 이미 존재한다(HerdrApp.swift:73, KeyboardSettingsView) | P2 | repo ../herdr-pet/apps/pet-app/src-tauri/src/main.rs:1773-1794, macos/Sources/HerdrMacOS/HerdrApp.swift:73 | resolved | 배경 fact |
 
 ## Raw Q&A
 
@@ -227,6 +231,54 @@ normalization_checkpoint_every: 10
 - immediate_notes: 마감 심사 BLOCK의 requiresHuman 2건을 배치 확인, 둘 다 추천안 수락 → D-20, D-21. 나머지 2건(requiresHuman=false 검증 절차)은 UX 카드 proof에 명시적 검증 항목으로 추가.
 - needs_normalization: false
 
+### Q8: 마감 후 변경 요청 - Settings 펫 토글 + 상태바 펫 질문
+- decision_ids: D-22
+- route: user-decision
+- source_ref: claude:189f4c2b-415e-4f87-95da-04d6794f6040:60e03135-ce0c-42aa-b9a2-be3380d95677
+- asked: 인터뷰가 완료됐습니다. **gap-audit 게이트 PASS(봉인)**, qa-log는 `status: complete`로 커밋했습니다(`4c9e32c`).
+  
+  **최종 합의 요약** - 한 줄 목표: herdr-pet의 기능 전체(question payload 제외)를 herdr-ide 앱의 네이티브 부속 플로팅 펫 창으로 재구현해 herdr-pet 저장소를 은퇴 가능한 상태로 만든다.
+  
+  - **형태**: 네이티브 완전 흡수. 코어 로직(pose 우선순위·상태 집계·`_new` 판정)은 `docs/ported-reference/`의 Rust를 herdr-core로 이식(과거 "Rust 재사용 안 함" 결정은 공식 뒤집음), UI는 SwiftUI로 재작성.
+  - **범위**: 전체 패리티 - 애니메이션 펫, 뱃지 행, `_new` attention, 드래그+클램프+위치 복원, 클릭 시 가장 오래된 unseen pane 점프, default 테마, 단축키+`herdr-ide://hide|show|toggle`. 작업 순서는 코어 5개 먼저 end-to-end.
+  - **non-goal**: question payload(#8, 재방문 조건 기록), 구 `herdr-pet://` scheme, herdr-pet 저장소 정리(검증 통과 후 별도 후속).
+  - 게이트가 두 번 BLOCK을 냈고, 그때 확정된 세부: 깨진 스냅샷은 herdr-pet 패리티 + 제외 로그 보강, oldest-unseen은 최초 관찰 시각 기록 + pane 순서 fallback.
+  
+  다음 단계로 PRD를 만들려면:
+  
+  ```
+  /gen-prd --context agents/interview/pet-integration/qa-log.md "herdr-pet을 herdr-ide로 완전 통합"
+  ```
+- recommended: (해당 없음 - 마감 요약 턴)
+- answer: <command-message>gen-prd</command-message>
+  <command-name>/gen-prd</command-name>
+  <command-args>--context agents/interview/pet-integration/qa-log.md "herdr-pet을 herdr-ide로 완전 통합"</command-args>
+- immediate_notes: 사용자가 마감 요약을 받고 /gen-prd를 호출했다가 곧바로 중단하고 변경 요청을 제기했다: "아 근데 마짖막으로! 이거 그럼 Herdr IDE Settings에서 Pet 끄고켜고 할 수 있게 가능? 그리고 그거 키면 이제 herdr-pet 이제 뜨도록? 근데 맥 위에 상태바? 거기에도 pet 이 있던데 그것도 동일하게 잇는건가.." - 이 발언이 gate reopen(cycle 3)의 기록된 근거이고, Settings 토글 요청은 사용자 본인 제안이라 D-22로 확정(D-09의 표시 상태와 단일 상태 공유). 상태바 펫의 정체(herdr-pet 트레이)는 사실 확인 후 Q9에서 이식 여부 결정. /gen-prd는 인터뷰 재마감 후 다시 실행하면 된다.
+- needs_normalization: false
+
+### Q9: 상태바 아이콘 이식 - (a)
+- decision_ids: D-23
+- route: user-decision
+- source_ref: claude:189f4c2b-415e-4f87-95da-04d6794f6040:8d22033b-d462-4534-97c8-d76759abc845
+- asked: 확인했습니다. 사실부터 답하면:
+  
+  1. **Settings 토글 - 가능합니다.** herdr-ide에는 이미 SwiftUI Settings 씬이 있어서(현재 키보드 설정 탭) 거기에 Pet 섹션을 추가하면 됩니다. 토글은 이미 합의한 "표시 상태 기억"(D-09)과 같은 상태를 공유해서, Settings에서 켜면 즉시 펫이 뜨고, 단축키/URL scheme 토글과도 항상 일치하게 됩니다. 이건 요청하신 대로 결정에 추가하겠습니다.
+  
+  2. **맥 상태바의 펫** - 그건 herdr-pet 앱의 **트레이 아이콘**입니다. 내용을 확인해보니 상태 표시 기능은 없고, 정적 아이콘 + 메뉴(Show/Hide/Settings/Quit)뿐인 순수 제어점이에요. herdr-pet은 독립 백그라운드 앱이라 이 제어점이 필요했는데, 흡수 후에는 그 기능이 전부 herdr-ide의 다른 표면(Settings 토글, 단축키, URL scheme, 앱 메뉴)으로 커버됩니다.
+  
+  ---
+  
+  **Q8.** 그래서 상태바 아이콘만 결정이 필요합니다:
+  
+  - **(a) 상태바 아이콘도 이식 (추천)** - herdr-ide가 메뉴바에 펫 아이콘을 하나 두고, 메뉴는 Show/Hide Pet + Pet Settings 열기로 구성합니다(Quit는 IDE 전체 종료라 제외). 펫을 숨겨둔 상태에서 마우스만으로 되부르는 제어점이 유지되고, "기존꺼 다" 패리티 원칙과도 일치합니다.
+  - **(b) 상태바 아이콘 생략** - 기능이 전부 중복이므로 안 만듭니다. 메뉴바가 깔끔해지는 대신, 숨긴 펫을 되부르려면 단축키를 외우거나 Settings를 열어야 합니다.
+  
+  어느 쪽으로 할까요? (참고: 게이트가 이미 PASS로 봉인돼서, 이 답을 받으면 방금 말씀 자체를 근거로 게이트를 reopen해 한 번 더 심사받고 다시 닫습니다)
+- recommended: (a) 상태바 아이콘 이식 - 메뉴는 Show/Hide Pet + Pet Settings 열기, Quit는 제외
+- answer: A
+- immediate_notes: 사용자가 추천 (a)를 수락 → D-23. 트레이 원형 사실은 D-24. Quit 항목 제외는 패리티의 의도적 예외로 D-23에 명시.
+- needs_normalization: false
+
 ## UX Scenario Cards
 
 ### UX-01: 펫으로 에이전트 상태 인지 후 attention pane으로 점프
@@ -238,12 +290,12 @@ normalization_checkpoint_every: 10
 - linked decisions: D-06, D-08, D-13, D-17, D-18, D-11
 
 ### UX-02: 펫 이동, 표시 토글, 재시작 복원
-- trigger: 펫 드래그, 글로벌 단축키(사용자 캡처 설정, 미설정 시 등록 없음 - D-14) 또는 `herdr-ide://hide|show|toggle` 호출(D-10), herdr-ide 재시작
-- happy path: 드래그로 원하는 위치에 두고, 단축키/URL scheme으로 숨기고 다시 부르며, 재시작하면 마지막 위치(연결된 모니터 위일 때만 신뢰 - D-19)와 표시 상태가 그대로 복원된다
+- trigger: 펫 드래그, 글로벌 단축키(사용자 캡처 설정, 미설정 시 등록 없음 - D-14), `herdr-ide://hide|show|toggle` 호출(D-10), Settings의 Pet 토글(D-22), 메뉴바 아이콘 메뉴(D-23), herdr-ide 재시작
+- happy path: 드래그로 원하는 위치에 두고, 단축키/URL scheme/Settings 토글/메뉴바 메뉴 중 어느 표면으로든 숨기고 다시 부르며(모두 D-09의 단일 표시 상태를 공유해 항상 일치), 재시작하면 마지막 위치(연결된 모니터 위일 때만 신뢰 - D-19)와 표시 상태가 그대로 복원된다
 - state / failure: 저장된 위치가 오프스크린 좌표(실제 사고 좌표 [542720, 163840]가 회귀 테스트에 고정됨)라도 클램프가 가시 화면 안으로 되돌린다. 꺼둔 채 종료했으면 꺼진 채 시작한다
 - recovery: 클램프가 항상 가시 영역을 강제하므로 펫을 잃어버리는 상태가 존재하지 않는다
-- proof: 클램프·위치 신뢰 단위 테스트(사고 좌표 픽스처), 재시작 후 위치/표시 상태 스크린샷, 단축키 캡처·재설정과 `herdr-ide://` 각 명령의 동작 스크린샷(관용 파싱 테스트 포함)
-- linked decisions: D-09, D-10, D-14, D-19, D-03
+- proof: 클램프·위치 신뢰 단위 테스트(사고 좌표 픽스처), 재시작 후 위치/표시 상태 스크린샷, 단축키 캡처·재설정과 `herdr-ide://` 각 명령의 동작 스크린샷(관용 파싱 테스트 포함), Settings 토글로 켜면 즉시 펫이 뜨고 토글 상태가 다른 표면과 일치함을 설치 번들에서 확인(스크린샷), 메뉴바 아이콘 렌더와 Show/Hide·Pet Settings 메뉴 동작 스크린샷
+- linked decisions: D-09, D-10, D-14, D-19, D-03, D-22, D-23
 
 ## Evidence From Code, Docs, Or Research
 
@@ -291,6 +343,13 @@ normalization_checkpoint_every: 10
 - reopened_decisions: none
 - highest_remaining_gap: 없음
 
+### Checkpoint 4
+- after_question: Q9
+- normalized_entries: Q8, Q9
+- register_changes: 마감 후 변경 요청 반영: D-22(Settings Pet 토글, D-09 단일 상태 공유), D-23(메뉴바 아이콘 이식, Quit 제외), D-24(트레이 원형·Settings 씬 fact). UX-02 트리거/경로/proof에 두 표면 추가
+- reopened_decisions: none
+- highest_remaining_gap: 없음
+
 ## Audit History
 
 ### Audit 1
@@ -322,4 +381,14 @@ normalization_checkpoint_every: 10
 - highest-risk blocker: none
 - final-blocking-question: none
 - PRD impact: PASS 봉인(cycle 2). 남은 P2 advisory 없음
+
+### Audit 4
+- type: gap-audit-gate
+- result: pass
+- missing decision_ids: none
+- unsupported assumptions: none
+- UX or behavior gap: none
+- highest-risk blocker: none
+- final-blocking-question: none
+- PRD impact: 마감 후 변경 요청(cycle 3: Settings 토글 D-22, 메뉴바 아이콘 D-23, 트레이 원형 fact D-24) 반영 후 PASS 재봉인
 
