@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-29T20:01:56+09:00",
+  "source_commit": "18653e56eee3c9ba226739864d395b6e8478d55b",
+  "feature_commit_message": "Add native pane split and zoom commands",
+  "build": {
+    "script": "macos/scripts/build_dev_app.sh",
+    "result": "pass",
+    "bundle_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
+    "executable_sha256": "4d6869e96f8c5825bc9f21f2fc90facd2f16209ec6302b24d055146a9cb9afe2",
+    "info_plist_sha256": "ad91f1cc110ad7f5f7646d518182474bda5aec78a5bc9516b75b3b147e314bc4",
+    "architecture": "arm64",
+    "minimum_macos": "14.0",
+    "strict_deep_codesign": "pass"
+  },
+  "focused_checks": {
+    "herdr_core_unit": { "passed": 22, "failed": 0 },
+    "herdr_core_ffi": { "passed": 14, "failed": 0 },
+    "swift": { "passed": 18, "failed": 0 },
+    "herdr_core_clippy_deny_warnings": "pass",
+    "rust_fmt_check": "pass",
+    "git_diff_check": "pass"
+  },
+  "fixture": {
+    "ownership_prefix": "herdr-ide-verify-",
+    "name": "herdr-ide-verify-shortcuts-20260829",
+    "root": "/tmp/herdr-ide-verify-shortcuts-20260829",
+    "manifest": "spikes/swift-shell-pivot/evidence/shortcut-fixture-manifest.json",
+    "workspace_id": "w3C",
+    "tab_id": "w3C:t1",
+    "initial_pane_id": "w3C:p1",
+    "initial_pane_count": 1,
+    "retained_after_capture": true
+  },
+  "app": {
+    "pid": 31174,
+    "attach_pid": 31223,
+    "attach_command": "/Users/hoyeonlee/.local/bin/herdr pane attach w3C:p1",
+    "process_count_before_capture": 1,
+    "window_id": 3167,
+    "window_title": "Herdr IDE",
+    "on_screen": true,
+    "key": true,
+    "frontmost": true,
+    "terminated_after_capture": true,
+    "remaining_app_process_count": 0
+  },
+  "native_menu": [
+    { "label": "Split Right", "shortcut": "Command-D", "enabled": true },
+    { "label": "Split Down", "shortcut": "Command-Shift-D", "enabled": true },
+    { "label": "Toggle Zoom", "shortcut": "Command-Option-Return", "enabled": true }
+  ],
+  "runtime_transitions": [
+    {
+      "dispatch": "native_menu",
+      "action": "Split Right",
+      "result": "pass",
+      "created_pane": "w3C:p2",
+      "observed_direction": "right"
+    },
+    {
+      "dispatch": "native_menu",
+      "action": "Split Down",
+      "result": "pass",
+      "created_pane": "w3C:p3",
+      "observed_direction": "down"
+    },
+    {
+      "dispatch": "native_menu",
+      "action": "Toggle Zoom",
+      "result": "pass",
+      "pane_id": "w3C:p1",
+      "snapshot_zoomed": "w3C:p1",
+      "accessibility_header": "w3C:p1 · zoomed"
+    }
+  ],
+  "raw_shortcut_attempt": {
+    "chord": "Command-D",
+    "peekaboo_result": "indeterminate_unverifiable",
+    "accepted_as_runtime_evidence": false,
+    "immediate_layout_change_observed": false,
+    "final_owned_fixture_pane_count": 4,
+    "additional_pane": "w3C:p4",
+    "note": "The later fourth pane is recorded without assigning a cause. Shortcut discovery is proven by the native menu inventory; actual right/down/zoom routing is proven by the three native-menu transitions."
+  },
+  "input_scope": {
+    "automated_key_chord_attempts": 1,
+    "automated_terminal_text_or_probe_bytes": 0,
+    "input_source_switches": 0,
+    "t3_or_ime_verdict_use": false
+  },
+  "visual_evidence": {
+    "screenshot": "spikes/swift-shell-pivot/evidence/pane-shortcuts-native.png",
+    "screenshot_sha256": "3e61372dbd1fa90a4a72cccbfe27d536fb87da81ceb8d0051a743cb27fc913f1",
+    "visible_claim": "The signed native app rendered the terminal header w3C:p1 · zoomed in the three-column shell."
+  },
+  "external_effects": {
+    "user_workspace_mutated": false,
+    "live_service_failure_injection": false,
+    "herdr_daemon_disrupted": false,
+    "mini_disrupted": false,
+    "chromux_disrupted": false,
+    "default_chrome_pid_9609_retained": true
+  }
+}

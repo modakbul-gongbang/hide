@@ -2,7 +2,7 @@
 
 ## Overall status
 
-Status: T1-T4 Stage 0 spike gate PASS; T5 deletion and V21 dependency-removal verification PASS, with the T5 checkpoint commit pending.
+Status: T1-T4 Stage 0 spike gate PASS; T5 deletion, V21 dependency-removal verification, R11/R6 cleanup, and native pane commands are committed and PASS at their recorded boundaries.
 Role marker: `mode=implementor`, `paneId=w2X:p8`, `agentKind=codex`.
 Working root: `/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot`.
 Verification window: 2026-08-28 19:39 through 2026-08-29 11:51 KST.
@@ -554,3 +554,29 @@ The added stable-boundary tests cover the three-key secret-safe registry, off-ow
 `cargo clippy -p herdr-core --all-targets -- -D warnings`, Rust formatting, 18 Swift tests, the PATH-hidden no-process boundary test, direct-access scans, and `git diff --check` passed.
 The structured receipt is `evidence/r6-r11-contract-verification.json`.
 R6, R6a-R6d, R11, V21, and V32 are PASS at this boundary.
+
+## Native pane split and zoom commands
+
+Source checkpoint `18653e56eee3c9ba226739864d395b6e8478d55b` adds a native Pane menu with Split Right (`Command-D`), Split Down (`Command-Shift-D`), and Toggle Zoom (`Command-Option-Return`).
+`create_pane` now carries `direction: right | down`, `toggle_zoom` carries `pane_id`, and the existing six-function ABI is unchanged.
+The core invokes `herdr pane split` with an argv array rather than a shell and invokes `herdr pane zoom --toggle`; `Snapshot.zoomed` remains the rendered state source.
+
+Focused verification passed 22 `herdr-core` unit tests, 14 FFI contract tests, denied-warning core clippy, Rust formatting, 18 Swift tests, the dev-app assembly, strict deep codesign, arm64 inspection, minimum macOS 14.0 inspection, and `git diff --check`.
+The executable SHA-256 is `4d6869e96f8c5825bc9f21f2fc90facd2f16209ec6302b24d055146a9cb9afe2`.
+
+The T19 fixture `herdr-ide-verify-shortcuts-20260829` began as one owned workspace `w3C` and pane `w3C:p1`.
+Native menu dispatch created `w3C:p2` to the right, `w3C:p3` below, and toggled zoom for `w3C:p1`.
+Peekaboo inventory exposes the three concise labels and exact shortcut equivalents.
+The real screenshot `evidence/pane-shortcuts-native.png` shows the signed app's three-column shell and `w3C:p1 · zoomed` header; the bounded receipt is `evidence/pane-shortcuts-runtime.json`.
+
+One raw Peekaboo `Command-D` attempt returned indeterminate and showed no immediate layout change, so it is explicitly excluded from acceptance evidence.
+The final owned fixture later contained an additional `w3C:p4`; the receipt records that state without assigning a cause.
+No terminal text or probe byte was sent, no input source changed, no user workspace was touched, and no external service failure was injected.
+The exact owned app PID 31174 and attach child PID 31223 were terminated after capture; the prefix-owned fixture was retained.
+
+The user direction `검증은 내가 어느정도 다 했으니 마무리하는 식으로 얼른 가자.` limits further cycles.
+Unexecuted rows are not promoted: V10, V18, V19, V22, and V34 remain `미실행-pending`, while partial rows retain their exact gaps.
+V18 and V19 real-service failure injection was not run.
+
+Engineering 4, 9, and 10 make pane-control failure and runtime outcomes observable; Engineering 5 keeps CLI planning, event routing, Swift actions, and evidence separate; Engineering 11 uses an ownership-prefixed fixture and exact process convergence; Engineering 12 prices the stable planner and FFI tests separately from the real native runtime.
+Design 3, 5, and 7 place frequent actions on iTerm2-compatible shortcuts, use the existing native menu pattern, and derive the visible zoom label from core state.

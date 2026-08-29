@@ -4,9 +4,10 @@ Status: **Partially Done**.
 
 Pre-deletion source checkpoint and `rust-native-final` target: `b2582ade493bc6569af0e9719aa672751962df96`.
 T5 deletion checkpoint: `99c4aa85e8b7b0c388c1848967690584a5e40754`.
+R11/R6 cleanup checkpoint: `48e2a56421344a2490db3051fd50a866cb8003a5`.
+Pane command source checkpoint: `18653e56eee3c9ba226739864d395b6e8478d55b`.
 
-This report describes that committed baseline, the approved T5 working-tree deletion, and retained runtime evidence.
-The exact T5 commit is recorded by the next report update after the commit exists.
+This report describes the committed T5 deletion, the follow-up contract cleanup, the pane command feature, and retained runtime evidence.
 The user supplied the authoritative physical-keyboard terminal verdict `1,2,3,4 모두 잘 맞아 다 된다`.
 The terminal V9 axis passes, the editor axis remains deferred by prior agreement, T3 and AC1-AC3 are satisfied, and T1-T4 are fully passed.
 The user explicitly authorized T5, and the tag, approved deletion, dependency removal, focused build/test checks, deterministic assembly, codesign, and native screenshot are complete.
@@ -20,6 +21,7 @@ The later direction `검증은 내가 어느정도 다 했으니 마무리하는
 - The workbench browses existing local files, renders image, Markdown, code, and text surfaces, and supports local text drafts and saves without adding create, rename, move, or delete operations.
 - Browser status and opening are delegated to the literal chromux executable and the `default` profile, with visible unavailable, stale, absent-profile, loading, and ready states.
 - The mini positive path, environment status, destructive-consequence previews, persistent UI state, and the selective-click-through pet surface are represented in the shell.
+- The native Pane menu exposes Split Right (`Command-D`), Split Down (`Command-Shift-D`), and Toggle Zoom (`Command-Option-Return`); the actions travel through the six-function FFI event contract and the visible terminal header derives zoom state from the core snapshot.
 - The p3 checkpoints add machine-tested composition byte suppression, re-anchor the SwiftTerm marked-text overlay after pane echo, and hide the block caret while composition is active; the human owner then passed all four terminal checks with `1,2,3,4 모두 잘 맞아 다 된다`.
 
 The current human-readiness runtime is captured in [v9-b2582ad-human-retest-ready.png](evidence/v9-b2582ad-human-retest-ready.png) and [v9-b2582ad-human-retest-ready.json](evidence/v9-b2582ad-human-retest-ready.json).
@@ -46,7 +48,7 @@ The approved final crate deletion/split is not complete.
 An additive platform-neutral `herdr-core` crate exists, while the original root Rust application and its legacy rendering dependencies remain in place.
 No `herdr-macos` migration-removal step was performed.
 
-## Exact C ABI at `b2582ad`
+## Exact C ABI at `18653e5`
 
 ```c
 HerdrCore *herdr_core_create(const uint8_t *options_json, size_t len);
@@ -92,7 +94,8 @@ Every event is `{ schema_version: u32, kind: string, payload: object }` with sch
 | `browser_status` | `{ state: string, profile: string, current_url: string | null, current_title: string | null, message: string | null, last_checked_at_unix_ms: u64 }` |
 | `create_workspace` | `{ path: string, label: string, create_worktree: bool }` |
 | `create_tab` | `{ workspace_id: string, label: string }` |
-| `create_pane` | `{ tab_id: string, cwd: string, command: string | null }` |
+| `create_pane` | `{ tab_id: string, cwd: string, command: string | null, direction: right | down }` |
+| `toggle_zoom` | `{ pane_id: string }` |
 | `close_workspace` | `{ workspace_id: string, confirmed: bool }` |
 | `close_tab` | `{ tab_id: string, confirmed: bool }` |
 | `close_pane` | `{ pane_id: string, confirmed: bool }` |
@@ -264,7 +267,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 
 | V | Status | Evidence and remaining gap |
 | --- | --- | --- |
-| V1 | PASS | Current `cargo test -p herdr-core`: 20 unit and 11 FFI tests, including required error paths. |
+| V1 | PASS | Current `cargo test -p herdr-core`: 22 unit and 14 FFI tests, including required error paths and pane command routing. |
 | V2 | PASS | Stage-0 byte round trip and later [live-input-proof.png](evidence/live-input-proof.png). |
 | V3 | PARTIAL | Live polling/attach exists; full focus transition and both absence modes are not one complete runtime receipt. |
 | V4 | PARTIAL | File contracts and surfaces exist; all render/save/conflict branches are not directly evidenced. |
@@ -273,7 +276,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | V7 | PARTIAL | Warning is native-evidenced, but the actual close result executor is incomplete. |
 | V8 | PASS | [t19-v8-scale-runtime.json](evidence/t19-v8-scale-runtime.json). |
 | V9 | PASS | Human terminal verdict: `1,2,3,4 모두 잘 맞아 다 된다`; editor axis deferred by prior agreement. |
-| V10 | BLOCKED | Final human visual-quality review is missing. |
+| V10 | 미실행-pending | Final six-axis visual-quality review was not executed as a complete V10 row. |
 | V11 | PASS | Two unchanged-source assemblies have identical bundle and executable hashes; launch and strict signing pass. |
 | V12 | PASS | Wrong unused loopback port produced stale plus last-checked without daemon disruption. |
 | V13 | PASS | `herdr-ide-verify-absent` guidance passed without profile creation. |
@@ -281,11 +284,11 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | V15 | PARTIAL | Protocol mismatch is explicit in process; complete native runtime evidence is missing. |
 | V16 | PARTIAL | Mini positive path passes; not every action was driven through the final app. |
 | V17 | PARTIAL | In-process missing/corrupt fallback passes; native log/status proof is incomplete. |
-| V18 | NOT RUN | Live Herdr server-down and recovery injection was not performed. |
-| V19 | NOT RUN | Mini disconnect/reconnect injection was not performed. |
+| V18 | 미실행-pending | Live Herdr server-down and recovery injection was not performed. |
+| V19 | 미실행-pending | Mini disconnect/reconnect injection was not performed. |
 | V20 | PASS | Missing summary fallback and nonaccess receipt pass. |
 | V21 | PASS | T5 dependency reachability is empty, the six-function ABI is intact, owner-thread tests pass, and Swift has no registry bypass. |
-| V22 | NOT RUN | Finder-launched remote authentication path was not completed. |
+| V22 | 미실행-pending | Finder-launched remote authentication path was not completed. |
 | V23 | PASS | Stage-0 actual linked-app 100-callback evidence is retained in [runtime.json](evidence/runtime.json). |
 | V24 | PASS | Selective hit-region receipt and real pet screenshot pass. |
 | V25 | PASS | Static and owned-process OPENROUTER sentinel nonaccess evidence passes. |
@@ -297,19 +300,17 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | V31 | PARTIAL | Aggregate warning is shown; actual workspace close result is incomplete. |
 | V32 | PASS | All three keys have tested present/absent or default contracts, value-free status, and a zero-result Swift raw-access scan. |
 | V33 | PARTIAL | Some browser/mini loading states exist; all five loading surfaces are not directly evidenced. |
-| V34 | NOT RUN | Focused-pane path versus tree-root divergence was not demonstrated. |
+| V34 | 미실행-pending | Focused-pane path versus tree-root divergence was not demonstrated. |
 | V35 | PARTIAL | Tab/worktree/attention warnings exist; final execution results are incomplete. |
 
 ## Verification performed
 
 ### Build and static
 
-- The most recent `cargo test -p herdr-core` passed 20 unit tests and 11 FFI integration tests at `d290928`; the later `ecc46fb` and `b2582ad` commits change only p3-owned Swift input views.
-- `swift test --package-path macos --disable-keychain --disable-sandbox` passed 17 tests at `b2582ad`.
-- `/bin/bash macos/scripts/build_dev_app.sh` built the release static library, built the Swift package, assembled the app, and passed strict deep codesign at `b2582ad`.
-- The executable SHA-256 is `5d0027358d112b0294c758137e2f296b5421a5c8b5f84945ef94074a82c57964`.
-- The bundle-files manifest SHA-256 is `6919680c545371d9651c8318a60c60180949a1817df52161fcf97f4e73befa64`.
-- The executable is a thin `arm64` Mach-O with minimum macOS `14.0`, SDK `15.2`, ad-hoc CDHash `80e2b2899ee721b5e40c406f97cf3047e37c5980`.
+- The current pane-command boundary passed 22 `herdr-core` unit tests, 14 FFI integration tests, denied-warning core clippy, Rust formatting, and 18 Swift tests.
+- `/bin/bash macos/scripts/build_dev_app.sh` built the release static library, built the Swift package, assembled the app, and passed strict deep codesign from the exact feature source.
+- The current executable SHA-256 is `4d6869e96f8c5825bc9f21f2fc90facd2f16209ec6302b24d055146a9cb9afe2` and the `Info.plist` SHA-256 is `ad91f1cc110ad7f5f7646d518182474bda5aec78a5bc9516b75b3b147e314bc4`.
+- The executable is a thin `arm64` Mach-O with minimum macOS `14.0` and strict deep codesign passed.
 - The first bundle hash attempt inherited an unavailable `C.UTF-8` locale and failed before producing a claim; repeating with process-local `LC_ALL=C` succeeded without changing the user environment.
 
 ### Real native runtime
@@ -329,6 +330,12 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 
 The current screenshot and fresh Peekaboo observations are [v9-b2582ad-human-retest-ready.png](evidence/v9-b2582ad-human-retest-ready.png), [apps JSON](evidence/v9-b2582ad-human-retest-ready-apps.json), [windows JSON](evidence/v9-b2582ad-human-retest-ready-windows.json), [AX JSON](evidence/v9-b2582ad-human-retest-ready-see.json), and [readiness receipt](evidence/v9-b2582ad-human-retest-ready.json).
 
+The later prefix-owned shortcut fixture `herdr-ide-verify-shortcuts-20260829` started as workspace `w3C` with one pane.
+Native menu dispatch created a right pane and a down pane, then toggled `w3C:p1` zoom through the core event path.
+Peekaboo menu inventory exposes the three shortcut equivalents and the signed app rendered `w3C:p1 · zoomed` in [pane-shortcuts-native.png](evidence/pane-shortcuts-native.png).
+The one raw `Command-D` attempt returned indeterminate and is not acceptance evidence; a later fourth owned fixture pane is recorded without assigning its cause.
+The bounded receipt is [pane-shortcuts-runtime.json](evidence/pane-shortcuts-runtime.json).
+
 ### External and remote
 
 - Approved positive mini evidence exists in [t13-t19-mini-positive-runtime.json](evidence/t13-t19-mini-positive-runtime.json).
@@ -341,8 +348,8 @@ The current screenshot and fresh Peekaboo observations are [v9-b2582ad-human-ret
 
 | Test group | Current count | Regression guarded |
 | --- | ---: | --- |
-| `herdr-core` unit | 21 | Token projection, three-key environment registry, persistence, files, fixtures, chromux planning, live socket/protocol behavior |
-| `herdr-core` FFI | 13 | Six ABI calls, buffers/callbacks, schema, malformed/unknown events, invalid options, off-owner dispatch/snapshot/destroy, live input without attach, byte preservation |
+| `herdr-core` unit | 22 | Token projection, three-key environment registry, persistence, files, fixtures, chromux planning, live socket/protocol behavior, and shell-free right/down/zoom command planning |
+| `herdr-core` FFI | 14 | Six ABI calls, buffers/callbacks, schema, malformed/unknown events, invalid options, off-owner dispatch/snapshot/destroy, live input without attach, byte preservation, and pane event routing |
 | Swift package | 18 | IME byte policy, CDP title decoding, PATH-hidden preflight, pet hit geometry/lifecycle policy, consequence previews |
 | Stage-0 spike Rust | 5 retained | ABI callback and buffer boundary |
 | Stage-0 composition proxy | Diagnostic only | Coordinate and lifecycle reasoning; never V9 acceptance |
@@ -394,9 +401,8 @@ The macOS source has no direct `ProcessInfo.processInfo.environment` access; bro
 
 1. The four-item V9 terminal checklist is complete with `1,2,3,4 모두 잘 맞아 다 된다`; the editor axis remains deferred by prior agreement.
 2. V10 needs the final six-axis human review: three-column structure/density, typography/Hangul, state expression, dark mode, resize behavior, and native conventions.
-3. Add and verify native right/down pane splits and pane zoom through the existing FFI event path.
-4. Rows not covered by retained evidence or legitimate manual acceptance remain `미실행-pending`, especially V18 and V19 live-service failure injection.
-5. Expose a read-only live `input_generation` counter if zero-input readiness must be machine-proven in future sessions.
+3. Rows not covered by retained evidence or legitimate manual acceptance remain `미실행-pending`, especially V18 and V19 live-service failure injection.
+4. Expose a read-only live `input_generation` counter if zero-input readiness must be machine-proven in future sessions.
 
 ## T5 verification result
 
@@ -429,6 +435,7 @@ The structured receipt is [r6-r11-contract-verification.json](evidence/r6-r11-co
 - Engineering 5: this build/fixture/report batch did not edit p3-owned terminal-input source and keeps core, live attach, UI, fixture, and evidence boundaries separate.
 - Engineering 11: exact app count, fixture name, manifest ownership, one attach child, repeat status, and unchanged bootstrap hash make repeated preparation converge.
 - Engineering 12 and the outcome-focused test practice: stable logic is covered in process, while native rendering and the V9 readiness claim use a real signed app and fresh screenshot.
+- Design 3, 5, and 7: the frequent split and zoom actions use the native Pane menu, iTerm2-compatible shortcuts, and snapshot-derived visible zoom state.
 - Design 4 and 7: the shell derives connection, pane, browser, mini, and agent state and represents it structurally instead of asking the user to calculate it.
 - Design 6: no destructive action was taken; existing preview surfaces state process, workspace, tab, and checkout consequences before confirmation.
 - The environment practice keeps the declared `SSH_AUTH_SOCK` contract in Rust code and values external, while this report calls out the remaining Swift bypass instead of hiding it.
