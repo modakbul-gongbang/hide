@@ -2,7 +2,7 @@ import AppKit
 import MarkdownUI
 import SwiftUI
 
-struct WorkspaceFileNode: Identifiable, Hashable {
+struct WorkspaceFileNode: Identifiable, Hashable, Sendable {
     let url: URL
     let isDirectory: Bool
     let children: [WorkspaceFileNode]?
@@ -16,8 +16,9 @@ enum WorkspaceTree {
         ".git", ".build", "build", "target", "DerivedData",
     ]
 
-    static func load(root: URL) -> [WorkspaceFileNode] {
-        [node(at: root, depth: 0)].compactMap { $0 }
+    static func load(root: URL?) -> [WorkspaceFileNode] {
+        guard let root else { return [] }
+        return [node(at: root, depth: 0)].compactMap { $0 }
     }
 
     private static func node(at url: URL, depth: Int) -> WorkspaceFileNode? {
@@ -54,8 +55,8 @@ struct WorkbenchPanel: View {
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
     private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
-    private var activeRoot: URL {
-        model.focusedPath ?? model.core.workspaceRoot
+    private var activeRoot: URL? {
+        model.focusedPath
     }
     private var effectiveReadonlyReason: String? {
         if model.core.isRemoteWorkspace {
@@ -81,14 +82,18 @@ struct WorkbenchPanel: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .task(id: activeRoot?.path) {
+            let root = activeRoot
+            let loaded = await Task.detached(priority: .userInitiated) {
+                WorkspaceTree.load(root: root)
+            }.value
+            guard !Task.isCancelled else { return }
+            roots = loaded
+        }
         .onAppear {
-            roots = WorkspaceTree.load(root: activeRoot)
             if let restored = model.core.snapshot?.uiState.selectedPath {
                 model.core.openFile(URL(fileURLWithPath: restored))
             }
-        }
-        .onChange(of: activeRoot.path) { _, _ in
-            roots = WorkspaceTree.load(root: activeRoot)
         }
         .onChange(of: editor?.contentsUTF8) { _, contents in
             if let contents, contents != draft { draft = contents }
@@ -99,38 +104,51 @@ struct WorkbenchPanel: View {
         }
     }
 
+    @ViewBuilder
     private var fileTree: some View {
-        ScrollView {
-            OutlineGroup(roots, children: \.children) { node in
-                Button {
-                    if node.isDirectory {
-                        let current = Set(model.core.snapshot?.uiState.expandedPaths ?? [])
-                        var updated = current
-                        if !updated.insert(node.url.path).inserted { updated.remove(node.url.path) }
-                        model.core.persistUIState(expandedPaths: updated.sorted())
-                    } else {
-                        model.core.openFile(node.url)
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: node.isDirectory ? "folder" : icon(for: node.url))
-                            .foregroundStyle(node.isDirectory ? .blue : .secondary)
-                        Text(node.name)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
+        Group {
+            if activeRoot == nil {
+                ContentUnavailableView {
+                    Label("No workspace", systemImage: "folder")
+                } description: {
+                    Text("Choose New Workspace to browse local files.")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("workspace-file-\(node.name)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(ShellMetrics.panelPadding)
+            } else {
+                ScrollView {
+                    OutlineGroup(roots, children: \.children) { node in
+                        Button {
+                            if node.isDirectory {
+                                let current = Set(model.core.snapshot?.uiState.expandedPaths ?? [])
+                                var updated = current
+                                if !updated.insert(node.url.path).inserted { updated.remove(node.url.path) }
+                                model.core.persistUIState(expandedPaths: updated.sorted())
+                            } else {
+                                model.core.openFile(node.url)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: node.isDirectory ? "folder" : icon(for: node.url))
+                                    .foregroundStyle(node.isDirectory ? .blue : .secondary)
+                                Text(node.name)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("workspace-file-\(node.name)")
+                    }
+                    .padding(10)
+                }
+                .overlay(alignment: .topTrailing) {
+                    Text("Local, existing files only")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(8)
+                }
             }
-            .padding(10)
-        }
-        .overlay(alignment: .topTrailing) {
-            Text("Local, existing files only")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(8)
         }
         .accessibilityIdentifier("workbench-file-tree")
     }

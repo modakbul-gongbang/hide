@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -71,6 +72,30 @@ import Testing
     #expect(bridge.snapshot != nil)
     #expect(bridge.runtimeSelection == nil)
     #expect(bridge.bridgeError == HideStartupDiagnostic.initializing)
+}
+
+@Test @MainActor func mainWindowPresentationIsVisibleBeforeRuntimeWorkStarts() {
+    let application = NSApplication.shared
+    let window = NSWindow(
+        contentRect: CGRect(x: 0, y: 0, width: 480, height: 320),
+        styleMask: [.titled, .closable],
+        backing: .buffered,
+        defer: false
+    )
+
+    MainWindowPresentation.present(window, application: application)
+
+    #expect(window.isVisible)
+    #expect(application.windows.contains { $0 === window })
+    // Closing the last test window asks the xctest-host application to
+    // terminate while the remaining Swift Testing cases are still running.
+    // Ordering it out keeps the test isolated without changing host
+    // lifecycle state.
+    window.orderOut(nil)
+}
+
+@Test func finderLaunchWithoutAnActiveWorkspaceDoesNotScanTheProcessDirectory() {
+    #expect(WorkspaceTree.load(root: nil).isEmpty)
 }
 
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {
