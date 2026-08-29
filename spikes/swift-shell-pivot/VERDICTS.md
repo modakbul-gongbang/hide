@@ -608,7 +608,7 @@ Default, missing, corrupt, invalid, duplicate, reserved, persistence, and dynami
 The native Settings scene itself rendered correctly in `evidence/pane-actions-settings-diagnostic-r2-settings-latest.png`.
 Exact-window TextField automation did not change the visible value and returned indeterminate receipts, so it is not acceptance evidence and was not retried.
 `evidence/pane-actions-settings-driver-limitation.json` records the driver limitation.
-Native TextField editing, immediate menu-equivalent refresh, action routing after user edit, and relaunch persistence are handed to the final human checklist.
+Native TextField editing, immediate menu-equivalent refresh, action routing after user edit, and relaunch persistence were not proven by the failed driver; they were subsequently accepted through the user's final manual check with the exact verdict `좋네`.
 No global input was sent after that handoff.
 
 Before the fixture-retarget regression was added, stale/global focus redirected a diagnostic menu or shortcut action into user-owned w2Y and created at least one unintended pane split.
@@ -640,5 +640,12 @@ Design Principle 6 keeps destructive Close Pane consequences ahead of confirmati
 
 V8 remains PASS at 220752 KB combined RSS.
 The pane-grid zoom-buffer regression is PASS on the owned three-pane fixture.
-Settings native edit and relaunch remains human-pending because the failed driver attempt is not promoted to success.
+Settings native edit, immediate routing, and relaunch behavior are `사용자 수동 검증으로 수용됨` under the exact final verdict `좋네`; the failed driver attempt remains recorded as unsuccessful automation and is not relabeled as machine evidence.
 V18 and V19 external-service failure injection remain `미실행-pending`.
+
+## Final pane-grid human acceptance
+
+The user's exact final verdict is `좋네`.
+This closes the final human checklist as `사용자 수동 검증으로 수용됨` for the simultaneous pane grid, Split Right, Split Down, Toggle Zoom, Close Pane, the sidebar responsiveness correction, Settings shortcut rebind behavior, and authoritative focus versus hover separation.
+The acceptance supplements the retained machine and native evidence; it does not convert the failed Settings automation attempt into a pass.
+It also does not change V10, V18, V19, other partial or unexecuted verification rows, or the recorded Sasu gap-audit/spec BLOCK and start refusal into Done.

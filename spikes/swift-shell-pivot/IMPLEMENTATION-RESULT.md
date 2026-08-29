@@ -6,7 +6,8 @@ Pre-deletion source checkpoint and `rust-native-final` target: `b2582ade493bc656
 T5 deletion checkpoint: `99c4aa85e8b7b0c388c1848967690584a5e40754`.
 R11/R6 cleanup checkpoint: `48e2a56421344a2490db3051fd50a866cb8003a5`.
 Pane command source checkpoint: `18653e56eee3c9ba226739864d395b6e8478d55b`.
-Current pane-grid, lifecycle, shortcut Settings, Close Pane, and zoom-buffer correction: working tree based on `b2670107dc152eaa67d448dce4d4681151170448`, pending the checkpoint recorded later in this report.
+Pane-grid, lifecycle, shortcut Settings, Close Pane, and zoom-buffer correction checkpoint: `70012581cb979f828ea9cb16da21aef0d2830db1`.
+Workspace-history honesty correction checkpoint: `8ed0d41c852bbcc58ea67f90e6a988ff71681e4b`.
 
 This report describes the committed T5 deletion, the follow-up contract cleanup, the pane command feature, and retained runtime evidence.
 The user supplied the authoritative physical-keyboard terminal verdict `1,2,3,4 모두 잘 맞아 다 된다`.
@@ -367,7 +368,8 @@ See [zoom-buffer-retention-diagnostic.json](evidence/zoom-buffer-retention-diagn
 The standard Settings scene renders its Keyboard-only pane-binding form in [pane-actions-settings-diagnostic-r2-settings-latest.png](evidence/pane-actions-settings-diagnostic-r2-settings-latest.png).
 Default, missing, corrupt, invalid, duplicate, reserved, persistence, and dynamic command-routing seams pass focused tests.
 The exact-window TextField driver did not change the visible value and returned indeterminate receipts, so it is not recorded as successful native rebind evidence and was not retried.
-Actual Settings edit, immediate Pane-menu refresh, rebound action routing, and relaunch persistence remain on the final human checklist, as recorded in [pane-actions-settings-driver-limitation.json](evidence/pane-actions-settings-driver-limitation.json).
+The failed driver remains documented in [pane-actions-settings-driver-limitation.json](evidence/pane-actions-settings-driver-limitation.json) and is not machine acceptance evidence.
+Actual Settings edit, immediate Pane-menu refresh, rebound action routing, and relaunch persistence were subsequently accepted by the user under the exact final verdict `좋네`.
 
 ### External and remote
 
@@ -435,9 +437,10 @@ The macOS source has no direct `ProcessInfo.processInfo.environment` access; bro
 ## Remaining human review and follow-ups
 
 1. The four-item V9 terminal checklist is complete with `1,2,3,4 모두 잘 맞아 다 된다`; the editor axis remains deferred by prior agreement.
-2. V10 needs the final six-axis human review: three-column structure/density, typography/Hangul, state expression, dark mode, resize behavior, and native conventions.
-3. Rows not covered by retained evidence or legitimate manual acceptance remain `미실행-pending`, especially V18 and V19 live-service failure injection.
-4. Expose a read-only live `input_generation` counter if zero-input readiness must be machine-proven in future sessions.
+2. The final pane-grid checklist is `사용자 수동 검증으로 수용됨` under `좋네`, covering the grid, four pane shortcuts, sidebar responsiveness, Settings rebind, and authoritative focus versus hover separation.
+3. V10 remains incomplete as a distinct six-axis review row: three-column structure/density, typography/Hangul, state expression, dark mode, resize behavior, and native conventions.
+4. Rows not covered by retained evidence or legitimate manual acceptance remain `미실행-pending`, especially V18 and V19 live-service failure injection.
+5. Expose a read-only live `input_generation` counter if zero-input readiness must be machine-proven in future sessions.
 
 ## T5 verification result
 
@@ -474,5 +477,12 @@ The structured receipt is [r6-r11-contract-verification.json](evidence/r6-r11-co
 - Design 4 and 7: the shell derives connection, pane, browser, mini, and agent state and represents it structurally instead of asking the user to calculate it.
 - Design 6: no destructive action was taken; existing preview surfaces state process, workspace, tab, and checkout consequences before confirmation.
 - The environment practice keeps the declared `SSH_AUTH_SOCK` contract in Rust code and values external, while this report calls out the remaining Swift bypass instead of hiding it.
+
+## Final pane-grid user acceptance
+
+The user's exact final verdict is `좋네`.
+The simultaneous pane grid, Split Right, Split Down, Toggle Zoom, Close Pane, sidebar responsiveness correction, Settings shortcut rebind, and authoritative focus versus hover separation are therefore recorded as `사용자 수동 검증으로 수용됨`.
+This manual acceptance closes that final product checklist without manufacturing machine execution for the failed Settings driver or for any other unexecuted verification row.
+V10, V18, V19, remaining partial rows, and the Sasu gap-audit/spec BLOCK and start refusal remain open exactly as recorded above.
 
 This implementation is not Done and has no receipt-backed Sasu completion claim.
