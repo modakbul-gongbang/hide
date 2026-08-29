@@ -410,3 +410,38 @@ The outcome-focused test practice uses durable in-process contracts for coordina
 T5, every tag including `rust-native-final`, source or evidence deletion, live herdr failure injection, mini disconnect injection, chromux daemon kill, default profile deletion, Chrome termination, push, PR, delivery, unified finalize, and Done remain NOT RUN or forbidden.
 The user-directed downstream dependency deviation remains explicit because this additive work proceeded while T3 and the Stage 0 gate stayed open.
 The coherent source, test, and selected evidence checkpoint for this operational batch is `b1a2d4dcf08223df7b0de255571257288e3ea797`.
+
+## CDP title character-reference display correction
+
+The retained launch receipt `evidence/t12-default-runtime.json` proved that structured CDP JSON decoding produced the literal title `Who&#39;s using Chrome?`, and the retained native screenshot rendered that undecoded value.
+The live default endpoint returned an empty array during this correction, so it was observed read-only and was not mutated to recreate the prior page target.
+The defect was fixed at the successful `ChromuxTab.title` decoding boundary: JSON remains decoded by `JSONDecoder`, then only the decoded title string has CoreFoundation character references unescaped once before it enters the runtime receipt and SwiftUI display.
+URL, type, array structure, type validation, endpoint reachability, and invalid-JSON behavior remain on the existing structured decoding path.
+
+The focused `cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing` test used the retained `/json/list` payload shape and first failed because the observed value remained `Who&#39;s using Chrome?`.
+After the boundary fix, that test passed and also proved that `chrome://profile-picker/` and the `page` type remained unchanged.
+The full affected Swift suite passed 7 tests.
+The development app assembled successfully and strict deep codesign verification passed.
+
+Peekaboo permissions reported Screen Recording and Accessibility granted before observation.
+Because the live default CDP endpoint had no page target, one owned loopback endpoint on port 65431 supplied only the retained failing JSON payload to the app's existing DEBUG endpoint override.
+It did not send a command to Chrome, chromux, herdr, or mini.
+Exactly one current assembled dev app was present for the accepted observation: PID 6821 with main window ID 1906 titled `Herdr IDE`.
+The accessibility tree exposed `Who's using Chrome?`, and the single fresh exact-window screenshot visibly renders the same decoded title at `evidence/v5-decoded-chrome-title.png`.
+The corresponding structured runtime receipt is `evidence/t12-decoded-title-runtime.json`, and the combined verification record is `evidence/v5-decoded-chrome-title-verification.json`.
+
+An earlier owned launch PID 3828 was discarded before evidence capture because it had been started without the bounded workspace-root argument and spent its time in the existing Workbench filesystem traversal.
+A process sample ruled out the CDP decoder, PID 3828 was terminated, and no screenshot from that launch was retained as acceptance evidence.
+After the accepted screenshot, exact ownership was rechecked and only app PID 6821 and loopback PID 3145 were terminated.
+The final audit found no owned Herdr IDE app and no listener on port 65431.
+Default Chrome PID 9609 remains running, and the unrelated modakbul Chrome PID 11478 remains running and untouched.
+
+Engineering Principle 4 preserves explicit structured decode and endpoint failures instead of accepting raw JSON heuristics.
+Engineering Principle 5 keeps CDP transport, structured JSON decoding, title display normalization, and SwiftUI rendering as separate concerns.
+Engineering Principle 12 prices the regression at the small stable CDP parsing boundary, while the user-visible claim is proven once in the signed native app.
+Engineering Principle 13 fixes the character-reference class rather than replacing only the observed apostrophe string.
+Design Principle 7 is satisfied by rendering the browser's derived title as readable user-facing state.
+The outcome-focused test practice asserts the caller-visible decoded title while preserving the neighboring structured fields.
+
+No T3 human retest, keyboard automation, T5 action, file deletion, fixture workspace recreation, tag, push, PR, gate rerun, finalize, qa-log change, or external-service failure injection occurred.
+T3 remains BLOCKED with AC2 unmet and V9 pending human judgment, and T5 remains forbidden.

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "verdict": "PASS",
+  "boundary": "CDP JSONDecoder -> ChromuxTab.title -> SwiftUI Text",
+  "before": {
+    "receipt": "evidence/t12-default-runtime.json",
+    "current_title": "Who&#39;s using Chrome?"
+  },
+  "after": {
+    "receipt": "evidence/t12-decoded-title-runtime.json",
+    "current_title": "Who's using Chrome?",
+    "screenshot": "evidence/v5-decoded-chrome-title.png",
+    "accessibility_text": "Who's using Chrome?"
+  },
+  "regression": {
+    "focused_test": "cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing",
+    "before_fix": "FAIL: title remained Who&#39;s using Chrome?",
+    "after_fix": "PASS",
+    "swift_suite": "PASS: 7 tests"
+  },
+  "native_observation": {
+    "app_pid": 6821,
+    "window_id": 1906,
+    "window_title": "Herdr IDE",
+    "app_bundle": "macos/build/assembled/HerdrIDE.app",
+    "loopback_fixture_pid": 3145,
+    "loopback_fixture_port": 65431,
+    "loopback_fixture_reason": "The live default CDP endpoint returned an empty array, so an owned one-shot endpoint supplied the retained failing CDP payload without mutating Chrome.",
+    "app_terminated": true,
+    "loopback_fixture_terminated": true
+  },
+  "retained_external_processes": {
+    "default_chrome_pid": 9609,
+    "modakbul_chrome_pid": 11478,
+    "status": "running and untouched after verification"
+  },
+  "not_run": [
+    "T3 human keyboard retest",
+    "T5",
+    "external service failure injection",
+    "gate rerun",
+    "finalize",
+    "tag",
+    "push",
+    "pull request"
+  ]
+}

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import HerdrMacOS
 
@@ -69,4 +70,17 @@ import Testing
     #expect(notice.requiresConfirmation)
     #expect(notice.consequence.contains("removed from disk"))
     #expect(notice.consequence.contains("uncommitted files"))
+}
+
+@Test func cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing() throws {
+    let payload = Data(
+        #"[{"url":"chrome://profile-picker/","title":"Who&#39;s using Chrome?","type":"page"}]"#.utf8
+    )
+
+    let tabs = try ChromuxTabDecoder.decode(payload)
+
+    #expect(tabs.count == 1)
+    #expect(tabs[0].url == "chrome://profile-picker/")
+    #expect(tabs[0].title == "Who's using Chrome?")
+    #expect(tabs[0].type == "page")
 }

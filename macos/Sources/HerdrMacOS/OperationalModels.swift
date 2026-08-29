@@ -1,4 +1,5 @@
 import AppKit
+import CoreFoundation
 import Foundation
 
 enum RuntimePhase: String, Codable, Sendable {
@@ -37,10 +38,38 @@ private struct ChromuxProfile: Decodable {
     let daemon: String?
 }
 
-private struct ChromuxTab: Decodable {
+struct ChromuxTab: Decodable {
     let url: String?
     let title: String?
     let type: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case url
+        case title
+        case type
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        title = try container.decodeIfPresent(String.self, forKey: .title).map { encodedTitle in
+            guard encodedTitle.contains("&"),
+                  let decodedTitle = CFXMLCreateStringByUnescapingEntities(
+                      kCFAllocatorDefault,
+                      encodedTitle as CFString,
+                      nil
+                  )
+            else { return encodedTitle }
+            return decodedTitle as String
+        }
+    }
+}
+
+enum ChromuxTabDecoder {
+    static func decode(_ data: Data) throws -> [ChromuxTab] {
+        try JSONDecoder().decode([ChromuxTab].self, from: data)
+    }
 }
 
 private struct ProcessReceipt: Sendable {
@@ -230,7 +259,7 @@ enum ChromuxExecutor {
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
         guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let tabs = try? JSONDecoder().decode([ChromuxTab].self, from: data)
+              let tabs = try? ChromuxTabDecoder.decode(data)
         else { return (false, nil) }
         return (true, tabs.first(where: { $0.type == "page" }) ?? tabs.first)
     }
