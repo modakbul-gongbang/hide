@@ -1,7 +1,7 @@
 ---
 topic: "herdr-pet을 herdr-ide로 완전 통합"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"
 review_profile: "standard"
 review_rationale: "로컬 데스크톱 앱의 사용자 가시 UI와 코어 상태 로직을 크게 바꾸지만, 프로덕션 데이터·인증·과금·외부 파괴적 side effect 경계는 건드리지 않는다."
 source_intake: "agents/interview/pet-integration/qa-log.md"
