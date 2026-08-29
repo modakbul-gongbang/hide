@@ -416,7 +416,7 @@ private struct StatusBar: View {
         if model.browser.receipt.phase == .failed || model.browser.receipt.phase == .stale {
             return model.browser.receipt.message
         }
-        if let environment = model.core.snapshot?.status.environment.first,
+        if let environment = model.core.snapshot?.status.environment.first(where: { $0.key == "SSH_AUTH_SOCK" }),
            environment.state != "available" {
             return environment.message
         }

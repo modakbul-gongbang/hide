@@ -3,6 +3,7 @@
 Status: **Partially Done**.
 
 Pre-deletion source checkpoint and `rust-native-final` target: `b2582ade493bc6569af0e9719aa672751962df96`.
+T5 deletion checkpoint: `99c4aa85e8b7b0c388c1848967690584a5e40754`.
 
 This report describes that committed baseline, the approved T5 working-tree deletion, and retained runtime evidence.
 The exact T5 commit is recorded by the next report update after the commit exists.
@@ -29,13 +30,13 @@ The earlier d290928 and ecc46fb readiness artifacts are retained as superseded c
 | Module | Current responsibility | Boundary status |
 | --- | --- | --- |
 | `herdr-core/src/model.rs` | Versioned options, snapshot, status, terminal, editor, IME, sidebar, and UI-state data | Platform-neutral committed contract |
-| `herdr-core/src/ffi.rs` and `include/herdr_core.h` | Six-function C ABI, Rust-owned buffers, callback registration, panic containment, owner-thread diagnostics | Implemented; off-owner `snapshot` and `destroy` still need contract tightening |
+| `herdr-core/src/ffi.rs` and `include/herdr_core.h` | Six-function C ABI, Rust-owned buffers, callback registration, panic containment, owner-thread enforcement | Implemented; off-owner snapshot and destroy reject, notify, and preserve an observable error for the owner |
 | `herdr-core/src/runtime.rs` | Event validation, state transitions, terminal generations, persistence, file actions, browser and remote status | Implemented; create/close operations are still preview/no-op paths |
 | `herdr-core/src/live.rs` | Local Herdr socket polling, protocol 21 enforcement, one PTY attach, terminal output, resize, and input routing | Implemented and runtime-evidenced on a prefix-owned pane |
 | `herdr-core/src/sidebar.rs` | Seven-state token projection and authoritative ordering | Implemented and unit/runtime-evidenced |
 | `herdr-core/src/files.rs` | Existing-file open, draft, save, conflict, and diff projection | Implemented; full native failure matrix remains incomplete |
 | `herdr-core/src/chromux.rs` and macOS operational models | Pure planning plus default-profile executor, CDP read-only status, visible results | Implemented for approved default and safe failure branches |
-| `herdr-core/src/environment.rs` | Enumerable `SSH_AUTH_SOCK` contract without value disclosure | Implemented, but Swift-side direct environment reads remain a registry bypass |
+| `herdr-core/src/environment.rs` | Enumerable `SSH_AUTH_SOCK`, `PATH`, and `HERDR_SOCKET_PATH` contracts without value disclosure | Implemented; Swift consumes only registry state and has no direct raw environment read |
 | `herdr-core/src/persistence.rs` | Versioned UI state, safe missing/corrupt fallback, atomic replacement | Implemented; full native relaunch restoration evidence remains incomplete |
 | `herdr-core/src/fixture.rs` and `src/bin/herdr-ide-fixture.rs` | Prefix validation, local/mini fixture plan/create/status/cleanup | Implemented and used for the retained V9 fixture |
 | `macos/Sources/HerdrMacOS` | SwiftUI shell, bridge/model, live terminal, workbench, browser/mini status, notices, and pet | Production application surface after the approved T5 removal |
@@ -203,8 +204,8 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | T3 | PASS | The physical-keyboard terminal verdict is `1,2,3,4 모두 잘 맞아 다 된다`; the editor axis remains deferred by prior agreement. |
 | T4 | PASS | SwiftPM, Rust staticlib, app assembly, arm64, macOS 14, and ad-hoc signing passed. |
 | T5 | PASS | Annotated pre-deletion tag verified; approved Rust-native shell files and nine obsolete dependency families removed; V21/build/native evidence passes. |
-| T6 | PARTIAL | Registry and tests exist, but committed Swift code still reads `PATH`, `SSH_AUTH_SOCK`, and `HERDR_SOCKET_PATH` directly. |
-| T7 | PARTIAL | ABI and status are implemented, but off-owner snapshot/destroy enforcement does not fully match the main-thread-only contract. |
+| T6 | PASS | The three-key Rust registry is enumerable, value-safe, tested, and the only raw environment-read boundary. |
+| T7 | PASS | The exact six-function ABI, status schema, buffers, callbacks, and owner-thread snapshot/destroy enforcement pass focused tests. |
 | T8 | PASS | Signed native three-column shell and menus have runtime evidence. |
 | T9 | PASS | Live SwiftTerm attach and byte routing are machine/runtime proven, and the user passed all four terminal-axis V9 checks; editor axis remains deferred. |
 | T10 | PASS | Seven-state two-line sidebar and authoritative ordering are implemented and evidenced. |
@@ -227,7 +228,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | R3 | PASS | Live attach and byte policy pass, and all four physical-keyboard terminal checks pass; the editor axis is deferred by prior agreement. |
 | R4 | PARTIAL | Workbench surfaces exist; complete V4/AC15 native failure and conflict proof is missing. |
 | R5 | PASS | [t12-chromux-lifecycle.json](evidence/t12-chromux-lifecycle.json), safe failure receipts, and decoded-title evidence. |
-| R6 | PARTIAL | Six functions and error tests pass; off-owner snapshot/destroy behavior remains a contract gap. |
+| R6 | PASS | Six functions and error tests pass; off-owner snapshot/destroy are rejected with observable `ffi.wrong_thread` state. |
 | R6a | PASS | Exact options types are fixed in `model.rs` and tested. |
 | R6b | PASS | Exact event kinds and payloads are fixed in `runtime.rs` and tested. |
 | R6c | PASS | Full 13-field snapshot and nested status schema are fixed in `model.rs`. |
@@ -236,7 +237,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | R8 | PARTIAL | In-process persistence passes; V17/V28 native relaunch proof is incomplete. |
 | R9 | PASS | Two current T5-source assemblies converged; arm64, minimum macOS 14.0, and strict deep codesign pass. |
 | R10 | PASS | Missing summary fallback and OPENROUTER nonaccess receipts pass. |
-| R11 | PARTIAL | Registry declares one key, but direct Swift environment reads bypass it. |
+| R11 | PASS | One Rust registry declares all three keys; Swift consumes only snapshot state and raw values never enter errors or logs. |
 | R12 | PARTIAL | Consequences and several state cards exist; V29/V30/V33/V34 remain incomplete. |
 
 ## Acceptance criteria coverage
@@ -283,7 +284,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | V18 | NOT RUN | Live Herdr server-down and recovery injection was not performed. |
 | V19 | NOT RUN | Mini disconnect/reconnect injection was not performed. |
 | V20 | PASS | Missing summary fallback and nonaccess receipt pass. |
-| V21 | PARTIAL | Crate and schema checks pass; direct Swift environment reads violate the registry-only portion. |
+| V21 | PASS | T5 dependency reachability is empty, the six-function ABI is intact, owner-thread tests pass, and Swift has no registry bypass. |
 | V22 | NOT RUN | Finder-launched remote authentication path was not completed. |
 | V23 | PASS | Stage-0 actual linked-app 100-callback evidence is retained in [runtime.json](evidence/runtime.json). |
 | V24 | PASS | Selective hit-region receipt and real pet screenshot pass. |
@@ -294,7 +295,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | V29 | PARTIAL | Some empty states are visible; all four reason-and-next-action states are not directly evidenced. |
 | V30 | PARTIAL | Binary/read reasons exist; real PTY exit-code surface is not directly evidenced. |
 | V31 | PARTIAL | Aggregate warning is shown; actual workspace close result is incomplete. |
-| V32 | PARTIAL | Registry contract tests pass; every-key native present/absent and no-bypass proof does not. |
+| V32 | PASS | All three keys have tested present/absent or default contracts, value-free status, and a zero-result Swift raw-access scan. |
 | V33 | PARTIAL | Some browser/mini loading states exist; all five loading surfaces are not directly evidenced. |
 | V34 | NOT RUN | Focused-pane path versus tree-root divergence was not demonstrated. |
 | V35 | PARTIAL | Tab/worktree/attention warnings exist; final execution results are incomplete. |
@@ -340,9 +341,9 @@ The current screenshot and fresh Peekaboo observations are [v9-b2582ad-human-ret
 
 | Test group | Current count | Regression guarded |
 | --- | ---: | --- |
-| `herdr-core` unit | 20 | Token projection, environment registry, persistence, files, fixtures, chromux planning, live socket/protocol behavior |
-| `herdr-core` FFI | 11 | Six ABI calls, buffers/callbacks, schema, malformed/unknown events, invalid options, off-owner dispatch, live input without attach, byte preservation |
-| Swift package | 17 | IME byte policy, CDP title decoding, pet hit geometry/lifecycle policy, consequence previews |
+| `herdr-core` unit | 21 | Token projection, three-key environment registry, persistence, files, fixtures, chromux planning, live socket/protocol behavior |
+| `herdr-core` FFI | 13 | Six ABI calls, buffers/callbacks, schema, malformed/unknown events, invalid options, off-owner dispatch/snapshot/destroy, live input without attach, byte preservation |
+| Swift package | 18 | IME byte policy, CDP title decoding, PATH-hidden preflight, pet hit geometry/lifecycle policy, consequence previews |
 | Stage-0 spike Rust | 5 retained | ABI callback and buffer boundary |
 | Stage-0 composition proxy | Diagnostic only | Coordinate and lifecycle reasoning; never V9 acceptance |
 
@@ -354,10 +355,11 @@ No low-maintenance automated test can replace the physical Korean IME verdict.
 | Key | Required | Format | Absence behavior |
 | --- | --- | --- | --- |
 | `SSH_AUTH_SOCK` | No | Absolute Unix-domain socket path | Disable remote features with a visible reason; keep local features available |
+| `PATH` | No | Colon-separated executable search path containing the chromux install directory | Disable chromux actions with visible guidance |
+| `HERDR_SOCKET_PATH` | No | Absolute Unix-domain socket path | Use the configured default local Herdr socket path |
 
 Values remain external and the Rust registry never puts them in status messages.
-However, the committed macOS source directly reads `PATH`, `SSH_AUTH_SOCK`, and `HERDR_SOCKET_PATH` in `OperationalModels.swift` and `CoreBridge.swift`.
-That is an honest R11/V21/V32 registry bypass and remains follow-up work.
+The macOS source has no direct `ProcessInfo.processInfo.environment` access; browser and remote models consume registry state, while Rust applies the socket override at core creation.
 
 ## Deviations and pipeline record
 
@@ -385,17 +387,16 @@ That is an honest R11/V21/V32 registry bypass and remains follow-up work.
 - Non-invasive wrong unused loopback port check: performed without stopping a live daemon.
 - Prefix-owned historical w38, w39, w3A, and w3B fixtures remain preserved; no app attach is retained.
 - Delivery mode: local.
-- Commit for this report/readiness batch: none, because another operator shares the worktree.
+- T5 deletion commit: `99c4aa85e8b7b0c388c1848967690584a5e40754`.
 - Push/PR: not performed.
 
 ## Remaining human review and follow-ups
 
 1. The four-item V9 terminal checklist is complete with `1,2,3,4 모두 잘 맞아 다 된다`; the editor axis remains deferred by prior agreement.
 2. V10 needs the final six-axis human review: three-column structure/density, typography/Hangul, state expression, dark mode, resize behavior, and native conventions.
-3. Remove the Swift environment-registry bypass and tighten off-owner `snapshot`/`destroy` behavior before claiming R6/R11 complete.
-4. Add and verify native right/down pane splits and pane zoom through the existing FFI event path.
-5. Rows not covered by retained evidence or legitimate manual acceptance remain `미실행-pending`, especially V18 and V19 live-service failure injection.
-6. Expose a read-only live `input_generation` counter if zero-input readiness must be machine-proven in future sessions.
+3. Add and verify native right/down pane splits and pane zoom through the existing FFI event path.
+4. Rows not covered by retained evidence or legitimate manual acceptance remain `미실행-pending`, especially V18 and V19 live-service failure injection.
+5. Expose a read-only live `input_generation` counter if zero-input readiness must be machine-proven in future sessions.
 
 ## T5 verification result
 
@@ -409,6 +410,18 @@ The exact owned app PID 38574 and its attach child were terminated after capture
 
 The user directed `검증은 내가 어느정도 다 했으니 마무리하는 식으로 얼른 가자.`
 This report therefore distinguishes retained machine evidence, legitimate `사용자 수동 검증으로 수용됨` behavior, and `미실행-pending` rows without manufacturing execution or a Sasu completion receipt.
+
+## R11 and R6 contract verification
+
+The enumerable environment registry now contains `SSH_AUTH_SOCK`, `PATH`, and `HERDR_SOCKET_PATH` with optionality, format, validation state, and absence behavior.
+Swift no longer reads process environment values directly.
+Browser PATH and remote SSH availability come from `status.environment`, while the Rust creation boundary applies a valid Herdr socket override without serializing it.
+The exact six C ABI signatures remain unchanged.
+Off-owner snapshot returns empty bytes after recording and notifying `ffi.wrong_thread`; off-owner destroy records and notifies the same error without freeing the handle, leaving final destruction to the owner thread.
+
+`cargo test -p herdr-core` passed 21 unit and 13 FFI tests, `cargo clippy -p herdr-core --all-targets -- -D warnings` passed, formatting passed, and 18 Swift tests passed.
+The focused PATH-hidden test proves the app stops before process launch when the registry reports PATH absent.
+The structured receipt is [r6-r11-contract-verification.json](evidence/r6-r11-contract-verification.json).
 
 ## Principles applied
 

@@ -117,3 +117,15 @@ import Testing
     #expect(tabs[0].title == "Who's using Chrome?")
     #expect(tabs[0].type == "page")
 }
+
+@Test func chromuxPathAbsenceStopsBeforeAnyProcessLaunch() async {
+    let receipt = await ChromuxExecutor.inspectAndOpen(
+        profile: "default",
+        shouldOpen: true,
+        pathState: "absent"
+    )
+
+    #expect(receipt.phase == .unavailable)
+    #expect(receipt.action == "unavailable")
+    #expect(receipt.message.contains("PATH"))
+}

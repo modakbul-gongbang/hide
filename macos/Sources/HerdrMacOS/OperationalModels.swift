@@ -111,6 +111,7 @@ enum ChromuxExecutor {
     static func inspectAndOpen(
         profile: String,
         shouldOpen: Bool,
+        pathState: String,
         endpointPortOverride: Int? = nil
     ) async -> BrowserRuntimeReceipt {
         let checkedAt = ISO8601DateFormatter().string(from: Date())
@@ -132,7 +133,7 @@ enum ChromuxExecutor {
                 checkedAt: checkedAt
             )
         }
-        guard executableIsVisibleInPATH() else {
+        guard pathState == "available" else {
             return receipt(
                 phase: .unavailable,
                 profile: profile,
@@ -264,13 +265,6 @@ enum ChromuxExecutor {
         return (true, tabs.first(where: { $0.type == "page" }) ?? tabs.first)
     }
 
-    private static func executableIsVisibleInPATH() -> Bool {
-        guard let path = ProcessInfo.processInfo.environment["PATH"] else { return false }
-        return path.split(separator: ":").contains { component in
-            URL(fileURLWithPath: String(component)).appendingPathComponent("chromux").path == executable
-        }
-    }
-
     private static func visibleFailure(_ process: ProcessReceipt, fallback: String) -> String {
         let error = String(decoding: process.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return error.isEmpty ? fallback : error
@@ -315,6 +309,7 @@ final class BrowserRuntimeModel: ObservableObject {
 
     let profile: String
     var onReceipt: ((BrowserRuntimeReceipt) -> Void)?
+    var environmentStateProvider: ((String) -> String?)?
     private let receiptPath: String?
     private let endpointPortOverride: Int?
 
@@ -356,6 +351,7 @@ final class BrowserRuntimeModel: ObservableObject {
             var result = await ChromuxExecutor.inspectAndOpen(
                 profile: profile,
                 shouldOpen: shouldOpen,
+                pathState: environmentStateProvider?("PATH") ?? "absent",
                 endpointPortOverride: endpointPortOverride
             )
             if shouldOpen, result.phase == .ready, let pid = result.pid {
@@ -425,9 +421,10 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var message = "Remote mini has not been checked yet."
     @Published private(set) var workspaces: [RemoteWorkspaceSummary] = []
     @Published private(set) var checkedAt = "never"
+    var environmentStateProvider: ((String) -> String?)?
 
     func refreshMini() {
-        guard ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]?.isEmpty == false else {
+        guard environmentStateProvider?("SSH_AUTH_SOCK") == "available" else {
             phase = .unavailable
             message = "SSH_AUTH_SOCK is unavailable. Remote features are disabled; launch from a shell with the agent socket exported."
             checkedAt = ISO8601DateFormatter().string(from: Date())

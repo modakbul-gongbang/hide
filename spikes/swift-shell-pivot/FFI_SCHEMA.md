@@ -1,7 +1,7 @@
 # Stage 0 FFI schema
 
-This file resolves OPEN-2 for the spike.
-The executable source of truth is `include/herdr_core.h` plus the serializable types in `rust-core/src/lib.rs`.
+This file resolves OPEN-2 for the spike and records the implemented production extension.
+The production source of truth is `herdr-core/include/herdr_core.h` plus the serializable types in `herdr-core/src/model.rs` and `herdr-core/src/runtime.rs`.
 All JSON uses UTF-8 and `schema_version` is currently `1`.
 
 ## C ABI
@@ -21,6 +21,8 @@ Swift unregisters the callback before destroy and returns every snapshot buffer 
 The callback carries only the opaque context and may run on any thread.
 Swift hops to the main thread and then pulls a fresh snapshot.
 Rust contains panics at the FFI boundary and exposes dispatch failures through `status.last_error`.
+Create, dispatch, snapshot, callback registration, and destroy belong to the thread that created the core; the Swift bridge creates and calls them on its main actor.
+An off-owner snapshot returns an empty buffer after recording `ffi.wrong_thread`, and an off-owner destroy records the same error without freeing the core so the owner can observe and destroy it safely.
 
 ## Options
 
@@ -28,6 +30,7 @@ Rust contains panics at the FFI boundary and exposes dispatch failures through `
 CoreOptions {
   schema_version: u32,
   herdr_socket_path: String?,
+  herdr_bin_path: String?,
   remote_targets: RemoteTarget[],
   app_state_path: String
 }
@@ -166,8 +169,21 @@ Status {
   herdr: ProviderStatus,
   remote: RemoteStatus[],
   chromux: ChromuxStatus,
+  environment: EnvironmentStatus[],
+  diagnostics: Diagnostic[],
   last_error: LastError?
 }
+
+EnvironmentStatus {
+  key: String,
+  required: bool,
+  format: String,
+  state: String,
+  absent_behavior: String,
+  message: String
+}
+
+Diagnostic { kind: String, message: String, occurred_at: u64 }
 
 ProviderStatus {
   state: String,
@@ -209,3 +225,5 @@ SpikeEvidence {
 The `spike` object is test-only evidence and is not a production contract requirement.
 Timestamp fields are Unix milliseconds.
 Terminal and key bytes are base64 so arbitrary PTY bytes survive JSON unchanged.
+The enumerable environment registry contains `SSH_AUTH_SOCK`, `PATH`, and `HERDR_SOCKET_PATH`.
+Only validation state and absence behavior cross the ABI; raw values remain outside JSON, status messages, and logs.

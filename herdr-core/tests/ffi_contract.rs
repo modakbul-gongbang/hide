@@ -118,8 +118,17 @@ fn snapshot_exposes_the_production_schema_and_status() {
     assert_eq!(snapshot["status"]["herdr"]["state"], "unconfigured");
     assert_eq!(snapshot["status"]["remote"][0]["target_id"], "mini");
     assert_eq!(snapshot["status"]["chromux"]["profile"], "default");
-    assert_eq!(snapshot["status"]["environment"][0]["key"], "SSH_AUTH_SOCK");
-    assert!(snapshot["status"]["environment"][0].get("value").is_none());
+    let environment = snapshot["status"]["environment"]
+        .as_array()
+        .expect("environment registry array");
+    assert_eq!(
+        environment
+            .iter()
+            .map(|entry| entry["key"].as_str().expect("environment key"))
+            .collect::<Vec<_>>(),
+        ["SSH_AUTH_SOCK", "PATH", "HERDR_SOCKET_PATH"]
+    );
+    assert!(environment.iter().all(|entry| entry.get("value").is_none()));
     assert!(snapshot["status"]["last_error"].is_null());
     assert!(snapshot.get("spike").is_none());
 
@@ -228,6 +237,47 @@ fn off_owner_dispatch_surfaces_a_thread_contract_failure() {
 
     let snapshot = snapshot(core);
     assert_eq!(snapshot["status"]["last_error"]["kind"], "ffi.wrong_thread");
+    herdr_core_destroy(core);
+}
+
+#[test]
+fn off_owner_snapshot_returns_no_bytes_and_preserves_the_violation() {
+    let core = create();
+    let core_address = core as usize;
+
+    std::thread::spawn(move || {
+        let bytes = herdr_core_snapshot(core_address as *mut HerdrCore);
+        assert!(bytes.ptr.is_null());
+        assert_eq!(bytes.len, 0);
+        assert_eq!(bytes.cap, 0);
+    })
+    .join()
+    .expect("worker exits");
+
+    let owner_snapshot = snapshot(core);
+    assert_eq!(
+        owner_snapshot["status"]["last_error"]["kind"],
+        "ffi.wrong_thread"
+    );
+    herdr_core_destroy(core);
+}
+
+#[test]
+fn off_owner_destroy_is_rejected_until_the_owner_destroys() {
+    let core = create();
+    let core_address = core as usize;
+
+    std::thread::spawn(move || {
+        herdr_core_destroy(core_address as *mut HerdrCore);
+    })
+    .join()
+    .expect("worker exits");
+
+    let owner_snapshot = snapshot(core);
+    assert_eq!(
+        owner_snapshot["status"]["last_error"]["kind"],
+        "ffi.wrong_thread"
+    );
     herdr_core_destroy(core);
 }
 

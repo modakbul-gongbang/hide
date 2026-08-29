@@ -5,9 +5,9 @@ use std::slice;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 
-use crate::live;
 use crate::model::CoreOptions;
 use crate::runtime::{Runtime, validate_options};
+use crate::{environment, live};
 
 #[repr(C)]
 pub struct HerdrBytes {
@@ -123,13 +123,19 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         let Some(bytes) = input_bytes(options_json, len) else {
             return ptr::null_mut();
         };
-        let Ok(options) = serde_json::from_slice::<CoreOptions>(bytes) else {
+        let Ok(mut options) = serde_json::from_slice::<CoreOptions>(bytes) else {
             return ptr::null_mut();
         };
         if validate_options(&options).is_err() {
             return ptr::null_mut();
         }
-        let runtime = Arc::new(Mutex::new(Runtime::new(options.clone())));
+        let environment = environment::read_and_validate();
+        if options.herdr_socket_path.is_some()
+            && let Some(path) = environment.herdr_socket_path_override.as_ref()
+        {
+            options.herdr_socket_path = Some(path.clone());
+        }
+        let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let callback = Arc::new(Mutex::new(None));
         if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
@@ -182,7 +188,10 @@ pub extern "C" fn herdr_core_snapshot(core: *mut HerdrCore) -> HerdrBytes {
         let Some(core) = core_ref(core) else {
             return HerdrBytes::empty();
         };
-        let _ = check_owner_thread(core, "snapshot");
+        if !check_owner_thread(core, "snapshot") {
+            notify_change(core);
+            return HerdrBytes::empty();
+        }
         match serde_json::to_vec(lock_recover(&core.runtime).snapshot()) {
             Ok(bytes) => HerdrBytes::from_vec(bytes),
             Err(_) => HerdrBytes::empty(),
@@ -235,6 +244,7 @@ pub extern "C" fn herdr_core_destroy(core: *mut HerdrCore) {
         };
         if !check_owner_thread(core_ref, "destroy") {
             notify_change(core_ref);
+            return;
         }
         *lock_recover(&core_ref.callback) = None;
         unsafe {

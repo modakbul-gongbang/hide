@@ -47,6 +47,12 @@ final class ShellModel: ObservableObject {
         remoteSubscription = remote.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        browser.environmentStateProvider = { [weak core] key in
+            core?.environmentState(for: key)
+        }
+        remote.environmentStateProvider = { [weak core] key in
+            core?.environmentState(for: key)
+        }
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
         }

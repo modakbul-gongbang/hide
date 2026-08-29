@@ -535,3 +535,22 @@ The user then directed: `검증은 내가 어느정도 다 했으니 마무리�
 Accordingly, later verification uses the shortest focused checks and retained evidence.
 Rows not actually executed are recorded either as `사용자 수동 검증으로 수용됨` only where that direction legitimately covers an observed product behavior, or as `미실행-pending`; no unexecuted row is presented as machine-verified.
 Live-service failure-injection rows V18 and V19 remain `미실행-pending`.
+
+## R11 environment registry and R6 owner-thread contract
+
+T5 was committed separately as `99c4aa85e8b7b0c388c1848967690584a5e40754`.
+The enumerable Rust registry now owns `SSH_AUTH_SOCK`, `PATH`, and `HERDR_SOCKET_PATH`, including required status, format, validation, and absence behavior.
+Swift has zero direct reads of `ProcessInfo.processInfo.environment`; browser and remote capability decisions consume the Rust snapshot state, and Rust applies the socket override without exposing its value.
+The only production raw environment read is the registry boundary in `herdr-core/src/environment.rs`.
+Encoded status and tests contain no raw socket or PATH values.
+
+The six C ABI functions remain unchanged.
+Create, dispatch, snapshot, callback registration, and destroy belong to the creating thread, which the Swift `@MainActor` bridge owns.
+An off-owner snapshot now records `ffi.wrong_thread`, notifies the owner, and returns empty bytes instead of serializing state on the wrong thread.
+An off-owner destroy records and notifies the same violation but does not free the handle; the owner can observe the error and destroy normally.
+
+`cargo test -p herdr-core` passed 21 unit tests and 13 FFI tests.
+The added stable-boundary tests cover the three-key secret-safe registry, off-owner snapshot rejection, and off-owner destroy rejection.
+`cargo clippy -p herdr-core --all-targets -- -D warnings`, Rust formatting, 18 Swift tests, the PATH-hidden no-process boundary test, direct-access scans, and `git diff --check` passed.
+The structured receipt is `evidence/r6-r11-contract-verification.json`.
+R6, R6a-R6d, R11, V21, and V32 are PASS at this boundary.

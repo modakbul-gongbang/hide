@@ -254,7 +254,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let fixtureMode = arguments.contains("--verification-ui-fixture")
         let options: [String: Any] = [
             "schema_version": coreSchemaVersion,
-            "herdr_socket_path": fixtureMode ? NSNull() : Self.resolveHerdrSocketPath() as Any,
+            "herdr_socket_path": fixtureMode ? NSNull() : Self.defaultHerdrSocketPath() as Any,
             "herdr_bin_path": Self.resolveHerdrBinaryPath().map { $0 as Any } ?? NSNull(),
             "remote_targets": [[
                 "id": "mini",
@@ -390,6 +390,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func environmentState(for key: String) -> String? {
+        snapshot?.status.environment.first(where: { $0.key == key })?.state
+    }
+
     private func refreshSnapshot() {
         guard let core else { return }
         let owned = herdr_core_snapshot(core)
@@ -487,13 +491,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
     #endif
 
-    /// HERDR_SOCKET_PATH overrides the default local socket location. The
-    /// value only lives in the environment; this is the declared contract.
-    static func resolveHerdrSocketPath() -> String {
-        if let override = ProcessInfo.processInfo.environment["HERDR_SOCKET_PATH"],
-           !override.isEmpty {
-            return override
-        }
+    /// The environment registry in herdr-core applies HERDR_SOCKET_PATH to
+    /// this configured default without exposing the raw value to Swift.
+    static func defaultHerdrSocketPath() -> String {
         return NSHomeDirectory() + "/.config/herdr/herdr.sock"
     }
 

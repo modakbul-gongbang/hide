@@ -179,10 +179,9 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn new(options: CoreOptions) -> Self {
+    pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
         let mut snapshot = Snapshot::initial(&options);
-        let environment = environment::read_and_validate();
         snapshot.status.environment = environment.statuses;
         if !environment.remote_enabled {
             for remote in &mut snapshot.status.remote {

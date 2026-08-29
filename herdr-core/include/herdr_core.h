@@ -18,6 +18,7 @@ typedef struct HerdrBytes {
 
 typedef void (*HerdrChangeCallback)(void *context);
 
+/* create, dispatch, snapshot, on_change, and destroy belong to the creating thread. */
 HerdrCore *herdr_core_create(const uint8_t *options_json, size_t len);
 void herdr_core_dispatch(HerdrCore *core, const uint8_t *event_json, size_t len);
 HerdrBytes herdr_core_snapshot(HerdrCore *core);
