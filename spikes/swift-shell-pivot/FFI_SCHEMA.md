@@ -48,9 +48,13 @@ Every event is `{ schema_version: u32, kind: String, payload: Object }`.
 
 ```text
 key              { pane_id: String, bytes_base64: String }
+terminal_output  { pane_id: String, bytes_base64: String }
+terminal_resize  { pane_id: String, cols: u16, rows: u16 }
+session_snapshot { focused_pane_id: String?, layouts: SessionLayout[], agents: SessionAgent[] }
 click            { surface: Surface, x: f64, y: f64, button: MouseButton, click_count: u8 }
 focus_pane       { pane_id: String }
 open_browser     { profile: String }
+browser_status   { state: String, profile: String, current_url: String?, current_title: String?, message: String?, last_checked_at_unix_ms: u64 }
 create_workspace { path: String, label: String, create_worktree: bool }
 create_tab       { workspace_id: String, label: String }
 create_pane      { tab_id: String, cwd: String, command: String?, direction: PaneSplitDirection }
@@ -59,12 +63,28 @@ close_workspace  { workspace_id: String, confirmed: bool }
 close_tab        { tab_id: String, confirmed: bool }
 close_pane       { pane_id: String, confirmed: bool }
 file_open        { path: String }
+file_draft       { contents_utf8: String }
 file_save        { path: String, contents_utf8: String, expected_modified_at_unix_ms: u64? }
+file_conflict    { action: "reload" | "keep_editing" }
+ui_state_update  { expanded_paths: String[], selected_path: String?, selected_pane_id: String?, shortcut_bindings: Map<String, String> }
 retry_connect    { target_id: String }
 
 Surface = sidebar | terminal | workbench | pet
 MouseButton = left | right
 PaneSplitDirection = right | down
+
+SessionLayout {
+  workspace_id: String,
+  tab_id: String,
+  zoomed: bool,
+  area: Rect,
+  focused_pane_id: String,
+  panes: { pane_id: String, rect: Rect }[],
+  splits: { direction: PaneLayoutDirection, ratio: f32, rect: Rect }[]
+}
+
+SessionAgent carries the Herdr pane identity, workspace/cwd, agent status, and authoritative token map used by the sidebar projection.
+Rect = { x: u16, y: u16, width: u16, height: u16 }.
 ```
 
 An unknown `kind` produces `status.last_error.kind = "event.unknown_kind"`.
@@ -82,12 +102,13 @@ Snapshot {
   connection: Connection,
   zoomed: String?,
   focused: Focused,
+  pane_layout: PaneLayout?,
   terminal: Terminal,
   editor: Editor,
+  ui_state: UiState,
   ime: Ime,
   input_generation: u64,
-  status: Status,
-  spike: SpikeEvidence
+  status: Status
 }
 
 Navigator {
@@ -132,15 +153,38 @@ Pane {
 Connection { kind: String, state: String, target_id: String? }
 Focused { surface: Surface, pane_id: String? }
 
+PaneLayout {
+  workspace_id: String,
+  tab_id: String,
+  focused_pane_id: String,
+  zoomed: bool,
+  root: PaneLayoutNode
+}
+
+PaneLayoutNode =
+  { type: "pane", pane_id: String }
+  | {
+      type: "split",
+      direction: PaneLayoutDirection,
+      ratio: f32,
+      first: PaneLayoutNode,
+      second: PaneLayoutNode
+    }
+
+PaneLayoutDirection = right | down
+
 Terminal {
   pane_id: String?,
   sequence: u64,
   chunks: TerminalChunk[],
   closed: bool,
-  exit_code: i32?
+  exit_code: i32?,
+  panes: TerminalPane[]
 }
 
-TerminalChunk { sequence: u64, bytes_base64: String }
+TerminalChunk { pane_id: String, sequence: u64, bytes_base64: String }
+
+TerminalPane { pane_id: String, closed: bool, exit_code: i32? }
 
 Editor {
   path: String?,
@@ -158,6 +202,13 @@ EditorConflict {
 }
 
 Diff { added_lines: u32[], removed_lines: u32[] }
+
+UiState {
+  expanded_paths: String[],
+  selected_path: String?,
+  selected_pane_id: String?,
+  shortcut_bindings: Map<String, String>
+}
 
 Ime {
   marked_text: String,
@@ -217,15 +268,14 @@ LastError {
   occurred_at: u64
 }
 
-SpikeEvidence {
-  callback_emitted: u32,
-  remote_tui_ready: bool,
-  delegate_bytes_sent: u64
-}
 ```
 
-The `spike` object is test-only evidence and is not a production contract requirement.
 Timestamp fields are Unix milliseconds.
 Terminal and key bytes are base64 so arbitrary PTY bytes survive JSON unchanged.
+`pane_layout` is the authoritative recursive split tree from Herdr.
+Swift renders all leaves simultaneously and uses only `focused_pane_id` as the focus accent and keyboard-routing source.
+During zoom, every pane view retains its nonzero authoritative frame, attach process, and output feed; the focused pane alone receives a full-canvas visual frame.
+SwiftTerm frame changes emit `terminal_resize`, which Herdr forwards to the matching attach PTY so unzoom triggers reflow and repaint without rebuilding terminal buffers.
+`ui_state.shortcut_bindings` stores the four configurable Pane actions as canonical strings keyed by `split_right`, `split_down`, `toggle_zoom`, and `close_pane`.
 The enumerable environment registry contains `SSH_AUTH_SOCK`, `PATH`, and `HERDR_SOCKET_PATH`.
 Only validation state and absence behavior cross the ABI; raw values remain outside JSON, status messages, and logs.

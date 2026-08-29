@@ -15,7 +15,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 minWidth: ShellMetrics.windowMinWidth,
                 minHeight: ShellMetrics.windowMinHeight
             )
-        let window = NSWindow(
+        let window = PaneCommandWindow(
             contentRect: NSRect(
                 x: 0,
                 y: 0,
@@ -27,6 +27,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "Herdr IDE"
+        window.paneCommandModel = model
         window.minSize = NSSize(
             width: ShellMetrics.windowMinWidth,
             height: ShellMetrics.windowMinHeight
@@ -77,8 +78,7 @@ struct HerdrApp: App {
 
     var body: some Scene {
         Settings {
-            Text("Herdr IDE settings are not part of this additive batch.")
-                .padding(24)
+            KeyboardSettingsView(model: appDelegate.model)
         }
         .commands {
             ShellCommands(model: appDelegate.model)
@@ -109,21 +109,40 @@ struct ShellCommands: Commands {
 
         CommandMenu("Pane") {
             Button("Split Right") {
-                model.splitCurrentPane(.right)
+                model.performPaneCommand(.splitRight)
             }
-            .keyboardShortcut("d", modifiers: .command)
+            .keyboardShortcut(
+                model.shortcut(for: .splitRight).keyEquivalent,
+                modifiers: model.shortcut(for: .splitRight).eventModifiers
+            )
 
             Button("Split Down") {
-                model.splitCurrentPane(.down)
+                model.performPaneCommand(.splitDown)
             }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .keyboardShortcut(
+                model.shortcut(for: .splitDown).keyEquivalent,
+                modifiers: model.shortcut(for: .splitDown).eventModifiers
+            )
 
             Divider()
 
             Button("Toggle Zoom") {
-                model.toggleCurrentPaneZoom()
+                model.performPaneCommand(.toggleZoom)
             }
-            .keyboardShortcut(.return, modifiers: [.command, .option])
+            .keyboardShortcut(
+                model.shortcut(for: .toggleZoom).keyEquivalent,
+                modifiers: model.shortcut(for: .toggleZoom).eventModifiers
+            )
+
+            Divider()
+
+            Button("Close Pane") {
+                model.performPaneCommand(.closePane)
+            }
+            .keyboardShortcut(
+                model.shortcut(for: .closePane).keyEquivalent,
+                modifiers: model.shortcut(for: .closePane).eventModifiers
+            )
         }
     }
 }

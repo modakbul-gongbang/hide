@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,8 @@ struct StoredUiState {
     expanded_paths: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
+    #[serde(default)]
+    shortcut_bindings: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,6 +48,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             expanded_paths: stored.expanded_paths,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
+            shortcut_bindings: stored.shortcut_bindings,
         },
         LoadDisposition::Loaded,
     )
@@ -62,6 +66,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         expanded_paths: state.expanded_paths.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
+        shortcut_bindings: state.shortcut_bindings.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -96,6 +101,32 @@ mod tests {
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
+        assert!(state.shortcut_bindings.is_empty());
+    }
+
+    #[test]
+    fn shortcut_bindings_survive_save_and_relaunch_load() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-shortcuts-{}", std::process::id()));
+        let path = root.join("state.json");
+        let mut state = UiStateSnapshot::default();
+        state
+            .shortcut_bindings
+            .insert("split_right".to_owned(), "command+option+r".to_owned());
+
+        save(&path, &state).expect("persist shortcut binding");
+        let (restored, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(
+            restored
+                .shortcut_bindings
+                .get("split_right")
+                .map(String::as_str),
+            Some("command+option+r")
+        );
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
     }
 
     #[test]

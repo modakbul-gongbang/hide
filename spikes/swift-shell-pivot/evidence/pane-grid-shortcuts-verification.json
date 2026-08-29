@@ -1,0 +1,48 @@
+{
+  "status": "pass",
+  "base_head": "b2670107dc152eaa67d448dce4d4681151170448",
+  "scope": [
+    "nonblocking pane attach and command lifecycle",
+    "authoritative recursive pane grid",
+    "right and down split, zoom, and focused-pane close routing",
+    "Keyboard-only native Settings shortcut policy",
+    "authoritative focus accent without hover coupling",
+    "zoom buffer retention and terminal resize path"
+  ],
+  "initial_full_core_run": {
+    "unit": {"passed": 25, "failed": 0},
+    "ffi": {"passed": 16, "failed": 3},
+    "classification": "test fixture contract drift",
+    "failed_tests": [
+      "pane_split_direction_and_zoom_events_reach_the_live_control_boundary",
+      "multi_pane_attach_destroy_returns_without_waiting_and_reaps_children",
+      "pane_control_dispatch_does_not_wait_for_the_child_process"
+    ],
+    "cause": "The tests still assumed focus_pane directly created an attach without the new authoritative socket focus and layout result."
+  },
+  "regression_seam_correction": {
+    "product_semantics_changed": false,
+    "fixture_change": "Seed authoritative session layouts for attach and current-pane state, then assert nonblocking dispatch and explicit missing-layout or focus failure at the disposable socket boundary.",
+    "focused_result": "6 pane-related FFI tests passed, followed by the dedicated multi-pane lifecycle test passing."
+  },
+  "final_checks": [
+    {"command": "cargo fmt --all -- --check", "result": "pass"},
+    {"command": "cargo test -p herdr-core", "result": "pass", "unit_passed": 25, "ffi_passed": 19},
+    {"command": "cargo clippy -p herdr-core --all-targets -- -D warnings", "result": "pass"},
+    {"command": "swift test --package-path macos", "result": "pass", "passed": 32},
+    {"command": "git diff --check", "result": "pass"}
+  ],
+  "static_input_safety": {
+    "pane_grid_on_hover_occurrences": 0,
+    "global_event_monitor_occurrences": 0,
+    "local_event_monitor_occurrences": 0,
+    "event_post_or_requeue_occurrences": 0,
+    "ime_behavior_change": false
+  },
+  "external_service_failure_injection": false,
+  "user_workspace_mutation": false,
+  "settings_driver_success_claimed": false,
+  "settings_driver_receipt": "pane-actions-settings-driver-limitation.json",
+  "zoom_runtime_receipt": "zoom-buffer-retention-diagnostic.json",
+  "v8_runtime_receipt": "pane-grid-v8-diagnostic.json"
+}

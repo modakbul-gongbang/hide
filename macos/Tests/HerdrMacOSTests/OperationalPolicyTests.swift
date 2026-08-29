@@ -86,6 +86,20 @@ import Testing
     #expect(notice.affected == [target])
 }
 
+@Test func everyAttentionPaneStateRequiresCloseConfirmation() {
+    for state in ["question", "approval", "error", "unseen_completion"] {
+        let target = DestructiveTarget(
+            id: "herdr-ide-verify-\(state)",
+            label: "Verification",
+            state: state,
+            summary: "Attention fixture"
+        )
+        let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
+        #expect(notice.requiresConfirmation)
+        #expect(notice.affected == [target])
+    }
+}
+
 @Test func workspaceAndTabWarningsAggregateOnlyActiveOrAttentionPanes() {
     let targets = [
         DestructiveTarget(id: "w", label: "A", state: "working", summary: "Build"),

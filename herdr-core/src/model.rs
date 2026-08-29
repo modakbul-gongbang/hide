@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -28,6 +30,7 @@ pub struct Snapshot {
     pub connection: ConnectionSnapshot,
     pub zoomed: Option<String>,
     pub focused: FocusedSnapshot,
+    pub pane_layout: Option<PaneLayoutSnapshot>,
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
     pub ui_state: UiStateSnapshot,
@@ -107,7 +110,7 @@ pub struct ConnectionSnapshot {
     pub target_id: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
     Sidebar,
@@ -116,10 +119,60 @@ pub enum Surface {
     Pet,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FocusedSnapshot {
     pub surface: Surface,
     pub pane_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneLayoutDirection {
+    Right,
+    Down,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaneLayoutSnapshot {
+    pub workspace_id: String,
+    pub tab_id: String,
+    pub focused_pane_id: String,
+    pub zoomed: bool,
+    pub root: PaneLayoutNodeSnapshot,
+}
+
+impl PaneLayoutSnapshot {
+    pub fn pane_ids(&self) -> Vec<&str> {
+        let mut pane_ids = Vec::new();
+        self.root.collect_pane_ids(&mut pane_ids);
+        pane_ids
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PaneLayoutNodeSnapshot {
+    Pane {
+        pane_id: String,
+    },
+    Split {
+        direction: PaneLayoutDirection,
+        ratio: f32,
+        first: Box<PaneLayoutNodeSnapshot>,
+        second: Box<PaneLayoutNodeSnapshot>,
+    },
+}
+
+impl PaneLayoutNodeSnapshot {
+    fn collect_pane_ids<'a>(&'a self, pane_ids: &mut Vec<&'a str>) {
+        match self {
+            Self::Pane { pane_id } => pane_ids.push(pane_id),
+            Self::Split { first, second, .. } => {
+                first.collect_pane_ids(pane_ids);
+                second.collect_pane_ids(pane_ids);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -129,12 +182,21 @@ pub struct TerminalSnapshot {
     pub chunks: Vec<TerminalChunk>,
     pub closed: bool,
     pub exit_code: Option<i32>,
+    pub panes: Vec<TerminalPaneSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct TerminalChunk {
+    pub pane_id: String,
     pub sequence: u64,
     pub bytes_base64: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TerminalPaneSnapshot {
+    pub pane_id: String,
+    pub closed: bool,
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -154,6 +216,7 @@ pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
+    pub shortcut_bindings: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,12 +348,14 @@ impl Snapshot {
                 surface: Surface::Terminal,
                 pane_id: None,
             },
+            pane_layout: None,
             terminal: TerminalSnapshot {
                 pane_id: None,
                 sequence: 0,
                 chunks: Vec::new(),
                 closed: false,
                 exit_code: None,
+                panes: Vec::new(),
             },
             editor: EditorSnapshot {
                 path: None,

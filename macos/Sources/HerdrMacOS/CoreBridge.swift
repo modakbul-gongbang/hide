@@ -13,6 +13,7 @@ struct CoreSnapshot: Decodable {
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
+    let paneLayout: CorePaneLayoutSnapshot?
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let uiState: CoreUIStateSnapshot
@@ -22,10 +23,84 @@ struct CoreSnapshot: Decodable {
         case schemaVersion = "schema_version"
         case navigator
         case zoomed
+        case paneLayout = "pane_layout"
         case terminal
         case editor
         case uiState = "ui_state"
         case status
+    }
+}
+
+struct CorePaneLayoutSnapshot: Decodable {
+    let workspaceID: String
+    let tabID: String
+    let focusedPaneID: String
+    let zoomed: Bool
+    let root: CorePaneLayoutNode
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
+        case tabID = "tab_id"
+        case focusedPaneID = "focused_pane_id"
+        case zoomed
+        case root
+    }
+}
+
+indirect enum CorePaneLayoutNode: Decodable {
+    case pane(paneID: String)
+    case split(
+        direction: PaneSplitDirection,
+        ratio: Double,
+        first: CorePaneLayoutNode,
+        second: CorePaneLayoutNode
+    )
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case paneID = "pane_id"
+        case direction
+        case ratio
+        case first
+        case second
+    }
+
+    private enum NodeType: String, Decodable {
+        case pane
+        case split
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(NodeType.self, forKey: .type) {
+        case .pane:
+            self = .pane(paneID: try container.decode(String.self, forKey: .paneID))
+        case .split:
+            self = .split(
+                direction: try container.decode(PaneSplitDirection.self, forKey: .direction),
+                ratio: try container.decode(Double.self, forKey: .ratio),
+                first: try container.decode(CorePaneLayoutNode.self, forKey: .first),
+                second: try container.decode(CorePaneLayoutNode.self, forKey: .second)
+            )
+        }
+    }
+
+    var paneIDs: [String] {
+        switch self {
+        case let .pane(paneID):
+            [paneID]
+        case let .split(_, _, first, second):
+            first.paneIDs + second.paneIDs
+        }
+    }
+
+    func pane(_ paneID: String) -> CorePaneLayoutNode? {
+        switch self {
+        case let .pane(candidate):
+            candidate == paneID ? self : nil
+        case let .split(_, _, first, second):
+            first.pane(paneID) ?? second.pane(paneID)
+        }
     }
 }
 
@@ -71,6 +146,7 @@ struct CoreTerminalSnapshot: Decodable {
     let chunks: [CoreTerminalChunk]
     let closed: Bool
     let exitCode: Int32?
+    let panes: [CoreTerminalPaneSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
@@ -78,16 +154,32 @@ struct CoreTerminalSnapshot: Decodable {
         case chunks
         case closed
         case exitCode = "exit_code"
+        case panes
     }
 }
 
 struct CoreTerminalChunk: Decodable {
+    let paneID: String
     let sequence: UInt64
     let bytesBase64: String
 
     enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
         case sequence
         case bytesBase64 = "bytes_base64"
+    }
+}
+
+struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
+    var id: String { paneID }
+    let paneID: String
+    let closed: Bool
+    let exitCode: Int32?
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case closed
+        case exitCode = "exit_code"
     }
 }
 
@@ -117,11 +209,24 @@ struct CoreUIStateSnapshot: Decodable {
     let expandedPaths: [String]
     let selectedPath: String?
     let selectedPaneID: String?
+    let shortcutBindings: [String: String]
 
     enum CodingKeys: String, CodingKey {
         case expandedPaths = "expanded_paths"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
+        case shortcutBindings = "shortcut_bindings"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        expandedPaths = try container.decode([String].self, forKey: .expandedPaths)
+        selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
+        selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
+        shortcutBindings = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .shortcutBindings
+        ) ?? [:]
     }
 }
 
@@ -230,19 +335,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
     @Published private(set) var bridgeError: String?
 
-    var onTerminalBytes: (([UInt8]) -> Void)? {
-        didSet { drainPendingTerminalBytes() }
-    }
-
-    var onRequestTerminalFocus: (() -> Void)?
-
     let workspaceRoot: URL
     let isRemoteWorkspace: Bool
 
     nonisolated(unsafe) private var core: OpaquePointer?
     private var lastTerminalSequence: UInt64 = 0
-    private var pendingTerminalBytes: [[UInt8]] = []
+    private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
+    private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
+
+    private struct TerminalRegistration {
+        let id: UUID
+        let receive: ([UInt8]) -> Void
+        let focus: () -> Void
+    }
 
     init(arguments: [String] = CommandLine.arguments) {
         isRemoteWorkspace = arguments.contains("--remote-workspace")
@@ -312,8 +418,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func resizeTerminal(cols: Int, rows: Int) {
+    func resizeTerminal(paneID: String, cols: Int, rows: Int) {
         dispatch(kind: "terminal_resize", payload: [
+            "pane_id": paneID,
             "cols": cols,
             "rows": rows,
         ])
@@ -321,8 +428,33 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func focusPane(_ paneID: String) {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
-        persistUIState(selectedPaneID: paneID)
-        onRequestTerminalFocus?()
+    }
+
+    @discardableResult
+    func registerTerminal(
+        paneID: String,
+        receive: @escaping ([UInt8]) -> Void,
+        focus: @escaping () -> Void
+    ) -> UUID {
+        let registrationID = UUID()
+        terminalRegistrations[paneID] = TerminalRegistration(
+            id: registrationID,
+            receive: receive,
+            focus: focus
+        )
+        drainPendingTerminalBytes(for: paneID)
+        if snapshot?.terminal.paneID == paneID {
+            DispatchQueue.main.async { [weak self] in
+                guard self?.terminalRegistrations[paneID]?.id == registrationID else { return }
+                self?.terminalRegistrations[paneID]?.focus()
+            }
+        }
+        return registrationID
+    }
+
+    func unregisterTerminal(paneID: String, registrationID: UUID) {
+        guard terminalRegistrations[paneID]?.id == registrationID else { return }
+        terminalRegistrations.removeValue(forKey: paneID)
     }
 
     func splitCurrentPane(direction: PaneSplitDirection) {
@@ -344,6 +476,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             return
         }
         dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
+    }
+
+    func closePane(_ paneID: String, confirmed: Bool) {
+        dispatch(kind: "close_pane", payload: [
+            "pane_id": paneID,
+            "confirmed": confirmed,
+        ])
     }
 
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
@@ -385,7 +524,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func persistUIState(
         expandedPaths: [String]? = nil,
         selectedPath: String? = nil,
-        selectedPaneID: String? = nil
+        selectedPaneID: String? = nil,
+        shortcutBindings: [String: String]? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -394,6 +534,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "expanded_paths": expandedPaths ?? current?.expandedPaths ?? [],
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
             "selected_pane_id": effectivePaneID.map { $0 as Any } ?? NSNull(),
+            "shortcut_bindings": shortcutBindings ?? current?.shortcutBindings ?? [:],
         ])
     }
 
@@ -428,9 +569,19 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         do {
             let data = Data(bytes: pointer, count: owned.len)
             let decoded = try JSONDecoder().decode(CoreSnapshot.self, from: data)
+            let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
+                ?? snapshot?.terminal.paneID
             snapshot = decoded
             bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             restorePaneSelectionIfNeeded(decoded)
+            let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
+                ?? decoded.terminal.paneID
+            if authoritativeFocusedPaneID != previousFocusedPaneID,
+               let authoritativeFocusedPaneID {
+                DispatchQueue.main.async { [weak self] in
+                    self?.terminalRegistrations[authoritativeFocusedPaneID]?.focus()
+                }
+            }
             for chunk in decoded.terminal.chunks
                 .filter({ $0.sequence > lastTerminalSequence })
                 .sorted(by: { $0.sequence < $1.sequence })
@@ -440,9 +591,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     bridgeError = "terminal.invalid_base64: sequence \(chunk.sequence)"
                     continue
                 }
-                pendingTerminalBytes.append([UInt8](data))
+                pendingTerminalBytes[chunk.paneID, default: []].append([UInt8](data))
+                drainPendingTerminalBytes(for: chunk.paneID)
             }
-            drainPendingTerminalBytes()
         } catch {
             bridgeError = "Snapshot decode failed: \(error.localizedDescription)"
         }
@@ -459,12 +610,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         focusPane(persisted)
     }
 
-    private func drainPendingTerminalBytes() {
-        guard let onTerminalBytes else { return }
-        for bytes in pendingTerminalBytes {
-            onTerminalBytes(bytes)
+    private func drainPendingTerminalBytes(for paneID: String) {
+        guard let registration = terminalRegistrations[paneID],
+              let pending = pendingTerminalBytes.removeValue(forKey: paneID)
+        else { return }
+        for bytes in pending {
+            registration.receive(bytes)
         }
-        pendingTerminalBytes.removeAll(keepingCapacity: true)
     }
 
     #if DEBUG

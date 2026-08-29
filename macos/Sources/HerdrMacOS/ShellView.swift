@@ -208,14 +208,17 @@ private struct TerminalPanel: View {
     @EnvironmentObject private var model: ShellModel
 
     private var attachedPaneDescription: String {
-        guard let terminal = model.core.snapshot?.terminal, let paneID = terminal.paneID else {
+        guard let snapshot = model.core.snapshot,
+              let paneID = snapshot.paneLayout?.focusedPaneID ?? snapshot.terminal.paneID
+        else {
             return "No pane selected"
         }
-        let workspace = model.core.snapshot?.navigator.agents
-            .first { $0.paneID == paneID }
-            .map { " · \($0.workspaceLabel)" } ?? ""
-        let zoom = model.core.snapshot?.zoomed == paneID ? " · zoomed" : ""
-        return terminal.closed ? "\(paneID)\(workspace) · closed\(zoom)" : "\(paneID)\(workspace)\(zoom)"
+        let count = snapshot.paneLayout?.root.paneIDs.count ?? 1
+        let zoom = snapshot.paneLayout?.zoomed == true ? " · zoomed" : ""
+        let activity = PaneActivityPresentation.suffix(
+            for: model.core.snapshot?.status.diagnostics ?? []
+        )
+        return "\(count) pane\(count == 1 ? "" : "s") · \(paneID)\(zoom)\(activity)"
     }
 
     var body: some View {
@@ -228,10 +231,224 @@ private struct TerminalPanel: View {
 
             Divider()
 
-            TerminalHost(bridge: model.core)
-                .accessibilityLabel("SwiftTerm terminal connected to herdr-core")
+            if let layout = model.core.snapshot?.paneLayout {
+                PaneLayoutCanvas(
+                    layout: layout,
+                    bridge: model.core
+                )
+                .padding(3)
+                .accessibilityIdentifier("terminal-pane-grid")
+            } else if let paneID = model.core.snapshot?.terminal.paneID {
+                PaneTerminalCell(
+                    paneID: paneID,
+                    focusedPaneID: paneID,
+                    bridge: model.core
+                )
+                .padding(3)
+            } else {
+                ContentUnavailableView {
+                    Label("No terminal pane", systemImage: "terminal")
+                } description: {
+                    Text("Select an agent pane to attach its terminal.")
+                }
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+enum PaneGridPresentation {
+    static func visibleRoot(
+        layout: CorePaneLayoutSnapshot
+    ) -> CorePaneLayoutNode {
+        layout.root
+    }
+
+    static func items(layout: CorePaneLayoutSnapshot) -> [PaneGridItem] {
+        let retained = flatten(
+            node: visibleRoot(layout: layout),
+            frame: .unit
+        )
+        return retained.map { item in
+            PaneGridItem(
+                paneID: item.paneID,
+                retainedFrame: item.retainedFrame,
+                visualFrame: layout.zoomed && item.paneID == layout.focusedPaneID
+                    ? .unit
+                    : item.retainedFrame,
+                isVisible: !layout.zoomed || item.paneID == layout.focusedPaneID,
+                isFocused: item.paneID == layout.focusedPaneID
+            )
+        }
+    }
+
+    private static func flatten(
+        node: CorePaneLayoutNode,
+        frame: PaneGridFrame
+    ) -> [PaneGridItem] {
+        switch node {
+        case let .pane(paneID):
+            return [PaneGridItem(
+                paneID: paneID,
+                retainedFrame: frame,
+                visualFrame: frame,
+                isVisible: true,
+                isFocused: false
+            )]
+        case let .split(direction, ratio, first, second):
+            let firstFrame: PaneGridFrame
+            let secondFrame: PaneGridFrame
+            if direction == .right {
+                firstFrame = PaneGridFrame(
+                    x: frame.x,
+                    y: frame.y,
+                    width: frame.width * ratio,
+                    height: frame.height
+                )
+                secondFrame = PaneGridFrame(
+                    x: frame.x + firstFrame.width,
+                    y: frame.y,
+                    width: frame.width - firstFrame.width,
+                    height: frame.height
+                )
+            } else {
+                firstFrame = PaneGridFrame(
+                    x: frame.x,
+                    y: frame.y,
+                    width: frame.width,
+                    height: frame.height * ratio
+                )
+                secondFrame = PaneGridFrame(
+                    x: frame.x,
+                    y: frame.y + firstFrame.height,
+                    width: frame.width,
+                    height: frame.height - firstFrame.height
+                )
+            }
+            return flatten(node: first, frame: firstFrame)
+                + flatten(node: second, frame: secondFrame)
+        }
+    }
+}
+
+struct PaneGridFrame: Equatable {
+    static let unit = PaneGridFrame(x: 0, y: 0, width: 1, height: 1)
+
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+struct PaneGridItem: Equatable {
+    let paneID: String
+    let retainedFrame: PaneGridFrame
+    let visualFrame: PaneGridFrame
+    let isVisible: Bool
+    let isFocused: Bool
+}
+
+private struct PaneLayoutCanvas: View {
+    let layout: CorePaneLayoutSnapshot
+    @ObservedObject var bridge: CoreBridge
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                ForEach(PaneGridPresentation.items(layout: layout), id: \.paneID) { item in
+                    let frame = item.visualFrame
+                    PaneTerminalCell(
+                        paneID: item.paneID,
+                        focusedPaneID: layout.focusedPaneID,
+                        bridge: bridge
+                    )
+                    .frame(
+                        width: geometry.size.width * CGFloat(frame.width),
+                        height: geometry.size.height * CGFloat(frame.height)
+                    )
+                    .position(
+                        x: geometry.size.width * CGFloat(frame.x + frame.width / 2),
+                        y: geometry.size.height * CGFloat(frame.y + frame.height / 2)
+                    )
+                    .opacity(item.isVisible ? 1 : 0)
+                    .allowsHitTesting(item.isVisible)
+                    .accessibilityHidden(!item.isVisible)
+                    .zIndex(item.isFocused ? 1 : 0)
+                }
+            }
+            .clipped()
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+        }
+    }
+}
+
+private struct PaneTerminalCell: View {
+    let paneID: String
+    let focusedPaneID: String?
+    @ObservedObject var bridge: CoreBridge
+
+    private var isFocused: Bool { paneID == focusedPaneID }
+
+    private var paneState: CoreTerminalPaneSnapshot? {
+        bridge.snapshot?.terminal.panes.first { $0.paneID == paneID }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                bridge.focusPane(paneID)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isFocused ? "circle.inset.filled" : "circle")
+                        .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
+                    Text(paneID)
+                        .font(.caption.monospaced().weight(.semibold))
+                    Spacer(minLength: 4)
+                    Text(paneState?.closed == true ? "closed" : "attached")
+                        .font(.caption2)
+                        .foregroundStyle(paneState?.closed == true ? .red : .secondary)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Focus terminal pane \(paneID)")
+
+            Divider()
+
+            TerminalHost(bridge: bridge, paneID: paneID)
+                .accessibilityLabel("SwiftTerm terminal for \(paneID)")
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(
+                    isFocused ? Color.accentColor : Color(nsColor: .separatorColor),
+                    lineWidth: isFocused ? 2 : 1
+                )
+        }
+        .accessibilityIdentifier("terminal-pane-\(paneID)")
+    }
+}
+
+enum PaneActivityPresentation {
+    static func suffix(for diagnostics: [CoreDiagnostic]) -> String {
+        guard let kind = diagnostics.last(where: { $0.kind.hasPrefix("pane.") })?.kind else {
+            return ""
+        }
+        return switch kind {
+        case "pane.split.right.requested": " · splitting right…"
+        case "pane.split.down.requested": " · splitting down…"
+        case "pane.zoom.requested": " · toggling zoom…"
+        case "pane.attach.requested": " · attaching…"
+        case "pane.attach.ready": " · attached"
+        case "pane.split.right": " · split right"
+        case "pane.split.down": " · split down"
+        default: ""
+        }
     }
 }
 

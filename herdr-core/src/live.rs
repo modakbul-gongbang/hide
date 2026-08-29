@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -16,8 +16,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
+use crate::model::{PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot};
 use crate::runtime::Runtime;
-use crate::sidebar::{SessionAgentPayload, SessionSnapshotPayload};
+use crate::sidebar::{
+    SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
+    SessionSnapshotPayload,
+};
 
 /// Herdr API protocol revision this core speaks. A mismatch is a hard,
 /// explicit failure instead of a partially working sidebar.
@@ -51,21 +55,49 @@ impl PaneSplitDirection {
     }
 }
 
-pub enum PaneControlAction<'a> {
+#[derive(Clone, Debug)]
+pub enum PaneControlAction {
+    Focus {
+        pane_id: String,
+    },
     Split {
-        pane_id: &'a str,
+        pane_id: String,
         direction: PaneSplitDirection,
-        cwd: Option<&'a str>,
+        cwd: Option<String>,
     },
     ToggleZoom {
-        pane_id: &'a str,
+        pane_id: String,
+    },
+    Close {
+        pane_id: String,
     },
 }
 
-pub fn execute_pane_control(
+#[derive(Debug)]
+pub struct PaneControlOutcome {
+    pub created_pane_id: Option<String>,
+    pub layout: Option<PaneLayoutSnapshot>,
+    pub layout_refresh_error: Option<String>,
+}
+
+fn execute_pane_control(
     context: &LiveContext,
-    action: PaneControlAction<'_>,
-) -> Result<(), String> {
+    action: &PaneControlAction,
+) -> Result<PaneControlOutcome, String> {
+    if let PaneControlAction::Focus { pane_id } = action {
+        request(
+            &context.socket_path,
+            "pane.focus",
+            json!({"pane_id": pane_id}),
+        )?;
+        let layout = fetch_pane_layout(&context.socket_path, pane_id)?;
+        return Ok(PaneControlOutcome {
+            created_pane_id: None,
+            layout: Some(layout),
+            layout_refresh_error: None,
+        });
+    }
+
     let Some(herdr_bin) = context.herdr_bin.as_ref() else {
         return Err("herdr binary was not found; pane control is unavailable".to_owned());
     };
@@ -76,7 +108,60 @@ pub fn execute_pane_control(
         .output()
         .map_err(|error| format!("herdr pane control could not start: {error}"))?;
     if output.status.success() {
-        return Ok(());
+        let created_pane_id = match action {
+            PaneControlAction::Split { .. } => {
+                let response: Value = serde_json::from_slice(&output.stdout)
+                    .map_err(|_| "herdr pane split returned unreadable JSON".to_owned())?;
+                Some(
+                    response
+                        .pointer("/result/pane/pane_id")
+                        .and_then(Value::as_str)
+                        .filter(|pane_id| !pane_id.trim().is_empty())
+                        .map(str::to_owned)
+                        .ok_or_else(|| {
+                            "herdr pane split response is missing result.pane.pane_id".to_owned()
+                        })?,
+                )
+            }
+            PaneControlAction::Focus { .. }
+            | PaneControlAction::ToggleZoom { .. }
+            | PaneControlAction::Close { .. } => None,
+        };
+        let layout_pane_id = created_pane_id.as_deref().unwrap_or_else(|| match action {
+            PaneControlAction::Focus { pane_id }
+            | PaneControlAction::Split { pane_id, .. }
+            | PaneControlAction::ToggleZoom { pane_id }
+            | PaneControlAction::Close { pane_id } => pane_id,
+        });
+        let (layout, layout_refresh_error) = match action {
+            PaneControlAction::Close { .. } => match fetch_session(&context.socket_path) {
+                Ok(payload) => {
+                    let target = payload.focused_pane_id.as_deref().or_else(|| {
+                        payload
+                            .layouts
+                            .first()
+                            .map(|layout| layout.focused_pane_id.as_str())
+                    });
+                    match target {
+                        Some(pane_id) => match project_layout_for_pane(&payload, pane_id) {
+                            Ok(layout) => (Some(layout), None),
+                            Err(message) => (None, Some(message)),
+                        },
+                        None => (None, None),
+                    }
+                }
+                Err(error) => (None, Some(error.message().to_owned())),
+            },
+            _ => match fetch_pane_layout(&context.socket_path, layout_pane_id) {
+                Ok(layout) => (Some(layout), None),
+                Err(message) => (None, Some(message)),
+            },
+        };
+        return Ok(PaneControlOutcome {
+            created_pane_id,
+            layout,
+            layout_refresh_error,
+        });
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     Err(if stderr.is_empty() {
@@ -86,8 +171,54 @@ pub fn execute_pane_control(
     })
 }
 
-fn pane_control_arguments(action: PaneControlAction<'_>) -> Vec<String> {
+fn fetch_pane_layout(socket_path: &Path, pane_id: &str) -> Result<PaneLayoutSnapshot, String> {
+    let result = request(socket_path, "pane.layout", json!({"pane_id": pane_id}))?;
+    let layout = serde_json::from_value::<SessionLayoutPayload>(
+        result
+            .get("layout")
+            .cloned()
+            .ok_or_else(|| "pane.layout response is missing layout".to_owned())?,
+    )
+    .map_err(|error| format!("pane.layout response is malformed: {error}"))?;
+    project_layout(&layout)
+}
+
+pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
+    let worker_name = match &action {
+        PaneControlAction::Focus { .. } => "herdr-core-pane-focus".to_owned(),
+        PaneControlAction::Split { direction, .. } => {
+            format!("herdr-core-pane-split-{}", direction.as_str())
+        }
+        PaneControlAction::ToggleZoom { .. } => "herdr-core-pane-zoom".to_owned(),
+        PaneControlAction::Close { .. } => "herdr-core-pane-close".to_owned(),
+    };
+    thread::Builder::new()
+        .name(worker_name)
+        .spawn(move || {
+            let started = Instant::now();
+            let result = execute_pane_control(&context, &action);
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_pane_control_result(action, result, elapsed_ms),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("pane control worker could not be started: {error}"))
+}
+
+fn pane_control_arguments(action: &PaneControlAction) -> Vec<String> {
     match action {
+        PaneControlAction::Focus { .. } => {
+            unreachable!("pane focus uses the socket API instead of the CLI")
+        }
         PaneControlAction::Split {
             pane_id,
             direction,
@@ -96,12 +227,11 @@ fn pane_control_arguments(action: PaneControlAction<'_>) -> Vec<String> {
             let mut arguments = vec![
                 "pane".to_owned(),
                 "split".to_owned(),
-                pane_id.to_owned(),
+                pane_id.clone(),
                 "--direction".to_owned(),
                 direction.as_str().to_owned(),
-                "--no-focus".to_owned(),
             ];
-            if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+            if let Some(cwd) = cwd.as_deref().filter(|value| !value.trim().is_empty()) {
                 arguments.push("--cwd".to_owned());
                 arguments.push(cwd.to_owned());
             }
@@ -110,9 +240,12 @@ fn pane_control_arguments(action: PaneControlAction<'_>) -> Vec<String> {
         PaneControlAction::ToggleZoom { pane_id } => vec![
             "pane".to_owned(),
             "zoom".to_owned(),
-            pane_id.to_owned(),
+            pane_id.clone(),
             "--toggle".to_owned(),
         ],
+        PaneControlAction::Close { pane_id } => {
+            vec!["pane".to_owned(), "close".to_owned(), pane_id.clone()]
+        }
     }
 }
 
@@ -277,7 +410,156 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
         })
         .collect();
 
-    Ok(SessionSnapshotPayload { agents })
+    let layouts =
+        serde_json::from_value(snapshot.get("layouts").cloned().ok_or_else(|| {
+            SessionFetchError::Malformed("snapshot is missing layouts".to_owned())
+        })?)
+        .map_err(|error| {
+            SessionFetchError::Malformed(format!("snapshot layouts are malformed: {error}"))
+        })?;
+    let focused_pane_id = snapshot
+        .get("focused_pane_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    Ok(SessionSnapshotPayload {
+        focused_pane_id,
+        layouts,
+        agents,
+    })
+}
+
+pub fn project_layout_for_pane(
+    payload: &SessionSnapshotPayload,
+    pane_id: &str,
+) -> Result<PaneLayoutSnapshot, String> {
+    let layout = payload
+        .layouts
+        .iter()
+        .find(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
+        .ok_or_else(|| format!("Herdr session has no layout containing pane {pane_id}"))?;
+    project_layout(layout)
+}
+
+fn project_layout(layout: &SessionLayoutPayload) -> Result<PaneLayoutSnapshot, String> {
+    if layout.panes.is_empty() {
+        return Err(format!("Herdr tab {} has no panes", layout.tab_id));
+    }
+    let root = project_layout_node(layout.area, &layout.panes, &layout.splits)?;
+    Ok(PaneLayoutSnapshot {
+        workspace_id: layout.workspace_id.clone(),
+        tab_id: layout.tab_id.clone(),
+        focused_pane_id: layout.focused_pane_id.clone(),
+        zoomed: layout.zoomed,
+        root,
+    })
+}
+
+fn project_layout_node(
+    area: SessionLayoutRect,
+    panes: &[SessionLayoutPanePayload],
+    splits: &[crate::sidebar::SessionLayoutSplitPayload],
+) -> Result<PaneLayoutNodeSnapshot, String> {
+    let matching_splits = splits
+        .iter()
+        .filter(|split| split.rect == area)
+        .collect::<Vec<_>>();
+    if matching_splits.len() > 1 {
+        return Err("Herdr layout contains duplicate splits for one area".to_owned());
+    }
+    let Some(split) = matching_splits.first().copied() else {
+        return match panes {
+            [pane] => Ok(PaneLayoutNodeSnapshot::Pane {
+                pane_id: pane.pane_id.clone(),
+            }),
+            [] => Err("Herdr layout produced an empty leaf".to_owned()),
+            _ => Err("Herdr layout has multiple panes without an authoritative split".to_owned()),
+        };
+    };
+    if !split.ratio.is_finite() || split.ratio <= 0.0 || split.ratio >= 1.0 {
+        return Err(format!(
+            "Herdr layout split ratio {} is invalid",
+            split.ratio
+        ));
+    }
+    let (first_area, second_area, boundary) = split_areas(area, split.direction, split.ratio)?;
+    let (first_panes, second_panes): (Vec<_>, Vec<_>) = panes.iter().partition(|pane| {
+        let center = match split.direction {
+            PaneLayoutDirection::Right => f32::from(pane.rect.x) + f32::from(pane.rect.width) / 2.0,
+            PaneLayoutDirection::Down => f32::from(pane.rect.y) + f32::from(pane.rect.height) / 2.0,
+        };
+        center < boundary
+    });
+    if first_panes.is_empty() || second_panes.is_empty() {
+        return Err("Herdr layout split does not divide panes into two children".to_owned());
+    }
+    let first = project_layout_node(
+        first_area,
+        &first_panes.into_iter().cloned().collect::<Vec<_>>(),
+        splits,
+    )?;
+    let second = project_layout_node(
+        second_area,
+        &second_panes.into_iter().cloned().collect::<Vec<_>>(),
+        splits,
+    )?;
+    Ok(PaneLayoutNodeSnapshot::Split {
+        direction: split.direction,
+        ratio: split.ratio,
+        first: Box::new(first),
+        second: Box::new(second),
+    })
+}
+
+fn split_areas(
+    area: SessionLayoutRect,
+    direction: PaneLayoutDirection,
+    ratio: f32,
+) -> Result<(SessionLayoutRect, SessionLayoutRect, f32), String> {
+    match direction {
+        PaneLayoutDirection::Right => {
+            if area.width < 2 {
+                return Err("Herdr right split area is too narrow".to_owned());
+            }
+            let first_width =
+                ((f32::from(area.width) * ratio).round() as u16).clamp(1, area.width - 1);
+            let second_width = area.width - first_width;
+            let second_x = area.x.saturating_add(first_width);
+            Ok((
+                SessionLayoutRect {
+                    width: first_width,
+                    ..area
+                },
+                SessionLayoutRect {
+                    x: second_x,
+                    width: second_width,
+                    ..area
+                },
+                f32::from(second_x),
+            ))
+        }
+        PaneLayoutDirection::Down => {
+            if area.height < 2 {
+                return Err("Herdr down split area is too short".to_owned());
+            }
+            let first_height =
+                ((f32::from(area.height) * ratio).round() as u16).clamp(1, area.height - 1);
+            let second_height = area.height - first_height;
+            let second_y = area.y.saturating_add(first_height);
+            Ok((
+                SessionLayoutRect {
+                    height: first_height,
+                    ..area
+                },
+                SessionLayoutRect {
+                    y: second_y,
+                    height: second_height,
+                    ..area
+                },
+                f32::from(second_y),
+            ))
+        }
+    }
 }
 
 fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
@@ -333,8 +615,9 @@ pub struct PaneAttach {
     pub pane_id: String,
     pub generation: u64,
     master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    child: Option<Box<dyn Child + Send + Sync>>,
     writer: Box<dyn Write + Send>,
+    reader: Option<Box<dyn Read + Send>>,
 }
 
 impl PaneAttach {
@@ -376,16 +659,33 @@ impl PaneAttach {
             .master
             .take_writer()
             .map_err(|error| format!("PTY writer could not be taken: {error}"))?;
-        let mut reader = pair
+        let reader = pair
             .master
             .try_clone_reader()
             .map_err(|error| format!("PTY reader could not be cloned: {error}"))?;
 
-        let runtime = context.runtime.clone();
-        let notifier = context.notifier.clone();
-        let reader_pane = pane_id.to_owned();
+        Ok(Self {
+            pane_id: pane_id.to_owned(),
+            generation,
+            master: pair.master,
+            child: Some(child),
+            writer,
+            reader: Some(reader),
+        })
+    }
+
+    pub fn start_reader(
+        &mut self,
+        runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
+    ) -> Result<(), String> {
+        let Some(mut reader) = self.reader.take() else {
+            return Err("attach reader was already started".to_owned());
+        };
+        let generation = self.generation;
+        let reader_pane = self.pane_id.clone();
         thread::Builder::new()
-            .name(format!("herdr-core-attach-{pane_id}"))
+            .name(format!("herdr-core-attach-{reader_pane}"))
             .spawn(move || {
                 let mut bytes = [0_u8; 8192];
                 loop {
@@ -398,6 +698,7 @@ impl PaneAttach {
                             if !deliver_attach_output(
                                 &runtime,
                                 &notifier,
+                                &reader_pane,
                                 generation,
                                 &bytes[..count],
                             ) {
@@ -417,15 +718,8 @@ impl PaneAttach {
                     }
                 }
             })
-            .map_err(|error| format!("attach reader thread could not be started: {error}"))?;
-
-        Ok(Self {
-            pane_id: pane_id.to_owned(),
-            generation,
-            master: pair.master,
-            child,
-            writer,
-        })
+            .map(|_| ())
+            .map_err(|error| format!("attach reader thread could not be started: {error}"))
     }
 
     pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
@@ -449,14 +743,84 @@ impl PaneAttach {
 
 impl Drop for PaneAttach {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let pane_id = self.pane_id.clone();
+        if let Err(error) = child.kill() {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "live",
+                    "kind": "pane.attach_kill_failed",
+                    "pane_id": pane_id,
+                    "message": error.to_string(),
+                })
+            );
+        }
+        if let Err(error) = thread::Builder::new()
+            .name(format!("herdr-core-attach-reaper-{pane_id}"))
+            .spawn(move || {
+                if let Err(error) = child.wait() {
+                    eprintln!(
+                        "{}",
+                        json!({
+                            "component": "live",
+                            "kind": "pane.attach_wait_failed",
+                            "pane_id": pane_id,
+                            "message": error.to_string(),
+                        })
+                    );
+                }
+            })
+        {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "live",
+                    "kind": "pane.attach_reaper_spawn_failed",
+                    "message": error.to_string(),
+                })
+            );
+        }
     }
+}
+
+pub fn spawn_pane_attach(
+    context: LiveContext,
+    pane_id: String,
+    generation: u64,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name(format!("herdr-core-attach-spawn-{pane_id}"))
+        .spawn(move || {
+            let started = Instant::now();
+            let result = PaneAttach::spawn(&context, &pane_id, generation, rows, cols);
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => {
+                    guard.ingest_attach_spawn(generation, &pane_id, result, elapsed_ms, &context)
+                }
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("attach worker could not be started: {error}"))
 }
 
 fn deliver_attach_output(
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
+    pane_id: &str,
     generation: u64,
     bytes: &[u8],
 ) -> bool {
@@ -464,7 +828,7 @@ fn deliver_attach_output(
         return false;
     };
     let delivered = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_attach_output(generation, bytes),
+        Ok(mut guard) => guard.ingest_attach_output(pane_id, generation, bytes),
         Err(_) => return false,
     };
     drop(runtime);
@@ -485,6 +849,7 @@ fn deliver_attach_exit(
     };
     let delivered = match runtime.lock() {
         Ok(mut guard) => guard.ingest_attach_exit(
+            pane_id,
             generation,
             format!("Pane {pane_id} attach ended; it may be attached elsewhere or closed"),
         ),
@@ -507,9 +872,11 @@ fn deliver_attach_error(
         return;
     };
     let delivered = match runtime.lock() {
-        Ok(mut guard) => {
-            guard.ingest_attach_exit(generation, format!("Pane {pane_id} stream failed: {error}"))
-        }
+        Ok(mut guard) => guard.ingest_attach_exit(
+            pane_id,
+            generation,
+            format!("Pane {pane_id} stream failed: {error}"),
+        ),
         Err(_) => return,
     };
     drop(runtime);
@@ -530,6 +897,8 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::net::UnixListener;
+
     use serde_json::json;
 
     use super::*;
@@ -537,10 +906,10 @@ mod tests {
     #[test]
     fn pane_control_plans_right_down_and_zoom_without_shell_interpolation() {
         assert_eq!(
-            pane_control_arguments(PaneControlAction::Split {
-                pane_id: "w1:p1",
+            pane_control_arguments(&PaneControlAction::Split {
+                pane_id: "w1:p1".to_owned(),
                 direction: PaneSplitDirection::Right,
-                cwd: Some("/tmp/herdr-ide-verify-shortcuts"),
+                cwd: Some("/tmp/herdr-ide-verify-shortcuts".to_owned()),
             }),
             [
                 "pane",
@@ -548,30 +917,83 @@ mod tests {
                 "w1:p1",
                 "--direction",
                 "right",
-                "--no-focus",
                 "--cwd",
                 "/tmp/herdr-ide-verify-shortcuts",
             ]
         );
         assert_eq!(
-            pane_control_arguments(PaneControlAction::Split {
-                pane_id: "w1:p1",
+            pane_control_arguments(&PaneControlAction::Split {
+                pane_id: "w1:p1".to_owned(),
                 direction: PaneSplitDirection::Down,
                 cwd: None,
             }),
-            [
-                "pane",
-                "split",
-                "w1:p1",
-                "--direction",
-                "down",
-                "--no-focus",
-            ]
+            ["pane", "split", "w1:p1", "--direction", "down"]
         );
         assert_eq!(
-            pane_control_arguments(PaneControlAction::ToggleZoom { pane_id: "w1:p1" }),
+            pane_control_arguments(&PaneControlAction::ToggleZoom {
+                pane_id: "w1:p1".to_owned(),
+            }),
             ["pane", "zoom", "w1:p1", "--toggle"]
         );
+        assert_eq!(
+            pane_control_arguments(&PaneControlAction::Close {
+                pane_id: "w1:p1".to_owned(),
+            }),
+            ["pane", "close", "w1:p1"]
+        );
+    }
+
+    #[test]
+    fn focus_uses_the_direct_socket_contract_before_reading_authoritative_layout() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-focus-contract-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            for expected_method in ["pane.focus", "pane.layout"] {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], expected_method);
+                assert_eq!(request["params"]["pane_id"], "fixture:p2");
+                let result = if expected_method == "pane.focus" {
+                    json!({"pane": {"pane_id": "fixture:p2"}})
+                } else {
+                    json!({
+                        "layout": {
+                            "workspace_id": "fixture",
+                            "tab_id": "fixture:t1",
+                            "zoomed": false,
+                            "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                            "focused_pane_id": "fixture:p2",
+                            "panes": [
+                                {"pane_id": "fixture:p1", "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                                {"pane_id": "fixture:p2", "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                            ],
+                            "splits": [
+                                {"direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
+                            ]
+                        }
+                    })
+                };
+                writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
+                    .expect("write response");
+            }
+        });
+
+        request(&socket_path, "pane.focus", json!({"pane_id": "fixture:p2"}))
+            .expect("focus request");
+        let layout = fetch_pane_layout(&socket_path, "fixture:p2").expect("focused layout");
+        assert_eq!(layout.focused_pane_id, "fixture:p2");
+        assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
+
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]
@@ -581,6 +1003,7 @@ mod tests {
             "workspaces": [
                 {"workspace_id": "w1", "label": "herdr-ide"},
             ],
+            "layouts": [],
             "agents": [
                 {
                     "pane_id": "w1:p1",
@@ -628,6 +1051,56 @@ mod tests {
         let error = project_session(&snapshot).expect_err("must fail");
         assert_eq!(error.state(), "protocol_mismatch");
         assert!(error.message().contains("20"));
+    }
+
+    #[test]
+    fn session_layout_projects_authoritative_nested_tree_and_zoom() {
+        let snapshot = json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "workspaces": [{"workspace_id": "w1", "label": "verify"}],
+            "agents": [],
+            "focused_pane_id": "w1:p3",
+            "layouts": [{
+                "workspace_id": "w1",
+                "tab_id": "w1:t1",
+                "zoomed": true,
+                "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                "focused_pane_id": "w1:p3",
+                "panes": [
+                    {"pane_id": "w1:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                    {"pane_id": "w1:p2", "focused": false, "rect": {"x": 60, "y": 0, "width": 60, "height": 30}},
+                    {"pane_id": "w1:p3", "focused": true, "rect": {"x": 60, "y": 30, "width": 60, "height": 30}}
+                ],
+                "splits": [
+                    {"id": "split_0_root", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}},
+                    {"id": "split_1_1", "direction": "down", "ratio": 0.5, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                ]
+            }]
+        });
+
+        let payload = project_session(&snapshot).expect("session projection");
+        let layout = project_layout_for_pane(&payload, "w1:p3").expect("layout projection");
+        assert_eq!(layout.workspace_id, "w1");
+        assert_eq!(layout.tab_id, "w1:t1");
+        assert_eq!(layout.focused_pane_id, "w1:p3");
+        assert!(layout.zoomed);
+        assert_eq!(layout.pane_ids(), ["w1:p1", "w1:p2", "w1:p3"]);
+        assert_eq!(
+            serde_json::to_value(&layout.root).expect("layout JSON"),
+            json!({
+                "type": "split",
+                "direction": "right",
+                "ratio": 0.5,
+                "first": {"type": "pane", "pane_id": "w1:p1"},
+                "second": {
+                    "type": "split",
+                    "direction": "down",
+                    "ratio": 0.5,
+                    "first": {"type": "pane", "pane_id": "w1:p2"},
+                    "second": {"type": "pane", "pane_id": "w1:p3"}
+                }
+            })
+        );
     }
 
     #[test]

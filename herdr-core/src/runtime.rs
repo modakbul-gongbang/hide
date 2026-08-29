@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -5,11 +6,12 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::live::{
-    LiveContext, PaneAttach, PaneControlAction, PaneSplitDirection, SessionFetchError,
+    LiveContext, PaneAttach, PaneControlAction, PaneControlOutcome, PaneSplitDirection,
+    SessionFetchError,
 };
 use crate::model::{
-    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, SCHEMA_VERSION, Snapshot, Surface,
-    TerminalChunk, UiStateSnapshot,
+    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, SCHEMA_VERSION,
+    Snapshot, Surface, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence};
@@ -140,6 +142,8 @@ struct UiStateUpdatePayload {
     expanded_paths: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
+    #[serde(default)]
+    shortcut_bindings: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,6 +153,7 @@ struct RetryConnectPayload {
 
 #[derive(Debug, Deserialize)]
 struct TerminalResizePayload {
+    pane_id: String,
     cols: u16,
     rows: u16,
 }
@@ -181,10 +186,10 @@ pub struct Runtime {
     snapshot: Snapshot,
     state_path: PathBuf,
     live: Option<LiveContext>,
-    attach: Option<PaneAttach>,
-    attach_generation: u64,
-    terminal_rows: u16,
-    terminal_cols: u16,
+    attaches: HashMap<String, PaneAttach>,
+    attach_generations: HashMap<String, u64>,
+    next_attach_generation: u64,
+    terminal_sizes: HashMap<String, (u16, u16)>,
 }
 
 impl Runtime {
@@ -234,10 +239,10 @@ impl Runtime {
             snapshot,
             state_path,
             live: None,
-            attach: None,
-            attach_generation: 0,
-            terminal_rows: 24,
-            terminal_cols: 80,
+            attaches: HashMap::new(),
+            attach_generations: HashMap::new(),
+            next_attach_generation: 0,
+            terminal_sizes: HashMap::new(),
         }
     }
 
@@ -255,18 +260,58 @@ impl Runtime {
         &mut self,
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
     ) -> bool {
-        let (state, message, agents) = match fetched {
-            Ok(payload) => match project_agents(payload) {
-                Ok(agents) => ("connected", None, Some(agents)),
-                Err(projection_error) => (
-                    "malformed",
-                    Some(format!(
-                        "Herdr agents could not be projected: {projection_error}"
-                    )),
-                    None,
-                ),
-            },
-            Err(error) => (error.state(), Some(error.message().to_owned()), None),
+        let (state, message, agents, layout) = match fetched {
+            Ok(payload) => {
+                let selected_pane_id = self.snapshot.terminal.pane_id.as_deref().or(self
+                    .snapshot
+                    .ui_state
+                    .selected_pane_id
+                    .as_deref());
+                let selected_still_exists = selected_pane_id.is_some_and(|pane_id| {
+                    payload
+                        .layouts
+                        .iter()
+                        .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
+                });
+                // Once the user or persisted state chooses a pane, a session
+                // snapshot that omits that workspace must not silently retarget
+                // commands to Herdr's unrelated globally focused workspace.
+                let target_pane_id = if selected_pane_id.is_some() && !selected_still_exists {
+                    None
+                } else {
+                    selected_pane_id
+                        .or(payload.focused_pane_id.as_deref())
+                        .or_else(|| {
+                            payload
+                                .layouts
+                                .first()
+                                .map(|layout| layout.focused_pane_id.as_str())
+                        })
+                };
+                let layout = target_pane_id
+                    .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
+                    .transpose();
+                match (project_agents(payload), layout) {
+                    (Ok(agents), Ok(layout)) => ("connected", None, Some(agents), layout),
+                    (Err(projection_error), Ok(layout)) => (
+                        "malformed",
+                        Some(format!(
+                            "Herdr agents could not be projected: {projection_error}"
+                        )),
+                        None,
+                        layout,
+                    ),
+                    (_, Err(projection_error)) => (
+                        "malformed",
+                        Some(format!(
+                            "Herdr pane layout could not be projected: {projection_error}"
+                        )),
+                        None,
+                        None,
+                    ),
+                }
+            }
+            Err(error) => (error.state(), Some(error.message().to_owned()), None, None),
         };
 
         let mut changed = false;
@@ -284,34 +329,369 @@ impl Runtime {
             self.snapshot.navigator.agents = agents;
             changed = true;
         }
+        if let Some(layout) = layout {
+            if self.snapshot.terminal.pane_id.is_none() {
+                let pane_id = layout.focused_pane_id.clone();
+                self.snapshot.terminal.pane_id = Some(pane_id.clone());
+                self.snapshot.focused.pane_id = Some(pane_id);
+            }
+            changed |= self.apply_pane_layout(layout);
+        }
         changed
     }
 
+    fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
+        let pane_ids = layout
+            .pane_ids()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let desired = pane_ids.iter().cloned().collect::<HashSet<_>>();
+        let layout_changed = self.snapshot.pane_layout.as_ref() != Some(&layout);
+
+        self.attaches.retain(|pane_id, _| desired.contains(pane_id));
+        self.attach_generations
+            .retain(|pane_id, _| desired.contains(pane_id));
+        self.terminal_sizes
+            .retain(|pane_id, _| desired.contains(pane_id));
+
+        let previous = self
+            .snapshot
+            .terminal
+            .panes
+            .drain(..)
+            .map(|pane| (pane.pane_id.clone(), pane))
+            .collect::<HashMap<_, _>>();
+        self.snapshot.terminal.panes = pane_ids
+            .iter()
+            .map(|pane_id| {
+                previous
+                    .get(pane_id)
+                    .cloned()
+                    .unwrap_or_else(|| TerminalPaneSnapshot {
+                        pane_id: pane_id.clone(),
+                        closed: false,
+                        exit_code: None,
+                    })
+            })
+            .collect();
+
+        // Herdr owns focus and input routing. The shell never keeps a second,
+        // hover- or click-local focus value alongside the authoritative layout.
+        self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
+        self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
+        self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
+        self.snapshot.pane_layout = Some(layout);
+        self.sync_focused_terminal_projection();
+
+        if self.live.is_some() {
+            for pane_id in pane_ids {
+                self.request_attach(&pane_id);
+            }
+        }
+        layout_changed
+    }
+
+    fn ensure_terminal_pane(&mut self, pane_id: &str) {
+        if self
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == pane_id)
+        {
+            return;
+        }
+        self.snapshot.terminal.panes.push(TerminalPaneSnapshot {
+            pane_id: pane_id.to_owned(),
+            closed: false,
+            exit_code: None,
+        });
+    }
+
+    fn set_terminal_closed(&mut self, pane_id: &str, closed: bool) {
+        self.ensure_terminal_pane(pane_id);
+        if let Some(pane) = self
+            .snapshot
+            .terminal
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == pane_id)
+        {
+            pane.closed = closed;
+            if !closed {
+                pane.exit_code = None;
+            }
+        }
+        self.sync_focused_terminal_projection();
+    }
+
+    fn terminal_is_closed(&self, pane_id: &str) -> bool {
+        self.snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .is_some_and(|pane| pane.closed)
+    }
+
+    fn sync_focused_terminal_projection(&mut self) {
+        let Some(pane_id) = self.snapshot.terminal.pane_id.as_deref() else {
+            self.snapshot.terminal.closed = false;
+            self.snapshot.terminal.exit_code = None;
+            return;
+        };
+        if let Some(pane) = self
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+        {
+            self.snapshot.terminal.closed = pane.closed;
+            self.snapshot.terminal.exit_code = pane.exit_code;
+        }
+    }
+
+    /// Applies a background pane-control result to the owner-thread snapshot.
+    /// The child process is never waited on while the Swift caller holds the
+    /// runtime lock; completion arrives through the normal change callback.
+    pub fn ingest_pane_control_result(
+        &mut self,
+        action: PaneControlAction,
+        result: Result<PaneControlOutcome, String>,
+        elapsed_ms: u128,
+    ) -> bool {
+        match (action, result) {
+            (PaneControlAction::Focus { pane_id }, Ok(outcome)) => {
+                let Some(layout) = outcome.layout else {
+                    self.set_error(
+                        "pane.focus_missing_layout",
+                        format!("Pane {pane_id} focused without an authoritative layout"),
+                        true,
+                    );
+                    return true;
+                };
+                if layout.focused_pane_id != pane_id {
+                    self.set_error(
+                        "pane.focus_mismatch",
+                        format!(
+                            "Requested pane {pane_id}, but Herdr reported focused pane {}",
+                            layout.focused_pane_id
+                        ),
+                        true,
+                    );
+                    return true;
+                }
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.focus".to_owned(),
+                    message: format!("Pane {pane_id} focused in {elapsed_ms} ms"),
+                    occurred_at: unix_milliseconds(),
+                });
+                self.snapshot.ui_state.selected_pane_id = Some(pane_id);
+                if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+                    self.set_error("ui_state.save_failed", message, true);
+                }
+                self.apply_pane_layout(layout);
+                true
+            }
+            (
+                PaneControlAction::Split {
+                    pane_id, direction, ..
+                },
+                Ok(outcome),
+            ) => {
+                let Some(created_pane_id) = outcome.created_pane_id else {
+                    self.set_error(
+                        "pane.split_invalid_response",
+                        "Pane split completed without a created pane id",
+                        true,
+                    );
+                    return true;
+                };
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: format!("pane.split.{}", direction.as_str()),
+                    message: format!(
+                        "Pane {pane_id} split {} to {created_pane_id} in {elapsed_ms} ms",
+                        direction.as_str()
+                    ),
+                    occurred_at: unix_milliseconds(),
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_control",
+                        "kind": "pane.split_ready",
+                        "pane_id": pane_id,
+                        "created_pane_id": created_pane_id,
+                        "direction": direction.as_str(),
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+                if let Some(message) = outcome.layout_refresh_error {
+                    self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                        kind: "pane.layout.refresh_pending".to_owned(),
+                        message,
+                        occurred_at: unix_milliseconds(),
+                    });
+                }
+                let Some(layout) = outcome.layout else {
+                    self.set_error(
+                        "pane.layout_refresh_failed",
+                        format!(
+                            "Pane {created_pane_id} was created, but Herdr did not return its authoritative layout"
+                        ),
+                        true,
+                    );
+                    return true;
+                };
+                if !layout.pane_ids().contains(&created_pane_id.as_str()) {
+                    self.set_error(
+                        "pane.layout_created_pane_missing",
+                        format!(
+                            "Authoritative layout does not contain created pane {created_pane_id}"
+                        ),
+                        true,
+                    );
+                    return true;
+                }
+                let authoritative_focus = layout.focused_pane_id.clone();
+                self.snapshot.focused.surface = Surface::Terminal;
+                self.snapshot.ui_state.selected_pane_id = Some(authoritative_focus);
+                if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+                    self.set_error("ui_state.save_failed", message, true);
+                }
+                self.apply_pane_layout(layout);
+                true
+            }
+            (PaneControlAction::ToggleZoom { pane_id }, Ok(outcome)) => {
+                let layout_zoomed = outcome.layout.as_ref().map(|layout| layout.zoomed);
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.zoom_toggled".to_owned(),
+                    message: format!(
+                        "Pane {pane_id} zoom {} in {elapsed_ms} ms",
+                        layout_zoomed
+                            .map(|zoomed| if zoomed { "enabled" } else { "disabled" })
+                            .unwrap_or("awaiting authoritative layout")
+                    ),
+                    occurred_at: unix_milliseconds(),
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_control",
+                        "kind": "pane.zoom_ready",
+                        "pane_id": pane_id,
+                        "zoomed": layout_zoomed,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+                if let Some(message) = outcome.layout_refresh_error {
+                    self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                        kind: "pane.layout.refresh_pending".to_owned(),
+                        message,
+                        occurred_at: unix_milliseconds(),
+                    });
+                }
+                if let Some(layout) = outcome.layout {
+                    self.apply_pane_layout(layout);
+                }
+                true
+            }
+            (PaneControlAction::Close { pane_id }, Ok(outcome)) => {
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.close".to_owned(),
+                    message: format!("Pane {pane_id} closed in {elapsed_ms} ms"),
+                    occurred_at: unix_milliseconds(),
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_control",
+                        "kind": "pane.close_ready",
+                        "pane_id": pane_id,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+
+                let _retired_attach = self.attaches.remove(&pane_id);
+                self.attach_generations.remove(&pane_id);
+                self.terminal_sizes.remove(&pane_id);
+                self.snapshot
+                    .terminal
+                    .panes
+                    .retain(|pane| pane.pane_id != pane_id);
+
+                if let Some(message) = outcome.layout_refresh_error {
+                    self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                        kind: "pane.layout.refresh_pending".to_owned(),
+                        message,
+                        occurred_at: unix_milliseconds(),
+                    });
+                    if self.snapshot.terminal.pane_id.as_deref() == Some(pane_id.as_str()) {
+                        self.snapshot.terminal.pane_id = None;
+                        self.snapshot.focused.pane_id = None;
+                    }
+                } else if let Some(layout) = outcome.layout {
+                    let focused_pane_id = layout.focused_pane_id.clone();
+                    self.snapshot.focused.surface = Surface::Terminal;
+                    self.snapshot.focused.pane_id = Some(focused_pane_id.clone());
+                    self.snapshot.terminal.pane_id = Some(focused_pane_id.clone());
+                    self.snapshot.ui_state.selected_pane_id = Some(focused_pane_id);
+                    self.apply_pane_layout(layout);
+                } else {
+                    self.snapshot.pane_layout = None;
+                    self.snapshot.zoomed = None;
+                    self.snapshot.focused.pane_id = None;
+                    self.snapshot.terminal.pane_id = None;
+                    self.snapshot.terminal.panes.clear();
+                    self.snapshot.ui_state.selected_pane_id = None;
+                }
+                if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+                    self.set_error("ui_state.save_failed", message, true);
+                }
+                self.sync_focused_terminal_projection();
+                true
+            }
+            (PaneControlAction::Focus { .. }, Err(message)) => {
+                self.set_error("pane.focus_failed", message, true);
+                true
+            }
+            (PaneControlAction::Split { .. }, Err(message)) => {
+                self.set_error("pane.split_failed", message, true);
+                true
+            }
+            (PaneControlAction::ToggleZoom { .. }, Err(message)) => {
+                self.set_error("pane.zoom_failed", message, true);
+                true
+            }
+            (PaneControlAction::Close { .. }, Err(message)) => {
+                self.set_error("pane.close_failed", message, true);
+                true
+            }
+        }
+    }
+
     /// Appends live pane bytes when the delivering attach is still current.
-    pub fn ingest_attach_output(&mut self, generation: u64, bytes: &[u8]) -> bool {
-        if generation != self.attach_generation {
+    pub fn ingest_attach_output(&mut self, pane_id: &str, generation: u64, bytes: &[u8]) -> bool {
+        if self.attach_generations.get(pane_id) != Some(&generation) {
             return false;
         }
-        let pane_id = match self.attach.as_ref() {
-            Some(attach) => attach.pane_id.clone(),
-            None => return false,
-        };
-        self.append_terminal_chunk(pane_id, live::encode_base64(bytes));
+        if !self.attaches.contains_key(pane_id) {
+            return false;
+        }
+        self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
         true
     }
 
     /// Marks the terminal closed when the current attach stream ends.
-    pub fn ingest_attach_exit(&mut self, generation: u64, message: String) -> bool {
-        if generation != self.attach_generation {
+    pub fn ingest_attach_exit(&mut self, pane_id: &str, generation: u64, message: String) -> bool {
+        if self.attach_generations.get(pane_id) != Some(&generation) {
             return false;
         }
-        let pane_id = match self.attach.as_ref() {
-            Some(attach) => attach.pane_id.clone(),
-            None => return false,
-        };
-        self.snapshot.terminal.closed = true;
+        self.set_terminal_closed(pane_id, true);
         let notice = format!("\r\n[{message}]\r\n");
-        self.append_terminal_chunk(pane_id, live::encode_base64(notice.as_bytes()));
+        self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
         true
     }
 
@@ -372,6 +752,9 @@ impl Runtime {
                 self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
+                self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
+                self.ensure_terminal_pane(&payload.pane_id);
+                self.sync_focused_terminal_projection();
                 if self.live.is_some() {
                     self.write_attached(&payload.pane_id, &payload.bytes_base64);
                 } else {
@@ -382,30 +765,39 @@ impl Runtime {
                 true
             }
             ValidatedEvent::TerminalOutput(payload) => {
+                if self.snapshot.terminal.pane_id.is_none() {
+                    self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
+                    self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
+                }
+                self.ensure_terminal_pane(&payload.pane_id);
                 self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
                 true
             }
-            ValidatedEvent::SessionSnapshot(payload) => match project_agents(payload) {
-                Ok(agents) => {
-                    self.snapshot.navigator.agents = agents;
-                    true
-                }
-                Err(message) => {
-                    self.set_error("herdr.invalid_tokens", message, false);
-                    true
-                }
-            },
+            ValidatedEvent::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
             ValidatedEvent::Click(payload) => {
                 let _ = (payload.x, payload.y, payload.button, payload.click_count);
                 self.snapshot.focused.surface = payload.surface;
                 true
             }
             ValidatedEvent::FocusPane(payload) => {
-                self.snapshot.focused.surface = Surface::Terminal;
-                self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
-                self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
-                if self.live.is_some() {
-                    self.attach_pane(&payload.pane_id);
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.set_error(
+                        "pane.control_unavailable",
+                        "Pane focus requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                let pane_id = payload.pane_id;
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.focus.requested".to_owned(),
+                    message: format!("Focusing pane {pane_id}"),
+                    occurred_at: unix_milliseconds(),
+                });
+                if let Err(message) =
+                    live::spawn_pane_control(context, PaneControlAction::Focus { pane_id })
+                {
+                    self.set_error("pane.focus_worker_failed", message, true);
                 }
                 true
             }
@@ -485,30 +877,21 @@ impl Runtime {
                     );
                     return true;
                 };
-                match live::execute_pane_control(
-                    &context,
-                    PaneControlAction::Split {
-                        pane_id: &pane_id,
-                        direction: payload.direction,
-                        cwd: Some(&payload.cwd),
-                    },
-                ) {
-                    Ok(()) => {
-                        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                            kind: format!("pane.split.{}", payload.direction.as_str()),
-                            message: format!(
-                                "Pane {pane_id} split {} successfully",
-                                payload.direction.as_str()
-                            ),
-                            occurred_at: unix_milliseconds(),
-                        });
-                        true
-                    }
-                    Err(message) => {
-                        self.set_error("pane.split_failed", message, true);
-                        true
-                    }
+                let direction = payload.direction;
+                let action = PaneControlAction::Split {
+                    pane_id: pane_id.clone(),
+                    direction,
+                    cwd: Some(payload.cwd),
+                };
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: format!("pane.split.{}.requested", direction.as_str()),
+                    message: format!("Splitting pane {pane_id} {}", direction.as_str()),
+                    occurred_at: unix_milliseconds(),
+                });
+                if let Err(message) = live::spawn_pane_control(context, action) {
+                    self.set_error("pane.split_worker_failed", message, true);
                 }
+                true
             }
             ValidatedEvent::ToggleZoom(payload) => {
                 let context = self.live.as_ref().cloned();
@@ -520,31 +903,18 @@ impl Runtime {
                     );
                     return true;
                 };
-                match live::execute_pane_control(
-                    &context,
-                    PaneControlAction::ToggleZoom {
-                        pane_id: &payload.pane_id,
-                    },
-                ) {
-                    Ok(()) => {
-                        let zoomed = self.snapshot.zoomed.as_deref() == Some(&payload.pane_id);
-                        self.snapshot.zoomed = (!zoomed).then_some(payload.pane_id.clone());
-                        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                            kind: "pane.zoom_toggled".to_owned(),
-                            message: format!(
-                                "Pane {} zoom is {}",
-                                payload.pane_id,
-                                if zoomed { "off" } else { "on" }
-                            ),
-                            occurred_at: unix_milliseconds(),
-                        });
-                        true
-                    }
-                    Err(message) => {
-                        self.set_error("pane.zoom_failed", message, true);
-                        true
-                    }
+                let pane_id = payload.pane_id;
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.zoom.requested".to_owned(),
+                    message: format!("Toggling zoom for pane {pane_id}"),
+                    occurred_at: unix_milliseconds(),
+                });
+                if let Err(message) =
+                    live::spawn_pane_control(context, PaneControlAction::ToggleZoom { pane_id })
+                {
+                    self.set_error("pane.zoom_worker_failed", message, true);
                 }
+                true
             }
             ValidatedEvent::CloseWorkspace(payload) => {
                 let _ = (payload.workspace_id, payload.confirmed);
@@ -555,8 +925,44 @@ impl Runtime {
                 false
             }
             ValidatedEvent::ClosePane(payload) => {
-                let _ = (payload.pane_id, payload.confirmed);
-                false
+                let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
+                    agent.pane_id == payload.pane_id
+                        && matches!(
+                            agent.state.as_str(),
+                            "working" | "question" | "approval" | "error" | "unseen_completion"
+                        )
+                });
+                if requires_confirmation && !payload.confirmed {
+                    self.set_error(
+                        "pane.close_confirmation_required",
+                        format!(
+                            "Pane {} is working or needs attention; close_pane requires confirmed=true",
+                            payload.pane_id
+                        ),
+                        false,
+                    );
+                    return true;
+                }
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.set_error(
+                        "pane.control_unavailable",
+                        "Pane close requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                let pane_id = payload.pane_id;
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.close.requested".to_owned(),
+                    message: format!("Closing pane {pane_id}"),
+                    occurred_at: unix_milliseconds(),
+                });
+                if let Err(message) =
+                    live::spawn_pane_control(context, PaneControlAction::Close { pane_id })
+                {
+                    self.set_error("pane.close_worker_failed", message, true);
+                }
+                true
             }
             ValidatedEvent::FileOpen(payload) => match files::open(Path::new(&payload.path)) {
                 Ok(editor) => {
@@ -630,9 +1036,9 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.terminal_rows = payload.rows;
-                self.terminal_cols = payload.cols;
-                if let Some(attach) = self.attach.as_mut()
+                self.terminal_sizes
+                    .insert(payload.pane_id.clone(), (payload.rows, payload.cols));
+                if let Some(attach) = self.attaches.get_mut(&payload.pane_id)
                     && let Err(message) = attach.resize(payload.rows, payload.cols)
                 {
                     self.set_error("terminal.resize_failed", message, true);
@@ -645,6 +1051,7 @@ impl Runtime {
                     expanded_paths: payload.expanded_paths,
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
+                    shortcut_bindings: payload.shortcut_bindings,
                 };
                 match persistence::save(&self.state_path, &self.snapshot.ui_state) {
                     Ok(()) => true,
@@ -657,47 +1064,99 @@ impl Runtime {
         }
     }
 
-    /// Attaches the terminal to a live pane, replacing any previous attach.
-    /// Re-focusing the already attached pane is a no-op so repeated clicks
-    /// cannot kill and respawn the transport.
-    fn attach_pane(&mut self, pane_id: &str) {
-        if self
-            .attach
-            .as_ref()
-            .is_some_and(|attach| attach.pane_id == pane_id && !self.snapshot.terminal.closed)
-        {
+    /// Begins a pane attach without spawning or waiting for a process on the
+    /// caller. Re-focusing the active pane is a no-op; a different pane makes
+    /// the selection visible immediately and finishes on a worker.
+    fn request_attach(&mut self, pane_id: &str) {
+        if self.attaches.contains_key(pane_id) && !self.terminal_is_closed(pane_id) {
             return;
         }
-        self.attach_generation = self.attach_generation.saturating_add(1);
-        self.attach = None;
-        self.snapshot.terminal.closed = false;
-        self.snapshot.terminal.exit_code = None;
-        // Full terminal reset so the previous pane's grid cannot bleed into
-        // the new pane; herdr redraws the pane content after attach.
+        self.next_attach_generation = self.next_attach_generation.saturating_add(1);
+        let generation = self.next_attach_generation;
+        self.attach_generations
+            .insert(pane_id.to_owned(), generation);
+        let _retired_attach = self.attaches.remove(pane_id);
+        self.set_terminal_closed(pane_id, false);
+        // Reset only this pane's SwiftTerm grid; other panes retain their
+        // independent terminal state while the replacement attach starts.
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(b"\x1bc"));
+        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+            kind: "pane.attach.requested".to_owned(),
+            message: format!("Attaching pane {pane_id}"),
+            occurred_at: unix_milliseconds(),
+        });
         let context = self
             .live
             .as_ref()
             .cloned()
-            .expect("attach_pane is only called with live configured");
-        match PaneAttach::spawn(
-            &context,
-            pane_id,
-            self.attach_generation,
-            self.terminal_rows,
-            self.terminal_cols,
+            .expect("request_attach is only called with live configured");
+        if let Err(message) = live::spawn_pane_attach(
+            context,
+            pane_id.to_owned(),
+            generation,
+            self.terminal_sizes.get(pane_id).map_or(24, |size| size.0),
+            self.terminal_sizes.get(pane_id).map_or(80, |size| size.1),
         ) {
-            Ok(attach) => {
-                self.attach = Some(attach);
+            self.set_terminal_closed(pane_id, true);
+            let notice = format!("\r\n[Attach to {pane_id} failed: {message}]\r\n");
+            self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
+            self.set_error("pane.attach_worker_failed", message, true);
+        }
+    }
+
+    pub fn ingest_attach_spawn(
+        &mut self,
+        generation: u64,
+        pane_id: &str,
+        result: Result<PaneAttach, String>,
+        elapsed_ms: u128,
+        context: &LiveContext,
+    ) -> bool {
+        if self.attach_generations.get(pane_id) != Some(&generation) {
+            return false;
+        }
+        if let Some(layout) = self.snapshot.pane_layout.as_ref()
+            && !layout.pane_ids().contains(&pane_id)
+        {
+            return false;
+        }
+        match result {
+            Ok(mut attach) => {
+                if let Err(message) =
+                    attach.start_reader(context.runtime.clone(), context.notifier.clone())
+                {
+                    self.set_terminal_closed(pane_id, true);
+                    self.set_error("pane.attach_reader_failed", message, true);
+                    return true;
+                }
+                self.attaches.insert(pane_id.to_owned(), attach);
+                self.set_terminal_closed(pane_id, false);
+                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: "pane.attach.ready".to_owned(),
+                    message: format!("Pane {pane_id} attached in {elapsed_ms} ms"),
+                    occurred_at: unix_milliseconds(),
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_attach",
+                        "kind": "pane.attach_ready",
+                        "pane_id": pane_id,
+                        "generation": generation,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+                true
             }
             Err(message) => {
-                self.snapshot.terminal.closed = true;
+                self.set_terminal_closed(pane_id, true);
                 let notice = format!("\r\n[Attach to {pane_id} failed: {message}]\r\n");
                 self.append_terminal_chunk(
                     pane_id.to_owned(),
                     live::encode_base64(notice.as_bytes()),
                 );
                 self.set_error("pane.attach_failed", message, true);
+                true
             }
         }
     }
@@ -712,23 +1171,16 @@ impl Runtime {
                 return;
             }
         };
-        match self.attach.as_mut() {
-            Some(attach) if attach.pane_id == pane_id => {
+        match self.attaches.get_mut(pane_id) {
+            Some(attach) => {
                 if let Err(message) = attach.write_bytes(&bytes) {
                     self.set_error("terminal.write_failed", message, true);
                 }
             }
-            Some(attach) => {
-                let message = format!(
-                    "Input targeted pane {pane_id} but the terminal is attached to {}",
-                    attach.pane_id
-                );
-                self.set_error("terminal.pane_mismatch", message, false);
-            }
             None => {
                 self.set_error(
                     "terminal.not_attached",
-                    "No pane is attached; select an agent in the sidebar first",
+                    format!("Pane {pane_id} is not attached; select or retry that pane"),
                     true,
                 );
             }
@@ -737,8 +1189,8 @@ impl Runtime {
 
     fn append_terminal_chunk(&mut self, pane_id: String, bytes_base64: String) {
         self.snapshot.terminal.sequence = self.snapshot.terminal.sequence.saturating_add(1);
-        self.snapshot.terminal.pane_id = Some(pane_id);
         self.snapshot.terminal.chunks.push(TerminalChunk {
+            pane_id,
             sequence: self.snapshot.terminal.sequence,
             bytes_base64,
         });

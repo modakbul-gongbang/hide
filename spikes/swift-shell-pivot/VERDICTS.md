@@ -580,3 +580,61 @@ V18 and V19 real-service failure injection was not run.
 
 Engineering 4, 9, and 10 make pane-control failure and runtime outcomes observable; Engineering 5 keeps CLI planning, event routing, Swift actions, and evidence separate; Engineering 11 uses an ownership-prefixed fixture and exact process convergence; Engineering 12 prices the stable planner and FFI tests separately from the real native runtime.
 Design 3, 5, and 7 place frequent actions on iTerm2-compatible shortcuts, use the existing native menu pattern, and derive the visible zoom label from core state.
+
+## Authoritative pane grid, command lifecycle, Settings boundary, and zoom-buffer retention
+
+The user-reported sidebar pause was reproduced on owned PID 23460 before the fix.
+`evidence/sidebar-freeze-pid23460.sample.txt` shows the owner thread blocked in `focusPane`, core dispatch, `Runtime.apply`, `PaneAttach` destruction, `portable_pty::Child.wait`, and `wait4`.
+The class-level fix moves pane attach and pane control lifecycles behind bounded asynchronous workers, preserves the owner-thread FFI contract, and publishes requested, ready, failed, and authoritative refresh diagnostics instead of waiting for a PTY child or Herdr command on the main thread.
+The exact lifecycle receipt is `evidence/pane-grid-v8-diagnostic.json`, and `evidence/grid-diagnostic-graceful-termination.log` distinguishes a normal AppKit termination from a crash.
+
+Herdr remains authoritative for the recursive current-tab pane layout.
+The core snapshot now carries `pane_layout.workspace_id`, `tab_id`, `focused_pane_id`, `zoomed`, and a recursive `pane | split(direction, ratio, first, second)` tree.
+The Swift shell renders all leaves concurrently and owns one independent SwiftTerm view and attach feed per pane.
+The T19-owned V8 workspace `w3F` rendered eleven panes with eleven attaches at 220752 KB combined RSS, below the 409600 KB limit, then only that owned fixture and app were cleaned.
+The screenshot is `evidence/grid-v8-11-pane.png`, and the structured receipt is `evidence/pane-grid-v8-diagnostic.json`.
+
+Focus accent is derived only from the authoritative `pane_layout.focused_pane_id` and uses the system `accentColor`.
+There is no hover state, hover callback, hover highlight, global monitor, or local monitor in the grid.
+Click dispatches asynchronous `focus_pane`; the accent moves only after the refreshed snapshot changes the focused pane.
+The owned-fixture transition to `w3H:p4` is visible in `evidence/pane-actions-settings-diagnostic-r2-focus-p4.png` and its matching layout JSON.
+
+The native Pane menu and key-equivalent router expose Split Right, Split Down, Toggle Zoom, and Close Pane.
+`create_pane.direction`, `toggle_zoom.pane_id`, `close_pane.pane_id/confirmed`, and the recursive layout remain inside the six-function ABI event and snapshot contract.
+Idle Close Pane uses the existing `close_pane` path immediately, while working or attention state produces the T15 consequence dialog and sends `confirmed=true` only after confirmation.
+The Settings scene contains only the Keyboard section for these four bindings.
+Default, missing, corrupt, invalid, duplicate, reserved, persistence, and dynamic routing seams are covered by focused tests and observable diagnostics.
+
+The native Settings scene itself rendered correctly in `evidence/pane-actions-settings-diagnostic-r2-settings-latest.png`.
+Exact-window TextField automation did not change the visible value and returned indeterminate receipts, so it is not acceptance evidence and was not retried.
+`evidence/pane-actions-settings-driver-limitation.json` records the driver limitation.
+Native TextField editing, immediate menu-equivalent refresh, action routing after user edit, and relaunch persistence are handed to the final human checklist.
+No global input was sent after that handoff.
+
+The user-owned w2Y screenshot at `/Users/hoyeonlee/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png` showed a real zoom-buffer defect and was never mutated.
+The defect was reproduced at the presentation seam: zoom selected only the focused subtree, SwiftUI dismantled hidden SwiftTerm views while their core attach workers continued draining bytes, and recreated views therefore showed only future output fragments.
+The pre-fix regression in `evidence/zoom-buffer-retention-regression-before.log` failed on that exact behavior.
+
+The correction keeps every pane view in one stable ZStack throughout zoom and unzoom.
+Hidden panes retain their authoritative nonzero frame, SwiftTerm instance, attach PID, and output feed; only opacity, hit testing, accessibility visibility, and z-order change.
+The focused pane uses the full canvas visually while zoomed.
+When its real frame changes, SwiftTerm `setFrameSize` invokes `processSizeChange`, the delegate emits `terminal_resize`, and herdr-core resizes the matching attach PTY with `terminal.resize_failed` observable on failure.
+
+The owned w3H fixture ran distinct continuous output in all three panes.
+The screenshots `evidence/zoom-buffer-retention-before.png`, `evidence/zoom-buffer-retention-on.png`, and `evidence/zoom-buffer-retention-after.png` show all three buffers populated before zoom, the focused pane full-canvas during zoom, and all three panes restored with later line numbers after unzoom.
+Attach PIDs 25551, 25552, and 25550 remained bound to w3H:p1, w3H:p3, and w3H:p2 across the sequence.
+The bounded receipt is `evidence/zoom-buffer-retention-diagnostic.json`, and the final focused suite passes five pane-grid tests including retained nonzero frames and authoritative-only focus.
+The diagnostic app and fixture are temporary and will be replaced by a fresh zero-automation human-readiness instance after the checkpoint build.
+
+Engineering Principles 4, 9, and 10 make asynchronous command, attach, resize, Settings fallback, and lifecycle failures externally observable.
+Engineering Principle 5 separates authoritative core layout, per-pane terminal lifetime, command policy, Settings persistence, and evidence.
+Engineering Principle 11 makes exact fixture creation, attach convergence, repeated focus, and zoom/unzoom lifecycle repeatable.
+Engineering Principle 12 prices pure layout, shortcut, and consequence seams separately from signed native evidence.
+Engineering Principle 13 fixes the view-lifetime class instead of replaying a single damaged buffer.
+Design Principles 3, 5, and 7 keep frequent pane actions in native shortcuts and menus, use a standard Settings scene, and bind focus/zoom visuals to authoritative state.
+Design Principle 6 keeps destructive Close Pane consequences ahead of confirmation.
+
+V8 remains PASS at 220752 KB combined RSS.
+The pane-grid zoom-buffer regression is PASS on the owned three-pane fixture.
+Settings native edit and relaunch remains human-pending because the failed driver attempt is not promoted to success.
+V18 and V19 external-service failure injection remain `미실행-pending`.

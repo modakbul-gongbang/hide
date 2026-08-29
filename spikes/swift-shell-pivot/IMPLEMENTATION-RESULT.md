@@ -6,6 +6,7 @@ Pre-deletion source checkpoint and `rust-native-final` target: `b2582ade493bc656
 T5 deletion checkpoint: `99c4aa85e8b7b0c388c1848967690584a5e40754`.
 R11/R6 cleanup checkpoint: `48e2a56421344a2490db3051fd50a866cb8003a5`.
 Pane command source checkpoint: `18653e56eee3c9ba226739864d395b6e8478d55b`.
+Current pane-grid, lifecycle, shortcut Settings, Close Pane, and zoom-buffer correction: working tree based on `b2670107dc152eaa67d448dce4d4681151170448`, pending the checkpoint recorded later in this report.
 
 This report describes the committed T5 deletion, the follow-up contract cleanup, the pane command feature, and retained runtime evidence.
 The user supplied the authoritative physical-keyboard terminal verdict `1,2,3,4 모두 잘 맞아 다 된다`.
@@ -17,11 +18,14 @@ The later direction `검증은 내가 어느정도 다 했으니 마무리하는
 
 - The development app is a signed macOS 14 arm64 SwiftUI application with a resizable three-column Agents, Terminal, and Workbench layout plus native menus.
 - The sidebar projects live Herdr session tokens into seven authoritative states, two-line summaries, and `sort_rank` then `activity` ordering.
-- Selecting or restoring a pane attaches the center SwiftTerm 1.20.0 terminal to one live `herdr pane attach` process and displays the pane ID in the terminal header.
+- The center terminal renders Herdr's recursive current-tab pane layout as a simultaneous grid with one retained SwiftTerm 1.20.0 view and one live attach per pane.
+- The blue focus accent uses the system accent color and follows only the authoritative snapshot focus; hover has no visual focus effect, and click requests asynchronous focus before the accent moves.
 - The workbench browses existing local files, renders image, Markdown, code, and text surfaces, and supports local text drafts and saves without adding create, rename, move, or delete operations.
 - Browser status and opening are delegated to the literal chromux executable and the `default` profile, with visible unavailable, stale, absent-profile, loading, and ready states.
 - The mini positive path, environment status, destructive-consequence previews, persistent UI state, and the selective-click-through pet surface are represented in the shell.
-- The native Pane menu exposes Split Right (`Command-D`), Split Down (`Command-Shift-D`), and Toggle Zoom (`Command-Option-Return`); the actions travel through the six-function FFI event contract and the visible terminal header derives zoom state from the core snapshot.
+- The native Pane menu exposes Split Right (`Command-D`), Split Down (`Command-Shift-D`), Toggle Zoom (`Command-Option-Return`), and Close Pane (`Command-W`); the actions travel through the six-function FFI event contract and the recursive grid derives focus and zoom from the core snapshot.
+- Zoom is visual-only: hidden terminals retain their view, attach, feed, and nonzero frame, while unzoom resizes the changed terminal through the existing `terminal_resize` path.
+- The standard Settings scene provides only a Keyboard section for rebinding those four pane actions, with persisted defaults, validation, explicit fallback diagnostics, and immediate command-policy routing.
 - The p3 checkpoints add machine-tested composition byte suppression, re-anchor the SwiftTerm marked-text overlay after pane echo, and hide the block caret while composition is active; the human owner then passed all four terminal checks with `1,2,3,4 모두 잘 맞아 다 된다`.
 
 The current human-readiness runtime is captured in [v9-b2582ad-human-retest-ready.png](evidence/v9-b2582ad-human-retest-ready.png) and [v9-b2582ad-human-retest-ready.json](evidence/v9-b2582ad-human-retest-ready.json).
@@ -33,22 +37,21 @@ The earlier d290928 and ecc46fb readiness artifacts are retained as superseded c
 | --- | --- | --- |
 | `herdr-core/src/model.rs` | Versioned options, snapshot, status, terminal, editor, IME, sidebar, and UI-state data | Platform-neutral committed contract |
 | `herdr-core/src/ffi.rs` and `include/herdr_core.h` | Six-function C ABI, Rust-owned buffers, callback registration, panic containment, owner-thread enforcement | Implemented; off-owner snapshot and destroy reject, notify, and preserve an observable error for the owner |
-| `herdr-core/src/runtime.rs` | Event validation, state transitions, terminal generations, persistence, file actions, browser and remote status | Implemented; create/close operations are still preview/no-op paths |
-| `herdr-core/src/live.rs` | Local Herdr socket polling, protocol 21 enforcement, one PTY attach, terminal output, resize, and input routing | Implemented and runtime-evidenced on a prefix-owned pane |
+| `herdr-core/src/runtime.rs` | Event validation, authoritative pane-layout transitions, per-pane terminal generations, asynchronous pane controls, persistence, file actions, browser and remote status | Implemented; failures are reflected through status diagnostics and `last_error` |
+| `herdr-core/src/live.rs` | Local Herdr socket polling, protocol 21 enforcement, asynchronous PTY attaches, shell-free pane controls, terminal output, resize, and input routing | Implemented and runtime-evidenced on prefix-owned multi-pane fixtures |
 | `herdr-core/src/sidebar.rs` | Seven-state token projection and authoritative ordering | Implemented and unit/runtime-evidenced |
 | `herdr-core/src/files.rs` | Existing-file open, draft, save, conflict, and diff projection | Implemented; full native failure matrix remains incomplete |
 | `herdr-core/src/chromux.rs` and macOS operational models | Pure planning plus default-profile executor, CDP read-only status, visible results | Implemented for approved default and safe failure branches |
 | `herdr-core/src/environment.rs` | Enumerable `SSH_AUTH_SOCK`, `PATH`, and `HERDR_SOCKET_PATH` contracts without value disclosure | Implemented; Swift consumes only registry state and has no direct raw environment read |
-| `herdr-core/src/persistence.rs` | Versioned UI state, safe missing/corrupt fallback, atomic replacement | Implemented; full native relaunch restoration evidence remains incomplete |
+| `herdr-core/src/persistence.rs` | Versioned UI state including shortcut bindings, safe missing/corrupt fallback, atomic replacement | Implemented; full native V17/V28 relaunch restoration evidence remains incomplete |
 | `herdr-core/src/fixture.rs` and `src/bin/herdr-ide-fixture.rs` | Prefix validation, local/mini fixture plan/create/status/cleanup | Implemented and used for the retained V9 fixture |
-| `macos/Sources/HerdrMacOS` | SwiftUI shell, bridge/model, live terminal, workbench, browser/mini status, notices, and pet | Production application surface after the approved T5 removal |
+| `macos/Sources/HerdrMacOS` | SwiftUI shell, authoritative pane grid, retained per-pane terminals, native pane commands and Settings, workbench, browser/mini status, notices, and pet | Production application surface after the approved T5 removal |
 | `spikes/swift-shell-pivot` | Stage-0 spike, IME traces, runtime receipts, and verdict ledger | Preserved; proxy IME checks are diagnostic only |
 
-The approved final crate deletion/split is not complete.
-An additive platform-neutral `herdr-core` crate exists, while the original root Rust application and its legacy rendering dependencies remain in place.
-No `herdr-macos` migration-removal step was performed.
+The approved T5 deletion and crate split are complete.
+The platform-neutral `herdr-core` crate remains the six-function ABI owner, and the obsolete root Rust AppKit/wgpu paths and nine dependency families were removed after the verified `rust-native-final` tag.
 
-## Exact C ABI at `18653e5`
+## Exact current C ABI
 
 ```c
 HerdrCore *herdr_core_create(const uint8_t *options_json, size_t len);
@@ -64,8 +67,8 @@ Rust owns `HerdrCore` and every returned buffer, and the caller returns buffers 
 The callback carries only the opaque context and may run from a worker thread; Swift must hop to the main thread and pull a snapshot.
 Malformed events, unknown kinds, schema mismatch, invalid payloads, and wrong-thread dispatch become explicit errors where a live core exists.
 
-The implementation records a wrong-thread error in `herdr_core_snapshot` but still serializes a snapshot, and records a wrong-thread error in `herdr_core_destroy` but still destroys the core.
-Those two paths do not fully enforce the PRD's main-thread-only rule and keep R6 partial.
+Off-owner snapshot returns empty bytes after recording and notifying `ffi.wrong_thread`.
+Off-owner destroy records and notifies the same error without freeing the handle, so destruction remains owned by the creating thread.
 
 ## Options schema
 
@@ -87,7 +90,7 @@ Every event is `{ schema_version: u32, kind: string, payload: object }` with sch
 | --- | --- |
 | `key` | `{ pane_id: string, bytes_base64: string }` |
 | `terminal_output` | `{ pane_id: string, bytes_base64: string }` |
-| `session_snapshot` | `{ agents: SessionAgent[] }` where each agent has optional `id`, `pane_id`, `workspace_label`, `cwd`, `agent`, `agent_status`, plus `tokens: object` |
+| `session_snapshot` | `{ focused_pane_id: string | null, layouts: SessionLayout[], agents: SessionAgent[] }`; each layout includes workspace/tab/focus/zoom, area, pane rects, and split direction/ratio rects, and each agent includes optional identity/status fields plus `tokens: object` |
 | `click` | `{ surface: sidebar | terminal | workbench | pet, x: f64, y: f64, button: left | right, click_count: u8 }` |
 | `focus_pane` | `{ pane_id: string }` |
 | `open_browser` | `{ profile: string }` |
@@ -103,16 +106,16 @@ Every event is `{ schema_version: u32, kind: string, payload: object }` with sch
 | `file_draft` | `{ contents_utf8: string }` |
 | `file_save` | `{ path: string, contents_utf8: string, expected_modified_at_unix_ms: u64 | null }` |
 | `file_conflict` | `{ action: reload | keep_editing }` |
-| `ui_state_update` | `{ expanded_paths: string[], selected_path: string | null, selected_pane_id: string | null }` |
+| `ui_state_update` | `{ expanded_paths: string[], selected_path: string | null, selected_pane_id: string | null, shortcut_bindings: Map<string, string> }` |
 | `retry_connect` | `{ target_id: string }` |
-| `terminal_resize` | `{ cols: u16, rows: u16 }`, both positive |
+| `terminal_resize` | `{ pane_id: string, cols: u16, rows: u16 }`, both dimensions positive |
 
 Unknown `kind` becomes `status.last_error.kind = "event.unknown_kind"`.
 A malformed payload becomes `event.invalid_payload`, malformed JSON becomes `event.invalid_json`, and a version mismatch becomes `schema_version.mismatch`.
 
 ## Full snapshot schema
 
-The top-level snapshot has exactly these 13 fields:
+The top-level snapshot has exactly these 14 fields:
 
 ```text
 Snapshot {
@@ -140,10 +143,16 @@ Snapshot {
   zoomed: string | null,
   focused: { surface: sidebar | terminal | workbench | pet,
              pane_id: string | null },
+  pane_layout: {
+    workspace_id: string, tab_id: string,
+    focused_pane_id: string, zoomed: bool,
+    root: PaneLayoutNode
+  } | null,
   terminal: {
     pane_id: string | null, sequence: u64,
-    chunks: [{ sequence: u64, bytes_base64: string }],
-    closed: bool, exit_code: i32 | null
+    chunks: [{ pane_id: string, sequence: u64, bytes_base64: string }],
+    closed: bool, exit_code: i32 | null,
+    panes: [{ pane_id: string, closed: bool, exit_code: i32 | null }]
   },
   editor: {
     path: string | null, language: string | null,
@@ -156,7 +165,8 @@ Snapshot {
   },
   ui_state: {
     expanded_paths: string[], selected_path: string | null,
-    selected_pane_id: string | null
+    selected_pane_id: string | null,
+    shortcut_bindings: Map<string, string>
   },
   ime: {
     marked_text: string,
@@ -180,6 +190,10 @@ Snapshot {
   }
 }
 ```
+
+`PaneLayoutNode` is either `{ type: pane, pane_id }` or `{ type: split, direction: right | down, ratio: f32, first: PaneLayoutNode, second: PaneLayoutNode }`.
+The authoritative `focused_pane_id` is the only focus-accent and input-routing source.
+All pane leaves keep retained nonzero frames and live terminal feeds during zoom; only the focused pane receives a full-canvas visual frame.
 
 This resolves OPEN-2 from the implemented source rather than from the earlier spike prose.
 
@@ -209,14 +223,14 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | T5 | PASS | Annotated pre-deletion tag verified; approved Rust-native shell files and nine obsolete dependency families removed; V21/build/native evidence passes. |
 | T6 | PASS | The three-key Rust registry is enumerable, value-safe, tested, and the only raw environment-read boundary. |
 | T7 | PASS | The exact six-function ABI, status schema, buffers, callbacks, and owner-thread snapshot/destroy enforcement pass focused tests. |
-| T8 | PASS | Signed native three-column shell and menus have runtime evidence. |
+| T8 | PASS | Signed native three-column shell, authoritative recursive pane grid, native menus, and V8 11-pane runtime evidence pass. |
 | T9 | PASS | Live SwiftTerm attach and byte routing are machine/runtime proven, and the user passed all four terminal-axis V9 checks; editor axis remains deferred. |
 | T10 | PASS | Seven-state two-line sidebar and authoritative ordering are implemented and evidenced. |
 | T11 | PARTIAL | Existing-file browse/render/edit paths exist; the complete save-failure/conflict browser-runtime matrix is not proven. |
 | T12 | PASS | Approved default launch/reuse/focus/status and safe absent/stale/PATH branches are evidenced without profile mutation. |
 | T13 | PARTIAL | Mini positive display/attach/split/browse evidence exists; full in-app flow and disconnect recovery do not. |
-| T14 | PARTIAL | Persistence contracts pass in process; full native missing/corrupt/valid relaunch and legacy-sentinel row remains incomplete. |
-| T15 | PARTIAL | Consequence previews and dialogs exist; create/close/remove execution remains outside the implemented runtime. |
+| T14 | PARTIAL | Persistence and shortcut-binding contracts pass in process; full native missing/corrupt/valid relaunch and legacy-sentinel row remains incomplete. |
+| T15 | PARTIAL | Focused-pane close now executes through the core with idle immediate and working/attention confirmation policy; complete workspace/tab/worktree result evidence remains open. |
 | T16 | PARTIAL | Several visible states exist, but V29, V30, V33, and V34 are incomplete. |
 | T17 | PASS | Two unchanged-source T5 app assemblies produced identical bundle and executable hashes and passed strict deep codesign. |
 | T18 | PASS | Selective pet hit region, click-through corners, focus behavior, lifecycle, and offscreen recovery are evidenced. |
@@ -250,11 +264,11 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 | AC1 | PASS | On `b2582ad`, the user confirmed the Korean candidate window follows the terminal cursor; the editor axis is deferred by prior agreement. |
 | AC2 | PASS | On `b2582ad`, the user confirmed Backspace deletes the Korean composition without leaking DEL. |
 | AC3 | PASS | On `b2582ad`, the user confirmed multi-character composition preserves adjacent characters; the editor axis is deferred by prior agreement. |
-| AC4 | PARTIAL | Live attach is proven, but a sidebar selection receipt tied to Herdr's authoritative focused-pane state is incomplete. |
+| AC4 | PASS | The owned fixture focus receipt and screenshot show a click request followed by Herdr's authoritative focused-pane transition before the system-accent highlight moved. |
 | AC5 | PASS | [v6-path-hidden.png](evidence/v6-path-hidden.png) and receipt. |
 | AC6 | PASS | Default chromux reuse retained PID 9609 without a second instance. |
 | AC7 | NOT RUN | Mini disconnect/reconnect injection was not performed. |
-| AC8 | PASS | 7-workspace/11-pane fixture measured 135.625 MB RSS, below 400 MB. |
+| AC8 | PASS | The 11-pane grid fixture measured app RSS 120976 KB, below 400 MB; app plus eleven attach children totaled 220752 KB. |
 | AC9 | BLOCKED | Final six-axis V10 human review is missing. |
 | AC10 | PASS | In-process unknown-kind snapshot test passes. |
 | AC11 | PARTIAL | Core registry behavior passes; complete owned native missing-socket evidence and registry-only reads do not. |
@@ -267,14 +281,14 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 
 | V | Status | Evidence and remaining gap |
 | --- | --- | --- |
-| V1 | PASS | Current `cargo test -p herdr-core`: 22 unit and 14 FFI tests, including required error paths and pane command routing. |
+| V1 | PASS | Current `cargo test -p herdr-core`: 25 unit and 19 FFI tests, including required error paths, owner-thread behavior, asynchronous lifecycle, Close Pane policy, and authoritative multi-pane routing. |
 | V2 | PASS | Stage-0 byte round trip and later [live-input-proof.png](evidence/live-input-proof.png). |
 | V3 | PARTIAL | Live polling/attach exists; full focus transition and both absence modes are not one complete runtime receipt. |
 | V4 | PARTIAL | File contracts and surfaces exist; all render/save/conflict branches are not directly evidenced. |
 | V5 | PASS | Default chromux lifecycle and decoded title are evidenced. |
 | V6 | PASS | PATH-hidden owned-app unavailable state is evidenced. |
 | V7 | PARTIAL | Warning is native-evidenced, but the actual close result executor is incomplete. |
-| V8 | PASS | [t19-v8-scale-runtime.json](evidence/t19-v8-scale-runtime.json). |
+| V8 | PASS | [pane-grid-v8-diagnostic.json](evidence/pane-grid-v8-diagnostic.json) and [grid-v8-11-pane.png](evidence/grid-v8-11-pane.png): app RSS 120976 KB with eleven simultaneous panes. |
 | V9 | PASS | Human terminal verdict: `1,2,3,4 모두 잘 맞아 다 된다`; editor axis deferred by prior agreement. |
 | V10 | 미실행-pending | Final six-axis visual-quality review was not executed as a complete V10 row. |
 | V11 | PASS | Two unchanged-source assemblies have identical bundle and executable hashes; launch and strict signing pass. |
@@ -307,7 +321,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 
 ### Build and static
 
-- The current pane-command boundary passed 22 `herdr-core` unit tests, 14 FFI integration tests, denied-warning core clippy, Rust formatting, and 18 Swift tests.
+- The current pane-grid boundary passed 25 `herdr-core` unit tests, 19 FFI integration tests, denied-warning core clippy, Rust formatting, and 32 Swift tests.
 - `/bin/bash macos/scripts/build_dev_app.sh` built the release static library, built the Swift package, assembled the app, and passed strict deep codesign from the exact feature source.
 - The current executable SHA-256 is `4d6869e96f8c5825bc9f21f2fc90facd2f16209ec6302b24d055146a9cb9afe2` and the `Info.plist` SHA-256 is `ad91f1cc110ad7f5f7646d518182474bda5aec78a5bc9516b75b3b147e314bc4`.
 - The executable is a thin `arm64` Mach-O with minimum macOS `14.0` and strict deep codesign passed.
@@ -336,6 +350,25 @@ Peekaboo menu inventory exposes the three shortcut equivalents and the signed ap
 The one raw `Command-D` attempt returned indeterminate and is not acceptance evidence; a later fourth owned fixture pane is recorded without assigning its cause.
 The bounded receipt is [pane-shortcuts-runtime.json](evidence/pane-shortcuts-runtime.json).
 
+The later sidebar freeze diagnosis reproduced the user's real pause and sampled owner-thread destruction blocking in `portable_pty::Child.wait` and `wait4`.
+Pane attach and pane-control work now runs asynchronously, while the FFI owner remains the main actor and requested, ready, failed, and authoritative-refresh outcomes stay observable.
+The recursive Herdr layout tree is the sole grid authority; Swift does not invent pane topology.
+Each current-tab pane owns a stable terminal view and attach, only the authoritative focused pane receives the system-accent border and keyboard routing, and hover has no focus state or visual response.
+The 11-pane T19 fixture rendered eleven concurrent panes and eleven attaches at 120976 KB app RSS and 220752 KB including attach children, within the 400 MB app budget.
+See [pane-grid-v8-diagnostic.json](evidence/pane-grid-v8-diagnostic.json) and [grid-v8-11-pane.png](evidence/grid-v8-11-pane.png).
+
+The first zoom implementation removed hidden terminal views from the SwiftUI hierarchy.
+Because the core attach workers continued draining output, unzoom recreated empty SwiftTerm buffers that showed only future fragments.
+The fix retains every terminal view, attach, feed, and nonzero authoritative frame through zoom; only opacity, hit testing, accessibility visibility, z-order, and the focused pane's visual frame change.
+SwiftTerm frame changes continue through `sizeChanged` to the `terminal_resize` event and the matching PTY resize, with `terminal.resize_failed` exposed on error.
+The owned three-pane continuous-output sequence proves all three buffers advance across before, zoomed, and restored screenshots without attach PID replacement.
+See [zoom-buffer-retention-diagnostic.json](evidence/zoom-buffer-retention-diagnostic.json), [before](evidence/zoom-buffer-retention-before.png), [zoomed](evidence/zoom-buffer-retention-on.png), and [restored](evidence/zoom-buffer-retention-after.png).
+
+The standard Settings scene renders its Keyboard-only pane-binding form in [pane-actions-settings-diagnostic-r2-settings-latest.png](evidence/pane-actions-settings-diagnostic-r2-settings-latest.png).
+Default, missing, corrupt, invalid, duplicate, reserved, persistence, and dynamic command-routing seams pass focused tests.
+The exact-window TextField driver did not change the visible value and returned indeterminate receipts, so it is not recorded as successful native rebind evidence and was not retried.
+Actual Settings edit, immediate Pane-menu refresh, rebound action routing, and relaunch persistence remain on the final human checklist, as recorded in [pane-actions-settings-driver-limitation.json](evidence/pane-actions-settings-driver-limitation.json).
+
 ### External and remote
 
 - Approved positive mini evidence exists in [t13-t19-mini-positive-runtime.json](evidence/t13-t19-mini-positive-runtime.json).
@@ -348,9 +381,9 @@ The bounded receipt is [pane-shortcuts-runtime.json](evidence/pane-shortcuts-run
 
 | Test group | Current count | Regression guarded |
 | --- | ---: | --- |
-| `herdr-core` unit | 22 | Token projection, three-key environment registry, persistence, files, fixtures, chromux planning, live socket/protocol behavior, and shell-free right/down/zoom command planning |
-| `herdr-core` FFI | 14 | Six ABI calls, buffers/callbacks, schema, malformed/unknown events, invalid options, off-owner dispatch/snapshot/destroy, live input without attach, byte preservation, and pane event routing |
-| Swift package | 18 | IME byte policy, CDP title decoding, PATH-hidden preflight, pet hit geometry/lifecycle policy, consequence previews |
+| `herdr-core` unit | 25 | Token projection, three-key environment registry, persistence including shortcuts, fixtures, authoritative layouts, direct-socket focus, and shell-free pane command planning |
+| `herdr-core` FFI | 19 | Six ABI calls, buffers/callbacks, schema/error paths, owner-thread rejection, authoritative multi-pane state, async control latency, nonblocking attach destruction, Close Pane policy, and routing |
+| Swift package | 32 | IME byte policy, CDP title decoding, PATH-hidden preflight, pet hit geometry, consequence previews, pane operation status, shortcut defaults/validation/persistence/routing, authoritative focus, and zoom view retention |
 | Stage-0 spike Rust | 5 retained | ABI callback and buffer boundary |
 | Stage-0 composition proxy | Diagnostic only | Coordinate and lifecycle reasoning; never V9 acceptance |
 

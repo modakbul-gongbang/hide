@@ -3,11 +3,47 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::SidebarAgentSnapshot;
+use crate::model::{PaneLayoutDirection, SidebarAgentSnapshot};
 
 #[derive(Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
+    #[serde(default)]
+    pub focused_pane_id: Option<String>,
+    #[serde(default)]
+    pub layouts: Vec<SessionLayoutPayload>,
     pub agents: Vec<SessionAgentPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionLayoutPayload {
+    pub workspace_id: String,
+    pub tab_id: String,
+    pub zoomed: bool,
+    pub area: SessionLayoutRect,
+    pub focused_pane_id: String,
+    pub panes: Vec<SessionLayoutPanePayload>,
+    pub splits: Vec<SessionLayoutSplitPayload>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+pub struct SessionLayoutRect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SessionLayoutPanePayload {
+    pub pane_id: String,
+    pub rect: SessionLayoutRect,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionLayoutSplitPayload {
+    pub direction: PaneLayoutDirection,
+    pub ratio: f32,
+    pub rect: SessionLayoutRect,
 }
 
 #[derive(Debug, Deserialize)]

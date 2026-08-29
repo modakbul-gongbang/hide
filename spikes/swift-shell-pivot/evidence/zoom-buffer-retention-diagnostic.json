@@ -1,0 +1,87 @@
+{
+  "captured_at": "2026-08-29T13:05:26Z",
+  "status": "pass",
+  "source_head": "b2670107dc152eaa67d448dce4d4681151170448",
+  "assembled_binary_sha256": "f432c86b13f31a65f0bf700e7acc8dce75d55e051108ac7e2ebb51de1ef3ef48",
+  "user_owned_w2y": {
+    "reference_screenshot": "/Users/hoyeonlee/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png",
+    "mutation_count": 0,
+    "observation": "After unzoom, the upper pane retained its buffer while both lower panes showed only recent fragments."
+  },
+  "diagnosis": {
+    "root_cause": "The zoom presentation selected only the focused subtree. SwiftUI removed hidden TerminalHost views, dismantling their SwiftTerm views while the core attach workers continued draining pane output. Recreated views therefore received only future chunks.",
+    "fix": "Keep every pane view in a stable ZStack for zoom and unzoom. Hidden panes keep their authoritative nonzero retained frame, attach, and feed; only opacity, hit testing, accessibility visibility, and z-order change.",
+    "resize_boundary": [
+      "SwiftTerm MacTerminalView.setFrameSize calls processSizeChange for each real view size change.",
+      "TerminalHost.Coordinator.sizeChanged sends terminal_resize with pane_id, cols, and rows.",
+      "herdr-core records the dimensions and calls the owned PaneAttach resize path; failures are exposed as terminal.resize_failed."
+    ]
+  },
+  "owned_fixture": {
+    "prefix": "herdr-ide-verify-pane-actions-diagnostic-r2-20260829",
+    "workspace_id": "w3H",
+    "tab_id": "w3H:t1",
+    "focused_pane_id": "w3H:p1",
+    "pane_ids": ["w3H:p1", "w3H:p3", "w3H:p2"],
+    "manifest": "pane-actions-settings-diagnostic-r2-manifest.json",
+    "app_pid": 25515,
+    "attach_processes": [
+      {"pid": 25551, "pane_id": "w3H:p1"},
+      {"pid": 25552, "pane_id": "w3H:p3"},
+      {"pid": 25550, "pane_id": "w3H:p2"}
+    ],
+    "attach_identity_preserved": true
+  },
+  "sequence": [
+    {
+      "state": "before",
+      "zoomed": false,
+      "screenshot": "zoom-buffer-retention-before.png",
+      "screenshot_sha256": "696965a0cb56ac74e6abdae71bef2e65f223e301b51ff61621b77ecc06bb3ddb"
+    },
+    {
+      "state": "zoomed",
+      "zoomed": true,
+      "screenshot": "zoom-buffer-retention-on.png",
+      "screenshot_sha256": "ba29815114cd1c0d5867d9377ef0d8ed28deca5a2f58a89f0b87b674e9a45e9b"
+    },
+    {
+      "state": "restored",
+      "zoomed": false,
+      "screenshot": "zoom-buffer-retention-after.png",
+      "screenshot_sha256": "e904dfa99c5a8fcec9e4dc2df73b31fc026e4ed22c01aa771339c04546990531"
+    }
+  ],
+  "observed_output": {
+    "before_visible_lines": {
+      "w3H:p1": "ZOOM-P1 line 001002 or later",
+      "w3H:p3": "ZOOM-P3 line 000798 or later",
+      "w3H:p2": "ZOOM-P2 line 000870 or later"
+    },
+    "after_visible_lines": {
+      "w3H:p1": "ZOOM-P1 line 001267 or later",
+      "w3H:p3": "ZOOM-P3 line 001010 or later",
+      "w3H:p2": "ZOOM-P2 line 001106 or later"
+    },
+    "latest_read_only_lines": {
+      "w3H:p1": "ZOOM-P1 line 003115 retained-buffer",
+      "w3H:p3": "ZOOM-P3 line 002495 retained-buffer",
+      "w3H:p2": "ZOOM-P2 line 002772 retained-buffer"
+    },
+    "all_three_buffers_retained": true
+  },
+  "automation": {
+    "app_keyboard_input_count": 0,
+    "app_mouse_input_count": 0,
+    "input_source_switch_count": 0,
+    "terminal_probe_count": 0,
+    "owned_fixture_continuous_output_commands": 3,
+    "owned_fixture_external_zoom_commands": 2
+  },
+  "regression": {
+    "before_log": "zoom-buffer-retention-regression-before.log",
+    "before_result": "failed because visibleRoot returned only the focused pane",
+    "after_log": "zoom-buffer-retention-regression-final.log",
+    "after_result": "5 pane-grid presentation tests passed"
+  }
+}
