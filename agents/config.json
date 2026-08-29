@@ -20,5 +20,11 @@
   ],
   "judge": {
     "retryBudget": 15
+  },
+  "verify": {
+    "commands": {
+      "test": "CARGO_TARGET_DIR=/tmp/herdr-ide-verify/cargo cargo test --manifest-path herdr-core/Cargo.toml && cd macos && swift test --scratch-path /tmp/herdr-ide-verify/swift",
+      "build": "CARGO_TARGET_DIR=/tmp/herdr-ide-verify/cargo cargo build --manifest-path herdr-core/Cargo.toml && cd macos && swift build --scratch-path /tmp/herdr-ide-verify/swift"
+    }
   }
 }
