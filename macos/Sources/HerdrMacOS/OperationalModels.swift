@@ -124,8 +124,6 @@ enum SafeProcess {
 }
 
 enum ChromuxExecutor {
-    static let executable = "/Users/hoyeonlee/Library/pnpm/chromux"
-
     static func inspectAndOpen(
         profile: String,
         shouldOpen: Bool,
@@ -142,21 +140,21 @@ enum ChromuxExecutor {
                 checkedAt: checkedAt
             )
         }
-        guard FileManager.default.isExecutableFile(atPath: executable) else {
-            return receipt(
-                phase: .unavailable,
-                profile: profile,
-                action: "unavailable",
-                message: "chromux is not installed at the required path.",
-                checkedAt: checkedAt
-            )
-        }
         guard pathState == "available" else {
             return receipt(
                 phase: .unavailable,
                 profile: profile,
                 action: "unavailable",
-                message: "chromux is hidden from this app process PATH. Restore /Users/hoyeonlee/Library/pnpm and retry.",
+                message: "chromux is hidden from this app process PATH. Restore the login-shell PATH and retry.",
+                checkedAt: checkedAt
+            )
+        }
+        guard let executable = HideRuntimeEnvironment.resolveExecutable(named: "chromux") else {
+            return receipt(
+                phase: .unavailable,
+                profile: profile,
+                action: "unavailable",
+                message: "chromux is not installed in the login-shell executable PATH.",
                 checkedAt: checkedAt
             )
         }

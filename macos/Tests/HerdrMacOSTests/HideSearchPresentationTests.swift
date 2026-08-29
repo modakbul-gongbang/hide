@@ -14,7 +14,8 @@ import Testing
         summary: "Build the release",
         elapsed: "2m",
         sortRank: "01",
-        activity: "building"
+        activity: "building",
+        ambient: nil
     )
     let workspace = try JSONDecoder().decode(
         CoreWorkspaceSnapshot.self,

@@ -3,6 +3,20 @@ import Foundation
 import Testing
 @testable import HerdrMacOS
 
+@Test func loginShellPathIsTheChildToolPATH() {
+    let loginPath = HideRuntimeEnvironment.loginShellPath()
+    let childEnvironment = HideRuntimeEnvironment.childEnvironment()
+
+    #expect(loginPath != nil)
+    #expect(childEnvironment["PATH"] == loginPath)
+}
+
+@Test func childToolEnvironmentHasOnlyNonSecretRoutingValues() {
+    let allowedKeys = Set(["HOME", "USER", "PATH", "SSH_AUTH_SOCK", "HERDR_CONFIG_PATH"])
+
+    #expect(Set(HideRuntimeEnvironment.childEnvironment().keys).isSubset(of: allowedKeys))
+}
+
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {
     let visible = CGRect(x: 0, y: 25, width: 1_440, height: 875)
     let resolved = PetPlacement.clampedOrigin(

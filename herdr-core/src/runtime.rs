@@ -419,7 +419,7 @@ impl Runtime {
             &self.snapshot.ui_state.workspace_registrations,
             &temporary_paths,
         );
-        let projected_agents = project_agents(payload.clone()).unwrap_or_default();
+        let projected_agents = project_agents(payload.clone()).agents;
 
         for layout in &payload.layouts {
             let context_path = layout
