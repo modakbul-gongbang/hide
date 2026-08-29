@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 build = "build.rs"
 
+[workspace]
+members = [".", "herdr-core"]
+resolver = "3"
+
 [lib]
 name = "herdr_ide"
 path = "src/lib.rs"

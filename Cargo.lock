@@ -1064,6 +1064,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "herdr-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "herdr-ide"
 version = "0.1.0"
 dependencies = [

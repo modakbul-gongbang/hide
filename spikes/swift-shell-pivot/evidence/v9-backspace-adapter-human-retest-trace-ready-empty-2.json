@@ -1,0 +1,28 @@
+{
+  "event_count" : 0,
+  "events" : [
+
+  ],
+  "privacy" : {
+    "ime_marked_or_non_ascii_content" : "unicode scalar values only",
+    "key_events" : "key code and modifiers only",
+    "ordinary_printable_content" : "redacted"
+  },
+  "recorder" : {
+    "capacity" : 512,
+    "flush_completed_generation" : 1,
+    "flush_reason" : "startup",
+    "liveness" : "active",
+    "overflow_count" : 0,
+    "reentrancy_drop_count" : 0,
+    "retained_event_count" : 0,
+    "shutdown_observed" : false,
+    "total_event_count" : 0,
+    "write_failure_count_before_this_flush" : 0
+  },
+  "schema_version" : 1,
+  "started_at" : "2026-08-29T02:27:33Z",
+  "swiftterm_revision" : "5d14406844143538cd8f8851d2d8a67c1fe443e5",
+  "swiftterm_version" : "1.20.0",
+  "trace_kind" : "real-appkit-nstextinputclient-call-stream"
+}
