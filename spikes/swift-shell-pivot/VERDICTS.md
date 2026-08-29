@@ -409,3 +409,4 @@ The outcome-focused test practice uses durable in-process contracts for coordina
 
 T5, every tag including `rust-native-final`, source or evidence deletion, live herdr failure injection, mini disconnect injection, chromux daemon kill, default profile deletion, Chrome termination, push, PR, delivery, unified finalize, and Done remain NOT RUN or forbidden.
 The user-directed downstream dependency deviation remains explicit because this additive work proceeded while T3 and the Stage 0 gate stayed open.
+The coherent source, test, and selected evidence checkpoint for this operational batch is `b1a2d4dcf08223df7b0de255571257288e3ea797`.
