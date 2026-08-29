@@ -78,6 +78,19 @@ private struct ProcessReceipt: Sendable {
     let stderr: Data
 }
 
+/// Writes a verification receipt atomically and reports a write failure on
+/// stderr, so a receipt that never lands is visible instead of silently absent.
+enum VerificationReceipt {
+    static func write(_ data: Data, to path: String, failureKind: String) {
+        do {
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            let message = "{\"kind\":\"\(failureKind)\",\"path\":\"\(path)\"}\n"
+            FileHandle.standardError.write(Data(message.utf8))
+        }
+    }
+}
+
 enum SafeProcess {
     fileprivate static func run(executable: String, arguments: [String]) -> ProcessReceipt {
         let process = Process()
@@ -376,12 +389,7 @@ final class BrowserRuntimeModel: ObservableObject {
 
     private func writeReceipt(_ receipt: BrowserRuntimeReceipt) {
         guard let receiptPath, let data = try? JSONEncoder().encode(receipt) else { return }
-        do {
-            try data.write(to: URL(fileURLWithPath: receiptPath), options: .atomic)
-        } catch {
-            let message = "{\"kind\":\"chromux.receipt_write_failed\",\"path\":\"\(receiptPath)\"}\n"
-            FileHandle.standardError.write(Data(message.utf8))
-        }
+        VerificationReceipt.write(data, to: receiptPath, failureKind: "chromux.receipt_write_failed")
     }
 }
 

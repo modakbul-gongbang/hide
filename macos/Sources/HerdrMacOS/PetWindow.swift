@@ -358,11 +358,6 @@ final class PetWindowController: NSObject, NSWindowDelegate {
         guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys]) else {
             return
         }
-        do {
-            try data.write(to: URL(fileURLWithPath: receiptPath), options: .atomic)
-        } catch {
-            let failure = "{\"kind\":\"pet.receipt_write_failed\",\"path\":\"\(receiptPath)\"}\n"
-            FileHandle.standardError.write(Data(failure.utf8))
-        }
+        VerificationReceipt.write(data, to: receiptPath, failureKind: "pet.receipt_write_failed")
     }
 }

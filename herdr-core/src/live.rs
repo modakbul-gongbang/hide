@@ -691,7 +691,15 @@ impl PaneAttach {
                 loop {
                     match reader.read(&mut bytes) {
                         Ok(0) => {
-                            deliver_attach_exit(&runtime, &notifier, generation, &reader_pane);
+                            deliver_attach_exit(
+                                &runtime,
+                                &notifier,
+                                generation,
+                                &reader_pane,
+                                format!(
+                                    "Pane {reader_pane} attach ended; it may be attached elsewhere or closed"
+                                ),
+                            );
                             return;
                         }
                         Ok(count) => {
@@ -706,12 +714,12 @@ impl PaneAttach {
                             }
                         }
                         Err(error) => {
-                            deliver_attach_error(
+                            deliver_attach_exit(
                                 &runtime,
                                 &notifier,
                                 generation,
                                 &reader_pane,
-                                &error.to_string(),
+                                format!("Pane {reader_pane} stream failed: {error}"),
                             );
                             return;
                         }
@@ -843,40 +851,13 @@ fn deliver_attach_exit(
     notifier: &ChangeNotifier,
     generation: u64,
     pane_id: &str,
+    message: String,
 ) {
     let Some(runtime) = runtime.upgrade() else {
         return;
     };
     let delivered = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_attach_exit(
-            pane_id,
-            generation,
-            format!("Pane {pane_id} attach ended; it may be attached elsewhere or closed"),
-        ),
-        Err(_) => return,
-    };
-    drop(runtime);
-    if delivered {
-        notifier.notify();
-    }
-}
-
-fn deliver_attach_error(
-    runtime: &Weak<Mutex<Runtime>>,
-    notifier: &ChangeNotifier,
-    generation: u64,
-    pane_id: &str,
-    error: &str,
-) {
-    let Some(runtime) = runtime.upgrade() else {
-        return;
-    };
-    let delivered = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_attach_exit(
-            pane_id,
-            generation,
-            format!("Pane {pane_id} stream failed: {error}"),
-        ),
+        Ok(mut guard) => guard.ingest_attach_exit(pane_id, generation, message),
         Err(_) => return,
     };
     drop(runtime);

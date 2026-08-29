@@ -483,11 +483,10 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.focus".to_owned(),
-                    message: format!("Pane {pane_id} focused in {elapsed_ms} ms"),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic(
+                    "pane.focus",
+                    format!("Pane {pane_id} focused in {elapsed_ms} ms"),
+                );
                 self.snapshot.ui_state.selected_pane_id = Some(pane_id);
                 if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
                     self.set_error("ui_state.save_failed", message, true);
@@ -509,14 +508,13 @@ impl Runtime {
                     );
                     return true;
                 };
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: format!("pane.split.{}", direction.as_str()),
-                    message: format!(
+                self.push_diagnostic(
+                    format!("pane.split.{}", direction.as_str()),
+                    format!(
                         "Pane {pane_id} split {} to {created_pane_id} in {elapsed_ms} ms",
                         direction.as_str()
                     ),
-                    occurred_at: unix_milliseconds(),
-                });
+                );
                 eprintln!(
                     "{}",
                     serde_json::json!({
@@ -529,11 +527,7 @@ impl Runtime {
                     })
                 );
                 if let Some(message) = outcome.layout_refresh_error {
-                    self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                        kind: "pane.layout.refresh_pending".to_owned(),
-                        message,
-                        occurred_at: unix_milliseconds(),
-                    });
+                    self.push_diagnostic("pane.layout.refresh_pending", message);
                 }
                 let Some(layout) = outcome.layout else {
                     self.set_error(
@@ -566,16 +560,15 @@ impl Runtime {
             }
             (PaneControlAction::ToggleZoom { pane_id }, Ok(outcome)) => {
                 let layout_zoomed = outcome.layout.as_ref().map(|layout| layout.zoomed);
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.zoom_toggled".to_owned(),
-                    message: format!(
+                self.push_diagnostic(
+                    "pane.zoom_toggled",
+                    format!(
                         "Pane {pane_id} zoom {} in {elapsed_ms} ms",
                         layout_zoomed
                             .map(|zoomed| if zoomed { "enabled" } else { "disabled" })
                             .unwrap_or("awaiting authoritative layout")
                     ),
-                    occurred_at: unix_milliseconds(),
-                });
+                );
                 eprintln!(
                     "{}",
                     serde_json::json!({
@@ -587,11 +580,7 @@ impl Runtime {
                     })
                 );
                 if let Some(message) = outcome.layout_refresh_error {
-                    self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                        kind: "pane.layout.refresh_pending".to_owned(),
-                        message,
-                        occurred_at: unix_milliseconds(),
-                    });
+                    self.push_diagnostic("pane.layout.refresh_pending", message);
                 }
                 if let Some(layout) = outcome.layout {
                     self.apply_pane_layout(layout);
@@ -599,11 +588,10 @@ impl Runtime {
                 true
             }
             (PaneControlAction::Close { pane_id }, Ok(outcome)) => {
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.close".to_owned(),
-                    message: format!("Pane {pane_id} closed in {elapsed_ms} ms"),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic(
+                    "pane.close",
+                    format!("Pane {pane_id} closed in {elapsed_ms} ms"),
+                );
                 eprintln!(
                     "{}",
                     serde_json::json!({
@@ -623,11 +611,7 @@ impl Runtime {
                     .retain(|pane| pane.pane_id != pane_id);
 
                 if let Some(message) = outcome.layout_refresh_error {
-                    self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                        kind: "pane.layout.refresh_pending".to_owned(),
-                        message,
-                        occurred_at: unix_milliseconds(),
-                    });
+                    self.push_diagnostic("pane.layout.refresh_pending", message);
                     if self.snapshot.terminal.pane_id.as_deref() == Some(pane_id.as_str()) {
                         self.snapshot.terminal.pane_id = None;
                         self.snapshot.focused.pane_id = None;
@@ -693,6 +677,14 @@ impl Runtime {
         let notice = format!("\r\n[{message}]\r\n");
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
         true
+    }
+
+    fn push_diagnostic(&mut self, kind: impl Into<String>, message: impl Into<String>) {
+        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+            kind: kind.into(),
+            message: message.into(),
+            occurred_at: unix_milliseconds(),
+        });
     }
 
     pub fn set_error(
@@ -789,11 +781,7 @@ impl Runtime {
                     return true;
                 };
                 let pane_id = payload.pane_id;
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.focus.requested".to_owned(),
-                    message: format!("Focusing pane {pane_id}"),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
                 if let Err(message) =
                     live::spawn_pane_control(context, PaneControlAction::Focus { pane_id })
                 {
@@ -883,11 +871,10 @@ impl Runtime {
                     direction,
                     cwd: Some(payload.cwd),
                 };
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: format!("pane.split.{}.requested", direction.as_str()),
-                    message: format!("Splitting pane {pane_id} {}", direction.as_str()),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic(
+                    format!("pane.split.{}.requested", direction.as_str()),
+                    format!("Splitting pane {pane_id} {}", direction.as_str()),
+                );
                 if let Err(message) = live::spawn_pane_control(context, action) {
                     self.set_error("pane.split_worker_failed", message, true);
                 }
@@ -904,11 +891,10 @@ impl Runtime {
                     return true;
                 };
                 let pane_id = payload.pane_id;
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.zoom.requested".to_owned(),
-                    message: format!("Toggling zoom for pane {pane_id}"),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic(
+                    "pane.zoom.requested",
+                    format!("Toggling zoom for pane {pane_id}"),
+                );
                 if let Err(message) =
                     live::spawn_pane_control(context, PaneControlAction::ToggleZoom { pane_id })
                 {
@@ -952,11 +938,7 @@ impl Runtime {
                     return true;
                 };
                 let pane_id = payload.pane_id;
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.close.requested".to_owned(),
-                    message: format!("Closing pane {pane_id}"),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
                 if let Err(message) =
                     live::spawn_pane_control(context, PaneControlAction::Close { pane_id })
                 {
@@ -1080,11 +1062,7 @@ impl Runtime {
         // Reset only this pane's SwiftTerm grid; other panes retain their
         // independent terminal state while the replacement attach starts.
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(b"\x1bc"));
-        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-            kind: "pane.attach.requested".to_owned(),
-            message: format!("Attaching pane {pane_id}"),
-            occurred_at: unix_milliseconds(),
-        });
+        self.push_diagnostic("pane.attach.requested", format!("Attaching pane {pane_id}"));
         let context = self
             .live
             .as_ref()
@@ -1131,11 +1109,10 @@ impl Runtime {
                 }
                 self.attaches.insert(pane_id.to_owned(), attach);
                 self.set_terminal_closed(pane_id, false);
-                self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
-                    kind: "pane.attach.ready".to_owned(),
-                    message: format!("Pane {pane_id} attached in {elapsed_ms} ms"),
-                    occurred_at: unix_milliseconds(),
-                });
+                self.push_diagnostic(
+                    "pane.attach.ready",
+                    format!("Pane {pane_id} attached in {elapsed_ms} ms"),
+                );
                 eprintln!(
                     "{}",
                     serde_json::json!({
