@@ -260,3 +260,152 @@ No state was hand-migrated, removed, renamed, or combined, and no alternate PRD 
 
 No app, fixture, browser profile, Chrome instance, workspace, worktree, remote process, or external service was created, focused, stopped, or changed during this v6 conversion step.
 The chromux and mini observations remained read-only, T3 Backspace remains unresolved with AC2 unmet, V9 remains pending human physical-keyboard judgment, T5 remains forbidden, and no tag, deletion, push, PR, or delivery occurred.
+
+## User-approved operational batch after the v6 gate refusal
+
+The structural helper returned `mode=implementor`, `paneId=w2X:p8`, and `agentKind=codex` before this batch mutated source or processes.
+The Spec Owner had already recorded gap-audit `BLOCK` with attempts 2 and phase `closure-blocked`, and spec `BLOCK` with attempts 1 and phase `closure`.
+Those gates were not overridden or rerun.
+The one authorized `sasu implement start` attempt under the original `swift-shell-pivot` slug refused with `qa-log-backed PRD requires live PASS for gap-audit and spec; got gap-audit=BLOCKED, spec=BLOCKED`.
+No v6 implement state exists, so evidence was retained as files and was not hand-registered into Sasu state.
+
+The Spec Owner moved the legacy v5 record tree from `/Users/hoyeonlee/projects/herdr-ide/agents/runs/swift-shell-pivot` to `/Users/hoyeonlee/projects/herdr-ide/agents/runs/swift-shell-pivot-v5-archive` without deleting it.
+The archived tree contains 13 files and 279437 bytes, and its per-file SHA-256 set was identical before and after the move.
+The archive path is reversible and the canonical PRD remains only `agents/prd/swift-shell-pivot/prd.md`.
+The qa-log was not edited.
+
+### T18: ADDITIVE IMPLEMENTATION AND NATIVE VERIFICATION PASS
+
+The pet surface is a 92 by 92 transparent, borderless, nonactivating floating `NSPanel` that joins all spaces and full-screen auxiliary spaces.
+The panel itself is the bounded pet hit region, `ignoresMouseEvents` is false only for that owned region, and every point outside the small panel remains outside the app window and therefore passes through normally.
+No global or local key monitor, CGEvent, IOHID, event posting, or event requeue path was added.
+Clicking the exact receipt-proven owned pet region changed the app from inactive with a non-key main window to active with the `Herdr IDE` main window key.
+The saved offscreen request at 1000000 by 1000000 was clamped to the visible primary-screen origin 1636 by 993.
+Native property and focus evidence is `evidence/t18-window-runtime.json`, `evidence/t18-pet-visible-runtime.json`, and `evidence/t18-pet-focus-boundary.json`.
+The actual pet screenshot is `evidence/v24-pet-visible.png`.
+The owned app PID 38870 was terminated after verification.
+
+### T12: ADDITIVE IMPLEMENTATION AND APPROVED DEFAULT-RUNTIME VERIFICATION PASS
+
+The production executor uses only the literal `/Users/hoyeonlee/Library/pnpm/chromux` executable.
+It accepts only `default` and the read-only missing-profile sentinel `herdr-ide-verify-absent`.
+It reads `chromux ps --json`, launches only a stopped or absent `default`, reuses an already running default, observes its loopback CDP status, and publishes structured ready, stale, unavailable, or failed receipts.
+The focus action records whether activation was requested, accepted, and observed as the frontmost PID.
+
+The approved live check launched default Chrome PID 9609 on port 9301, then a repeated launch returned the same PID with `already running` behavior.
+The current-source app recorded reuse with `focusRequested=true`, `focusActivationAccepted=true`, and `focusObserved=true` in `evidence/t12-default-reuse-focus-runtime.json`.
+The launch receipt is `evidence/t12-default-runtime.json`, and the combined lifecycle record is `evidence/t12-chromux-lifecycle.json`.
+The real three-column native screenshot with Chrome and mini ready is `evidence/v12-v16-native-ready.png`.
+No chromux profile was created or deleted, no browser or daemon was killed, stopped, or closed, and no CDP page was mutated.
+Default Chrome PID 9609 remains running by explicit approval.
+The unrelated pre-existing `modakbul` Chrome PID 11478 was not touched.
+
+V12 used only unused loopback port 65534 and displayed `stale`, a reason, a retry action, and the last-checked time in `evidence/v12-wrong-loopback-runtime.json` and `evidence/v12-wrong-loopback-stale.png`.
+The live default daemon and Chrome remained running.
+V13 queried only `herdr-ide-verify-absent`, displayed guidance without creating it, and is recorded in `evidence/v13-absent-profile-runtime.json` and `evidence/v13-absent-profile.png`.
+V6 hid chromux only from the owned app process PATH, displayed an actionable unavailable state, and is recorded in `evidence/v6-path-hidden-runtime.json` and `evidence/v6-path-hidden.png`.
+The combined safe-failure boundary is `evidence/v6-v12-v13-safe-failures.json`.
+
+### T15 and T16: ADDITIVE NOTICE AND VISUAL-STATE IMPLEMENTATION PASS, REMAINING ROWS PARKED
+
+Working or attention pane close previews state that the running process is terminated and list the affected work before confirmation.
+Workspace and tab previews aggregate working or attention panes into one warning rather than opening one prompt per pane.
+The worktree preview states that the checkout directory is removed and that uncommitted files can be lost.
+Idle pane policy does not add an unnecessary confirmation.
+Confirmation and cancellation previews publish a result sentence and never mutate a user resource.
+
+The native warning evidence is `evidence/v7-working-pane-warning.png`, `evidence/v31-workspace-aggregate-warning.png`, and `evidence/v35-worktree-warning.png`.
+Six Swift policy tests cover offscreen pet recovery, repeat placement, working and idle pane consequences, workspace and tab aggregation, and the worktree checkout-loss boundary.
+No destructive Continue action was used against a user resource.
+
+V29 remains partial because pane-unselected, first-workspace, missing-summary, and no-open-tab states were not all exercised in one real runtime.
+V30 remains partial because binary and read-failure reasons exist, but a real PTY exit code surface was not exercised.
+V33 remains partial because browser and mini loading states are visible, while initial sidebar, terminal attach, and large-file loading were not all exercised.
+V34 remains pending because focused-pane path versus tree-root divergence was not demonstrated in the app.
+V7, V31, and V35 have native warning and policy evidence, but actual product close and removal executors remain outside this additive preview layer.
+
+### T13: POSITIVE MINI PATH VERIFIED, FULL IN-APP WORKFLOW PARTIAL
+
+Mini live state was read before mutation, and only the exact prefix-owned `herdr-ide-verify-mini-w01` workspace was created.
+The fixture contained panes `w4J:p1` and `w4J:p2` under `/tmp/herdr-ide-verify-mini`.
+Workspace display, split, real terminal attach, `REMOTE_ATTACH_OK`, file browse, and the 48-byte README SHA-256 `7cc719e2dabf18ac17a8f1685bf5afe4b3ac2dc63cfd80c9d5f7a4d8a2aff19f` were verified on the positive path.
+The native app showed mini ready and the reason remote inline editing remains disabled.
+The combined receipt is `evidence/t13-t19-mini-positive-runtime.json`, and the retained manifest is `evidence/t19-mini-manifest.json`.
+
+T13 remains partial because the real attach, split, and browse probes were performed through the owned fixture boundary rather than all being driven from a complete in-app remote navigation workflow.
+V19 disconnect injection was NOT RUN.
+No mini connection was cut, and no remote process or service was killed or restarted.
+
+### T19 and V8: PREFIX-OWNED LIVE FIXTURE PASS
+
+The fixture tool now supports deterministic plan, scale plan, create, status, and cleanup operations for local and mini targets.
+Every operation requires the exact `herdr-ide-verify-` prefix, a validated manifest, exact live workspace ID and label ownership, and an owned `/tmp/herdr-ide-verify-*` path.
+The remote path contract rejects shell syntax and requires the path to match the fixture name before any SSH process launch.
+Create is convergent when run twice, and cleanup revalidates every live target before closing only manifest-owned workspaces.
+
+The local `herdr-ide-verify-v8` fixture created exactly 7 workspaces and 11 panes.
+With the fixture live, owned app PID 38870 used 138880 KB, or 135.625 MB RSS, below the 400 MB V8 limit.
+The retained manifest is `evidence/t19-local-v8-manifest.json`, and the scale and cleanup receipt is `evidence/t19-v8-scale-runtime.json`.
+
+After exact ownership revalidation, only local IDs `w2Z`, `w20`, `w31`, `w32`, `w33`, `w34`, `w35` and mini ID `w4J` were closed.
+The local and mini prefix-owned workspace counts are both zero, both owned `/tmp` fixture paths are absent, and both manifests remain retained.
+The observed non-prefixed workspace IDs and labels were unchanged across cleanup.
+No user workspace or worktree was touched.
+
+### Safe state and secret rows
+
+V17 core behavior passes at the in-process boundary: missing, corrupt, and unknown-schema UI state use safe defaults and publish structured `ui_state.missing` or `ui_state.corrupt` status.
+V28 core behavior passes for valid selected and expanded state round-trip and atomic replacement, and production source contains no `navigator.json` read.
+Full native relaunch restoration remains pending, so V17 and V28 are not claimed as complete browser-runtime verdicts.
+The receipt is `evidence/v17-v28-persistence-contract.json`.
+
+V20's missing summary produces `Check agent-context-labels settings` instead of a blank line.
+V25 static inspection found zero production reads of `OPENROUTER_API_KEY`.
+A synthetic sentinel was supplied only to one owned LaunchServices app process, whose startup observation showed one visible key main window and whose final retained receipt captures deactivation before cleanup.
+The app wrote no sentinel to source, evidence, state, or process log.
+No real secret value was read or printed.
+Evidence is `evidence/v20-v25-openrouter-nonaccess.json` and `evidence/v25-openrouter-sentinel-window.json`.
+
+### T3 remains blocked
+
+The existing SwiftTerm 1.20.0 document-coordinate adapter, bounded trace hygiene, real partial trace, and diagnosis evidence were preserved.
+The composition state tests pass seven document-coordinate lifecycle cases.
+The human artifact has no `SPIKE_BOUNDARY_PROBE` compile definition, so `MarkedTextBoundaryProbe`, its `NSApp.activate`, and its synthetic key event path are compile-time excluded.
+Static scans found no global or local event monitor, CGEvent or IOHID path, event posting or requeue, `discardMarkedText`, DEL suppression, or input-source manipulation.
+No user retest app was launched and no human judgment was requested in this batch.
+The proxy tests are not V9 acceptance evidence.
+T3 remains BLOCKED, Backspace remains unresolved, AC2 remains unmet, and a fresh physical-keyboard V9 verdict is still required before v1 completion.
+
+### Final verification and boundaries
+
+`cargo fmt --all -- --check` passed after final formatting.
+`cargo clippy -p herdr-core --all-targets -- -D warnings` passed.
+`cargo test -p herdr-core` passed 17 unit tests and 10 FFI integration tests.
+The FFI set includes the approved and required in-process unknown kind, schema mismatch, malformed payload, invalid options, and off-owner tests.
+No external service failure was injected.
+`swift test --package-path macos --disable-keychain --disable-sandbox` passed 6 tests.
+The spike Rust crate passed 5 tests, and the spike Swift composition package passed 7 tests.
+The release C caller exercised create, callback, dispatch, snapshot, free, and destroy and exited zero.
+Two final app assemblies produced the same content hash `a56003585b26789ffabdb6d9dddabb11cbb354ea345f0eaa133310480b1ee0bc`.
+Strict deep codesign verification passed.
+The aggregate machine receipt is `evidence/additive-operational-verification.json`.
+
+Peekaboo permission status reported Screen Recording and Accessibility granted before native checks.
+Each native check first proved exactly one owned assembled development app and targeted the exact `Herdr IDE` window.
+Fresh screenshots proved the three-column shell, browser and mini status, destructive consequence dialogs, and pet surface.
+Only owned app processes were terminated after checks, and the final audit found zero HerdrIDE apps, zero Swift shell spike apps, and zero owned fixture workspaces.
+
+Engineering Principle 3 grew the system through core contracts, process executors, observable models, and native views in separate layers.
+Engineering Principle 4 made unavailable, stale, failed, and refused outcomes explicit.
+Engineering Principle 5 kept chromux, mini, pet, consequence, fixture, persistence, and terminal composition concerns modular.
+Engineering Principle 9 records structured receipts for process, focus, state, and cleanup questions.
+Engineering Principle 10 exposes failures outside the process through status cards, stderr JSON, and atomic evidence receipts.
+Engineering Principle 11 made fixture creation, status, cleanup, focus receipts, and state writes safe to repeat.
+Engineering Principle 13 fixed the remote fixture path class by validating exact owned paths before SSH instead of relying only on a prefix.
+Design Principle 6 states process, tab, workspace, and checkout consequences before any destructive action.
+Design Principle 7 uses distinct ready, loading, stale, unavailable, and failed visual states rather than silent blank surfaces.
+The environment practice keeps variable declarations and validation in the Rust registry while values remain external and absent values degrade only their capability.
+The outcome-focused test practice uses durable in-process contracts for coordinate, C ABI, ownership, and policy behavior, and reserves native claims for actual signed-window screenshots.
+
+T5, every tag including `rust-native-final`, source or evidence deletion, live herdr failure injection, mini disconnect injection, chromux daemon kill, default profile deletion, Chrome termination, push, PR, delivery, unified finalize, and Done remain NOT RUN or forbidden.
+The user-directed downstream dependency deviation remains explicit because this additive work proceeded while T3 and the Stage 0 gate stayed open.

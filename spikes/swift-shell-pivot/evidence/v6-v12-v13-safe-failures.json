@@ -1,0 +1,28 @@
+{
+  "v6": {
+    "scope": "owned app process PATH only",
+    "phase": "unavailable",
+    "reason_visible": true,
+    "quiet_noop": false,
+    "live_default_profile_unchanged": true,
+    "receipt": "v6-path-hidden-runtime.json",
+    "screenshot": "v6-path-hidden.png"
+  },
+  "v12": {
+    "scope": "unused loopback port 65534",
+    "phase": "stale",
+    "last_checked_visible": true,
+    "live_daemon_stopped": false,
+    "live_default_profile_unchanged": true,
+    "receipt": "v12-wrong-loopback-runtime.json",
+    "screenshot": "v12-wrong-loopback-stale.png"
+  },
+  "v13": {
+    "profile": "herdr-ide-verify-absent",
+    "phase": "unavailable",
+    "guidance_visible": true,
+    "profile_created": false,
+    "receipt": "v13-absent-profile-runtime.json",
+    "screenshot": "v13-absent-profile.png"
+  }
+}

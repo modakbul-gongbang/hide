@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "ownership_prefix": "herdr-ide-verify-",
+  "target": "local",
+  "cwd": "/tmp/herdr-ide-verify-v8",
+  "workspaces": [
+    {
+      "workspace_name": "herdr-ide-verify-v8-w01",
+      "workspace_id": "w2Z",
+      "pane_ids": [
+        "w2Z:p1",
+        "w2Z:p2",
+        "w2Z:p3",
+        "w2Z:p4",
+        "w2Z:p5"
+      ]
+    },
+    {
+      "workspace_name": "herdr-ide-verify-v8-w02",
+      "workspace_id": "w20",
+      "pane_ids": [
+        "w20:p1"
+      ]
+    },
+    {
+      "workspace_name": "herdr-ide-verify-v8-w03",
+      "workspace_id": "w31",
+      "pane_ids": [
+        "w31:p1"
+      ]
+    },
+    {
+      "workspace_name": "herdr-ide-verify-v8-w04",
+      "workspace_id": "w32",
+      "pane_ids": [
+        "w32:p1"
+      ]
+    },
+    {
+      "workspace_name": "herdr-ide-verify-v8-w05",
+      "workspace_id": "w33",
+      "pane_ids": [
+        "w33:p1"
+      ]
+    },
+    {
+      "workspace_name": "herdr-ide-verify-v8-w06",
+      "workspace_id": "w34",
+      "pane_ids": [
+        "w34:p1"
+      ]
+    },
+    {
+      "workspace_name": "herdr-ide-verify-v8-w07",
+      "workspace_id": "w35",
+      "pane_ids": [
+        "w35:p1"
+      ]
+    }
+  ]
+}

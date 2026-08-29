@@ -5,6 +5,7 @@ import SwiftUI
 final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     let model = ShellModel()
     private var mainWindow: NSWindow?
+    private var petWindowController: PetWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard mainWindow == nil else { return }
@@ -37,10 +38,36 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        petWindowController = PetWindowController(mainWindow: window)
+        petWindowController?.refreshVisibility()
+
+        if CommandLine.arguments.contains("--verification-browser-open") {
+            model.browser.openOrFocus()
+        } else if CommandLine.arguments.contains("--verification-browser-refresh") {
+            model.browser.refresh()
+        }
+        if CommandLine.arguments.contains("--verification-remote-mini") {
+            model.remote.refreshMini()
+        }
+        #if DEBUG
+        if let rawKind = Self.argumentValue("--verification-consequence", in: CommandLine.arguments),
+           let kind = DestructiveTargetKind(rawValue: rawKind) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                self?.model.previewConsequence(kind)
+            }
+        }
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    private static func argumentValue(_ flag: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return arguments[index + 1]
     }
 }
 

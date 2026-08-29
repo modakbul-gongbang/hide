@@ -219,12 +219,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     let workspaceRoot: URL
+    let isRemoteWorkspace: Bool
 
     nonisolated(unsafe) private var core: OpaquePointer?
     private var lastTerminalSequence: UInt64 = 0
     private var pendingTerminalBytes: [[UInt8]] = []
 
     init(arguments: [String] = CommandLine.arguments) {
+        isRemoteWorkspace = arguments.contains("--remote-workspace")
         workspaceRoot = Self.argumentValue("--workspace-root", in: arguments)
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
@@ -233,7 +235,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let options: [String: Any] = [
             "schema_version": coreSchemaVersion,
             "herdr_socket_path": NSNull(),
-            "remote_targets": [],
+            "remote_targets": [[
+                "id": "mini",
+                "label": "Mac mini",
+                "ssh_alias": "mini",
+            ]],
             "app_state_path": statePath,
         ]
         guard
@@ -283,6 +289,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func focusPane(_ paneID: String) {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
         persistUIState(selectedPaneID: paneID)
+    }
+
+    func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
+        let checkedMilliseconds = UInt64(
+            (ISO8601DateFormatter().date(from: receipt.checkedAt)?.timeIntervalSince1970 ?? Date().timeIntervalSince1970) * 1_000
+        )
+        dispatch(kind: "browser_status", payload: [
+            "state": receipt.phase.rawValue,
+            "profile": receipt.profile,
+            "current_url": receipt.currentURL.map { $0 as Any } ?? NSNull(),
+            "current_title": receipt.currentTitle.map { $0 as Any } ?? NSNull(),
+            "message": receipt.message,
+            "last_checked_at_unix_ms": NSNumber(value: checkedMilliseconds),
+        ])
     }
 
     func openFile(_ url: URL) {

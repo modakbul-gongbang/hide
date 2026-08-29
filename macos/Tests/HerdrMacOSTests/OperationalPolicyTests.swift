@@ -1,0 +1,72 @@
+import CoreGraphics
+import Testing
+@testable import HerdrMacOS
+
+@Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {
+    let visible = CGRect(x: 0, y: 25, width: 1_440, height: 875)
+    let resolved = PetPlacement.clampedOrigin(
+        requested: CGPoint(x: 1_000_000, y: 1_000_000),
+        windowSize: CGSize(width: 92, height: 92),
+        visibleFrames: [visible]
+    )
+    #expect(resolved == CGPoint(x: 1_348, y: 808))
+}
+
+@Test func petPlacementIsStableWhenRepeated() {
+    let visible = CGRect(x: -1_920, y: 0, width: 1_920, height: 1_080)
+    let first = PetPlacement.clampedOrigin(
+        requested: CGPoint(x: -200, y: 100),
+        windowSize: CGSize(width: 92, height: 92),
+        visibleFrames: [visible]
+    )
+    let second = PetPlacement.clampedOrigin(
+        requested: first,
+        windowSize: CGSize(width: 92, height: 92),
+        visibleFrames: [visible]
+    )
+    #expect(first == second)
+}
+
+@Test func workingPaneNoticeNamesTheTerminationConsequence() {
+    let target = DestructiveTarget(
+        id: "herdr-ide-verify-working",
+        label: "Verification",
+        state: "working",
+        summary: "Long-running fixture"
+    )
+    let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
+    #expect(notice.requiresConfirmation)
+    #expect(notice.consequence.contains("terminates its running process"))
+    #expect(notice.affected == [target])
+}
+
+@Test func idlePaneCloseDoesNotAddAnUnnecessaryConfirmation() {
+    let target = DestructiveTarget(
+        id: "herdr-ide-verify-idle",
+        label: "Verification",
+        state: "idle",
+        summary: "Completed fixture"
+    )
+    let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
+    #expect(!notice.requiresConfirmation)
+    #expect(notice.affected == [target])
+}
+
+@Test func workspaceAndTabWarningsAggregateOnlyActiveOrAttentionPanes() {
+    let targets = [
+        DestructiveTarget(id: "w", label: "A", state: "working", summary: "Build"),
+        DestructiveTarget(id: "q", label: "B", state: "question", summary: "Needs input"),
+        DestructiveTarget(id: "i", label: "C", state: "idle", summary: "Done"),
+    ]
+    let workspace = ConsequencePolicy.notice(kind: .workspace, targets: targets)
+    let tab = ConsequencePolicy.notice(kind: .tab, targets: targets)
+    #expect(workspace.affected.map(\.id) == ["w", "q"])
+    #expect(tab.affected.map(\.id) == ["w", "q"])
+}
+
+@Test func worktreeNoticeStatesTheCheckoutLossBoundary() {
+    let notice = ConsequencePolicy.notice(kind: .worktree, targets: [])
+    #expect(notice.requiresConfirmation)
+    #expect(notice.consequence.contains("removed from disk"))
+    #expect(notice.consequence.contains("uncommitted files"))
+}

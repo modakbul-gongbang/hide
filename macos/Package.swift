@@ -45,5 +45,10 @@ let package = Package(
                 ]),
             ]
         ),
+        .testTarget(
+            name: "HerdrMacOSTests",
+            dependencies: ["HerdrMacOS"],
+            path: "Tests/HerdrMacOSTests"
+        ),
     ]
 )

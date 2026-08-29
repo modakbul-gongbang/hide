@@ -57,6 +57,16 @@ struct OpenBrowserPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct BrowserStatusPayload {
+    state: String,
+    profile: String,
+    current_url: Option<String>,
+    current_title: Option<String>,
+    message: Option<String>,
+    last_checked_at_unix_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateWorkspacePayload {
     path: String,
     label: String,
@@ -135,6 +145,7 @@ enum ValidatedEvent {
     Click(ClickPayload),
     FocusPane(FocusPanePayload),
     OpenBrowser(OpenBrowserPayload),
+    BrowserStatus(BrowserStatusPayload),
     CreateWorkspace(CreateWorkspacePayload),
     CreateTab(CreateTabPayload),
     CreatePane(CreatePanePayload),
@@ -301,6 +312,16 @@ impl Runtime {
                     chromux::BrowserAction::Parked(message) => message,
                     _ => "Runtime execution is parked for this approved batch".to_owned(),
                 });
+                true
+            }
+            ValidatedEvent::BrowserStatus(payload) => {
+                self.snapshot.status.chromux.state = payload.state;
+                self.snapshot.status.chromux.profile = payload.profile;
+                self.snapshot.status.chromux.current_url = payload.current_url;
+                self.snapshot.status.chromux.current_title = payload.current_title;
+                self.snapshot.status.chromux.message = payload.message;
+                self.snapshot.status.chromux.last_checked_at_unix_ms =
+                    Some(payload.last_checked_at_unix_ms);
                 true
             }
             ValidatedEvent::RetryConnect(payload) => {
@@ -470,6 +491,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "click" => decode!(ClickPayload, Click),
         "focus_pane" => decode!(FocusPanePayload, FocusPane),
         "open_browser" => decode!(OpenBrowserPayload, OpenBrowser),
+        "browser_status" => decode!(BrowserStatusPayload, BrowserStatus),
         "create_workspace" => decode!(CreateWorkspacePayload, CreateWorkspace),
         "create_tab" => decode!(CreateTabPayload, CreateTab),
         "create_pane" => decode!(CreatePanePayload, CreatePane),

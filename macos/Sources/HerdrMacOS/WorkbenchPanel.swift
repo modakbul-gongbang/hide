@@ -54,6 +54,12 @@ struct WorkbenchPanel: View {
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
     private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
+    private var effectiveReadonlyReason: String? {
+        if model.core.isRemoteWorkspace {
+            return "Remote inline editing is disabled in v1. Use the attached remote terminal so SSH remains the single write owner."
+        }
+        return editor?.readonlyReason
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -143,7 +149,7 @@ struct WorkbenchPanel: View {
                     HighlightedCodeEditor(
                         text: $draft,
                         language: syntaxLanguage(for: selectedURL),
-                        isEditable: editor?.readonlyReason == nil
+                        isEditable: effectiveReadonlyReason == nil
                     )
                 } else {
                     unavailable(
@@ -153,7 +159,7 @@ struct WorkbenchPanel: View {
                 }
                 if let conflict = editor?.conflict {
                     conflictBar(conflict)
-                } else if let reason = editor?.readonlyReason, editor?.contentsUTF8 != nil {
+                } else if let reason = effectiveReadonlyReason, editor?.contentsUTF8 != nil {
                     noticeBar(systemImage: "lock.fill", message: reason, color: .orange)
                 }
             }
@@ -184,7 +190,7 @@ struct WorkbenchPanel: View {
             Spacer()
             Button("Save") { model.core.saveFile(draft) }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(editor?.readonlyReason != nil || editor?.dirty != true)
+                .disabled(effectiveReadonlyReason != nil || editor?.dirty != true)
                 .accessibilityIdentifier("workbench-save")
         }
         .padding(.horizontal, 10)
