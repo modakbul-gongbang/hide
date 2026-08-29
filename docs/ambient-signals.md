@@ -11,10 +11,11 @@ A Herdr server can attach an optional `ambient` object to a pane's snapshot:
 { "subagents_active": 2, "background_running": 1, "background_failed": 0 }
 ```
 
-When present, `herdr-core::parse_snapshot` reads it into
-`AgentSnapshot.ambient` and Pet renders small count badges on that pane's
-card - never task names, commands, prompts, output, or file paths. See
-`AgentSnapshot` in `crates/herdr-core/src/model.rs` and `AmbientSignal`.
+When present, the sidebar projection reads it into
+`SidebarAgentSnapshot.ambient`, `herdr_core::pet::ambient_totals` sums it
+across panes, and the pet renders small count badges - never task names,
+commands, prompts, output, or file paths. See
+`SidebarAgentSnapshot` and `AmbientSignal` in `herdr-core/src/model.rs`.
 
 ## Scope boundary (read this before assuming more than this does)
 
@@ -64,17 +65,14 @@ other key in that object, or a value of the wrong type, is dropped during
 parsing and never reaches app state, the rendered UI, or logs - proven per
 surface:
 
-- Parsing: `unknown_ambient_keys_and_sentinel_content_never_survive_parsing`
-  in `crates/herdr-core/src/herdr.rs`.
-- The exact `PetState` JSON the frontend consumes:
-  `sentinel_ambient_content_never_reaches_serialized_pet_state` in
-  `apps/pet-app/src-tauri/src/main.rs`.
-- Rendered HTML: the sentinel-key test in `web/ambient-badges.test.mjs`
-  (`node --test web/ambient-badges.test.mjs`).
-- Logs/error strings: this app has no logging call site at all around agent
-  data, enforced by
-  `no_source_file_touching_ambient_data_contains_a_logging_call_site` in
-  `apps/pet-app/src-tauri/src/main.rs`.
+- Parsing and the serialized agent: `ambient_counts_parse_and_unknown_keys_never_survive`
+  in `herdr-core/src/sidebar.rs` asserts that a sentinel key present in the
+  wire object reaches neither `SidebarAgentSnapshot` nor its serialization.
+- A record whose shape cannot be read never partially survives: it excludes
+  only that agent, proven by `a_malformed_ambient_record_excludes_only_that_agent`.
+- Rendered UI: `PetBadgeRow` in `macos/Sources/HerdrMacOS/PetView.swift` is
+  handed three integers by `herdr_core::pet::ambient_totals`; no other
+  ambient field exists to render.
 
 This matches the product decision that ambient badges show counts only,
 never task names, commands, prompts, stdout/stderr, or paths.
