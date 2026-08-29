@@ -16,15 +16,50 @@ fn options() -> Vec<u8> {
 }
 
 fn options_with_state(state_path: &std::path::Path) -> Vec<u8> {
+    // A null socket keeps the core in loopback mode so byte-echo tests stay
+    // deterministic; live semantics are covered by the dedicated live test.
     serde_json::to_vec(&json!({
         "schema_version": 1,
-        "herdr_socket_path": "/tmp/herdr.sock",
+        "herdr_socket_path": null,
         "remote_targets": [
             {"id": "mini", "label": "Mac mini", "ssh_alias": "mini"}
         ],
         "app_state_path": state_path
     }))
     .expect("options serialize")
+}
+
+#[test]
+fn live_key_without_attach_surfaces_an_explicit_error() {
+    let missing_state =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/missing-ui-state.json");
+    let options = serde_json::to_vec(&json!({
+        "schema_version": 1,
+        "herdr_socket_path": "/tmp/herdr-core-ffi-test-missing.sock",
+        "remote_targets": [],
+        "app_state_path": missing_state
+    }))
+    .expect("options serialize");
+    let core = herdr_core_create(options.as_ptr(), options.len());
+    assert!(!core.is_null());
+
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "key", "payload": {"pane_id": "p1", "bytes_base64": "fw=="}}),
+    );
+    let after = snapshot(core);
+    assert_eq!(
+        after["status"]["last_error"]["kind"],
+        "terminal.not_attached"
+    );
+    assert_eq!(after["status"]["last_error"]["retryable"], true);
+    // The live key path must not echo input back as terminal output.
+    assert_eq!(
+        after["terminal"]["chunks"].as_array().map(Vec::len),
+        Some(0)
+    );
+
+    herdr_core_destroy(core);
 }
 
 fn create() -> *mut HerdrCore {
@@ -79,7 +114,8 @@ fn snapshot_exposes_the_production_schema_and_status() {
         ]
     );
     assert_eq!(snapshot["schema_version"], 1);
-    assert_eq!(snapshot["status"]["herdr"]["state"], "not_connected");
+    // The default test options leave the herdr socket unconfigured.
+    assert_eq!(snapshot["status"]["herdr"]["state"], "unconfigured");
     assert_eq!(snapshot["status"]["remote"][0]["target_id"], "mini");
     assert_eq!(snapshot["status"]["chromux"]["profile"], "default");
     assert_eq!(snapshot["status"]["environment"][0]["key"], "SSH_AUTH_SOCK");

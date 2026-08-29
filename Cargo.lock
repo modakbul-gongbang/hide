@@ -1067,6 +1067,8 @@ dependencies = [
 name = "herdr-core"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "portable-pty",
  "serde",
  "serde_json",
 ]

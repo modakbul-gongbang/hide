@@ -4,12 +4,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::live::{LiveContext, PaneAttach, SessionFetchError};
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, SCHEMA_VERSION, Snapshot, Surface,
     TerminalChunk, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
-use crate::{chromux, environment, files, persistence};
+use crate::{chromux, environment, files, live, persistence};
 
 #[derive(Debug, Deserialize)]
 struct EventEnvelope {
@@ -138,6 +139,12 @@ struct RetryConnectPayload {
     target_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct TerminalResizePayload {
+    cols: u16,
+    rows: u16,
+}
+
 enum ValidatedEvent {
     Key(KeyPayload),
     TerminalOutput(TerminalOutputPayload),
@@ -158,11 +165,17 @@ enum ValidatedEvent {
     FileConflict(FileConflictPayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
+    TerminalResize(TerminalResizePayload),
 }
 
 pub struct Runtime {
     snapshot: Snapshot,
     state_path: PathBuf,
+    live: Option<LiveContext>,
+    attach: Option<PaneAttach>,
+    attach_generation: u64,
+    terminal_rows: u16,
+    terminal_cols: u16,
 }
 
 impl Runtime {
@@ -212,11 +225,86 @@ impl Runtime {
         Self {
             snapshot,
             state_path,
+            live: None,
+            attach: None,
+            attach_generation: 0,
+            terminal_rows: 24,
+            terminal_cols: 80,
         }
     }
 
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    pub fn set_live(&mut self, context: LiveContext) {
+        self.live = Some(context);
+    }
+
+    /// Applies a live session poll result: projected agents on success, an
+    /// explicit herdr status on failure. Returns whether the snapshot changed.
+    pub fn ingest_session(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+    ) -> bool {
+        let (state, message, agents) = match fetched {
+            Ok(payload) => match project_agents(payload) {
+                Ok(agents) => ("connected", None, Some(agents)),
+                Err(projection_error) => (
+                    "malformed",
+                    Some(format!(
+                        "Herdr agents could not be projected: {projection_error}"
+                    )),
+                    None,
+                ),
+            },
+            Err(error) => (error.state(), Some(error.message().to_owned()), None),
+        };
+
+        let mut changed = false;
+        if self.snapshot.status.herdr.state != state
+            || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
+        {
+            self.snapshot.status.herdr.state = state.to_owned();
+            self.snapshot.status.herdr.message = message;
+            changed = true;
+        }
+        self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
+        if let Some(agents) = agents
+            && self.snapshot.navigator.agents != agents
+        {
+            self.snapshot.navigator.agents = agents;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Appends live pane bytes when the delivering attach is still current.
+    pub fn ingest_attach_output(&mut self, generation: u64, bytes: &[u8]) -> bool {
+        if generation != self.attach_generation {
+            return false;
+        }
+        let pane_id = match self.attach.as_ref() {
+            Some(attach) => attach.pane_id.clone(),
+            None => return false,
+        };
+        self.append_terminal_chunk(pane_id, live::encode_base64(bytes));
+        true
+    }
+
+    /// Marks the terminal closed when the current attach stream ends.
+    pub fn ingest_attach_exit(&mut self, generation: u64, message: String) -> bool {
+        if generation != self.attach_generation {
+            return false;
+        }
+        let pane_id = match self.attach.as_ref() {
+            Some(attach) => attach.pane_id.clone(),
+            None => return false,
+        };
+        self.snapshot.terminal.closed = true;
+        let notice = format!("\r\n[{message}]\r\n");
+        self.append_terminal_chunk(pane_id, live::encode_base64(notice.as_bytes()));
+        true
     }
 
     pub fn set_error(
@@ -276,7 +364,13 @@ impl Runtime {
                 self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
-                self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
+                if self.live.is_some() {
+                    self.write_attached(&payload.pane_id, &payload.bytes_base64);
+                } else {
+                    // Fixture mode has no PTY behind the pane; the loopback
+                    // echo is the whole byte bridge.
+                    self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
+                }
                 true
             }
             ValidatedEvent::TerminalOutput(payload) => {
@@ -301,7 +395,10 @@ impl Runtime {
             ValidatedEvent::FocusPane(payload) => {
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
-                self.snapshot.terminal.pane_id = Some(payload.pane_id);
+                self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
+                if self.live.is_some() {
+                    self.attach_pane(&payload.pane_id);
+                }
                 true
             }
             ValidatedEvent::OpenBrowser(payload) => {
@@ -432,6 +529,25 @@ impl Runtime {
                     true
                 }
             },
+            ValidatedEvent::TerminalResize(payload) => {
+                if payload.rows == 0 || payload.cols == 0 {
+                    self.set_error(
+                        "terminal.invalid_resize",
+                        "Terminal dimensions must be positive",
+                        false,
+                    );
+                    return true;
+                }
+                self.terminal_rows = payload.rows;
+                self.terminal_cols = payload.cols;
+                if let Some(attach) = self.attach.as_mut()
+                    && let Err(message) = attach.resize(payload.rows, payload.cols)
+                {
+                    self.set_error("terminal.resize_failed", message, true);
+                    return true;
+                }
+                false
+            }
             ValidatedEvent::UiStateUpdate(payload) => {
                 self.snapshot.ui_state = UiStateSnapshot {
                     expanded_paths: payload.expanded_paths,
@@ -445,6 +561,84 @@ impl Runtime {
                         true
                     }
                 }
+            }
+        }
+    }
+
+    /// Attaches the terminal to a live pane, replacing any previous attach.
+    /// Re-focusing the already attached pane is a no-op so repeated clicks
+    /// cannot kill and respawn the transport.
+    fn attach_pane(&mut self, pane_id: &str) {
+        if self
+            .attach
+            .as_ref()
+            .is_some_and(|attach| attach.pane_id == pane_id && !self.snapshot.terminal.closed)
+        {
+            return;
+        }
+        self.attach_generation = self.attach_generation.saturating_add(1);
+        self.attach = None;
+        self.snapshot.terminal.closed = false;
+        self.snapshot.terminal.exit_code = None;
+        // Full terminal reset so the previous pane's grid cannot bleed into
+        // the new pane; herdr redraws the pane content after attach.
+        self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(b"\x1bc"));
+        let context = self
+            .live
+            .as_ref()
+            .cloned()
+            .expect("attach_pane is only called with live configured");
+        match PaneAttach::spawn(
+            &context,
+            pane_id,
+            self.attach_generation,
+            self.terminal_rows,
+            self.terminal_cols,
+        ) {
+            Ok(attach) => {
+                self.attach = Some(attach);
+            }
+            Err(message) => {
+                self.snapshot.terminal.closed = true;
+                let notice = format!("\r\n[Attach to {pane_id} failed: {message}]\r\n");
+                self.append_terminal_chunk(
+                    pane_id.to_owned(),
+                    live::encode_base64(notice.as_bytes()),
+                );
+                self.set_error("pane.attach_failed", message, true);
+            }
+        }
+    }
+
+    /// Routes key bytes to the attached pane's PTY. Failures surface as
+    /// explicit errors instead of silently dropping input.
+    fn write_attached(&mut self, pane_id: &str, bytes_base64: &str) {
+        let bytes = match live::decode_base64(bytes_base64) {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.set_error("terminal.invalid_input", message, false);
+                return;
+            }
+        };
+        match self.attach.as_mut() {
+            Some(attach) if attach.pane_id == pane_id => {
+                if let Err(message) = attach.write_bytes(&bytes) {
+                    self.set_error("terminal.write_failed", message, true);
+                }
+            }
+            Some(attach) => {
+                let message = format!(
+                    "Input targeted pane {pane_id} but the terminal is attached to {}",
+                    attach.pane_id
+                );
+                self.set_error("terminal.pane_mismatch", message, false);
+            }
+            None => {
+                self.set_error(
+                    "terminal.not_attached",
+                    "No pane is attached; select an agent in the sidebar first",
+                    true,
+                );
             }
         }
     }
@@ -504,6 +698,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
+        "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
@@ -524,6 +719,13 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
         .is_some_and(|path| path.trim().is_empty())
     {
         return Err("herdr_socket_path must be null or non-empty");
+    }
+    if options
+        .herdr_bin_path
+        .as_ref()
+        .is_some_and(|path| path.trim().is_empty())
+    {
+        return Err("herdr_bin_path must be null or non-empty");
     }
     for target in &options.remote_targets {
         if target.id.trim().is_empty()

@@ -90,6 +90,23 @@ private struct AgentsPanel: View {
 
     private var agents: [SidebarAgent] { model.core.snapshot?.navigator.agents ?? [] }
 
+    /// The empty sidebar states the herdr connection status instead of a
+    /// generic prompt: a missing socket, an unreachable server, and a
+    /// connected-but-empty session are different situations.
+    private var emptyAgentsDescription: String {
+        guard let herdr = model.core.snapshot?.status.herdr else {
+            return "Connect herdr to load workspaces and agent activity."
+        }
+        switch herdr.state {
+        case "connected":
+            return "Herdr is connected but no agent panes are running."
+        case "unconfigured":
+            return "No herdr socket is configured for this launch."
+        default:
+            return herdr.message ?? "Herdr is not reachable."
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(
@@ -104,7 +121,7 @@ private struct AgentsPanel: View {
                 ContentUnavailableView {
                     Label("No agents yet", systemImage: "rectangle.stack.badge.person.crop")
                 } description: {
-                    Text("Connect herdr to load workspaces and agent activity.")
+                    Text(emptyAgentsDescription)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(ShellMetrics.panelPadding)
@@ -190,12 +207,22 @@ private struct AgentRow: View {
 private struct TerminalPanel: View {
     @EnvironmentObject private var model: ShellModel
 
+    private var attachedPaneDescription: String {
+        guard let terminal = model.core.snapshot?.terminal, let paneID = terminal.paneID else {
+            return "No pane selected"
+        }
+        let workspace = model.core.snapshot?.navigator.agents
+            .first { $0.paneID == paneID }
+            .map { " · \($0.workspaceLabel)" } ?? ""
+        return terminal.closed ? "\(paneID)\(workspace) · closed" : "\(paneID)\(workspace)"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(
                 title: "Terminal",
                 systemImage: "terminal",
-                trailing: "No pane selected"
+                trailing: attachedPaneDescription
             )
 
             Divider()

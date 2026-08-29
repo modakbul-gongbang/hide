@@ -144,16 +144,30 @@ struct CoreDiffSnapshot: Decodable {
 }
 
 struct CoreStatusSnapshot: Decodable {
+    let herdr: CoreHerdrStatus
     let chromux: CoreChromuxStatus
     let environment: [CoreEnvironmentStatus]
     let diagnostics: [CoreDiagnostic]
     let lastError: CoreLastError?
 
     enum CodingKeys: String, CodingKey {
+        case herdr
         case chromux
         case environment
         case diagnostics
         case lastError = "last_error"
+    }
+}
+
+struct CoreHerdrStatus: Decodable {
+    let state: String
+    let socketPath: String?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case socketPath = "socket_path"
+        case message
     }
 }
 
@@ -218,12 +232,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         didSet { drainPendingTerminalBytes() }
     }
 
+    var onRequestTerminalFocus: (() -> Void)?
+
     let workspaceRoot: URL
     let isRemoteWorkspace: Bool
 
     nonisolated(unsafe) private var core: OpaquePointer?
     private var lastTerminalSequence: UInt64 = 0
     private var pendingTerminalBytes: [[UInt8]] = []
+    private var restoredPaneSelection = false
 
     init(arguments: [String] = CommandLine.arguments) {
         isRemoteWorkspace = arguments.contains("--remote-workspace")
@@ -232,9 +249,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let statePath = Self.argumentValue("--state-path", in: arguments)
             ?? "/tmp/herdr-ide-verify-ui-state.json"
+        // The verification fixture runs without any live herdr connection;
+        // every other launch talks to the local herdr socket.
+        let fixtureMode = arguments.contains("--verification-ui-fixture")
         let options: [String: Any] = [
             "schema_version": coreSchemaVersion,
-            "herdr_socket_path": NSNull(),
+            "herdr_socket_path": fixtureMode ? NSNull() : Self.resolveHerdrSocketPath() as Any,
+            "herdr_bin_path": Self.resolveHerdrBinaryPath().map { $0 as Any } ?? NSNull(),
             "remote_targets": [[
                 "id": "mini",
                 "label": "Mac mini",
@@ -279,16 +300,27 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func sendTerminalInput(_ bytes: [UInt8], paneID: String = "local-loopback") {
+    func sendTerminalInput(_ bytes: [UInt8], paneID: String? = nil) {
+        // Input goes to the pane the terminal is attached to; the loopback
+        // pane only exists for the verification fixture.
+        let target = paneID ?? snapshot?.terminal.paneID ?? "local-loopback"
         dispatch(kind: "key", payload: [
-            "pane_id": paneID,
+            "pane_id": target,
             "bytes_base64": Data(bytes).base64EncodedString(),
+        ])
+    }
+
+    func resizeTerminal(cols: Int, rows: Int) {
+        dispatch(kind: "terminal_resize", payload: [
+            "cols": cols,
+            "rows": rows,
         ])
     }
 
     func focusPane(_ paneID: String) {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
         persistUIState(selectedPaneID: paneID)
+        onRequestTerminalFocus?()
     }
 
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
@@ -371,6 +403,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             let decoded = try JSONDecoder().decode(CoreSnapshot.self, from: data)
             snapshot = decoded
             bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" }
+            restorePaneSelectionIfNeeded(decoded)
             for chunk in decoded.terminal.chunks
                 .filter({ $0.sequence > lastTerminalSequence })
                 .sorted(by: { $0.sequence < $1.sequence })
@@ -386,6 +419,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         } catch {
             bridgeError = "Snapshot decode failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Restores the persisted pane selection once on launch so the terminal
+    /// reattaches to the pane the user last worked in. A pane that no longer
+    /// exists fails through the normal attach error path.
+    private func restorePaneSelectionIfNeeded(_ decoded: CoreSnapshot) {
+        guard !restoredPaneSelection else { return }
+        restoredPaneSelection = true
+        guard decoded.terminal.paneID == nil,
+              let persisted = decoded.uiState.selectedPaneID else { return }
+        focusPane(persisted)
     }
 
     private func drainPendingTerminalBytes() {
@@ -442,6 +486,28 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ]
     }
     #endif
+
+    /// HERDR_SOCKET_PATH overrides the default local socket location. The
+    /// value only lives in the environment; this is the declared contract.
+    static func resolveHerdrSocketPath() -> String {
+        if let override = ProcessInfo.processInfo.environment["HERDR_SOCKET_PATH"],
+           !override.isEmpty {
+            return override
+        }
+        return NSHomeDirectory() + "/.config/herdr/herdr.sock"
+    }
+
+    /// Finder launches carry no shell PATH, so the herdr binary is resolved
+    /// from its known install locations. A missing binary stays nil and pane
+    /// attach fails with explicit guidance instead of a silent no-op.
+    static func resolveHerdrBinaryPath() -> String? {
+        let candidates = [
+            NSHomeDirectory() + "/.local/bin/herdr",
+            "/opt/homebrew/bin/herdr",
+            "/usr/local/bin/herdr",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
 
     private static func argumentValue(_ flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {

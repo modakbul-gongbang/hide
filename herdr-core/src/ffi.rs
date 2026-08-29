@@ -2,9 +2,10 @@ use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::slice;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 
+use crate::live;
 use crate::model::CoreOptions;
 use crate::runtime::{Runtime, validate_options};
 
@@ -44,10 +45,28 @@ struct CallbackRegistration {
 unsafe impl Send for CallbackRegistration {}
 unsafe impl Sync for CallbackRegistration {}
 
+/// Thread-safe handle that fires the registered change callback. Cloned into
+/// live worker threads so PTY and poller output can wake the Swift shell.
+#[derive(Clone)]
+pub struct ChangeNotifier {
+    registration: Arc<Mutex<Option<CallbackRegistration>>>,
+}
+
+impl ChangeNotifier {
+    pub fn notify(&self) {
+        let registration = *lock_recover(&self.registration);
+        if let Some(registration) = registration {
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                (registration.callback)(registration.context);
+            }));
+        }
+    }
+}
+
 #[repr(C)]
 pub struct HerdrCore {
-    runtime: Mutex<Runtime>,
-    callback: Mutex<Option<CallbackRegistration>>,
+    runtime: Arc<Mutex<Runtime>>,
+    callback: Arc<Mutex<Option<CallbackRegistration>>>,
     owner_thread: ThreadId,
 }
 
@@ -92,12 +111,10 @@ fn check_owner_thread(core: &HerdrCore, operation: &str) -> bool {
 }
 
 fn notify_change(core: &HerdrCore) {
-    let registration = *lock_recover(&core.callback);
-    if let Some(registration) = registration {
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            (registration.callback)(registration.context);
-        }));
+    ChangeNotifier {
+        registration: Arc::clone(&core.callback),
     }
+    .notify();
 }
 
 #[unsafe(no_mangle)]
@@ -112,9 +129,21 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         if validate_options(&options).is_err() {
             return ptr::null_mut();
         }
+        let runtime = Arc::new(Mutex::new(Runtime::new(options.clone())));
+        let callback = Arc::new(Mutex::new(None));
+        if let Some(socket_path) = options.herdr_socket_path.as_deref() {
+            live::install(
+                &runtime,
+                ChangeNotifier {
+                    registration: Arc::clone(&callback),
+                },
+                socket_path,
+                options.herdr_bin_path.as_deref(),
+            );
+        }
         Box::into_raw(Box::new(HerdrCore {
-            runtime: Mutex::new(Runtime::new(options)),
-            callback: Mutex::new(None),
+            runtime,
+            callback,
             owner_thread: thread::current().id(),
         }))
     }))

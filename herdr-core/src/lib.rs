@@ -3,6 +3,7 @@ mod environment;
 mod ffi;
 mod files;
 pub mod fixture;
+pub mod live;
 mod model;
 mod persistence;
 mod runtime;

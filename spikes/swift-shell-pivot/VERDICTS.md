@@ -486,3 +486,28 @@ Required in-process core tests for unknown kind, schema mismatch, malformed payl
 The selective hit-region source, regression tests, bounded runtime receipt, and native screenshot checkpoint is `eb666eaee80fb785f46babcec3d60152b7a08808`.
 No T3 human retest, keyboard or mouse automation, T5 action, source or evidence deletion, fixture recreation, tag, push, PR, gate rerun, finalize, qa-log change, or service disruption occurred.
 T3 remains BLOCKED with AC2 unmet and V9 pending human judgment, and T5 remains forbidden.
+
+## Live pane attach, sidebar session polling, and IME composition byte suppression
+
+This batch delivered the two operational gaps the user hit in person: sidebar clicks not driving the terminal, and terminal input not reaching any real pane.
+
+`herdr-core` gained a `live` module.
+A session poller reads `session.snapshot` from the local herdr socket once per second, requires protocol revision 21 explicitly, and passes agent tokens through verbatim so the unseen-versus-acknowledged rules of INV-herdr-unseen-token stay owned by the sidebar projection.
+Socket-file-missing, unreachable, protocol-mismatch, and malformed responses are distinct explicit states surfaced through `status.herdr` and the sidebar empty state.
+`focus_pane` now spawns `herdr pane attach <pane_id>` under a portable-pty transport with a generation guard, so a superseded attach cannot write into the next pane's terminal, and re-focusing the attached pane is a no-op.
+Key events decode and write to the attached PTY instead of the loopback echo, input for a mismatched or missing attach raises a typed error instead of dropping bytes, and a new `terminal_resize` event resizes the live PTY.
+The Swift shell restores the persisted pane selection once at launch, routes input to the attached pane, shows the attached pane in the terminal header, and reports the herdr connection state when the sidebar is empty.
+The fixture path is unchanged: a null socket keeps loopback semantics, and the seeded fixture instance still runs without live access.
+
+The IME defect recorded in `evidence/v9-backspace-adapter-human-retest-trace.json` was re-diagnosed from the call stream: on Backspace during Korean composition the input method re-marks the composing text, commits it through `insertText`, and lets the key fall through to SwiftTerm's `doCommand(deleteBackward:)`, which leaks DEL while the composition is stale.
+SwiftTerm's `keyDown` and `doCommand` are not open, so the fix enforces the rule where bytes leave the view, mirroring Ghostty's composing control-input policy: `ImeTerminalView` captures composition state in `interpretKeyEvents`, a plain Backspace during composition swallows both the give-up commit and the DEL, and any other single C0 or DEL fallback byte produced during composition is suppressed while committed text and multi-byte arrow sequences still pass.
+The decision table is the pure `CompositionInputPolicy`, covered by six Swift tests; coordinate-adapter work in the spike remains untouched.
+
+Machine verification: 20 herdr-core unit tests, 11 FFI contract tests including the new live-key-without-attach error row, clippy with denied warnings, fmt, 17 Swift tests, and a clean dev-app assembly with strict codesign.
+Runtime verification used only the prefix-owned fixture: `herdr-ide-fixture create herdr-ide-verify-attach` produced workspace w37 with pane w37:p1, the launched app restored the persisted selection, spawned exactly one `herdr pane attach w37:p1` client, rendered the live sidebar with sixteen real agents, and a peekaboo-typed probe `herdr-attach-proof-42` landed in `herdr pane read w37:p1 --source visible` and echoed back into the app terminal.
+Process memory was 118 MB against the 400 MB V8 bound.
+Screenshots and the bounded receipt are `evidence/live-initial.png`, `evidence/live-fixture-attach.png`, `evidence/live-input-proof.png`, and `evidence/pane-attach-ime-verification.json`.
+No real agent pane received input, the one pre-existing fixture-mode app instance was left running, and the fixture workspace and its /tmp directory were removed afterward.
+
+T3's gate is unchanged by machinery alone: the composition suppression is machine-verified, and a fresh physical-keyboard V9 human verdict in the live app remains mandatory.
+T5, tags, deletion, push, PR, and finalize remain NOT RUN.

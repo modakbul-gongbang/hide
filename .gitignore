@@ -22,3 +22,7 @@ spikes/*/target
 __pycache__/
 *.pyc
 .env
+# SwiftPM build output
+.build/
+.build-boundary/
+macos/build/

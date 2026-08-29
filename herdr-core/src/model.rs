@@ -6,6 +6,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct CoreOptions {
     pub schema_version: u32,
     pub herdr_socket_path: Option<String>,
+    #[serde(default)]
+    pub herdr_bin_path: Option<String>,
     pub remote_targets: Vec<RemoteTarget>,
     pub app_state_path: String,
 }
