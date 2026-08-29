@@ -483,5 +483,6 @@ The outcome-focused test practice covers center, edge, corner, and repeat behavi
 
 The corrected failure-injection boundary forbids external-service and live-system fault injection only.
 Required in-process core tests for unknown kind, schema mismatch, malformed payload, invalid options, and off-owner behavior remain allowed and are not reclassified as forbidden.
+The selective hit-region source, regression tests, bounded runtime receipt, and native screenshot checkpoint is `eb666eaee80fb785f46babcec3d60152b7a08808`.
 No T3 human retest, keyboard or mouse automation, T5 action, source or evidence deletion, fixture recreation, tag, push, PR, gate rerun, finalize, qa-log change, or service disruption occurred.
 T3 remains BLOCKED with AC2 unmet and V9 pending human judgment, and T5 remains forbidden.
