@@ -444,4 +444,5 @@ Design Principle 7 is satisfied by rendering the browser's derived title as read
 The outcome-focused test practice asserts the caller-visible decoded title while preserving the neighboring structured fields.
 
 No T3 human retest, keyboard automation, T5 action, file deletion, fixture workspace recreation, tag, push, PR, gate rerun, finalize, qa-log change, or external-service failure injection occurred.
+The source, regression test, runtime receipt, native screenshot, and verification-record checkpoint is `fdd3a7df9eaa4b259767e1f6191ca498decc75fd`.
 T3 remains BLOCKED with AC2 unmet and V9 pending human judgment, and T5 remains forbidden.
