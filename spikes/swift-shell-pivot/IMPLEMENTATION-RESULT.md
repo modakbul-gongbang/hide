@@ -374,7 +374,9 @@ Actual Settings edit, immediate Pane-menu refresh, rebound action routing, and r
 - Approved positive mini evidence exists in [t13-t19-mini-positive-runtime.json](evidence/t13-t19-mini-positive-runtime.json).
 - No mini connection was cut and V19 was not run.
 - Default chromux Chrome PID 9609 was launched/reused in the approved earlier batch and remains running.
-- No Chrome, chromux daemon, Herdr daemon, live socket, or user workspace was stopped or disrupted.
+- No Chrome, chromux daemon, Herdr daemon, or live socket was stopped or disrupted.
+- Before the fixture-retarget regression, stale/global focus redirected a diagnostic action to user-owned w2Y and caused at least one unintended pane split; the exact count is unproven, input stopped immediately, and no out-of-ownership cleanup was attempted.
+- After that regression, w2Y received no further focus, split, zoom, cleanup, automated input, or mutation, and its later zoom screenshot was inspected read-only.
 - The final `w3B` fixture remains historical evidence without an app attach; historical prefix-owned w38, w39, and w3A fixtures also remain preserved.
 
 ## Automated tests and regression risks

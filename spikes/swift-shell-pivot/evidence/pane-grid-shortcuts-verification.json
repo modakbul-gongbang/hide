@@ -40,7 +40,17 @@
     "ime_behavior_change": false
   },
   "external_service_failure_injection": false,
-  "user_workspace_mutation": false,
+  "unexpected_user_workspace_mutation": true,
+  "unexpected_user_workspace_mutation_detail": "Before the fixture-retarget regression was added, stale/global focus retargeted a diagnostic menu or shortcut action to user-owned w2Y and created at least one pane split. The evidence does not establish an exact created-pane count, so none is asserted.",
+  "unexpected_mutation_response": "App input was stopped and the diagnostic app was terminated immediately. Because w2Y is outside fixture ownership, no generated pane was closed or otherwise cleaned up by this run.",
+  "post_retarget_w2y_actions": {
+    "focus": 0,
+    "split": 0,
+    "zoom": 0,
+    "cleanup": 0,
+    "automated_input": 0
+  },
+  "current_final_verification_user_workspace_mutation": false,
   "settings_driver_success_claimed": false,
   "settings_driver_receipt": "pane-actions-settings-driver-limitation.json",
   "zoom_runtime_receipt": "zoom-buffer-retention-diagnostic.json",

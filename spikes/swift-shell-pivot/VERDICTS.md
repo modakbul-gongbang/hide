@@ -611,7 +611,11 @@ Exact-window TextField automation did not change the visible value and returned 
 Native TextField editing, immediate menu-equivalent refresh, action routing after user edit, and relaunch persistence are handed to the final human checklist.
 No global input was sent after that handoff.
 
-The user-owned w2Y screenshot at `/Users/hoyeonlee/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png` showed a real zoom-buffer defect and was never mutated.
+Before the fixture-retarget regression was added, stale/global focus redirected a diagnostic menu or shortcut action into user-owned w2Y and created at least one unintended pane split.
+The evidence does not establish the exact number of created panes, so no count beyond one or more is claimed.
+App input was stopped and the diagnostic app was terminated immediately; because w2Y was outside fixture ownership, this run did not close or otherwise clean up the created pane or panes.
+After the retarget regression landed, no further focus, split, zoom, cleanup, automatic input, or other mutation targeted w2Y.
+The later user-provided w2Y screenshot at `/Users/hoyeonlee/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png` was used read-only to diagnose the zoom-buffer defect.
 The defect was reproduced at the presentation seam: zoom selected only the focused subtree, SwiftUI dismantled hidden SwiftTerm views while their core attach workers continued draining bytes, and recreated views therefore showed only future output fragments.
 The pre-fix regression in `evidence/zoom-buffer-retention-regression-before.log` failed on that exact behavior.
 
