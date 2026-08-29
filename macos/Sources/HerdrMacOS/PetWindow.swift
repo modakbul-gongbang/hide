@@ -108,7 +108,7 @@ final class PetWindowController: NSObject, NSWindowDelegate {
 
     init(mainWindow: NSWindow, arguments: [String] = CommandLine.arguments) {
         self.mainWindow = mainWindow
-        receiptPath = Self.argumentValue("--verification-window-receipt", in: arguments)
+        receiptPath = LaunchArguments.value("--verification-window-receipt", in: arguments)
         forceOffscreenRequest = arguments.contains("--verification-pet-offscreen")
         showForVerification = arguments.contains("--verification-show-pet")
         runHitRegionProbe = arguments.contains("--verification-pet-hit-region-probe")
@@ -364,12 +364,5 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             let failure = "{\"kind\":\"pet.receipt_write_failed\",\"path\":\"\(receiptPath)\"}\n"
             FileHandle.standardError.write(Data(failure.utf8))
         }
-    }
-
-    private static func argumentValue(_ flag: String, in arguments: [String]) -> String? {
-        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
-            return nil
-        }
-        return arguments[index + 1]
     }
 }

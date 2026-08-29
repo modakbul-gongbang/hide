@@ -903,6 +903,18 @@ mod tests {
 
     use super::*;
 
+    /// `contracts/herdr-api.schema.json` is the canonical Herdr API contract,
+    /// synced from Herdr itself by `scripts/sync-herdr-contract.sh`. A core that
+    /// silently spoke a different revision than the contract would fail at
+    /// runtime with an empty sidebar, so the divergence is caught here instead.
+    #[test]
+    fn protocol_revision_matches_the_canonical_contract() {
+        const CONTRACT: &str = include_str!("../../contracts/herdr-api.schema.json");
+
+        let schema: Value = serde_json::from_str(CONTRACT).expect("contract is valid JSON");
+        assert_eq!(schema["protocol"], HERDR_PROTOCOL_REVISION);
+    }
+
     #[test]
     fn pane_control_plans_right_down_and_zoom_without_shell_interpolation() {
         assert_eq!(

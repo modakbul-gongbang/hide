@@ -315,13 +315,13 @@ final class BrowserRuntimeModel: ObservableObject {
 
     init(arguments: [String] = CommandLine.arguments) {
         #if DEBUG
-        profile = Self.argumentValue("--verification-chromux-profile", in: arguments) ?? "default"
+        profile = LaunchArguments.value("--verification-chromux-profile", in: arguments) ?? "default"
         #else
         profile = "default"
         #endif
-        receiptPath = Self.argumentValue("--verification-browser-receipt", in: arguments)
+        receiptPath = LaunchArguments.value("--verification-browser-receipt", in: arguments)
         #if DEBUG
-        endpointPortOverride = Self.argumentValue("--verification-chromux-port", in: arguments).flatMap(Int.init)
+        endpointPortOverride = LaunchArguments.value("--verification-chromux-port", in: arguments).flatMap(Int.init)
         #else
         endpointPortOverride = nil
         #endif
@@ -382,13 +382,6 @@ final class BrowserRuntimeModel: ObservableObject {
             let message = "{\"kind\":\"chromux.receipt_write_failed\",\"path\":\"\(receiptPath)\"}\n"
             FileHandle.standardError.write(Data(message.utf8))
         }
-    }
-
-    private static func argumentValue(_ flag: String, in arguments: [String]) -> String? {
-        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
-            return nil
-        }
-        return arguments[index + 1]
     }
 }
 

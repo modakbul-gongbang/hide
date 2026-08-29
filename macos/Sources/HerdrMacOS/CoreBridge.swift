@@ -352,10 +352,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     init(arguments: [String] = CommandLine.arguments) {
         isRemoteWorkspace = arguments.contains("--remote-workspace")
-        workspaceRoot = Self.argumentValue("--workspace-root", in: arguments)
+        workspaceRoot = LaunchArguments.value("--workspace-root", in: arguments)
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let statePath = Self.argumentValue("--state-path", in: arguments)
+        let statePath = LaunchArguments.value("--state-path", in: arguments)
             ?? "/tmp/herdr-ide-verify-ui-state.json"
         // The verification fixture runs without any live herdr connection;
         // every other launch talks to the local herdr socket.
@@ -682,12 +682,5 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "/usr/local/bin/herdr",
         ]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
-    private static func argumentValue(_ flag: String, in arguments: [String]) -> String? {
-        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
-            return nil
-        }
-        return arguments[index + 1]
     }
 }

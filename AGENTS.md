@@ -1,5 +1,12 @@
 # Agent Notes
 
+## Repository Layout
+
+- `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
+- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. All authority (pane layout, focus, zoom, persisted state) lives here.
+- `src/` - the retired Rust-native shell. Only `remote.rs` (SSH/mini) is still unported; nothing links this crate into the application.
+- `spikes/swift-shell-pivot/` - the Stage 0 spike, its evidence, and `VERDICTS.md`. A frozen record; do not edit it to reflect later changes.
+
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)
 

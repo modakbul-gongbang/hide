@@ -51,7 +51,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             model.remote.refreshMini()
         }
         #if DEBUG
-        if let rawKind = Self.argumentValue("--verification-consequence", in: CommandLine.arguments),
+        if let rawKind = LaunchArguments.value("--verification-consequence", in: CommandLine.arguments),
            let kind = DestructiveTargetKind(rawValue: rawKind) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                 self?.model.previewConsequence(kind)
@@ -62,13 +62,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
-    }
-
-    private static func argumentValue(_ flag: String, in arguments: [String]) -> String? {
-        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
-            return nil
-        }
-        return arguments[index + 1]
     }
 }
 
