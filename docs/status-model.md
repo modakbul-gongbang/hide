@@ -16,13 +16,14 @@ Only unseen (`_new`) tokens may be promoted to attention or error.
 Matching on the `status_question` prefix alone pulls acknowledged items back into the waiting list, which is exactly the bug the user caught by comparing the dashboard against the herdr sidebar.
 Legacy boolean form (`status_question: true`) still means unseen and is accepted.
 
-Covered by tests in `crates/herdr-core/src/herdr.rs` (acknowledged `?` -> idle, unseen `?` -> attention, done -> done), enforced by `INV-herdr-unseen-token`.
+Covered by tests in `herdr-core/src/sidebar.rs` (acknowledged `?` -> idle, unseen `?` -> attention, done -> done), enforced by `INV-herdr-unseen-token`.
+That projection is the single owner of the rule: `herdr-core/src/pet.rs` buckets the states it already decided rather than reading tokens a second time.
 
 ## Pet pose priority
 
 An unseen error or question/approval takes precedence over ordinary work so a `!` or `?` is never hidden by a background task.
 The compatibility `top_status` field still exposes the five existing states to the dashboard and badge code.
-The behavior layer adds the clawd-style priority used for pose selection:
+The behavior layer adds the clawd-style priority used for pose selection (`herdr_core::pet::expanded_state`):
 
 ```
 error > notification > sweeping > attention > carrying/juggling > working > thinking > idle/roam > sleeping
@@ -33,6 +34,9 @@ One working pane maps to `carrying`, two or more to `juggling`.
 After eight idle seconds the pet can roam; after sixty idle seconds it runs `yawning -> dozing -> collapsing -> sleeping`.
 Any pointer activity produces `waking` before returning to the normal priority.
 Urgent error/attention and the badge contract always win over these delight states.
+
+A lost herdr connection outranks all of it: `herdr_core::pet::pose` reports `disconnected`, because a server that stopped answering cannot say anything true about agent state.
+The last valid agent list is retained so counts do not blink to empty, but every retained agent is counted as disconnected - a stale yellow "act now" badge for a dead server is the failure this prevents.
 
 ## Badges
 

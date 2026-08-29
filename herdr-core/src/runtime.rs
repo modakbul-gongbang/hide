@@ -10,11 +10,15 @@ use crate::live::{
     SessionFetchError,
 };
 use crate::model::{
-    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, SCHEMA_VERSION,
-    Snapshot, Surface, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PetBadgesSnapshot,
+    PetClickSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot, Surface,
+    TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
-use crate::{chromux, environment, files, live, persistence};
+use crate::{chromux, environment, files, live, persistence, pet};
+
+/// How long the pet plays its waking pose after activity interrupts sleep.
+const PET_WAKING_MS: u64 = 1_200;
 
 #[derive(Debug, Deserialize)]
 struct EventEnvelope {
@@ -152,6 +156,33 @@ struct RetryConnectPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct PetVisibilityPayload {
+    visible: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PetMovePayload {
+    /// Already clamped to a visible screen by the shell, which owns the
+    /// display geometry; the core only records where the pet ended up.
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PetDragPayload {
+    dragging: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PetShortcutPayload {
+    /// `null` or blank means the user cleared the binding: nothing is
+    /// registered and no shortcut fires (D-14).
+    accelerator: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TerminalResizePayload {
     pane_id: String,
     cols: u16,
@@ -180,6 +211,13 @@ enum ValidatedEvent {
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
+    PetClick,
+    PetSetVisible(PetVisibilityPayload),
+    PetToggleVisible,
+    PetMove(PetMovePayload),
+    PetDrag(PetDragPayload),
+    PetActivity,
+    PetShortcutUpdate(PetShortcutPayload),
 }
 
 pub struct Runtime {
@@ -190,6 +228,15 @@ pub struct Runtime {
     attach_generations: HashMap<String, u64>,
     next_attach_generation: u64,
     terminal_sizes: HashMap<String, (u16, u16)>,
+    /// The last moment any agent was working or waiting on the user. The pet
+    /// measures idleness from here, so roam and sleep are driven by real
+    /// session activity rather than wall-clock uptime.
+    pet_active_at_unix_ms: u64,
+    pet_waking_until_unix_ms: u64,
+    pet_dragging: bool,
+    /// First moment each currently-unseen pane became unseen. Memory only by
+    /// decision (D-21): after a restart snapshot order decides instead.
+    pet_unseen_observed: std::collections::BTreeMap<String, u64>,
 }
 
 impl Runtime {
@@ -235,7 +282,7 @@ impl Runtime {
                 occurred_at: unix_milliseconds(),
             });
         }
-        Self {
+        let mut runtime = Self {
             snapshot,
             state_path,
             live: None,
@@ -243,7 +290,14 @@ impl Runtime {
             attach_generations: HashMap::new(),
             next_attach_generation: 0,
             terminal_sizes: HashMap::new(),
-        }
+            pet_active_at_unix_ms: unix_milliseconds(),
+            pet_waking_until_unix_ms: 0,
+            pet_dragging: false,
+            pet_unseen_observed: std::collections::BTreeMap::new(),
+        };
+        runtime.apply_persisted_pet_state();
+        runtime.refresh_pet();
+        runtime
     }
 
     pub fn snapshot(&self) -> &Snapshot {
@@ -260,6 +314,7 @@ impl Runtime {
         &mut self,
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
     ) -> bool {
+        let mut excluded = Vec::new();
         let (state, message, agents, layout) = match fetched {
             Ok(payload) => {
                 let selected_pane_id = self.snapshot.terminal.pane_id.as_deref().or(self
@@ -291,17 +346,11 @@ impl Runtime {
                 let layout = target_pane_id
                     .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
                     .transpose();
-                match (project_agents(payload), layout) {
-                    (Ok(agents), Ok(layout)) => ("connected", None, Some(agents), layout),
-                    (Err(projection_error), Ok(layout)) => (
-                        "malformed",
-                        Some(format!(
-                            "Herdr agents could not be projected: {projection_error}"
-                        )),
-                        None,
-                        layout,
-                    ),
-                    (_, Err(projection_error)) => (
+                let projection = project_agents(payload);
+                excluded = projection.excluded;
+                match layout {
+                    Ok(layout) => ("connected", None, Some(projection.agents), layout),
+                    Err(projection_error) => (
                         "malformed",
                         Some(format!(
                             "Herdr pane layout could not be projected: {projection_error}"
@@ -314,7 +363,27 @@ impl Runtime {
             Err(error) => (error.state(), Some(error.message().to_owned()), None, None),
         };
 
-        let mut changed = false;
+        // A single unreadable agent record excludes only itself; the
+        // exclusion is stated rather than silently folded into the count.
+        for exclusion in &excluded {
+            let pane_id = exclusion.pane_id.as_deref().unwrap_or("<missing pane id>");
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "session",
+                    "kind": "agent.excluded",
+                    "pane_id": pane_id,
+                    "source_index": exclusion.source_index,
+                    "message": exclusion.reason,
+                })
+            );
+            self.push_diagnostic(
+                "agent.excluded",
+                format!("Agent {pane_id} was excluded: {}", exclusion.reason),
+            );
+        }
+
+        let mut changed = !excluded.is_empty();
         if self.snapshot.status.herdr.state != state
             || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
         {
@@ -337,7 +406,114 @@ impl Runtime {
             }
             changed |= self.apply_pane_layout(layout);
         }
-        changed
+        changed | self.refresh_pet()
+    }
+
+    /// Recomputes the pet's pose, badge row, and attention queue from the
+    /// current agent list and connection state. Idempotent: the same inputs
+    /// produce the same snapshot and report no change.
+    fn refresh_pet(&mut self) -> bool {
+        let now = unix_milliseconds();
+        let connected = self.snapshot.status.herdr.state == "connected";
+        let agents = &self.snapshot.navigator.agents;
+        let summary = pet::summarize(agents, connected);
+        if summary.error + summary.attention + summary.working > 0 {
+            self.pet_active_at_unix_ms = now;
+        }
+        let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
+        let waking = now < self.pet_waking_until_unix_ms;
+        let ambient = pet::ambient_totals(agents, connected);
+        let attention_pane_ids = if connected {
+            pet::observe_unseen(&mut self.pet_unseen_observed, agents, now);
+            pet::attention_order(&self.snapshot.navigator.agents, &self.pet_unseen_observed)
+        } else {
+            Vec::new()
+        };
+
+        let next = PetSnapshot {
+            visible: self.snapshot.ui_state.pet_visible,
+            connection: self.snapshot.status.herdr.state.clone(),
+            connection_message: self.snapshot.status.herdr.message.clone(),
+            pose: pet::pose(summary, idle_ms, waking, connected).to_owned(),
+            sleep_phase: pet::sleep_phase_for_idle_ms(idle_ms).as_str().to_owned(),
+            roam_allowed: connected && pet::is_roam_allowed(summary, idle_ms, self.pet_dragging),
+            badges: PetBadgesSnapshot {
+                working: summary.working,
+                done: summary.done,
+                attention: summary.attention,
+                error: summary.error,
+                disconnected: summary.disconnected,
+                subagents_active: ambient.subagents_active,
+                background_running: ambient.background_running,
+                background_failed: ambient.background_failed,
+            },
+            attention_pane_ids,
+            origin: self.snapshot.ui_state.pet_origin,
+            shortcut: self.snapshot.ui_state.pet_shortcut.clone(),
+            shortcut_error: self.snapshot.pet.shortcut_error.clone(),
+            theme_id: self.snapshot.pet.theme_id.clone(),
+            last_click: self.snapshot.pet.last_click.clone(),
+        };
+        if self.snapshot.pet == next {
+            return false;
+        }
+        self.snapshot.pet = next;
+        true
+    }
+
+    /// Applying the same visibility twice converges instead of flapping, so
+    /// four surfaces sharing one state can all set it freely.
+    fn set_pet_visible(&mut self, visible: bool) -> bool {
+        if self.snapshot.ui_state.pet_visible == visible {
+            return false;
+        }
+        self.snapshot.ui_state.pet_visible = visible;
+        self.persist_ui_state();
+        self.note_pet_activity();
+        self.refresh_pet();
+        true
+    }
+
+    /// Pointer or toggle activity wakes a sleeping pet before the normal
+    /// priority resumes.
+    fn note_pet_activity(&mut self) {
+        let now = unix_milliseconds();
+        let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
+        if pet::sleep_phase_for_idle_ms(idle_ms) != pet::SleepPhase::Awake {
+            self.pet_waking_until_unix_ms = now.saturating_add(PET_WAKING_MS);
+        }
+        self.pet_active_at_unix_ms = now;
+    }
+
+    fn apply_persisted_pet_state(&mut self) {
+        self.snapshot.pet.visible = self.snapshot.ui_state.pet_visible;
+        self.snapshot.pet.origin = self.snapshot.ui_state.pet_origin;
+        self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
+    }
+
+    /// Saves the current UI state and surfaces a write failure instead of
+    /// dropping it.
+    fn persist_ui_state(&mut self) {
+        if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+            self.set_error("ui_state.save_failed", message, true);
+        }
+    }
+
+    fn focus_pane(&mut self, pane_id: String) {
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.set_error(
+                "pane.control_unavailable",
+                "Pane focus requires a live Herdr connection",
+                true,
+            );
+            return;
+        };
+        self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
+        if let Err(message) =
+            live::spawn_pane_control(context, PaneControlAction::Focus { pane_id })
+        {
+            self.set_error("pane.focus_worker_failed", message, true);
+        }
     }
 
     fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
@@ -766,27 +942,77 @@ impl Runtime {
                 true
             }
             ValidatedEvent::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
+            ValidatedEvent::PetClick => {
+                // Every toggle surface and the click itself share one state,
+                // so the click never has to guess which pane the user meant:
+                // the oldest unseen pane wins, and with nothing unseen the
+                // shell only raises its window.
+                let selected_pane_id = self.snapshot.pet.attention_pane_ids.first().cloned();
+                if let Some(pane_id) = selected_pane_id.clone() {
+                    self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
+                    self.persist_ui_state();
+                    self.focus_pane(pane_id);
+                }
+                self.snapshot.pet.last_click = Some(PetClickSnapshot {
+                    selected_pane_id,
+                    at_unix_ms: unix_milliseconds(),
+                });
+                true
+            }
+            ValidatedEvent::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
+            ValidatedEvent::PetToggleVisible => {
+                let visible = !self.snapshot.ui_state.pet_visible;
+                self.set_pet_visible(visible)
+            }
+            ValidatedEvent::PetMove(payload) => {
+                let origin = PetOriginSnapshot {
+                    x: payload.x,
+                    y: payload.y,
+                };
+                if self.snapshot.ui_state.pet_origin == Some(origin) {
+                    return false;
+                }
+                self.snapshot.ui_state.pet_origin = Some(origin);
+                self.persist_ui_state();
+                self.refresh_pet();
+                true
+            }
+            ValidatedEvent::PetDrag(payload) => {
+                if self.pet_dragging == payload.dragging {
+                    return false;
+                }
+                self.pet_dragging = payload.dragging;
+                self.note_pet_activity();
+                self.refresh_pet()
+            }
+            ValidatedEvent::PetActivity => {
+                self.note_pet_activity();
+                self.refresh_pet()
+            }
+            ValidatedEvent::PetShortcutUpdate(payload) => {
+                let accelerator = payload
+                    .accelerator
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty());
+                let error = payload.error.filter(|value| !value.trim().is_empty());
+                let unchanged = self.snapshot.ui_state.pet_shortcut == accelerator
+                    && self.snapshot.pet.shortcut_error == error;
+                if unchanged {
+                    return false;
+                }
+                self.snapshot.ui_state.pet_shortcut = accelerator;
+                self.snapshot.pet.shortcut_error = error;
+                self.persist_ui_state();
+                self.refresh_pet();
+                true
+            }
             ValidatedEvent::Click(payload) => {
                 let _ = (payload.x, payload.y, payload.button, payload.click_count);
                 self.snapshot.focused.surface = payload.surface;
                 true
             }
             ValidatedEvent::FocusPane(payload) => {
-                let Some(context) = self.live.as_ref().cloned() else {
-                    self.set_error(
-                        "pane.control_unavailable",
-                        "Pane focus requires a live Herdr connection",
-                        true,
-                    );
-                    return true;
-                };
-                let pane_id = payload.pane_id;
-                self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
-                if let Err(message) =
-                    live::spawn_pane_control(context, PaneControlAction::Focus { pane_id })
-                {
-                    self.set_error("pane.focus_worker_failed", message, true);
-                }
+                self.focus_pane(payload.pane_id);
                 true
             }
             ValidatedEvent::OpenBrowser(payload) => {
@@ -1029,11 +1255,16 @@ impl Runtime {
                 false
             }
             ValidatedEvent::UiStateUpdate(payload) => {
+                // Pet placement, visibility, and shortcut belong to the pet
+                // events; a navigator or keyboard save must not erase them.
                 self.snapshot.ui_state = UiStateSnapshot {
                     expanded_paths: payload.expanded_paths,
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
                     shortcut_bindings: payload.shortcut_bindings,
+                    pet_visible: self.snapshot.ui_state.pet_visible,
+                    pet_origin: self.snapshot.ui_state.pet_origin,
+                    pet_shortcut: self.snapshot.ui_state.pet_shortcut.clone(),
                 };
                 match persistence::save(&self.state_path, &self.snapshot.ui_state) {
                     Ok(()) => true,
@@ -1221,6 +1452,13 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
+        "pet_click" => Ok(ValidatedEvent::PetClick),
+        "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
+        "pet_toggle_visible" => Ok(ValidatedEvent::PetToggleVisible),
+        "pet_move" => decode!(PetMovePayload, PetMove),
+        "pet_drag" => decode!(PetDragPayload, PetDrag),
+        "pet_activity" => Ok(ValidatedEvent::PetActivity),
+        "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
@@ -1273,4 +1511,100 @@ fn unix_milliseconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::live::SessionFetchError;
+    use crate::sidebar::SessionSnapshotPayload;
+
+    fn runtime() -> Runtime {
+        let options = CoreOptions {
+            schema_version: SCHEMA_VERSION,
+            herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
+            herdr_bin_path: None,
+            remote_targets: Vec::new(),
+            app_state_path: std::env::temp_dir()
+                .join(format!("herdr-core-pet-runtime-{}.json", std::process::id()))
+                .to_string_lossy()
+                .into_owned(),
+        };
+        Runtime::new(
+            options,
+            environment::EnvironmentReport {
+                statuses: Vec::new(),
+                remote_enabled: false,
+                chromux_enabled: false,
+                herdr_socket_path_override: None,
+            },
+        )
+    }
+
+    fn working_payload() -> SessionSnapshotPayload {
+        serde_json::from_value(serde_json::json!({
+            "agents": [{
+                "pane_id": "w1:p1",
+                "workspace_label": "Fixture",
+                "agent": "codex",
+                "agent_status": "working",
+                "tokens": {"status_working": "\u{25cf}", "sort_rank": "05",
+                           "activity": "0000000000001"}
+            }],
+            "layouts": [{
+                "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w1:p1",
+                "panes": [{"pane_id": "w1:p1",
+                           "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("session payload")
+    }
+
+    #[test]
+    fn a_wholly_broken_poll_keeps_the_last_valid_agents_and_says_it_is_disconnected() {
+        let mut runtime = runtime();
+        runtime.ingest_session(Ok(working_payload()));
+        assert_eq!(runtime.snapshot().navigator.agents.len(), 1);
+        assert_eq!(runtime.snapshot().pet.pose, "carrying");
+        assert_eq!(runtime.snapshot().pet.badges.working, 1);
+
+        runtime.ingest_session(Err(SessionFetchError::SocketMissing(
+            "Herdr socket file does not exist".to_owned(),
+        )));
+        let down = runtime.snapshot();
+        assert_eq!(
+            down.navigator.agents.len(),
+            1,
+            "the last valid agent list is retained rather than blanked"
+        );
+        assert_eq!(down.pet.pose, "disconnected");
+        assert_eq!(down.pet.connection, "socket_missing");
+        assert!(
+            down.pet.connection_message.is_some(),
+            "a missing socket is stated, never a silent idle"
+        );
+        assert_eq!(
+            down.pet.badges.working, 0,
+            "a server that stopped answering cannot keep a working badge lit"
+        );
+        assert_eq!(down.pet.badges.disconnected, 1);
+
+        // The next valid poll recovers on its own.
+        runtime.ingest_session(Ok(working_payload()));
+        assert_eq!(runtime.snapshot().pet.pose, "carrying");
+        assert_eq!(runtime.snapshot().pet.connection, "connected");
+    }
+
+    #[test]
+    fn ingesting_the_same_poll_twice_reports_no_further_change() {
+        let mut runtime = runtime();
+        assert!(runtime.ingest_session(Ok(working_payload())));
+        assert!(
+            !runtime.ingest_session(Ok(working_payload())),
+            "an unchanged snapshot must not wake the shell every poll"
+        );
+    }
 }

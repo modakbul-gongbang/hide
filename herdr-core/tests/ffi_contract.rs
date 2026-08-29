@@ -174,6 +174,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "navigator",
             "overlay",
             "pane_layout",
+            "pet",
             "schema_version",
             "status",
             "tab",
@@ -200,6 +201,291 @@ fn snapshot_exposes_the_production_schema_and_status() {
     assert!(environment.iter().all(|entry| entry.get("value").is_none()));
     assert!(snapshot["status"]["last_error"].is_null());
     assert!(snapshot.get("spike").is_none());
+
+    // The pet rides the existing snapshot rather than a seventh ABI function.
+    let mut pet_keys = snapshot["pet"]
+        .as_object()
+        .expect("pet object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    pet_keys.sort_unstable();
+    assert_eq!(
+        pet_keys,
+        [
+            "attention_pane_ids",
+            "badges",
+            "connection",
+            "connection_message",
+            "last_click",
+            "origin",
+            "pose",
+            "roam_allowed",
+            "shortcut",
+            "shortcut_error",
+            "sleep_phase",
+            "theme_id",
+            "visible",
+        ]
+    );
+    // No socket configured means the pet says so instead of posing idle.
+    assert_eq!(snapshot["pet"]["connection"], "unconfigured");
+    assert_eq!(snapshot["pet"]["pose"], "disconnected");
+    assert_eq!(snapshot["pet"]["visible"], true);
+    assert_eq!(snapshot["pet"]["theme_id"], "default");
+    assert!(snapshot["pet"]["attention_pane_ids"]
+        .as_array()
+        .expect("attention array")
+        .is_empty());
+
+    herdr_core_destroy(core);
+}
+
+fn pet_agent(pane_id: &str, token: &str, symbol: &str, rank: &str, activity: &str) -> Value {
+    json!({
+        "pane_id": pane_id,
+        "workspace_label": "Fixture",
+        "agent": "codex",
+        "agent_status": "unknown",
+        "tokens": {token: symbol, "sort_rank": rank, "activity": activity}
+    })
+}
+
+#[test]
+fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
+    let core = create();
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+            "agents": [
+                pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
+                pet_agent("busy-b", "status_working", "\u{25cf}", "05", "0000000000003"),
+                pet_agent("quiet", "status_idle", "\u{25cb}", "10", "0000000000001")
+            ],
+            "layouts": [single_pane_layout("w1", "busy-a")]
+        }}),
+    );
+    let working = snapshot(core);
+    assert_eq!(working["pet"]["pose"], "juggling", "two working panes juggle");
+    assert_eq!(working["pet"]["badges"]["working"], 2);
+    assert_eq!(working["pet"]["badges"]["attention"], 0);
+    assert_eq!(working["pet"]["badges"]["error"], 0);
+    assert_eq!(working["pet"]["connection"], "connected");
+
+    // An unseen question outranks the working panes and joins the queue; the
+    // acknowledged one on the same snapshot does not.
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+            "agents": [
+                pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
+                json!({"pane_id": "asked", "workspace_label": "Fixture", "agent": "claude",
+                       "agent_status": "done",
+                       "tokens": {"status_question_new": "?", "sort_rank": "01",
+                                  "activity": "0000000000004"}}),
+                json!({"pane_id": "acknowledged", "workspace_label": "Fixture", "agent": "claude",
+                       "agent_status": "idle",
+                       "tokens": {"status_question": "?", "sort_rank": "10",
+                                  "activity": "0000000000005"}})
+            ],
+            "layouts": [single_pane_layout("w1", "busy-a")]
+        }}),
+    );
+    let asked = snapshot(core);
+    assert_eq!(asked["pet"]["pose"], "notification");
+    assert_eq!(asked["pet"]["badges"]["attention"], 1);
+    assert_eq!(
+        asked["pet"]["attention_pane_ids"],
+        json!(["asked"]),
+        "only the unseen question is jumpable"
+    );
+
+    herdr_core_destroy(core);
+}
+
+#[test]
+fn pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen() {
+    // A click persists the pane selection, so this run needs its own state
+    // file rather than the shared "this file is absent" fixture path.
+    let state_path = std::env::temp_dir().join(format!(
+        "herdr-core-pet-click-{}.json",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&state_path);
+    let core = create_with_socket_override_hidden(&options_with_state(&state_path));
+    assert!(!core.is_null());
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+            "agents": [pet_agent("earlier", "status_error_new", "\u{d7}", "00", "0000000000009")],
+            "layouts": [single_pane_layout("w1", "earlier")]
+        }}),
+    );
+    // A later snapshot adds a second unseen pane that sorts ahead of the
+    // first by rank; click order must still follow first observation.
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+            "agents": [
+                pet_agent("later", "status_question_new", "?", "01", "0000000000001"),
+                pet_agent("earlier", "status_error_new", "\u{d7}", "00", "0000000000009")
+            ],
+            "layouts": [single_pane_layout("w1", "earlier")]
+        }}),
+    );
+    let both = snapshot(core);
+    assert_eq!(
+        both["pet"]["attention_pane_ids"],
+        json!(["earlier", "later"]),
+        "the pane observed unseen first is clicked first"
+    );
+
+    dispatch(core, json!({"schema_version": 1, "kind": "pet_click", "payload": {}}));
+    let clicked = snapshot(core);
+    assert_eq!(clicked["pet"]["last_click"]["selected_pane_id"], "earlier");
+    assert_eq!(clicked["ui_state"]["selected_pane_id"], "earlier");
+
+    // Nothing unseen: the click reports no pane, so the shell only raises
+    // its own window.
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+            "agents": [pet_agent("quiet", "status_idle", "\u{25cb}", "10", "0000000000001")],
+            "layouts": [single_pane_layout("w1", "quiet")]
+        }}),
+    );
+    dispatch(core, json!({"schema_version": 1, "kind": "pet_click", "payload": {}}));
+    let quiet = snapshot(core);
+    assert!(quiet["pet"]["attention_pane_ids"]
+        .as_array()
+        .expect("attention array")
+        .is_empty());
+    assert!(quiet["pet"]["last_click"]["selected_pane_id"].is_null());
+
+    herdr_core_destroy(core);
+    let _ = fs::remove_file(&state_path);
+}
+
+#[test]
+fn every_pet_toggle_surface_writes_one_shared_visibility_that_survives_relaunch() {
+    let state_path = std::env::temp_dir().join(format!(
+        "herdr-core-pet-visibility-{}.json",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&state_path);
+    let options = options_with_state(&state_path);
+    let core = create_with_socket_override_hidden(&options);
+    assert!(!core.is_null());
+    assert_eq!(snapshot(core)["pet"]["visible"], true);
+
+    // Explicit set (Settings toggle, URL scheme hide/show) and the shared
+    // toggle (menu bar, shortcut, URL scheme toggle) reach the same state.
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "pet_set_visible", "payload": {"visible": false}}),
+    );
+    assert_eq!(snapshot(core)["pet"]["visible"], false);
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "pet_set_visible", "payload": {"visible": false}}),
+    );
+    assert_eq!(
+        snapshot(core)["pet"]["visible"],
+        false,
+        "setting the same visibility twice converges"
+    );
+    dispatch(core, json!({"schema_version": 1, "kind": "pet_toggle_visible", "payload": {}}));
+    assert_eq!(snapshot(core)["pet"]["visible"], true);
+    dispatch(core, json!({"schema_version": 1, "kind": "pet_toggle_visible", "payload": {}}));
+    assert_eq!(snapshot(core)["pet"]["visible"], false);
+
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "pet_move", "payload": {"x": 320.0, "y": 96.0}}),
+    );
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "pet_shortcut_update",
+               "payload": {"accelerator": "command+option+p"}}),
+    );
+    herdr_core_destroy(core);
+
+    // Relaunch: hidden stays hidden, and the position and shortcut come back.
+    let relaunched = create_with_socket_override_hidden(&options);
+    let restored = snapshot(relaunched);
+    assert_eq!(restored["pet"]["visible"], false);
+    assert_eq!(restored["pet"]["origin"]["x"], 320.0);
+    assert_eq!(restored["pet"]["origin"]["y"], 96.0);
+    assert_eq!(restored["pet"]["shortcut"], "command+option+p");
+
+    // A blank accelerator clears the binding so nothing is registered.
+    dispatch(
+        relaunched,
+        json!({"schema_version": 1, "kind": "pet_shortcut_update",
+               "payload": {"accelerator": "  "}}),
+    );
+    assert!(snapshot(relaunched)["pet"]["shortcut"].is_null());
+
+    // A keyboard save must not erase the pet's own placement.
+    dispatch(
+        relaunched,
+        json!({"schema_version": 1, "kind": "ui_state_update", "payload": {
+            "expanded_paths": [], "selected_path": null, "selected_pane_id": null,
+            "shortcut_bindings": {"split_right": "command+option+r"}
+        }}),
+    );
+    let after_keyboard_save = snapshot(relaunched);
+    assert_eq!(after_keyboard_save["pet"]["origin"]["x"], 320.0);
+    assert_eq!(after_keyboard_save["pet"]["visible"], false);
+
+    herdr_core_destroy(relaunched);
+    let _ = fs::remove_file(&state_path);
+}
+
+#[test]
+fn a_broken_agent_record_excludes_only_itself_and_reports_the_exclusion() {
+    let core = create();
+    dispatch(
+        core,
+        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+            "agents": [
+                pet_agent("intact", "status_working", "\u{25cf}", "05", "0000000000002"),
+                json!({"pane_id": "broken", "workspace_label": "Fixture", "agent": "codex",
+                       "agent_status": "working",
+                       "tokens": {"status_working": "\u{25cf}", "sort_rank": "oops",
+                                  "activity": "0000000000001"}})
+            ],
+            "layouts": [single_pane_layout("w1", "intact")]
+        }}),
+    );
+    let excluded = snapshot(core);
+    assert_eq!(
+        excluded["navigator"]["agents"]
+            .as_array()
+            .expect("agents array")
+            .len(),
+        1,
+        "the readable agent survives its broken neighbour"
+    );
+    assert_eq!(excluded["pet"]["badges"]["working"], 1);
+    assert_eq!(
+        excluded["status"]["herdr"]["state"], "connected",
+        "one broken record is not a broken snapshot"
+    );
+    let diagnostics = excluded["status"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    let exclusion = diagnostics
+        .iter()
+        .find(|entry| entry["kind"] == "agent.excluded")
+        .expect("the exclusion is stated, not swallowed");
+    assert!(
+        exclusion["message"]
+            .as_str()
+            .expect("exclusion message")
+            .contains("broken"),
+        "the log names the excluded pane: {exclusion}"
+    );
 
     herdr_core_destroy(core);
 }

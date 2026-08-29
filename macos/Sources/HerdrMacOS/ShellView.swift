@@ -475,6 +475,36 @@ struct PanelHeader: View {
 private struct PetStatus: View {
     @EnvironmentObject private var model: ShellModel
 
+    /// The pet's own state, said once. The pose and badge row on the pet
+    /// itself are the primary encoding; this line only names what it is
+    /// doing for someone reading the sidebar.
+    private var petHeadline: String {
+        guard let pet = model.core.pet else { return "Pet" }
+        guard pet.visible else { return "Pet is hidden" }
+        return switch pet.pose {
+        case "disconnected": "Pet: herdr is unreachable"
+        case "error": "Pet: unseen error"
+        case "notification": "Pet: waiting on you"
+        case "juggling", "carrying", "working": "Pet: agents working"
+        case "sleeping", "yawning", "dozing", "collapsing": "Pet is asleep"
+        default: "Pet is quiet"
+        }
+    }
+
+    private var petDetail: String {
+        guard let pet = model.core.pet else { return "" }
+        guard pet.visible else {
+            return "Turn it back on here, from the menu bar, or with herdr-ide://show."
+        }
+        if !pet.isConnected {
+            return pet.connectionMessage ?? "The herdr session is not answering."
+        }
+        if let paneID = pet.attentionPaneIDs.first {
+            return "Click the pet to jump to \(paneID)."
+        }
+        return "Click the pet to bring this window forward."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
@@ -487,14 +517,22 @@ private struct PetStatus: View {
                 .frame(width: 34, height: 34)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Pet is quiet")
+                    Text(petHeadline)
                         .font(.callout.weight(.medium))
-                    Text("The overlay appears while this window is behind.")
+                    Text(petDetail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 0)
+                Toggle("Show pet", isOn: Binding(
+                    get: { model.core.pet?.visible ?? true },
+                    set: { model.core.setPetVisible($0) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .accessibilityLabel("Show pet")
+                .accessibilityIdentifier("pet-visible-toggle-sidebar")
             }
 
             Menu("Safety previews") {

@@ -37,6 +37,54 @@ pub struct Snapshot {
     pub ime: ImeSnapshot,
     pub input_generation: u64,
     pub status: StatusSnapshot,
+    pub pet: PetSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PetSnapshot {
+    pub visible: bool,
+    /// `connected` while the herdr session poll is answering; otherwise the
+    /// poll's own failure state, so a missing socket is never a silent idle.
+    pub connection: String,
+    pub connection_message: Option<String>,
+    pub pose: String,
+    pub sleep_phase: String,
+    pub roam_allowed: bool,
+    pub badges: PetBadgesSnapshot,
+    /// Unseen panes in click order: oldest observation first, snapshot order
+    /// as the tie-break.
+    pub attention_pane_ids: Vec<String>,
+    pub origin: Option<PetOriginSnapshot>,
+    pub shortcut: Option<String>,
+    pub shortcut_error: Option<String>,
+    pub theme_id: String,
+    pub last_click: Option<PetClickSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PetBadgesSnapshot {
+    pub working: usize,
+    pub done: usize,
+    pub attention: usize,
+    pub error: usize,
+    pub disconnected: usize,
+    pub subagents_active: u32,
+    pub background_running: u32,
+    pub background_failed: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PetOriginSnapshot {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PetClickSnapshot {
+    /// The pane the click jumped to, or `None` when nothing was unseen and
+    /// the click only raised the main window.
+    pub selected_pane_id: Option<String>,
+    pub at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -59,6 +107,17 @@ pub struct SidebarAgentSnapshot {
     pub elapsed: String,
     pub sort_rank: String,
     pub activity: String,
+    pub ambient: Option<AmbientSignal>,
+}
+
+/// The only three values this client ever reads out of a pane's optional
+/// `ambient` object. Any other key, or a value of the wrong type, is dropped
+/// during parsing and never reaches app state, the UI, or logs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct AmbientSignal {
+    pub subagents_active: u32,
+    pub background_running: u32,
+    pub background_failed: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -211,12 +270,31 @@ pub struct EditorSnapshot {
     pub diff: Option<DiffSnapshot>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
+    pub pet_visible: bool,
+    pub pet_origin: Option<PetOriginSnapshot>,
+    pub pet_shortcut: Option<String>,
+}
+
+impl Default for UiStateSnapshot {
+    fn default() -> Self {
+        Self {
+            expanded_paths: Vec::new(),
+            selected_path: None,
+            selected_pane_id: None,
+            shortcut_bindings: BTreeMap::new(),
+            // The pet shows itself on a first run; hiding it is a choice the
+            // user makes and the store then remembers (D-09).
+            pet_visible: true,
+            pet_origin: None,
+            pet_shortcut: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -406,6 +484,29 @@ impl Snapshot {
                 diagnostics: Vec::new(),
                 last_error: None,
             },
+            pet: PetSnapshot::initial(),
+        }
+    }
+}
+
+impl PetSnapshot {
+    pub fn initial() -> Self {
+        Self {
+            visible: true,
+            connection: "not_connected".to_owned(),
+            connection_message: Some(
+                "Waiting for the first herdr connection attempt".to_owned(),
+            ),
+            pose: "disconnected".to_owned(),
+            sleep_phase: "awake".to_owned(),
+            roam_allowed: false,
+            badges: PetBadgesSnapshot::default(),
+            attention_pane_ids: Vec::new(),
+            origin: None,
+            shortcut: None,
+            shortcut_error: None,
+            theme_id: "default".to_owned(),
+            last_click: None,
         }
     }
 }

@@ -4,69 +4,102 @@ How the pet chooses its image, and how to add or replace art safely.
 
 ## Where assets live
 
-All art lives in `themes/default/assets/`.
-The Vite build copies the whole `themes/` tree into `dist/themes/`, so editing the source folder and rebuilding is the entire deployment step.
-The frontend resolves every image through one helper in `web/app.js`:
+All art lives in `assets/pet-theme/<theme-id>/assets/`, and
+`assets/pet-theme/<theme-id>/theme.json` maps a pose onto a file.
+`macos/scripts/build_dev_app.sh` copies the whole `assets/pet-theme` tree into
+`HerdrIDE.app/Contents/Resources/pet-theme`, so editing the source folder and
+rebuilding the bundle is the entire deployment step.
 
-```js
-const asset = (name, extension = 'png') => `/themes/default/assets/${name}.${extension}`;
-```
+Nothing in the shell hardcodes a filename. `PetTheme.swift` resolves every
+pose through the manifest, and a pose the manifest does not cover is a load
+error, not a blank pet. The manifest rules are in
+[theme-contract.md](theme-contract.md).
 
-Every asset ships as a **png + webp pair with the same basename**.
-`petImage()` renders a `<picture>` that prefers webp and falls back to png, and the png also serves the `prefers-reduced-motion` branch.
-If you add art, always add both files.
+Assets ship as a **png + webp pair with the same basename**. The native
+renderer reads whichever the manifest names; the pair is kept because the
+webp variants of the six status poses carry the animation frames while their
+png counterparts are single stills.
 
 ## Asset slots
 
-| Slot | File basename | When it shows |
+The bundled `default` theme is the campfire character.
+
+| Pose | File | When it shows |
 | --- | --- | --- |
-| idle / done | `idle-fire` | nothing urgent |
-| working | `working-fire-v5` + `working-ingot` (orbiting) | agents working |
-| attention | `attention-fire` | unseen question/approval |
-| error | `error-fire` | unseen error |
-| disconnected | `disconnected-fire` | herdr unreachable |
-| yawning | `yawning-fire` | 60s idle, first 4s |
-| dozing | `dozing-fire` | next 4s |
-| collapsing | `collapsing-fire` | next 4s |
-| sleeping | `sleeping-z-fire` | until woken |
-| sleepy-character idle | `sleeping-fire` | "Sleepy campfire" character setting |
-| walk cycle | `walk-sheet` (runtime) + `walk-1..4` (unused at runtime, kept as sheet source frames) | while roaming |
+| idle | `idle-fire.webp` | nothing urgent, under 8s |
+| roam | `walk-sheet.png` | 8s idle, free roaming |
+| working | `working-fire.webp` | working, reserved rung of the ladder |
+| carrying | `carrying-sheet.png` | exactly one working pane |
+| juggling | `juggling-sheet.png` | two or more working panes |
+| notification | `attention-fire.webp` | unseen question or approval |
+| error | `error-fire.webp` | unseen error |
+| disconnected | `disconnected-fire.webp` | herdr unreachable |
+| yawning | `yawning-fire.png` | 60s idle, first 4s |
+| dozing | `dozing-fire.png` | next 4s |
+| collapsing | `collapsing-fire.png` | next 4s |
+| sleeping | `sleeping-z-fire.png` | until woken |
+| waking | `waking-sheet.png` | activity interrupts sleep |
 
-Status → basename mapping lives in two small tables in `web/app.js`:
-`campfireAssets` (status states) and `sleepPhaseAssets` (sleep phases).
-Adding a new state image means adding the file pair and one line in the right table.
+Which pose a given agent state produces is decided in
+`herdr_core::pet::pose`; see [status-model.md](status-model.md).
 
-## Animated slots: sprite sheets, not GIFs
+Adding a new state image means adding the file pair and one line in
+`theme.json`.
 
-The walk animation is a **horizontal sprite sheet** (`walk-sheet.png`, 4 frames of 512x512, character facing left natively) driven by CSS:
+The blue-slime set (`idle.png`, `working.png`, `attention-0..3.png`,
+`error.png`, `disconnected.png`, `sleeping.png`, `idle.svg`) is an alternate
+character that the default theme does not reference. It has no animation
+frames and does not cover the motion or sleep-sequence poses, so a theme
+built on it would need new art for those before it could load.
 
-```css
-.walk-sprite { background-size: 400% 100%; }
-html.walking .walk-sprite { animation: walk-cycle .8s steps(4) infinite; }
-```
+## Animated slots: two mechanisms, both native
 
-Use this pattern for any future frame animation.
-Do not drive frames from a JS timer: the render webview is unfocused, so its timers are throttled to ~100ms+ and the animation stutters (this was learned the hard way).
-CSS `steps()` runs regardless of timer throttling.
-APNG/GIF would also work for simple loops, but a sprite sheet keeps per-frame control (direction flip, pause) and both png+webp variants.
+The renderer plays frames itself; there is no CSS and no webview.
+
+**Animated webp.** The six status poses are multi-frame webp with embedded
+per-frame delays. macOS ImageIO decodes them directly
+(`CGImageSourceGetCount` plus `kCGImagePropertyWebPDelayTime`), so they need
+no conversion and declare nothing in the manifest.
+
+**Sprite sheets.** The motion poses are horizontal sheets (2048x512, four
+512x512 frames) declared as `{"frames": 4, "durationMs": 800}`.
+`PetAnimationLoader` slices them with `CGImage.cropping`.
+
+Frames advance on a `.common`-mode run loop timer. The pet window is
+deliberately never key, and unlike a webview's throttled JS timers, an
+AppKit run loop timer in `.common` mode keeps firing while the window is
+unfocused.
 
 Conventions for a new sheet:
 
-- Frames in one horizontal row, equal width, character on a shared ground line.
-- Character faces **left** in the source art is fine; the CSS flips with `scaleX(-1)` for the other direction - keep one convention and set the flip rule accordingly (current sheet: faces left natively, flipped when walking right).
-- `background-size: (N*100)% 100%` and keyframe end `background-position-x: (N*100)/(N-1) ... ` - for 4 frames the magic end value is `133.3334%`.
+- Frames in one horizontal row, equal width, character on a shared ground
+  line. A sheet whose width does not divide evenly by its frame count is
+  rejected at load rather than rendered skewed.
+- Keep one facing convention across the sheet; the current walk sheet faces
+  left natively.
 
 ## Generating new art with ima2
 
-The current set was produced with `ima2`, and consistency comes from reference images:
+The current set was produced with `ima2`, and consistency comes from
+reference images:
 
-- New pose of the existing character: `ima2 edit <existing-asset>.png -p "<change only the flame ...>"` - keeps logs/stones/palette identical.
-- New action (e.g. walk frames): `ima2 gen "<prompt>" --ref themes/default/assets/idle-fire.png` and ask for a sprite sheet ("exactly N frames in one horizontal row, same size and ground line").
-- Generated backgrounds are often *painted* white/checkerboard, not true alpha.
-  Strip them with an edge flood-fill (light, low-saturation pixels only) rather than a global color key, so the character's own light pixels survive.
+- New pose of the existing character:
+  `ima2 edit <existing-asset>.png -p "<change only the flame ...>"` - keeps
+  logs, stones, and palette identical.
+- New action (e.g. walk frames):
+  `ima2 gen "<prompt>" --ref assets/pet-theme/default/assets/idle-fire.png`
+  and ask for a sprite sheet ("exactly N frames in one horizontal row, same
+  size and ground line").
+- Generated backgrounds are often *painted* white or checkerboard, not true
+  alpha. Strip them with an edge flood-fill (light, low-saturation pixels
+  only) rather than a global colour key, so the character's own light pixels
+  survive.
 
-## Character switching in settings
+`docs/asset-prompts.md` holds the prompts the current set was generated from.
 
-The settings window already has a `character` select (`orb` = Campfire, `sleepy`, `signal`) routed through `petAsset()`.
-To add a selectable character set: add a new option there, and branch the basename tables on `state.settings.character` - the asset helper and png/webp pairing stay unchanged.
-A future "theme pack" would generalize the hardcoded `default` in `asset()` to a setting, since the directory layout already namespaces by theme.
+## Adding a second theme
+
+The loader already namespaces by theme id; `theme.json` is the only contract.
+A new theme is a sibling directory under `assets/pet-theme/` that supplies
+art for all thirteen poses. This release bundles one theme, and the theme id
+the core reports is fixed at `default`.

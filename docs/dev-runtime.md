@@ -1,60 +1,98 @@
-# Dev Runtime: Which Pet Is Actually Running
+# Dev Runtime: Which App Is Actually Running
 
-The single biggest time sink so far is verifying a change against the wrong process.
-Read this before running or screenshotting the app.
+The single biggest time sink so far is verifying a change against the wrong
+process. Read this before running or screenshotting the app.
 
 ## One instance, always
 
-`Herdr Pet` (bundle display name) and `herdr-pet-app` (executable inside the bundle) are the same app, not two.
-Two instances can still be alive at once:
+`Herdr IDE` (bundle display name) and `HerdrMacOS` (executable inside the
+bundle) are the same app, not two. Several instances can be alive at once:
 
-- the installed bundle at `/Applications/Herdr Pet.app`
-- a `cargo tauri dev` instance from this checkout
+- an installed copy, if one has been placed in `/Applications`
+- the assembled dev bundle at
+  `macos/build/assembled/HerdrIDE.app`, from `macos/scripts/build_dev_app.sh`
+- a bare `swift run` from the checkout
 
-When both run, tray actions, `show`/`hide`, window position state, and the click-to-expand window all cross-talk between them.
-Observed symptoms during development: "the pet is not visible" (twice), and "a big dashboard window opens instead of the pet" (once).
-Neither was a code bug.
+When more than one runs, the pet's show/hide state, its saved position, the
+menu bar item, and the `herdr-ide://` URL scheme all cross-talk between them.
+Observed symptoms while this was still herdr-pet: "the pet is not visible"
+(twice) and "a big window opens instead of the pet" (once). Neither was a
+code bug.
 
 Before any visual check:
 
 ```sh
-pgrep -fl herdr-pet-app   # must list exactly one process
+pgrep -fl HerdrMacOS   # must list exactly one process
 ```
 
-If more than one is listed, kill all of them and start exactly the instance you intend to verify.
+If more than one is listed, kill all of them and start exactly the instance
+you intend to verify.
 
-## Verify against the installed bundle, not `dev`
+## Verify against the assembled bundle, not `swift run`
 
-A source fix is invisible to the running installed bundle.
-Repeatedly "fixing" something the user still sees broken usually means they are looking at an older `/Applications` copy.
+A source fix is invisible to an already-running app. Repeatedly "fixing"
+something the user still sees broken usually means they are looking at an
+older copy.
 
 For any change the user will confirm visually:
 
-1. Build the release bundle: `cargo tauri build` (output at `target/release/bundle/macos/Herdr Pet.app`).
-2. Replace `/Applications/Herdr Pet.app` with it.
-3. Relaunch, then confirm with a real screenshot.
-
-State explicitly which build the user is looking at when reporting a fix.
-
-## Window position state survives your edit
-
-The pet persists its position to `~/.config/herdr-pet/window.json` on move and on shutdown.
-Editing that file while the app is running is pointless: the app rewrites its in-memory coordinates on exit and overwrites you.
-Kill the process first, then reset the file, then relaunch.
-See [pet-window-macos.md](pet-window-macos.md) for the off-screen guards.
-
-## Deep links reach the bundle, not `dev`
-
-The pet accepts `herdr-pet://hide`, `herdr-pet://show`, and `herdr-pet://toggle`.
-macOS resolves a URL scheme through the bundle's `Info.plist`, which the Tauri bundler writes from the `plugins.deep-link` block in **both** `tauri.conf.json` files.
-A `cargo tauri dev` instance has no such plist entry, so `open herdr-pet://toggle` will launch or hit the installed `/Applications` copy instead - the same wrong-process trap as above, wearing a different hat.
-
-Verify deep links against a freshly built bundle:
-
 ```sh
-plutil -p "/Applications/Herdr Pet.app/Contents/Info.plist" | grep herdr-pet   # scheme registered
-open "herdr-pet://toggle"
+macos/scripts/build_dev_app.sh   # prints the assembled .app path
 ```
 
-The pet also registers its own global shortcut for the same toggle (Settings -> 단축키).
-That path does not go through the URL scheme at all, so a broken deep link and a broken shortcut are separate failures with separate checks.
+That script builds herdr-core in release, builds the Swift shell, copies
+`assets/pet-theme` into `Contents/Resources/pet-theme`, writes
+`Resources/Info.plist` into the bundle, and ad-hoc signs the result. Launch
+that bundle, then confirm with a real screenshot. State explicitly which
+build the user is looking at when reporting a fix.
+
+A bare `swift run` has no bundle resources: the pet theme then loads from the
+repository checkout instead, and the URL scheme is not registered at all.
+
+## Pet state survives your edit
+
+The pet persists its position, visibility, and global shortcut through
+herdr-core's UI state file (`--state-path`, default
+`/tmp/herdr-ide-verify-ui-state.json`). The file is rewritten whenever the
+pet moves or is toggled, so editing it while the app runs is pointless.
+Kill the process first, then reset the file, then relaunch.
+
+See [pet-window-macos.md](pet-window-macos.md) for the off-screen guards; a
+saved position outside every connected screen is clamped back into view
+rather than succeeding invisibly.
+
+## Deep links reach the bundle, not `swift run`
+
+The app accepts `herdr-ide://hide`, `herdr-ide://show`, and
+`herdr-ide://toggle`. macOS resolves a URL scheme through the bundle's
+`Info.plist` (`CFBundleURLTypes`), which only the assembled bundle has.
+
+```sh
+plutil -p "macos/build/assembled/HerdrIDE.app/Contents/Info.plist" | grep herdr-ide
+open "herdr-ide://toggle"
+```
+
+The retired pet app's `herdr-pet://` scheme is deliberately **not**
+registered. `open herdr-pet://toggle` must not affect this app; if it does
+something, an old Herdr Pet bundle is still installed.
+
+The pet's own global shortcut does not go through the URL scheme at all, so a
+broken deep link and a broken shortcut are separate failures with separate
+checks.
+
+## Driving pet states without real agents
+
+The pet's pose and badge row come from whatever the herdr server reports, and
+an unseen error cannot be produced on demand from a real agent.
+`macos/scripts/pet_scenario_server.py` serves scripted `session.snapshot`
+responses over a Unix socket using the same protocol revision the real server
+speaks, so the app exercises its ordinary polling path:
+
+```sh
+macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
+HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS
+```
+
+The scenario file is re-read on every request, so editing it changes what the
+next poll sees. Stopping the server (or deleting the socket) is how the
+"herdr went away" case is produced; restarting it proves the recovery.

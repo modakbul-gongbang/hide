@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -6,6 +7,9 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     let model = ShellModel()
     private var mainWindow: NSWindow?
     private var petWindowController: PetWindowController?
+    private var petMenuBarController: PetMenuBarController?
+    private var petHotkeyRegistrar: PetHotkeyRegistrar?
+    private var petVisibilityObservation: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard mainWindow == nil else { return }
@@ -39,8 +43,36 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        petWindowController = PetWindowController(mainWindow: window)
+        petWindowController = PetWindowController(mainWindow: window, model: model)
         petWindowController?.refreshVisibility()
+
+        // All four toggle surfaces write the same core visibility state, so
+        // the menu bar only has to follow the snapshot to stay in step with
+        // Settings, the shortcut, and the URL scheme.
+        petMenuBarController = PetMenuBarController(model: model) { [weak self] in
+            self?.openSettings()
+        }
+        petVisibilityObservation = model.core.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.petMenuBarController?.refresh() }
+            }
+        }
+
+        let registrar = PetHotkeyRegistrar { [weak self] in
+            self?.model.core.togglePetVisible()
+        }
+        petHotkeyRegistrar = registrar
+        model.petShortcutRegistrar = { [weak registrar] accelerator in
+            MainActor.assumeIsolated { registrar?.apply(accelerator: accelerator) }
+        }
+        // A stored accelerator is re-registered at launch; an unset one
+        // registers nothing at all.
+        if let stored = model.core.pet?.shortcut {
+            let failure = registrar.apply(accelerator: stored)
+            if failure != nil {
+                model.core.updatePetShortcut(accelerator: stored, error: failure)
+            }
+        }
 
         if CommandLine.arguments.contains("--verification-browser-open") {
             model.browser.openOrFocus()
@@ -60,6 +92,54 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    /// `herdr-ide://show|hide|toggle`. The retired app's `herdr-pet://`
+    /// scheme is not registered, so it never reaches this handler.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let command = PetURLCommand.parse(url) else {
+                FileHandle.standardError.write(Data(("""
+                {"component":"pet","kind":"url.unrecognised","url":"\(url.absoluteString)"}
+
+                """).utf8))
+                continue
+            }
+            switch command {
+            case .show: model.core.setPetVisible(true)
+            case .hide: model.core.setPetVisible(false)
+            case .toggle: model.core.togglePetVisible()
+            }
+        }
+        petMenuBarController?.refresh()
+    }
+
+    /// Opens the Settings scene from the pet's menu bar entry.
+    ///
+    /// SwiftUI installs the Settings action on the responder chain and its
+    /// own menu item, not on NSApplication, so performing the menu item it
+    /// already built is the reliable route; the selector send is the
+    /// fallback, and its name changed in macOS 14.
+    func openSettings() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        if let appMenu = NSApplication.shared.mainMenu?.item(at: 0)?.submenu,
+           let index = appMenu.items.firstIndex(where: {
+               $0.title.hasPrefix("Settings") || $0.title.hasPrefix("Preferences")
+           })
+        {
+            appMenu.performActionForItem(at: index)
+            return
+        }
+        for selector in [
+            Selector(("showSettingsWindow:")),
+            Selector(("showPreferencesWindow:")),
+        ] where NSApplication.shared.sendAction(selector, to: nil, from: nil) {
+            return
+        }
+        FileHandle.standardError.write(Data("""
+        {"component":"pet","kind":"settings.unavailable","message":"No Settings menu item or action was found"}
+
+        """.utf8))
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
@@ -71,7 +151,7 @@ struct HerdrApp: App {
 
     var body: some Scene {
         Settings {
-            KeyboardSettingsView(model: appDelegate.model)
+            AppSettingsView(model: appDelegate.model)
         }
         .commands {
             ShellCommands(model: appDelegate.model)
