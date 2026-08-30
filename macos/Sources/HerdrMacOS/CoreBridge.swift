@@ -777,6 +777,32 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
+    private var commandDevice = CommandDevice.local
+    private var routingError: String?
+
+    private struct CommandDevice {
+        let id: String
+        let label: String
+        let isRemote: Bool
+
+        static let local = CommandDevice(id: "local", label: "This Mac", isRemote: false)
+    }
+
+    /// Events in this set ultimately write to the one local Herdr socket owned
+    /// by the core. Keeping the guard at the only FFI dispatch boundary makes
+    /// a future call site safe by default instead of relying on every caller
+    /// to remember a remote-context branch.
+    private static let localSessionEventKinds: Set<String> = [
+        "key",
+        "terminal_resize",
+        "focus_pane",
+        "focus_checkout",
+        "focus_tab",
+        "create_tab",
+        "create_pane",
+        "toggle_zoom",
+        "close_pane",
+    ]
 
     private struct TerminalRegistration {
         let id: UUID
@@ -1068,6 +1094,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "focus_device", payload: ["device_id": deviceID])
     }
 
+    /// Synchronizes the shell's visible device selection with the local-core
+    /// write boundary. This is intentionally synchronous so a shortcut pressed
+    /// immediately after selecting a remote device cannot race a snapshot.
+    func selectCommandDevice(id: String, label: String, isRemote: Bool) {
+        commandDevice = CommandDevice(id: id, label: label, isRemote: isRemote)
+        routingError = nil
+        bridgeError = snapshot?.status.lastError.map { "\($0.kind): \($0.message)" }
+            ?? startupDiagnostic
+        HideLaunchTrace.mark(
+            "core.command_device",
+            detail: "id=\(id) remote=\(isRemote)"
+        )
+    }
+
     func createWorkspace(path: URL, label: String, initializeGit: Bool) {
         dispatch(kind: "create_workspace", payload: [
             "path": path.path,
@@ -1257,6 +1297,16 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func dispatch(kind: String, payload: [String: Any]) {
+        if commandDevice.isRemote, Self.localSessionEventKinds.contains(kind) {
+            let message = "device.route_blocked: \(commandDevice.label) is selected. \(kind) was not sent to the local Herdr session."
+            routingError = message
+            bridgeError = message
+            HideLaunchTrace.mark(
+                "core.dispatch.blocked",
+                detail: "kind=\(kind) device_id=\(commandDevice.id)"
+            )
+            return
+        }
         guard let core else {
             bridgeError = "Hide is still starting. Try again when the Herdr status is available."
             return
@@ -1436,7 +1486,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
             ?? snapshot?.terminal.paneID
         snapshot = decoded
-        bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" } ?? startupDiagnostic
+        bridgeError = routingError
+            ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
+            ?? startupDiagnostic
         restorePaneSelectionIfNeeded(decoded)
         let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
             ?? decoded.terminal.paneID

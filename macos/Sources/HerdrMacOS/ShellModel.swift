@@ -427,6 +427,7 @@ final class ShellModel: ObservableObject {
             activeRemoteDevice = device
             lastRemoteDevice = device
             checkoutStartState = .idle
+            core.selectCommandDevice(id: device.id, label: device.label, isRemote: true)
             HideLaunchTrace.mark("device.selection", detail: "remote_\(device.id)")
             core.focusDevice(device.id)
             remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
@@ -436,6 +437,7 @@ final class ShellModel: ObservableObject {
         activeRemoteDevice = nil
         remote.clearNavigation()
         checkoutStartState = .idle
+        core.selectCommandDevice(id: device.id, label: device.label, isRemote: false)
         HideLaunchTrace.mark("device.selection", detail: "local_\(device.id)")
         core.focusDevice(device.id)
     }
@@ -649,6 +651,14 @@ final class ShellModel: ObservableObject {
     }
 
     func performPaneCommand(_ command: PaneCommand) {
+        guard !isRemoteContext else {
+            interactionNotice = "\(command.title) is not available until Hide can route it to \(activeContextLabel ?? "the selected remote device"). No local pane was changed."
+            HideLaunchTrace.mark(
+                "pane.command.blocked",
+                detail: "command=\(command.rawValue) device_id=\(selectedDeviceID)"
+            )
+            return
+        }
         switch command {
         case .splitRight: splitCurrentPane(.right)
         case .splitDown: splitCurrentPane(.down)

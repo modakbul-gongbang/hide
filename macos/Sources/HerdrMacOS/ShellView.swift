@@ -130,8 +130,7 @@ private struct AgentsPanel: View {
                     LazyVStack(spacing: 6) {
                         ForEach(agents) { agent in
                             AgentRow(agent: agent) {
-                                model.core.focusPane(agent.paneID)
-                                model.focus(.terminal)
+                                model.selectAgent(agent)
                             }
                         }
                     }
