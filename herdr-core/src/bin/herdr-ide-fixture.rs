@@ -9,8 +9,7 @@ use herdr_core::fixture::{
 };
 use serde_json::Value;
 
-const LOCAL_HERDR: &str = "/Users/hoyeonlee/.local/bin/herdr";
-const REMOTE_HERDR: &str = "/Users/grab/.local/bin/herdr";
+const REMOTE_HERDR: &str = "~/.local/bin/herdr";
 
 fn main() -> ExitCode {
     match execute(std::env::args().skip(1).collect()) {
@@ -270,7 +269,11 @@ fn prepare_directory(target: &str, cwd: &str) -> Result<(), String> {
         fs::create_dir_all(cwd)
             .map_err(|error| format!("fixture cwd could not be created: {error}"))
     } else {
-        run_command("/usr/bin/ssh", &["mini", "/bin/mkdir", "-p", cwd]).map(|_| ())
+        run_command(
+            Path::new("/usr/bin/ssh"),
+            &["mini", "/bin/mkdir", "-p", cwd],
+        )
+        .map(|_| ())
     }
 }
 
@@ -287,7 +290,7 @@ fn cleanup_directory(target: &str, cwd: &str) -> Result<(), String> {
             )),
         }
     } else {
-        run_command("/usr/bin/ssh", &["mini", "/bin/rmdir", cwd]).map(|_| ())
+        run_command(Path::new("/usr/bin/ssh"), &["mini", "/bin/rmdir", cwd]).map(|_| ())
     }
 }
 
@@ -367,15 +370,18 @@ fn run_herdr(target: &str, args: &[&str]) -> Result<Value, String> {
 
 fn run_herdr_command(target: &str, args: &[&str]) -> Result<Output, String> {
     if target == "local" {
-        run_command(LOCAL_HERDR, args)
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| "local fixture execution requires HOME".to_owned())?;
+        let herdr = Path::new(&home).join(".local/bin/herdr");
+        run_command(&herdr, args)
     } else {
         let mut remote = vec!["mini", REMOTE_HERDR];
         remote.extend_from_slice(args);
-        run_command("/usr/bin/ssh", &remote)
+        run_command(Path::new("/usr/bin/ssh"), &remote)
     }
 }
 
-fn run_command(executable: &str, args: &[&str]) -> Result<Output, String> {
+fn run_command(executable: &Path, args: &[&str]) -> Result<Output, String> {
     let output = Command::new(executable)
         .args(args)
         .output()

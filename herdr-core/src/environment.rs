@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::model::EnvironmentStatusSnapshot;
 
@@ -49,6 +49,16 @@ pub fn read_and_validate() -> EnvironmentReport {
 }
 
 fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentReport {
+    let chromux_path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library/pnpm/chromux"));
+    validate_with_chromux_path(&mut read, chromux_path.as_deref())
+}
+
+fn validate_with_chromux_path(
+    mut read: impl FnMut(&str) -> Option<OsString>,
+    chromux_path: Option<&Path>,
+) -> EnvironmentReport {
     let mut statuses = Vec::with_capacity(REGISTRY.len());
     let mut remote_enabled = true;
     let mut chromux_enabled = true;
@@ -82,7 +92,7 @@ fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentR
                         "Executable search path is unavailable; chromux actions are disabled",
                     )
                 }
-                Some(value) if !path_exposes_chromux(&value) => {
+                Some(value) if !path_exposes_chromux(&value, chromux_path) => {
                     chromux_enabled = false;
                     (
                         "invalid",
@@ -125,10 +135,11 @@ fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentR
     }
 }
 
-fn path_exposes_chromux(value: &OsString) -> bool {
-    std::env::split_paths(value).any(|component| {
-        component.join("chromux") == Path::new("/Users/hoyeonlee/Library/pnpm/chromux")
-    })
+fn path_exposes_chromux(value: &OsString, chromux_path: Option<&Path>) -> bool {
+    let Some(chromux_path) = chromux_path else {
+        return false;
+    };
+    std::env::split_paths(value).any(|component| component.join("chromux") == chromux_path)
 }
 
 #[cfg(test)]
@@ -141,16 +152,22 @@ mod tests {
         assert_eq!(REGISTRY.len(), 3);
         assert_eq!(REGISTRY[0].key, "SSH_AUTH_SOCK");
         let secret_like_value = OsString::from("/private/tmp/private-agent.sock");
-        let report = validate_with(|key| match key {
-            SSH_AUTH_SOCK_KEY | HERDR_SOCKET_PATH_KEY => Some(secret_like_value.clone()),
-            PATH_KEY => Some(OsString::from("/Users/hoyeonlee/Library/pnpm:/usr/bin")),
-            _ => None,
-        });
+        let chromux_path = Path::new("/private/tmp/hide-environment-test/Library/pnpm/chromux");
+        let report = validate_with_chromux_path(
+            |key| match key {
+                SSH_AUTH_SOCK_KEY | HERDR_SOCKET_PATH_KEY => Some(secret_like_value.clone()),
+                PATH_KEY => Some(OsString::from(
+                    "/private/tmp/hide-environment-test/Library/pnpm:/usr/bin",
+                )),
+                _ => None,
+            },
+            Some(chromux_path),
+        );
         let encoded = serde_json::to_string(&report.statuses).unwrap();
         assert!(report.remote_enabled);
         assert!(report.chromux_enabled);
         assert!(!encoded.contains("private-agent.sock"));
-        assert!(!encoded.contains("/Users/hoyeonlee/Library/pnpm"));
+        assert!(!encoded.contains("/private/tmp/hide-environment-test/Library/pnpm"));
     }
 
     #[test]

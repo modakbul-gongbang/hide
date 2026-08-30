@@ -2936,11 +2936,11 @@ mod tests {
     #[test]
     fn an_unregistered_worktree_layout_projects_into_the_selected_checkout() {
         let mut runtime = runtime();
-        let checkout_path = "/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand";
+        let checkout_path = "/private/tmp/hide-rebrand/worktrees/hide-rebrand";
         let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
         let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
         let temporary_paths = vec![
-            "/Users/hoyeonlee/projects/herdr-ide".to_owned(),
+            "/private/tmp/hide-rebrand/herdr-ide".to_owned(),
             checkout_path.to_owned(),
         ];
         runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &temporary_paths);

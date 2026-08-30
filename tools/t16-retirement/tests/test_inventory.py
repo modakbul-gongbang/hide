@@ -13,8 +13,8 @@ from t16_retirement.inventory import inventory  # noqa: E402
 
 class InventoryTests(unittest.TestCase):
     def test_inventory_requires_historical_prds_and_keeps_retirement_disabled(self) -> None:
-        root = Path("/Users/hoyeonlee/projects/herdr-ide")
-        pet = Path("/Users/hoyeonlee/projects/herdr-pet")
+        root = Path.home() / "projects/herdr-ide"
+        pet = Path.home() / "projects/herdr-pet"
         if not (root / "agents/prd/herdr-lightweight-ide/prd.md").is_file():
             self.skipTest("repository fixtures are not available")
         result = inventory(root, pet)

@@ -3146,10 +3146,17 @@ mod tests {
 
     #[test]
     fn alias_import_preserves_paths_but_never_reads_key_contents() {
-        let alias = host();
+        let alias = SshAlias::from_config_contents(
+            "mini",
+            "Host mini\n  HostName mini.example.test\n  User grab\n  Port 2200\n  IdentityFile /private/tmp/hide-remote-home/.ssh/id_ed25519\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
         assert_eq!(
             alias.identity_file,
-            Some(PathBuf::from("/Users/hoyeonlee/.ssh/id_ed25519"))
+            Some(PathBuf::from(
+                "/private/tmp/hide-remote-home/.ssh/id_ed25519",
+            ))
         );
         let encoded = serde_json::to_string(&alias).unwrap();
         assert!(!encoded.contains("PRIVATE KEY"));
