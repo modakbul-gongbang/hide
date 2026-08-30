@@ -1,0 +1,1 @@
+/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS

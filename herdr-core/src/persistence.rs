@@ -171,7 +171,10 @@ mod tests {
         let (restored, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
-        assert!(!restored.pet_visible, "hidden at exit means hidden at start");
+        assert!(
+            !restored.pet_visible,
+            "hidden at exit means hidden at start"
+        );
         assert_eq!(
             restored.pet_origin,
             Some(PetOriginSnapshot { x: 120.0, y: 640.0 })

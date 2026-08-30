@@ -23,6 +23,53 @@ enum PaneSplitDirection: String, Decodable, Equatable {
     case down
 }
 
+enum CheckoutSelectionAction: Equatable {
+    case focusExisting
+    case startTerminal
+}
+
+enum CheckoutSelectionPolicy {
+    static func action(for checkout: CoreCheckoutSnapshot) -> CheckoutSelectionAction {
+        checkout.tabs.flatMap { $0.panes }.isEmpty ? .startTerminal : .focusExisting
+    }
+}
+
+enum CheckoutStartState {
+    case idle
+    case starting
+    case started
+    case failed(String)
+}
+
+enum TerminalLayoutPolicy {
+    static func belongs(
+        layout: CorePaneLayoutSnapshot,
+        to checkout: CoreCheckoutSnapshot
+    ) -> Bool {
+        belongs(
+            workspaceID: layout.workspaceID,
+            tabID: layout.tabID,
+            paneIDs: layout.root.paneIDs,
+            checkout: checkout
+        )
+    }
+
+    static func belongs(
+        workspaceID: String,
+        tabID: String,
+        paneIDs: [String],
+        checkout: CoreCheckoutSnapshot
+    ) -> Bool {
+        // `layout.workspace_id` is Herdr's live session workspace ID, while
+        // `checkout.workspaceID` is Hide's catalog workspace ID. They are
+        // intentionally different identity domains. The Herdr tab ID and
+        // its complete pane set are the stable cross-domain projection key.
+        _ = workspaceID
+        guard let tab = checkout.tabs.first(where: { $0.id == tabID }) else { return false }
+        return Set(paneIDs) == Set(tab.panes.map(\.id))
+    }
+}
+
 @MainActor
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
@@ -41,6 +88,7 @@ final class ShellModel: ObservableObject {
     @Published private(set) var paneShortcuts: [PaneCommand: PaneShortcut]
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
+    @Published private(set) var checkoutStartState: CheckoutStartState = .idle
     let core: CoreBridge
     let browser: BrowserRuntimeModel
     let remote: RemoteRuntimeModel
@@ -49,6 +97,8 @@ final class ShellModel: ObservableObject {
     private var remoteSubscription: AnyCancellable?
     private var pendingPaneCloseID: String?
     private var lastRemoteDevice: CoreDeviceSnapshot?
+    @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
+    private var pendingCheckoutStarts: Set<String> = []
 
     init(
         core: CoreBridge = CoreBridge(),
@@ -85,7 +135,10 @@ final class ShellModel: ObservableObject {
     }
 
     var workspaces: [CoreWorkspaceSnapshot] {
-        core.snapshot?.navigator.workspaces ?? []
+        if isRemoteContext {
+            return remote.navigation?.workspaces ?? []
+        }
+        return core.snapshot?.navigator.workspaces ?? []
     }
 
     var devices: [CoreDeviceSnapshot] {
@@ -93,37 +146,107 @@ final class ShellModel: ObservableObject {
     }
 
     var agents: [SidebarAgent] {
-        core.snapshot?.navigator.agents ?? []
+        if isRemoteContext {
+            return remote.navigation?.agents ?? []
+        }
+        return core.snapshot?.navigator.agents ?? []
     }
 
     var focusedWorkspace: CoreWorkspaceSnapshot? {
-        guard let id = core.snapshot?.navigator.focusedWorkspaceID else {
-            return workspaces.first
+        if isRemoteContext {
+            guard let navigation = remote.navigation else { return nil }
+            if let id = navigation.focusedWorkspaceID {
+                return navigation.workspaces.first(where: { $0.id == id }) ?? navigation.workspaces.first
+            }
+            return navigation.workspaces.first
         }
-        return workspaces.first(where: { $0.id == id }) ?? workspaces.first
+        guard let id = core.snapshot?.navigator.focusedWorkspaceID else { return nil }
+        return workspaces.first(where: { $0.id == id })
     }
 
     var focusedCheckout: CoreCheckoutSnapshot? {
+        if isRemoteContext {
+            guard let navigation = remote.navigation else { return nil }
+            if let id = navigation.focusedCheckoutID,
+               let checkout = navigation.workspaces.lazy.compactMap({ workspace in
+                   workspace.checkouts.first(where: { $0.id == id })
+               }).first {
+                return checkout
+            }
+            return focusedWorkspace?.checkouts.first
+        }
         if let id = core.snapshot?.navigator.focusedCheckoutID,
            let checkout = workspaces.lazy.compactMap({ workspace in
                workspace.checkouts.first(where: { $0.id == id })
            }).first {
             return checkout
         }
-        return focusedWorkspace?.checkouts.first
+        return nil
     }
 
     var focusedTabs: [CoreTabSnapshot] {
         focusedCheckout?.tabs ?? []
     }
 
+    var focusedTab: CoreTabSnapshot? {
+        guard let checkout = focusedCheckout else { return nil }
+        let preferredTabID = isRemoteContext
+            ? remote.navigation?.focusedTabID
+            : core.snapshot?.paneLayout?.tabID
+        if let preferredTabID,
+           let tab = checkout.tabs.first(where: { $0.id == preferredTabID }) {
+            return tab
+        }
+        return checkout.tabs.first
+    }
+
+    var focusedPanes: [CorePaneSnapshot] {
+        focusedTab?.panes ?? []
+    }
+
+    var focusedPaneLayout: CorePaneLayoutSnapshot? {
+        guard let layout = core.snapshot?.paneLayout,
+              let checkout = focusedCheckout,
+              TerminalLayoutPolicy.belongs(layout: layout, to: checkout)
+        else { return nil }
+        return layout
+    }
+
     var focusedPath: URL? {
+        if isRemoteContext {
+            guard let path = focusedCheckout?.path, !path.isEmpty else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
         guard let path = core.snapshot?.navigator.rootPath else { return nil }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
+    var localProjectionNotice: String? {
+        guard !isRemoteContext,
+              let error = core.snapshot?.status.lastError,
+              error.kind == "pane.projection_unavailable"
+        else { return nil }
+        return "\(error.kind): \(error.message)"
+    }
+
+    var isRemoteContext: Bool { activeRemoteDevice != nil }
+
+    var activeContextLabel: String? {
+        activeRemoteDevice?.label
+    }
+
+    var focusedPaneID: String? {
+        if isRemoteContext {
+            return remote.navigation?.focusedPaneID
+        }
+        return core.snapshot?.terminal.paneID
+    }
+
     var herdrIsConnected: Bool {
-        core.snapshot?.status.herdr.state == "connected"
+        if isRemoteContext {
+            return remote.phase == .ready
+        }
+        return core.snapshot?.status.herdr.state == "connected"
     }
 
     func openNewWorkspace() {
@@ -144,15 +267,38 @@ final class ShellModel: ObservableObject {
     }
 
     func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
+        if isRemoteContext {
+            remote.focus(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
+            focus(.terminal)
+            if CheckoutSelectionPolicy.action(for: checkout) == .startTerminal {
+                remote.startTerminal(checkout: checkout)
+            }
+            return
+        }
         core.focusCheckout(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
         focus(.terminal)
+        switch CheckoutSelectionPolicy.action(for: checkout) {
+        case .focusExisting:
+            checkoutStartState = .idle
+        case .startTerminal:
+            startTerminal(for: checkout)
+        }
     }
 
     func selectDevice(_ device: CoreDeviceSnapshot) {
+        if device.kind == "remote", let alias = device.sshAlias {
+            activeRemoteDevice = device
+            lastRemoteDevice = device
+            checkoutStartState = .idle
+            core.focusDevice(device.id)
+            remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+            focus(.terminal)
+            return
+        }
+        activeRemoteDevice = nil
+        remote.clearNavigation()
+        checkoutStartState = .idle
         core.focusDevice(device.id)
-        guard device.kind == "remote", let alias = device.sshAlias else { return }
-        lastRemoteDevice = device
-        remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
     }
 
     func selectAgent(_ agent: SidebarAgent) {
@@ -164,8 +310,12 @@ final class ShellModel: ObservableObject {
             interactionNotice = "The selected agent is not attached to a known checkout."
             return
         }
-        core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
-        core.focusPane(agent.paneID)
+        if isRemoteContext {
+            remote.focus(workspaceID: workspace.id, checkoutID: checkout.id, paneID: agent.paneID)
+        } else {
+            core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
+            core.focusPane(agent.paneID)
+        }
         focus(.terminal)
     }
 
@@ -195,7 +345,11 @@ final class ShellModel: ObservableObject {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
         }
-        core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
+        if isRemoteContext, let checkout = focusedCheckout {
+            remote.startTerminal(checkout: checkout)
+        } else {
+            core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
+        }
     }
 
     func startAgent() {
@@ -260,6 +414,51 @@ final class ShellModel: ObservableObject {
             return
         }
         remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+    }
+
+    private func startTerminal(for checkout: CoreCheckoutSnapshot) {
+        guard pendingCheckoutStarts.insert(checkout.id).inserted else {
+            checkoutStartState = .starting
+            interactionNotice = "A terminal is already starting for this checkout."
+            return
+        }
+        guard let runtime = core.runtimeSelection else {
+            pendingCheckoutStarts.remove(checkout.id)
+            checkoutStartState = .failed("The bundled Herdr runtime is still starting. Wait for Herdr status, then select this checkout again.")
+            interactionNotice = "The bundled Herdr runtime is not ready yet. Select this checkout again when Herdr status is available."
+            return
+        }
+        checkoutStartState = .starting
+        let checkoutID = checkout.id
+        let checkoutPath = checkout.path
+        let checkoutLabel = checkout.label
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                HerdrTerminalLauncher.launch(
+                    herdrPath: runtime.path,
+                    checkoutPath: checkoutPath,
+                    checkoutLabel: checkoutLabel
+                )
+            }.value
+            guard let self else { return }
+            pendingCheckoutStarts.remove(checkoutID)
+            if result.succeeded, let paneID = result.paneID {
+                // Keep Herdr's global focus untouched. The returned pane is
+                // the local projection anchor until the next session poll
+                // supplies its authoritative layout.
+                core.persistUIState(
+                    selectedPaneID: paneID,
+                    focusedCheckoutID: checkoutID
+                )
+                checkoutStartState = .started
+            } else {
+                let message = result.succeeded
+                    ? "Herdr created a workspace but did not return its terminal pane. Check Herdr status and retry."
+                    : result.message
+                checkoutStartState = .failed(message)
+                interactionNotice = message
+            }
+        }
     }
 
     var selectedAgentCheckout: CoreCheckoutSnapshot? {

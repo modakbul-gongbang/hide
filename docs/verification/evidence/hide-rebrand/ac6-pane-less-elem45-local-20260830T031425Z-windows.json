@@ -1,0 +1,35 @@
+{
+  "success" : true,
+  "data" : {
+    "target_application_info" : {
+      "app_name" : "hide",
+      "bundle_id" : "me.grab.hide",
+      "pid" : 49138
+    },
+    "windows" : [
+      {
+        "is_frontmost" : true,
+        "layer" : 0,
+        "is_on_screen" : true,
+        "window_index" : 12,
+        "window_title" : "hide",
+        "is_key" : true,
+        "bounds" : {
+          "y" : 72,
+          "width" : 1440,
+          "height" : 928,
+          "x" : 144
+        },
+        "subrole" : "AXStandardWindow",
+        "window_id" : 7723
+      }
+    ],
+    "inventory_completeness" : "partial",
+    "inventory_warnings" : [
+      "Window list omitted 12 non-renderable or duplicate inventory rows."
+    ]
+  },
+  "debug_logs" : [
+    "[2026-08-30T03:14:27.020Z] DEBUG: Runtime host: local (in-process)"
+  ]
+}

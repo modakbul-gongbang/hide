@@ -1,6 +1,6 @@
 # hide rebrand implementation result
 
-Status: The P0 Finder/open zero-window regression is fixed and caller-observable native evidence is PASS on the fresh bundle.
+Status: The baseline P0 Finder/open zero-window regression is PASS on the fresh bundle, while the later catalog-projection correction still requires a fresh native proof.
 
 The final dark-design taste review is still a human gate and is not approved here.
 
@@ -9,9 +9,9 @@ The final dark-design taste review is still a human gate and is not approved her
 - Worktree: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand`.
 - Branch: `prd/hide-rebrand`.
 - Main base: `0b6c80679ac1d122c025deddbd67a55c0cd29fbb`.
-- Current HEAD before this coherent fix commit: `70006b5747c01ee2d17a02c97c82983e4435d38e`.
-- Implementation tree on top of that HEAD: `HerdrApp.swift`, `WorkbenchPanel.swift`, `OperationalPolicyTests.swift`, `docs/verification/hide-rebrand-p0.md`, this report, and the retained native evidence files under `docs/verification/evidence/hide-rebrand/`.
-- The final current HEAD is the coherent commit that contains this implementation tree and is reported separately by the handoff after commit.
+- Current HEAD at this report update: `f626816` (`Expose workspace::normalized_for_comparison for runtime path matching`).
+- The current implementation tree contains the Rust catalog/focus projection correction, component-boundary path matching, Swift CoreBridge/ShellModel projection changes, WorkbenchPanel changes, regression tests, build changes, this report, the restored P0 report, and retained native evidence under `docs/verification/evidence/hide-rebrand/`.
+- The current implementation tree is not yet represented by a fresh post-projection native proof or a Sasu verification attempt.
 - The approved PRD and interview source remain unchanged.
 
 ## What changed
@@ -68,17 +68,41 @@ The Finder/open P0 result is PASS for AC1 and SC7.
 
 ## Automated verification
 
-- Rust workspace: 82 tests passed.
-- FFI suite: 23 tests passed.
-- Swift suite: 62 tests passed.
+- Historical pre-projection baseline: Rust 82 tests, FFI 23 tests, and Swift 62 tests passed.
+- Current focused projection suite: 10 Rust runtime tests passed.
+- Current focused FFI regression: 1 test passed.
+- Current full Rust workspace: 90 library tests and 25 FFI integration tests passed.
+- Current Swift suite: 69 tests passed.
+- `cargo fmt --all` and `git diff --check` passed for the current correction.
+- Current fresh bundle build: `docs/verification/evidence/hide-rebrand/build-app-after-catalog-projection-fixed-20260830T040742Z.log` completed successfully with bundled Herdr `0.8.2` and the recorded binary SHA-256 match.
 - Focused regression coverage includes `mainWindowPresentationIsVisibleBeforeRuntimeWorkStarts` and `finderLaunchWithoutAnActiveWorkspaceDoesNotScanTheProcessDirectory`.
-- Fresh bundle build, signature, Info.plist, Herdr binary pin, icon, and archive checks passed.
+- The prior PID `24041` Finder proof remains valid for the earlier P0 tree only; a fresh native proof after the catalog-projection correction is still required.
+- Fresh bundle signature, Info.plist, Herdr binary pin, icon, and archive checks passed.
 
 These already-passed suites were not rerun during this report-only continuation.
 
+## Sasu v6 compatibility recovery
+
+- The installed CLI is contract version `0.8.0` with implement schema support only for `sasu.implement.state.v7`.
+- Its read-only status refusal is recorded in `docs/verification/evidence/hide-rebrand/sasu-v6-recovery-20260830T041416Z.txt` and explicitly says that the current `sasu.implement.state.v6` run is unsupported by v7.
+- The v7 transition is commit `7d1e2e4`; its exact pre-v7 parent used for recovery is `33b332afde242789acb2f6dd5322228ca127303a`.
+- A temporary CLI was built from that commit at `/tmp/sasu-v6-cli.G2rYX2/cli`. It reports contract version `0.8.0` and successfully reads the existing run as `sasu.implement.state.v6`, `hide-rebrand: active`, with 11 open tasks, 20 open acceptance criteria, and verification `NOT_RUN`.
+- The v6 read-only status reports the stored baseline HEAD as `ff19b4daf99a12f1ce9903cb1edc987d995a8f24`; the current implementation worktree HEAD is separately `f626816`. This is recorded as state/source freshness context, not as a verification pass.
+- `agents/runs/hide-rebrand/state.json` SHA-256 was `38a0b9c6d06694a13dc3feb920a159cd39af39e847161271915bcc65375c82e4` before and after the v6 status command.
+
+The exact recovery path is:
+
+1. Preserve the existing v6 `state.json`, PRD, qa-log, source, and evidence bytes.
+2. Rebuild or retain a v6 CLI from Sasu commit `33b332afde242789acb2f6dd5322228ca127303a` in an isolated temporary directory.
+3. Use that binary for the existing run's read-only status and then, only after implementation tasks, acceptance checks, and final artifacts are current, run `implement verify --state agents/runs/hide-rebrand/state.json --json`.
+4. If a mutating v6 command reports ownership by another session, pass the user's verbatim approval through its required `--adopt "<verbatim user approval>"` flag; do not synthesize approval and do not create a new slug.
+5. Run `implement finalize --state agents/runs/hide-rebrand/state.json` only after a fresh v6 verification PASS and after the remaining human gates are resolved.
+
+No migration, replacement run, state overwrite, or v7 verify/finalize command was performed.
+
 ## Remaining boundary
 
-- Native P0 and the caller-observable V5 launch proof are PASS.
+- Baseline native P0 and the caller-observable V5 launch proof are PASS for PID `24041`; post-projection native proof remains open.
 - Sasu verify/finalize was not run.
 - No public push was performed.
 - No draft release was published.

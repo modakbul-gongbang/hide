@@ -44,6 +44,10 @@ install -m 644 \
   "$icon_path" \
   "$temporary_bundle/Contents/Resources/hide.icns"
 
+# The Pet resolves its theme from the bundle at runtime, so release builds
+# must carry the same resource tree as the development app.
+/usr/bin/ditto "$project_root/assets/pet-theme" "$temporary_bundle/Contents/Resources/pet-theme"
+
 for resource_bundle in "$macos_root"/.build/arm64-apple-macosx/release/*.bundle; do
   if [[ -d "$resource_bundle" ]]; then
     /usr/bin/ditto "$resource_bundle" "$temporary_bundle/Contents/Resources/$(basename "$resource_bundle")"

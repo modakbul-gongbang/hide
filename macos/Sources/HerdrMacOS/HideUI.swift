@@ -58,7 +58,7 @@ private struct HideScaledFontModifier: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
     func hideFont(
         size: CGFloat,
         weight: Font.Weight = .regular,
@@ -75,8 +75,11 @@ struct ShellView: View {
         HStack(spacing: 0) {
             HideSidebar()
                 .frame(width: 292)
+                .frame(maxHeight: .infinity, alignment: .topLeading)
             HideMainView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
         .preferredColorScheme(.dark)
         .environment(\.colorScheme, .dark)
@@ -225,7 +228,7 @@ private struct HideBrandHeader: View {
                 .frame(width: 7, height: 7)
                 .shadow(color: (model.herdrIsConnected ? HideTheme.success : HideTheme.warning).opacity(0.7), radius: 5)
             Spacer()
-            Text(model.core.runtimeSelection?.version ?? "offline")
+            Text(model.isRemoteContext ? model.remote.targetLabel : (model.core.runtimeSelection?.version ?? "offline"))
                 .hideFont(size: 10, weight: .medium, design: .monospaced)
                 .foregroundStyle(HideTheme.muted)
         }
@@ -500,13 +503,16 @@ private struct HideMainView: View {
                 .frame(height: 1)
             HSplitView {
                 HideTerminalSurface()
-                    .frame(minWidth: 540, maxWidth: .infinity)
+                    .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
                 WorkbenchPanel()
-                    .frame(minWidth: 285, idealWidth: 355, maxWidth: 430)
+                    .frame(minWidth: 285, idealWidth: 355, maxWidth: 430, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
             .background(HideTheme.background)
             HideStatusBar()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
         .accessibilityIdentifier("hide-main")
     }
@@ -522,18 +528,22 @@ private struct HideToolbar: View {
                 Image(systemName: "rectangle.3.group")
                     .foregroundStyle(accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.focusedWorkspace?.repoName ?? "No workspace")
+                    Text(model.focusedWorkspace?.repoName ?? (model.isRemoteContext ? model.remote.targetLabel : "No workspace"))
                         .hideFont(size: 13, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
                     Text(model.focusedCheckout.map { checkout in
                         checkout.branch.map { "\(checkout.label)  ·  \($0)" } ?? checkout.path
-                    } ?? "Register a workspace to begin")
+                    } ?? (model.isRemoteContext ? model.remote.message : "Register a workspace to begin"))
                         .hideFont(size: 10, design: .monospaced)
                         .foregroundStyle(HideTheme.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
-                if let selection = model.core.runtimeSelection {
+                if model.isRemoteContext {
+                    Label("mini \(model.remote.phase.rawValue)", systemImage: "externaldrive.connected.to.line.below")
+                        .hideFont(size: 10, weight: .medium)
+                        .foregroundStyle(model.herdrIsConnected ? HideTheme.success : HideTheme.warning)
+                } else if let selection = model.core.runtimeSelection {
                     Label("herdr \(selection.version)", systemImage: "bolt.horizontal.circle")
                         .hideFont(size: 10, weight: .medium)
                         .foregroundStyle(HideTheme.secondary)
@@ -569,11 +579,19 @@ private struct HideToolbar: View {
                                       let workspace = model.focusedWorkspace,
                                       let checkout = model.focusedCheckout
                                 else { return }
-                                model.core.focusTab(
-                                    workspaceID: workspace.id,
-                                    checkoutID: checkout.id,
-                                    tabID: tabID
-                                )
+                                if model.isRemoteContext {
+                                    model.remote.focus(
+                                        workspaceID: workspace.id,
+                                        checkoutID: checkout.id,
+                                        paneID: tab.panes.first?.id
+                                    )
+                                } else {
+                                    model.core.focusTab(
+                                        workspaceID: workspace.id,
+                                        checkoutID: checkout.id,
+                                        tabID: tabID
+                                    )
+                                }
                             } label: {
                                 HStack(spacing: 6) {
                                     Circle()
@@ -618,29 +636,47 @@ private struct HideTerminalSurface: View {
     @EnvironmentObject private var model: ShellModel
 
     private var panes: [CorePaneSnapshot] {
-        model.focusedTabs.flatMap { $0.panes }
+        model.focusedPanes
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if let layout = model.core.snapshot?.paneLayout {
+            if model.isRemoteContext {
+                if panes.isEmpty {
+                    HideEmptyCheckoutState()
+                } else if let workspace = model.focusedWorkspace,
+                          let checkout = model.focusedCheckout {
+                    HideTerminalGrid(itemCount: panes.count) { itemHeight in
+                        ForEach(panes) { pane in
+                            RemoteTerminalCell(
+                                pane: pane,
+                                model: model,
+                                workspaceID: workspace.id,
+                                checkoutID: checkout.id
+                            )
+                            .frame(height: itemHeight)
+                        }
+                    }
+                }
+            } else if let layout = model.focusedPaneLayout {
                 PaneLayoutCanvas(layout: layout, bridge: model.core)
                     .padding(12)
             } else if panes.isEmpty {
                 HideEmptyCheckoutState()
             } else {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                HideTerminalGrid(itemCount: panes.count) { itemHeight in
                     ForEach(panes) { pane in
                         PaneTerminalCell(
                             paneID: pane.id,
                             focusedPaneID: model.core.snapshot?.terminal.paneID,
                             bridge: model.core
                         )
+                        .frame(height: itemHeight)
                     }
                 }
-                .padding(12)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
         .overlay(alignment: .topLeading) {
             if let path = model.focusedPath {
@@ -655,36 +691,178 @@ private struct HideTerminalSurface: View {
     }
 }
 
+private struct HideTerminalGrid<Content: View>: View {
+    let itemCount: Int
+    private let content: (CGFloat) -> Content
+
+    init(
+        itemCount: Int,
+        @ViewBuilder content: @escaping (CGFloat) -> Content
+    ) {
+        self.itemCount = itemCount
+        self.content = content
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let columnCount = itemCount > 1 ? 2 : 1
+            let rowCount = max(1, (itemCount + columnCount - 1) / columnCount)
+            let innerHeight = max(120, geometry.size.height - 24 - CGFloat(rowCount - 1) * 8)
+            let itemHeight = innerHeight / CGFloat(rowCount)
+
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: 8),
+                    count: columnCount
+                ),
+                spacing: 8
+            ) {
+                content(itemHeight)
+            }
+            .padding(12)
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height,
+                alignment: .topLeading
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct RemoteTerminalCell: View {
+    let pane: CorePaneSnapshot
+    @ObservedObject var model: ShellModel
+    let workspaceID: String
+    let checkoutID: String
+
+    var body: some View {
+        HideTerminalPaneCard(
+            paneID: pane.id,
+            title: pane.label.isEmpty ? pane.id : pane.label,
+            cwd: pane.cwd,
+            status: pane.state,
+            isFocused: model.focusedPaneID == pane.id,
+            onFocus: {
+                model.remote.focus(
+                    workspaceID: workspaceID,
+                    checkoutID: checkoutID,
+                    paneID: pane.id
+                )
+            }
+        ) {
+            RemoteTerminalHost(
+                remote: model.remote,
+                sshAlias: model.remote.sshAlias,
+                paneID: pane.id
+            )
+            .accessibilityLabel("Remote SwiftTerm terminal for \(pane.id)")
+        }
+    }
+}
+
 private struct HideEmptyCheckoutState: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
 
     var body: some View {
-        VStack(spacing: 13) {
-            Image(systemName: model.focusedCheckout == nil ? "square.stack.3d.up" : "terminal")
-                .hideFont(size: 30, weight: .light)
-                .foregroundStyle(accent.opacity(0.75))
-            Text(model.focusedCheckout == nil ? "Start with a workspace" : "This checkout is ready")
-                .hideFont(size: 17, weight: .semibold)
-                .foregroundStyle(HideTheme.primary)
-            Text(model.focusedCheckout == nil
-                ? "Register a local folder, then choose a checkout from the sidebar."
-                : "Create a tab or start an agent to open the first terminal pane.")
-                .hideFont(size: 12)
-                .foregroundStyle(HideTheme.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-            HStack(spacing: 8) {
-                Button("New Workspace") { model.openNewWorkspace() }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: true))
-                if model.focusedCheckout != nil {
-                    Button("New Agent") { model.openNewAgent() }
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+        if model.isRemoteContext {
+            VStack(spacing: 13) {
+                Image(systemName: model.remote.phase == .loading ? "arrow.triangle.2.circlepath" : "externaldrive.connected.to.line.below")
+                    .hideFont(size: 30, weight: .light)
+                    .foregroundStyle(accent.opacity(0.75))
+                Text(model.remote.phase == .loading ? "Connecting to \(model.remote.targetLabel)" : "Remote context")
+                    .hideFont(size: 17, weight: .semibold)
+                    .foregroundStyle(HideTheme.primary)
+                Text(model.remote.attachError ?? model.remote.message)
+                    .hideFont(size: 12)
+                    .foregroundStyle(HideTheme.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+                if model.remote.phase != .loading {
+                    Button("Retry mini") { model.retryRemote() }
+                        .buttonStyle(HideToolbarButtonStyle(isProminent: true))
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(40)
+        } else {
+            VStack(spacing: 13) {
+                Image(systemName: model.localProjectionNotice != nil ? "exclamationmark.triangle" : (model.focusedCheckout == nil ? "square.stack.3d.up" : "terminal"))
+                    .hideFont(size: 30, weight: .light)
+                    .foregroundStyle(accent.opacity(0.75))
+                if let notice = model.localProjectionNotice {
+                    Text("Waiting for selected checkout")
+                        .hideFont(size: 17, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                    Text(notice)
+                        .hideFont(size: 12)
+                        .foregroundStyle(HideTheme.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
+                } else if model.focusedCheckout == nil {
+                    Text("Start with a workspace")
+                        .hideFont(size: 17, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                    Text("Register a local folder, then choose a checkout from the sidebar.")
+                        .hideFont(size: 12)
+                        .foregroundStyle(HideTheme.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                    Button("New Workspace") { model.openNewWorkspace() }
+                        .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                } else {
+                    switch model.checkoutStartState {
+                    case .starting:
+                        Text("Starting terminal")
+                            .hideFont(size: 17, weight: .semibold)
+                            .foregroundStyle(HideTheme.primary)
+                        Text("Opening a new Herdr tab and terminal pane at this checkout.")
+                            .hideFont(size: 12)
+                            .foregroundStyle(HideTheme.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 360)
+                        ProgressView()
+                            .controlSize(.small)
+                    case .started:
+                        Text("Terminal is starting")
+                            .hideFont(size: 17, weight: .semibold)
+                            .foregroundStyle(HideTheme.primary)
+                        Text("Waiting for Herdr to attach the new pane to this checkout.")
+                            .hideFont(size: 12)
+                            .foregroundStyle(HideTheme.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 360)
+                    case let .failed(message):
+                        Text("Couldn't start terminal")
+                            .hideFont(size: 17, weight: .semibold)
+                            .foregroundStyle(HideTheme.primary)
+                        Text(message)
+                            .hideFont(size: 12)
+                            .foregroundStyle(HideTheme.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 420)
+                        Button("Retry terminal") {
+                            if let checkout = model.focusedCheckout {
+                                model.selectCheckout(checkout)
+                            }
+                        }
+                            .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                    case .idle:
+                        Text("Preparing terminal")
+                            .hideFont(size: 17, weight: .semibold)
+                            .foregroundStyle(HideTheme.primary)
+                        Text("Hide will start a new Herdr tab and terminal pane at this checkout.")
+                            .hideFont(size: 12)
+                            .foregroundStyle(HideTheme.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 360)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(40)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 }
 
@@ -696,7 +874,9 @@ private struct HideStatusBar: View {
             Circle()
                 .fill(model.herdrIsConnected ? HideTheme.success : HideTheme.warning)
                 .frame(width: 6, height: 6)
-            Text(model.core.bridgeError ?? model.core.snapshot?.status.herdr.message ?? "Waiting for Herdr")
+            Text(model.isRemoteContext
+                ? (model.remote.attachError ?? model.remote.message)
+                : (model.core.bridgeError ?? model.core.snapshot?.status.herdr.message ?? "Waiting for Herdr"))
                 .lineLimit(1)
             Spacer()
             Text("\(model.agents.count) agents")

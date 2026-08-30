@@ -411,16 +411,368 @@ struct RemoteWorkspaceSummary: Decodable, Identifiable, Sendable {
     }
 }
 
-private struct RemoteWorkspaceEnvelope: Decodable {
-    struct Result: Decodable {
-        let workspaces: [RemoteWorkspaceSummary]
+private struct RemoteWorktreeWire: Decodable, Sendable {
+    let checkoutPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case checkoutPath = "checkout_path"
     }
+}
+
+private struct RemoteWorkspaceWire: Decodable, Sendable {
+    let workspaceID: String
+    let label: String
+    let activeTabID: String?
+    let paneCount: Int
+    let tabCount: Int
+    let worktree: RemoteWorktreeWire?
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
+        case label
+        case activeTabID = "active_tab_id"
+        case paneCount = "pane_count"
+        case tabCount = "tab_count"
+        case worktree
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workspaceID = try container.decode(String.self, forKey: .workspaceID)
+        label = try container.decode(String.self, forKey: .label)
+        activeTabID = try container.decodeIfPresent(String.self, forKey: .activeTabID)
+        paneCount = try container.decodeIfPresent(Int.self, forKey: .paneCount) ?? 0
+        tabCount = try container.decodeIfPresent(Int.self, forKey: .tabCount) ?? 0
+        worktree = try container.decodeIfPresent(RemoteWorktreeWire.self, forKey: .worktree)
+    }
+}
+
+private struct RemoteTabWire: Decodable, Sendable {
+    let tabID: String
+    let workspaceID: String
+    let label: String
+    let paneCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+        case workspaceID = "workspace_id"
+        case label
+        case paneCount = "pane_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tabID = try container.decode(String.self, forKey: .tabID)
+        workspaceID = try container.decode(String.self, forKey: .workspaceID)
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? "Tab"
+        paneCount = try container.decodeIfPresent(Int.self, forKey: .paneCount) ?? 0
+    }
+}
+
+private struct RemotePaneWire: Decodable, Sendable {
+    let paneID: String
+    let workspaceID: String
+    let tabID: String
+    let cwd: String
+    let terminalTitle: String?
+    let terminalTitleStripped: String?
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case workspaceID = "workspace_id"
+        case tabID = "tab_id"
+        case cwd
+        case terminalTitle = "terminal_title"
+        case terminalTitleStripped = "terminal_title_stripped"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        workspaceID = try container.decode(String.self, forKey: .workspaceID)
+        tabID = try container.decode(String.self, forKey: .tabID)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+        terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
+        terminalTitleStripped = try container.decodeIfPresent(String.self, forKey: .terminalTitleStripped)
+    }
+}
+
+private struct RemoteAgentWire: Decodable, Sendable {
+    let agent: String
+    let agentStatus: String
+    let paneID: String
+    let workspaceID: String
+    let tokens: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case agent
+        case agentStatus = "agent_status"
+        case paneID = "pane_id"
+        case workspaceID = "workspace_id"
+        case tokens
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try container.decodeIfPresent(String.self, forKey: .agent) ?? "agent"
+        agentStatus = try container.decodeIfPresent(String.self, forKey: .agentStatus) ?? "unknown"
+        paneID = try container.decode(String.self, forKey: .paneID)
+        workspaceID = try container.decode(String.self, forKey: .workspaceID)
+        tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
+    }
+}
+
+fileprivate struct RemoteSnapshotWire: Decodable, Sendable {
+    let focusedWorkspaceID: String?
+    let focusedTabID: String?
+    let focusedPaneID: String?
+    let workspaces: [RemoteWorkspaceWire]
+    let tabs: [RemoteTabWire]
+    let panes: [RemotePaneWire]
+    let agents: [RemoteAgentWire]
+
+    enum CodingKeys: String, CodingKey {
+        case focusedWorkspaceID = "focused_workspace_id"
+        case focusedTabID = "focused_tab_id"
+        case focusedPaneID = "focused_pane_id"
+        case workspaces
+        case tabs
+        case panes
+        case agents
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        focusedWorkspaceID = try container.decodeIfPresent(String.self, forKey: .focusedWorkspaceID)
+        focusedTabID = try container.decodeIfPresent(String.self, forKey: .focusedTabID)
+        focusedPaneID = try container.decodeIfPresent(String.self, forKey: .focusedPaneID)
+        workspaces = try container.decodeIfPresent([RemoteWorkspaceWire].self, forKey: .workspaces) ?? []
+        tabs = try container.decodeIfPresent([RemoteTabWire].self, forKey: .tabs) ?? []
+        panes = try container.decodeIfPresent([RemotePaneWire].self, forKey: .panes) ?? []
+        agents = try container.decodeIfPresent([RemoteAgentWire].self, forKey: .agents) ?? []
+    }
+}
+
+private struct RemoteSnapshotEnvelope: Decodable, Sendable {
+    struct Result: Decodable, Sendable {
+        let snapshot: RemoteSnapshotWire
+    }
+
     let result: Result
+}
+
+enum RemoteSnapshotProjection {
+    static func decode(
+        _ data: Data,
+        deviceID: String,
+        targetLabel: String
+    ) throws -> RemoteNavigationSnapshot {
+        let envelope = try JSONDecoder().decode(RemoteSnapshotEnvelope.self, from: data)
+        return RemoteNavigationSnapshot(
+            deviceID: deviceID,
+            targetLabel: targetLabel,
+            wire: envelope.result.snapshot
+        )
+    }
+}
+
+struct RemoteFileNode: Identifiable, Hashable, Sendable {
+    let path: String
+    let isDirectory: Bool
+
+    var id: String { path }
+    var name: String { URL(fileURLWithPath: path).lastPathComponent }
+}
+
+struct RemoteNavigationSnapshot {
+    let deviceID: String
+    let targetLabel: String
+    let workspaces: [CoreWorkspaceSnapshot]
+    let agents: [SidebarAgent]
+    let focusedWorkspaceID: String?
+    let focusedCheckoutID: String?
+    let focusedTabID: String?
+    let focusedPaneID: String?
+    private let activeTabIDs: [String: String]
+
+    fileprivate init(deviceID: String, targetLabel: String, wire: RemoteSnapshotWire) {
+        self.deviceID = deviceID
+        self.targetLabel = targetLabel
+
+        let labelsByWorkspace = Dictionary(uniqueKeysWithValues: wire.workspaces.map {
+            ($0.workspaceID, $0.label)
+        })
+        var projectedWorkspaces: [CoreWorkspaceSnapshot] = []
+        for workspace in wire.workspaces {
+            let workspaceID = Self.workspaceID(deviceID: deviceID, remoteID: workspace.workspaceID)
+            let workspacePanes = wire.panes.filter { $0.workspaceID == workspace.workspaceID }
+            let workspaceTabs = wire.tabs.filter { $0.workspaceID == workspace.workspaceID }
+            let tabs = workspaceTabs.map { tab in
+                let panes = wire.panes
+                    .filter { $0.tabID == tab.tabID && $0.workspaceID == workspace.workspaceID }
+                    .map { pane in
+                        CorePaneSnapshot(
+                            id: pane.paneID,
+                            label: pane.terminalTitleStripped ?? pane.terminalTitle ?? pane.paneID,
+                            cwd: pane.cwd,
+                            state: "attached",
+                            summary: nil,
+                            activityAt: nil
+                        )
+                    }
+                return CoreTabSnapshot(
+                    id: tab.tabID,
+                    workspaceID: workspaceID,
+                    checkoutID: Self.checkoutID(deviceID: deviceID, remoteID: workspace.workspaceID),
+                    label: tab.label,
+                    empty: panes.isEmpty,
+                    panes: panes
+                )
+            }
+            let path = workspacePanes.first(where: { !$0.cwd.isEmpty })?.cwd
+                ?? workspace.worktree?.checkoutPath
+                ?? ""
+            let checkoutID = Self.checkoutID(deviceID: deviceID, remoteID: workspace.workspaceID)
+            let checkout = CoreCheckoutSnapshot(
+                id: checkoutID,
+                workspaceID: workspaceID,
+                label: workspace.label,
+                path: path,
+                branch: nil,
+                isWorktree: workspace.worktree != nil,
+                exists: true,
+                temporary: false,
+                tabs: tabs
+            )
+            projectedWorkspaces.append(CoreWorkspaceSnapshot(
+                id: workspaceID,
+                label: workspace.label,
+                path: path,
+                remoteTargetID: deviceID,
+                expanded: true,
+                deviceID: deviceID,
+                repoName: workspace.label,
+                isGit: workspace.worktree != nil,
+                defaultBranch: nil,
+                registered: true,
+                temporary: false,
+                checkouts: [checkout]
+            ))
+        }
+        workspaces = projectedWorkspaces.sorted { lhs, rhs in
+            lhs.label.localizedStandardCompare(rhs.label) == .orderedAscending
+        }
+        activeTabIDs = Dictionary(uniqueKeysWithValues: wire.workspaces.compactMap { workspace in
+            guard let activeTabID = workspace.activeTabID else { return nil }
+            return (
+                Self.workspaceID(deviceID: deviceID, remoteID: workspace.workspaceID),
+                activeTabID
+            )
+        })
+        agents = wire.agents.map { agent in
+            let tokens = agent.tokens
+            return SidebarAgent(
+                id: "remote:\(deviceID):\(agent.paneID)",
+                paneID: agent.paneID,
+                workspaceLabel: labelsByWorkspace[agent.workspaceID] ?? agent.workspaceID,
+                agentKind: agent.agent,
+                state: agent.agentStatus,
+                symbol: tokens["agent_\(agent.agent)"] ?? "?",
+                summary: tokens["summary"] ?? tokens["terminal_title"] ?? "Remote agent",
+                elapsed: tokens["elapsed"] ?? "",
+                sortRank: tokens["sort_rank"] ?? "99",
+                activity: tokens["summary"] ?? "",
+                ambient: nil
+            )
+        }
+        focusedWorkspaceID = wire.focusedWorkspaceID.map {
+            Self.workspaceID(deviceID: deviceID, remoteID: $0)
+        }
+        focusedCheckoutID = wire.focusedWorkspaceID.map {
+            Self.checkoutID(deviceID: deviceID, remoteID: $0)
+        }
+        focusedTabID = wire.focusedTabID
+        focusedPaneID = wire.focusedPaneID
+    }
+
+    private init(
+        deviceID: String,
+        targetLabel: String,
+        workspaces: [CoreWorkspaceSnapshot],
+        agents: [SidebarAgent],
+        focusedWorkspaceID: String?,
+        focusedCheckoutID: String?,
+        focusedTabID: String?,
+        focusedPaneID: String?,
+        activeTabIDs: [String: String]
+    ) {
+        self.deviceID = deviceID
+        self.targetLabel = targetLabel
+        self.workspaces = workspaces
+        self.agents = agents
+        self.focusedWorkspaceID = focusedWorkspaceID
+        self.focusedCheckoutID = focusedCheckoutID
+        self.focusedTabID = focusedTabID
+        self.focusedPaneID = focusedPaneID
+        self.activeTabIDs = activeTabIDs
+    }
+
+    func focused(workspaceID: String, checkoutID: String, paneID: String? = nil) -> RemoteNavigationSnapshot {
+        let selectedCheckout = workspaces
+            .first(where: { $0.id == workspaceID })?
+            .checkouts
+            .first(where: { $0.id == checkoutID })
+        let selectedTab = paneID.flatMap { paneID in
+            selectedCheckout?.tabs.first(where: { tab in
+                tab.panes.contains(where: { $0.id == paneID })
+            })
+        }
+            ??
+            selectedCheckout?.tabs
+            .first(where: { $0.id == activeTabIDs[workspaceID] })
+            ?? selectedCheckout?.tabs.first
+        let selectedPaneID = paneID.flatMap { paneID in
+            selectedTab?.panes.contains(where: { $0.id == paneID }) == true ? paneID : nil
+        } ?? selectedTab?.panes.first?.id
+        return RemoteNavigationSnapshot(
+            deviceID: deviceID,
+            targetLabel: targetLabel,
+            workspaces: workspaces,
+            agents: agents,
+            focusedWorkspaceID: workspaceID,
+            focusedCheckoutID: checkoutID,
+            focusedTabID: selectedTab?.id,
+            focusedPaneID: selectedPaneID,
+            activeTabIDs: activeTabIDs
+        )
+    }
+
+    func focusedPane(_ paneID: String) -> RemoteNavigationSnapshot {
+        RemoteNavigationSnapshot(
+            deviceID: deviceID,
+            targetLabel: targetLabel,
+            workspaces: workspaces,
+            agents: agents,
+            focusedWorkspaceID: focusedWorkspaceID,
+            focusedCheckoutID: focusedCheckoutID,
+            focusedTabID: focusedTabID,
+            focusedPaneID: paneID,
+            activeTabIDs: activeTabIDs
+        )
+    }
+
+    static func workspaceID(deviceID: String, remoteID: String) -> String {
+        "remote:\(deviceID):workspace:\(remoteID)"
+    }
+
+    static func checkoutID(deviceID: String, remoteID: String) -> String {
+        "remote:\(deviceID):checkout:\(remoteID)"
+    }
 }
 
 private struct RemoteProbeResult: Sendable {
     let version: ProcessReceipt
-    let workspaceList: ProcessReceipt?
+    let snapshot: ProcessReceipt?
 }
 
 @MainActor
@@ -428,42 +780,73 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var phase: RuntimePhase = .idle
     @Published private(set) var message = "Remote mini has not been checked yet."
     @Published private(set) var workspaces: [RemoteWorkspaceSummary] = []
+    @Published private(set) var navigation: RemoteNavigationSnapshot?
+    @Published private(set) var files: [RemoteFileNode] = []
+    @Published private(set) var fileError: String?
+    @Published private(set) var attachError: String?
     @Published private(set) var checkedAt = "never"
     @Published private(set) var targetLabel = "mini"
+    private(set) var sshAlias = "mini"
+    private var refreshGeneration = UUID()
+    private var loadedFilePath: String?
+    private var pendingTerminalPaths: Set<String> = []
     var environmentStateProvider: ((String) -> String?)?
 
     func refreshMini() {
         refresh(targetID: "mini", label: "mini", sshAlias: "mini")
     }
 
+    func clearNavigation() {
+        refreshGeneration = UUID()
+        navigation = nil
+        workspaces = []
+        files = []
+        fileError = nil
+        attachError = nil
+        loadedFilePath = nil
+        phase = .idle
+        message = "Remote mini has not been checked yet."
+    }
+
     func refresh(targetID: String, label: String, sshAlias: String) {
+        let requestID = UUID()
+        refreshGeneration = requestID
+        navigation = nil
+        workspaces = []
+        files = []
+        fileError = nil
+        attachError = nil
+        loadedFilePath = nil
         guard environmentStateProvider?("SSH_AUTH_SOCK") == "available" else {
             phase = .unavailable
             targetLabel = label
+            self.sshAlias = sshAlias
             message = "SSH_AUTH_SOCK is unavailable. Remote features are disabled; launch from a shell with the agent socket exported."
             checkedAt = ISO8601DateFormatter().string(from: Date())
             return
         }
         phase = .loading
         targetLabel = label
+        self.sshAlias = sshAlias
         message = "Connecting to \(label) and loading remote workspaces…"
         Task {
             let probe = await Task.detached { () -> RemoteProbeResult in
                 let version = SafeProcess.run(
                     executable: "/usr/bin/ssh",
-                    arguments: [sshAlias, "zsh", "-ilc", "herdr --version"]
+                    arguments: [sshAlias, RemoteShellCommand.loginShell("herdr --version")]
                 )
                 guard version.status == 0 else {
-                    return RemoteProbeResult(version: version, workspaceList: nil)
+                    return RemoteProbeResult(version: version, snapshot: nil)
                 }
                 return RemoteProbeResult(
                     version: version,
-                    workspaceList: SafeProcess.run(
+                    snapshot: SafeProcess.run(
                         executable: "/usr/bin/ssh",
-                        arguments: [sshAlias, "zsh", "-ilc", "herdr workspace list"]
+                        arguments: [sshAlias, RemoteShellCommand.loginShell("herdr api snapshot")]
                     )
                 )
             }.value
+            guard refreshGeneration == requestID else { return }
             checkedAt = ISO8601DateFormatter().string(from: Date())
             guard probe.version.status == 0 else {
                 phase = .failed
@@ -471,48 +854,138 @@ final class RemoteRuntimeModel: ObservableObject {
                 log(kind: "remote.refresh_failed")
                 return
             }
-            guard let version = version(from: probe.version.stdout) else {
+            guard let remoteVersion = version(from: probe.version.stdout) else {
                 phase = .failed
                 message = "The Herdr version response from \(label) was not readable. Retry after checking the remote installation."
                 log(kind: "remote.refresh_failed")
                 return
             }
-            if compare(version, with: HideRuntimeEnvironment.bundledVersion) == .orderedAscending {
+            if compare(remoteVersion, with: HideRuntimeEnvironment.bundledVersion) == .orderedAscending {
                 phase = .stale
-                message = "Herdr \(version) on \(label) is below hide's supported \(HideRuntimeEnvironment.bundledVersion). Run `curl -fsSL https://herdr.dev/install.sh | sh` or `brew install herdr` on the remote host. Hide does not install or upgrade it."
+                message = "Herdr \(remoteVersion) on \(label) is below hide's supported \(HideRuntimeEnvironment.bundledVersion). Upgrade the remote Herdr installation, then retry. Hide does not install or upgrade it."
                 log(kind: "remote.stale")
                 return
             }
-            guard let workspaceList = probe.workspaceList else {
+            guard let snapshot = probe.snapshot else {
                 phase = .failed
-                message = "The remote workspace response from \(label) was not available. Retry after checking SSH and the remote Herdr service."
+                message = "The remote snapshot from \(label) was not available. Retry after checking SSH and the remote Herdr service."
                 log(kind: "remote.refresh_failed")
                 return
             }
-            guard workspaceList.status == 0 else {
+            guard snapshot.status == 0,
+                  let envelope = try? JSONDecoder().decode(RemoteSnapshotEnvelope.self, from: snapshot.stdout)
+            else {
                 phase = .failed
-                message = remoteFailure(workspaceList, label: label)
+                message = snapshot.status == 0
+                    ? "The remote snapshot from \(label) was malformed. Retry after checking the remote Herdr service."
+                    : remoteFailure(snapshot, label: label)
                 log(kind: "remote.refresh_failed")
                 return
             }
-            guard let envelope = try? JSONDecoder().decode(RemoteWorkspaceEnvelope.self, from: workspaceList.stdout) else {
-                phase = .failed
-                message = "The remote workspace response from \(label) was malformed. Retry after checking the remote Herdr service."
-                log(kind: "remote.refresh_failed")
-                return
-            }
-            workspaces = envelope.result.workspaces.sorted { lhs, rhs in
-                let lhsOwned = lhs.label.hasPrefix("herdr-ide-verify-")
-                let rhsOwned = rhs.label.hasPrefix("herdr-ide-verify-")
-                if lhsOwned != rhsOwned { return lhsOwned }
-                return lhs.label.localizedStandardCompare(rhs.label) == .orderedAscending
+            let wire = envelope.result.snapshot
+            let projection = RemoteNavigationSnapshot(deviceID: targetID, targetLabel: label, wire: wire)
+            navigation = projection
+            workspaces = projection.workspaces.map { workspace in
+                RemoteWorkspaceSummary(
+                    workspaceID: workspace.id,
+                    label: workspace.label,
+                    paneCount: workspace.checkouts.flatMap { $0.tabs }.flatMap { $0.panes }.count,
+                    activeTabID: workspace.checkouts.first?.tabs.first?.id
+                )
             }
             phase = .ready
             message = workspaces.isEmpty
                 ? "\(label) is connected, but no remote workspace is open. Create one on \(label) and retry."
-                : "\(label) connected. Remote file viewing and terminal attach are available; inline editing stays disabled."
+                : "\(label) connected. Remote workspaces, file trees, and terminal panes are attached; inline editing stays disabled."
             log(kind: "remote.ready")
         }
+    }
+
+    func focus(workspaceID: String, checkoutID: String, paneID: String? = nil) {
+        navigation = navigation?.focused(workspaceID: workspaceID, checkoutID: checkoutID, paneID: paneID)
+    }
+
+    func startTerminal(checkout: CoreCheckoutSnapshot) {
+        guard phase == .ready else {
+            attachError = "Remote Herdr is not ready. Retry the connection before starting a terminal."
+            message = attachError ?? message
+            return
+        }
+        guard !checkout.path.isEmpty else {
+            attachError = "The remote checkout path is unavailable, so Hide cannot start a terminal there."
+            message = attachError ?? message
+            return
+        }
+        guard pendingTerminalPaths.insert(checkout.path).inserted else {
+            attachError = "A remote terminal is already starting for this checkout."
+            return
+        }
+        let requestID = refreshGeneration
+        let alias = sshAlias
+        let label = checkout.label
+        let path = checkout.path
+        Task {
+            let result = await Task.detached {
+                let command = "herdr workspace create --cwd \(RemoteShellCommand.quote(path)) --label \(RemoteShellCommand.quote("hide \(label)")) --no-focus"
+                return SafeProcess.run(
+                    executable: "/usr/bin/ssh",
+                    arguments: [alias, RemoteShellCommand.loginShell(command)]
+                )
+            }.value
+            guard refreshGeneration == requestID else { return }
+            pendingTerminalPaths.remove(path)
+            guard result.status == 0 else {
+                attachError = remoteFailure(result, label: targetLabel)
+                message = attachError ?? message
+                log(kind: "remote.terminal_start_failed")
+                return
+            }
+            message = "Started a remote terminal in \(URL(fileURLWithPath: path).lastPathComponent). Refreshing the remote snapshot."
+            refresh(targetID: navigation?.deviceID ?? "mini", label: targetLabel, sshAlias: alias)
+        }
+    }
+
+    func loadFiles(path: String) {
+        guard phase == .ready, !path.isEmpty, path != loadedFilePath else { return }
+        loadedFilePath = path
+        fileError = nil
+        let requestID = refreshGeneration
+        let alias = sshAlias
+        Task {
+            let result = await Task.detached {
+                let quotedPath = RemoteShellCommand.quote(path)
+                let command = "find \(quotedPath) -mindepth 1 -maxdepth 1 -type d -exec printf 'D\\t%s\\n' {} \\; ; find \(quotedPath) -mindepth 1 -maxdepth 1 -type f -exec printf 'F\\t%s\\n' {} \\;"
+                return SafeProcess.run(
+                    executable: "/usr/bin/ssh",
+                    arguments: [alias, RemoteShellCommand.loginShell(command)]
+                )
+            }.value
+            guard refreshGeneration == requestID else { return }
+            guard result.status == 0 else {
+                fileError = remoteFailure(result, label: targetLabel)
+                files = []
+                log(kind: "remote.files_failed")
+                return
+            }
+            files = String(decoding: result.stdout, as: UTF8.self)
+                .split(whereSeparator: \.isNewline)
+                .compactMap { line in
+                    let pieces = line.split(separator: "\t", maxSplits: 1).map(String.init)
+                    guard pieces.count == 2 else { return nil }
+                    return RemoteFileNode(path: pieces[1], isDirectory: pieces[0] == "D")
+                }
+                .sorted { lhs, rhs in
+                    if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+                    return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                }
+            log(kind: "remote.files_ready")
+        }
+    }
+
+    func recordAttachFailure(paneID: String, exitCode: Int32?) {
+        let suffix = exitCode.map { " (exit \($0))" } ?? ""
+        attachError = "Remote terminal initialization failed for \(paneID)\(suffix). Check the SSH PTY/TERM and remote Herdr session, then retry."
+        log(kind: "remote.terminal_attach_failed")
     }
 
     private func version(from data: Data) -> String? {
@@ -550,7 +1023,7 @@ final class RemoteRuntimeModel: ObservableObject {
         if normalized.contains("could not resolve") || normalized.contains("connection refused") || normalized.contains("no route") {
             return "SSH could not reach \(label). Check the alias and host availability, then retry."
         }
-        return detail.isEmpty ? "\(label) workspace list failed. Retry after checking SSH and the remote Herdr service." : detail
+        return detail.isEmpty ? "\(label) remote Herdr operation failed. Retry after checking SSH and the remote Herdr service." : detail
     }
 
     private func log(kind: String) {
@@ -559,10 +1032,35 @@ final class RemoteRuntimeModel: ObservableObject {
             "target": targetLabel,
             "state": phase.rawValue,
             "workspace_count": workspaces.count,
+            "file_count": files.count,
             "checked_at": checkedAt,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
         VerificationReceipt.writeLine(data)
+    }
+}
+
+enum RemoteShellCommand {
+    static func quote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// SSH joins its trailing arguments into one remote command. Keep the
+    /// complete login-shell invocation in one argument so `-c` receives the
+    /// entire Herdr command instead of treating its words as `$0`, `$1`, ... .
+    static func loginShell(_ command: String) -> String {
+        "zsh -ilc \(quote(command))"
+    }
+
+    /// Keep remote Herdr diagnostics out of the terminal surface.
+    ///
+    /// A pane attach failure can include a Rust panic when the remote shell
+    /// has no usable PTY or TERM. The failure remains observable through the
+    /// exit code and the normalized sentence below, without leaking an
+    /// implementation traceback into the product UI.
+    static func attach(paneID: String) -> String {
+        let command = "herdr pane attach \(quote(paneID)) 2>/dev/null; status=$?; if [ \"$status\" -ne 0 ]; then printf '\\r\\nHide: remote terminal initialization failed on mini (exit %s). Check SSH PTY/TERM and the remote Herdr session, then retry.\\r\\n' \"$status\"; exit \"$status\"; fi"
+        return command
     }
 }
 

@@ -1,0 +1,1 @@
+zsh:log:14: too many arguments

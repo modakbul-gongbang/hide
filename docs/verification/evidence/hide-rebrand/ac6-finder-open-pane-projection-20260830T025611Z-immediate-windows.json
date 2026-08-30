@@ -1,0 +1,35 @@
+{
+  "debug_logs" : [
+    "[2026-08-30T02:57:28.658Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))"
+  ],
+  "data" : {
+    "windows" : [
+      {
+        "is_on_screen" : true,
+        "window_id" : 7723,
+        "is_key" : true,
+        "layer" : 0,
+        "window_title" : "hide",
+        "bounds" : {
+          "width" : 1440,
+          "height" : 928,
+          "y" : 72,
+          "x" : 144
+        },
+        "window_index" : 12,
+        "subrole" : "AXStandardWindow",
+        "is_frontmost" : true
+      }
+    ],
+    "target_application_info" : {
+      "pid" : 49138,
+      "bundle_id" : "me.grab.hide",
+      "app_name" : "hide"
+    },
+    "inventory_completeness" : "partial",
+    "inventory_warnings" : [
+      "Window list omitted 12 non-renderable or duplicate inventory rows."
+    ]
+  },
+  "success" : true
+}

@@ -564,13 +564,10 @@ impl Runtime {
                 continue;
             };
             let checkout_index = context_path.as_deref().and_then(|path| {
-                let normalized = workspace::normalized_for_comparison(Path::new(path));
-                workspace_snapshot.checkouts.iter().position(|checkout| {
-                    let checkout_path =
-                        workspace::normalized_for_comparison(Path::new(&checkout.path));
-                    normalized == checkout_path
-                        || normalized.starts_with(&format!("{checkout_path}/"))
-                })
+                workspace_snapshot
+                    .checkouts
+                    .iter()
+                    .position(|checkout| path_is_within_checkout(path, &checkout.path))
             });
             let Some(checkout) = workspace_snapshot
                 .checkouts
@@ -615,11 +612,19 @@ impl Runtime {
                     }
                 })
                 .collect::<Vec<_>>();
+            let tab_label = payload
+                .tabs
+                .iter()
+                .find(|tab| tab.tab_id == layout.tab_id)
+                .map(|tab| tab.label.trim())
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| layout.tab_id.clone());
             let tab = TabSnapshot {
                 id: Some(layout.tab_id.clone()),
                 workspace_id: Some(workspace_snapshot.id.clone()),
                 checkout_id: Some(checkout.id.clone()),
-                label: Some("Session".to_owned()),
+                label: Some(tab_label),
                 empty: panes.is_empty(),
                 panes,
             };
@@ -661,7 +666,7 @@ impl Runtime {
                 Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
             })
         });
-        if !focused_checkout_exists {
+        if !focused_checkout_exists && self.snapshot.ui_state.focused_checkout_id.is_none() {
             self.snapshot.navigator.focused_checkout_id = self
                 .snapshot
                 .navigator
@@ -723,6 +728,14 @@ impl Runtime {
                         .map(|checkout| (workspace.id.clone(), checkout))
                 })
         else {
+            self.snapshot.tab = TabSnapshot {
+                id: None,
+                workspace_id: None,
+                checkout_id: None,
+                label: None,
+                empty: true,
+                panes: Vec::new(),
+            };
             return;
         };
         if let Some(tab) = checkout.tabs.first() {
@@ -775,7 +788,6 @@ impl Runtime {
                             .flat_map(|workspace| workspace.checkouts.iter())
                             .find(|checkout| checkout.id == focused_checkout_id)
                     });
-                let focused_checkout_path = focused_checkout.map(|checkout| checkout.path.as_str());
                 let focused_checkout_pane_ids = focused_checkout
                     .map(|checkout| {
                         checkout
@@ -786,22 +798,30 @@ impl Runtime {
                             .collect::<HashSet<_>>()
                     })
                     .unwrap_or_default();
-                let selected_pane_id = self.snapshot.terminal.pane_id.as_deref().or(self
+                let selected_pane_id = self
                     .snapshot
-                    .ui_state
-                    .selected_pane_id
-                    .as_deref());
-                let selected_still_exists = selected_pane_id.is_some_and(|pane_id| {
+                    .terminal
+                    .pane_id
+                    .clone()
+                    .or_else(|| self.snapshot.ui_state.selected_pane_id.clone());
+                let selected_still_exists = selected_pane_id.as_deref().is_some_and(|pane_id| {
                     payload
                         .layouts
                         .iter()
                         .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
                 });
+                let selected_pane_missing = selected_pane_id.is_some() && !selected_still_exists;
+                let explicit_checkout_missing =
+                    self.snapshot.ui_state.focused_checkout_id.is_some()
+                        && focused_checkout.is_none();
                 // Once the user or persisted state chooses a pane, a session
                 // snapshot that omits that workspace must not silently retarget
                 // commands to Herdr's unrelated globally focused workspace.
-                let target_pane_id = if focused_checkout.is_some() {
+                let target_pane_id = if selected_pane_missing || explicit_checkout_missing {
+                    None
+                } else if focused_checkout.is_some() {
                     selected_pane_id
+                        .as_deref()
                         .filter(|pane_id| {
                             selected_still_exists && focused_checkout_pane_ids.contains(*pane_id)
                         })
@@ -818,20 +838,11 @@ impl Runtime {
                                 })
                                 .map(|pane_id| pane_id.as_str())
                         })
-                        .or_else(|| {
-                            focused_checkout_path.and_then(|checkout_path| {
-                                payload.panes.iter().find_map(|pane| {
-                                    pane.cwd
-                                        .as_deref()
-                                        .filter(|cwd| path_is_within_checkout(cwd, checkout_path))
-                                        .map(|_| pane.pane_id.as_str())
-                                })
-                            })
-                        })
                 } else if selected_pane_id.is_some() && !selected_still_exists {
                     None
                 } else {
                     selected_pane_id
+                        .as_deref()
                         .or(payload.focused_pane_id.as_deref())
                         .or_else(|| {
                             payload
@@ -840,6 +851,21 @@ impl Runtime {
                                 .map(|layout| layout.focused_pane_id.as_str())
                         })
                 };
+                let selected_pane_invalid_for_context = selected_pane_id.is_some()
+                    && ((focused_checkout.is_some() && target_pane_id.is_none())
+                        || (focused_checkout.is_none()
+                            && self.snapshot.ui_state.focused_checkout_id.is_some()));
+                if selected_pane_missing || selected_pane_invalid_for_context {
+                    let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
+                    self.clear_terminal_projection();
+                    self.set_error(
+                        "pane.projection_unavailable",
+                        format!(
+                            "Selected pane {pane_id} is not available for the selected checkout; terminal projection is waiting"
+                        ),
+                        true,
+                    );
+                }
                 let layout = target_pane_id
                     .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
                     .transpose();
@@ -1055,6 +1081,15 @@ impl Runtime {
         self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
         self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
         self.snapshot.pane_layout = Some(layout);
+        if self
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .is_some_and(|error| error.kind == "pane.projection_unavailable")
+        {
+            self.snapshot.status.last_error = None;
+        }
         self.sync_focused_terminal_projection();
 
         if self.live.is_some() {
@@ -1388,7 +1423,7 @@ impl Runtime {
                 Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
             })
         });
-        if !focused_exists {
+        if !focused_exists && self.snapshot.ui_state.focused_checkout_id.is_none() {
             self.snapshot.navigator.focused_checkout_id = self
                 .snapshot
                 .navigator
@@ -1437,16 +1472,51 @@ impl Runtime {
     /// next one. Herdr's globally focused pane may belong to another
     /// workspace, so retaining it here would let the next poll redraw stale
     /// terminal content while the selected checkout has no pane yet.
-    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
+    fn clear_terminal_projection(&mut self) {
         self.snapshot.pane_layout = None;
         self.snapshot.zoomed = None;
         self.snapshot.terminal.panes.clear();
         self.snapshot.terminal.closed = false;
         self.snapshot.terminal.exit_code = None;
+    }
+
+    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
+        self.clear_terminal_projection();
         self.snapshot.terminal.pane_id = pane_id.clone();
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = pane_id.clone();
         self.snapshot.ui_state.selected_pane_id = pane_id;
+        self.sync_focused_terminal_projection();
+    }
+
+    /// A launcher result is a local projection anchor, not a Herdr focus
+    /// request. Keep it authoritative over an older terminal pane while the
+    /// next live poll catches up, and make the missing layout visible instead
+    /// of retaining unrelated same-cwd content.
+    fn apply_selected_pane_anchor(&mut self, pane_id: Option<String>) {
+        let layout_contains_pane = pane_id.as_deref().is_some_and(|selected_pane_id| {
+            self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
+                layout
+                    .pane_ids()
+                    .into_iter()
+                    .any(|layout_pane_id| layout_pane_id == selected_pane_id)
+            })
+        });
+        self.snapshot.terminal.pane_id = pane_id.clone();
+        self.snapshot.focused.surface = Surface::Terminal;
+        self.snapshot.focused.pane_id = pane_id.clone();
+        if !layout_contains_pane {
+            self.clear_terminal_projection();
+            if let Some(pane_id) = pane_id.as_deref() {
+                self.set_error(
+                    "pane.projection_unavailable",
+                    format!(
+                        "Selected pane {pane_id} is not present in the Herdr session; terminal projection is waiting"
+                    ),
+                    true,
+                );
+            }
+        }
         self.sync_focused_terminal_projection();
     }
 
@@ -2237,11 +2307,14 @@ impl Runtime {
                     font_size: payload.font_size.unwrap_or(current.font_size),
                     bypass_warnings: payload.bypass_warnings.unwrap_or(current.bypass_warnings),
                 };
+                self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
-                self.rebuild_catalog(&[]);
+                // The live poller owns session-derived temporary workspaces.
+                // UI-state persistence must not rebuild from an empty session
+                // and erase the catalog that the user is currently viewing.
                 match persistence::save(&self.state_path, &self.snapshot.ui_state) {
                     Ok(()) => true,
                     Err(message) => {
@@ -2450,7 +2523,9 @@ fn path_is_within_checkout(path: &str, checkout_path: &str) -> bool {
     let checkout_path = PathBuf::from(workspace::normalized_for_comparison(Path::new(
         checkout_path,
     )));
-    path == checkout_path || path.starts_with(checkout_path)
+    // `Path::starts_with` compares path components, so `barista` cannot
+    // match the checkout component `bar`.
+    path.starts_with(checkout_path.as_path())
 }
 
 struct EventValidationError {
@@ -2568,12 +2643,16 @@ mod tests {
     use super::*;
     use crate::live::SessionFetchError;
     use crate::model::{
-        CheckoutSnapshot, PaneSnapshot, TabSnapshot, TerminalPaneSnapshot, WorkspaceRegistration,
-        WorkspaceSnapshot,
+        CheckoutSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, TabSnapshot,
+        TerminalPaneSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
     };
     use crate::sidebar::SessionSnapshotPayload;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_RUNTIME_STATE_ID: AtomicU64 = AtomicU64::new(0);
 
     fn runtime() -> Runtime {
+        let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
         let options = CoreOptions {
             schema_version: SCHEMA_VERSION,
             herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
@@ -2581,8 +2660,9 @@ mod tests {
             remote_targets: Vec::new(),
             app_state_path: std::env::temp_dir()
                 .join(format!(
-                    "herdr-core-pet-runtime-{}.json",
-                    std::process::id()
+                    "herdr-core-pet-runtime-{}-{}.json",
+                    std::process::id(),
+                    state_id
                 ))
                 .to_string_lossy()
                 .into_owned(),
@@ -2797,6 +2877,11 @@ mod tests {
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
+            "tabs": [{
+                "workspace_id": "herdr-workspace",
+                "tab_id": "herdr-workspace:t1",
+                "label": "2"
+            }],
             "panes": [{"pane_id": "plain:p1", "cwd": checkout_path}],
             "layouts": [{
                 "workspace_id": "herdr-workspace",
@@ -2832,6 +2917,7 @@ mod tests {
             "plain pane layout should create one checkout tab"
         );
         assert_eq!(checkout.tabs[0].panes[0].id, "plain:p1");
+        assert_eq!(checkout.tabs[0].label.as_deref(), Some("2"));
         assert_eq!(checkout.tabs[0].panes[0].cwd, checkout_path);
         assert_eq!(
             runtime.snapshot().terminal.pane_id.as_deref(),
@@ -2910,6 +2996,97 @@ mod tests {
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("w3M:p1")
         );
+
+        let ui_state_anchor = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "selected_path": null,
+                "selected_pane_id": "w3Z:p1",
+                "focused_checkout_id": checkout_id,
+                "shortcut_bindings": {},
+                "accent_hex": "#B9FF66",
+                "font_size": 13,
+                "bypass_warnings": false
+            }
+        }))
+        .expect("temporary catalog anchor event");
+        assert!(runtime.dispatch_json(&ui_state_anchor));
+        assert!(
+            runtime
+                .snapshot()
+                .navigator
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == workspace_id)
+        );
+        assert_eq!(
+            runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+            Some(checkout_id.as_str())
+        );
+
+        let next_payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [
+                {"pane_id": "w3P:p1", "cwd": checkout_path},
+                {"pane_id": "w3Z:p1", "cwd": checkout_path}
+            ],
+            "layouts": [
+                {
+                    "workspace_id": "w3P",
+                    "tab_id": "w3P:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w3P:p1",
+                    "panes": [{"pane_id": "w3P:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                },
+                {
+                    "workspace_id": "w3Z",
+                    "tab_id": "w3Z:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w3Z:p1",
+                    "panes": [{"pane_id": "w3Z:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }
+            ]
+        }))
+        .expect("selected temporary layout payload");
+        let next_catalog = live::PrecomputedCatalog {
+            registrations: Vec::new(),
+            workspaces: workspace::build_catalog(&[], &temporary_paths),
+        };
+        assert!(runtime.ingest_session_with_catalog(Ok(next_payload), Some(next_catalog)));
+        let selected_checkout = runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+            })
+            .expect("selected temporary checkout after the next poll");
+        assert!(selected_checkout.tabs.iter().any(|tab| {
+            tab.id.as_deref() == Some("w3Z:t1") && tab.panes.iter().any(|pane| pane.id == "w3Z:p1")
+        }));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w3Z:p1")
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layout
+                .as_ref()
+                .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
+            Some(("w3Z", "w3Z:t1"))
+        );
     }
 
     #[test]
@@ -2947,6 +3124,317 @@ mod tests {
                 .expect("workspace for the selected checkout");
 
         assert_eq!(selected.id, "registered-workspace");
+    }
+
+    #[test]
+    fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-selected-checkout";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let registration = WorkspaceRegistration {
+            id: workspace_id.clone(),
+            label: "Selected".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        };
+        let selected_workspace = workspace(
+            &workspace_id,
+            "Selected",
+            checkout_path,
+            vec![checkout(&workspace_id, &checkout_id, checkout_path, None)],
+        );
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
+        runtime.reset_terminal_projection(None);
+        runtime.snapshot.terminal.pane_id = Some("w2X:pB".to_owned());
+        runtime.snapshot.focused.pane_id = Some("w2X:pB".to_owned());
+        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+            workspace_id: "w2X".to_owned(),
+            tab_id: "w2X:t1".to_owned(),
+            focused_pane_id: "w2X:pB".to_owned(),
+            zoomed: false,
+            root: PaneLayoutNodeSnapshot::Pane {
+                pane_id: "w2X:pB".to_owned(),
+            },
+        });
+        runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+            pane_id: "w2X:pB".to_owned(),
+            closed: false,
+            exit_code: None,
+        }];
+
+        let selected_pane = "w3V:p1";
+        let select_pane = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "selected_path": null,
+                "selected_pane_id": selected_pane,
+                "focused_checkout_id": checkout_id,
+                "shortcut_bindings": {},
+                "accent_hex": "#B9FF66",
+                "font_size": 13,
+                "bypass_warnings": false
+            }
+        }))
+        .expect("selected pane state event");
+        assert!(runtime.dispatch_json(&select_pane));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some(selected_pane)
+        );
+        assert_eq!(
+            runtime.snapshot().focused.pane_id.as_deref(),
+            Some(selected_pane)
+        );
+        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().terminal.panes.is_empty());
+        assert_eq!(
+            runtime.snapshot().ui_state.focused_checkout_id.as_deref(),
+            Some(checkout_id.as_str())
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("pane.projection_unavailable")
+        );
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [
+                {"pane_id": "w2X:pB", "cwd": checkout_path},
+                {"pane_id": selected_pane, "cwd": checkout_path}
+            ],
+            "layouts": [
+                {
+                    "workspace_id": "w2X",
+                    "tab_id": "w2X:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w2X:pB",
+                    "panes": [{"pane_id": "w2X:pB", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                },
+                {
+                    "workspace_id": "w3V",
+                    "tab_id": "w3V:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": selected_pane,
+                    "panes": [{"pane_id": selected_pane, "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }
+            ]
+        }))
+        .expect("overlapping cwd session payload");
+        let catalog = live::PrecomputedCatalog {
+            registrations: vec![registration],
+            workspaces: vec![selected_workspace],
+        };
+
+        assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+        let checkout = runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+            })
+            .expect("selected checkout");
+        assert!(checkout.tabs.iter().any(|tab| {
+            tab.id.as_deref() == Some("w3V:t1")
+                && tab.panes.iter().any(|pane| pane.id == selected_pane)
+        }));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some(selected_pane)
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layout
+                .as_ref()
+                .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
+            Some(("w3V", "w3V:t1"))
+        );
+        assert!(runtime.snapshot().status.last_error.is_none());
+    }
+
+    #[test]
+    fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-missing-selected-pane";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let registration = WorkspaceRegistration {
+            id: workspace_id.clone(),
+            label: "Missing pane".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        };
+        let selected_workspace = workspace(
+            &workspace_id,
+            "Missing pane",
+            checkout_path,
+            vec![checkout(&workspace_id, &checkout_id, checkout_path, None)],
+        );
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.snapshot.ui_state.selected_pane_id = Some("missing:p1".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("missing:p1".to_owned());
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "old:p1", "cwd": checkout_path}],
+            "layouts": [{
+                "workspace_id": "old-workspace",
+                "tab_id": "old-workspace:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "old:p1",
+                "panes": [{"pane_id": "old:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("missing selected pane payload");
+        let catalog = live::PrecomputedCatalog {
+            registrations: vec![registration],
+            workspaces: vec![selected_workspace],
+        };
+
+        assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+        assert!(runtime.snapshot().pane_layout.is_none());
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("missing:p1")
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("pane.projection_unavailable")
+        );
+    }
+
+    #[test]
+    fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing() {
+        let mut runtime = runtime();
+        let stale_checkout_id = "checkout:selected";
+        runtime.snapshot.navigator.focused_checkout_id = Some(stale_checkout_id.to_owned());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(stale_checkout_id.to_owned());
+        runtime.snapshot.terminal.pane_id = Some("w3P:p1".to_owned());
+        runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+            pane_id: "w3P:p1".to_owned(),
+            closed: false,
+            exit_code: None,
+        }];
+        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+            workspace_id: "w3P".to_owned(),
+            tab_id: "w3P:t1".to_owned(),
+            focused_pane_id: "w3P:p1".to_owned(),
+            zoomed: false,
+            root: PaneLayoutNodeSnapshot::Pane {
+                pane_id: "w3P:p1".to_owned(),
+            },
+        });
+        runtime.snapshot.tab = TabSnapshot {
+            id: Some("w3P:t1".to_owned()),
+            workspace_id: Some("w3P".to_owned()),
+            checkout_id: Some(stale_checkout_id.to_owned()),
+            label: Some("Old context".to_owned()),
+            empty: false,
+            panes: vec![pane("w3P:p1", "/tmp/old-context")],
+        };
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "w3P:p1", "cwd": "/tmp/old-context"}],
+            "layouts": [{
+                "workspace_id": "w3P",
+                "tab_id": "w3P:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w3P:p1",
+                "panes": [{"pane_id": "w3P:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("stale projection payload");
+
+        assert!(runtime.ingest_session_with_catalog(
+            Ok(payload),
+            Some(live::PrecomputedCatalog {
+                registrations: Vec::new(),
+                workspaces: Vec::new(),
+            }),
+        ));
+        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().terminal.panes.is_empty());
+        assert!(runtime.snapshot().tab.empty);
+        assert!(runtime.snapshot().tab.panes.is_empty());
+        assert_eq!(runtime.snapshot().tab.checkout_id, None);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("pane.projection_unavailable")
+        );
+    }
+
+    #[test]
+    fn checkout_path_matching_uses_component_boundaries() {
+        let id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
+        let checkout_path = std::env::temp_dir().join(format!(
+            "hide-checkout-boundary-{}-{id}",
+            std::process::id()
+        ));
+        let sibling_path = checkout_path.with_file_name(format!(
+            "{}-sibling",
+            checkout_path
+                .file_name()
+                .expect("checkout directory name")
+                .to_string_lossy()
+        ));
+        std::fs::create_dir_all(checkout_path.join("src")).expect("checkout fixture");
+        std::fs::create_dir_all(sibling_path.join("src")).expect("sibling fixture");
+        let checkout = checkout_path.to_string_lossy();
+        let child = checkout_path
+            .join("src/main.rs")
+            .to_string_lossy()
+            .into_owned();
+        let sibling_child = sibling_path
+            .join("src/main.rs")
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(path_is_within_checkout(&child, &checkout));
+        assert!(!path_is_within_checkout(&sibling_child, &checkout));
+
+        let _ = std::fs::remove_dir_all(checkout_path);
+        let _ = std::fs::remove_dir_all(sibling_path);
     }
 
     #[test]

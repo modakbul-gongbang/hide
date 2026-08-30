@@ -98,6 +98,164 @@ import Testing
     #expect(WorkspaceTree.load(root: nil).isEmpty)
 }
 
+@Test func paneLessCheckoutSelectionRequestsAnAutomaticTerminal() {
+    let checkout = CoreCheckoutSnapshot(
+        id: "checkout-empty",
+        workspaceID: "workspace",
+        label: "feature/empty",
+        path: "/tmp/hide-empty-checkout",
+        branch: "feature/empty",
+        isWorktree: true,
+        exists: true,
+        temporary: false,
+        tabs: []
+    )
+
+    #expect(CheckoutSelectionPolicy.action(for: checkout) == .startTerminal)
+}
+
+@Test func checkoutWithAExistingPaneOnlyChangesFocus() {
+    let pane = CorePaneSnapshot(
+        id: "pane-existing",
+        label: "terminal",
+        cwd: "/tmp/hide-existing-checkout",
+        state: "attached",
+        summary: nil,
+        activityAt: nil
+    )
+    let checkout = CoreCheckoutSnapshot(
+        id: "checkout-existing",
+        workspaceID: "workspace",
+        label: "main",
+        path: "/tmp/hide-existing-checkout",
+        branch: "main",
+        isWorktree: false,
+        exists: true,
+        temporary: false,
+        tabs: [CoreTabSnapshot(
+            id: "tab-existing",
+            workspaceID: "workspace",
+            checkoutID: "checkout-existing",
+            label: "1",
+            empty: false,
+            panes: [pane]
+        )]
+    )
+
+    #expect(CheckoutSelectionPolicy.action(for: checkout) == .focusExisting)
+}
+
+@Test func terminalLayoutMustBelongToTheFocusedCheckoutBeforeRendering() {
+    let checkout = CoreCheckoutSnapshot(
+        id: "checkout-b",
+        workspaceID: "workspace-b",
+        label: "main",
+        path: "/tmp/hide-workspace-b",
+        branch: "main",
+        isWorktree: false,
+        exists: true,
+        temporary: false,
+        tabs: [CoreTabSnapshot(
+            id: "tab-b",
+            workspaceID: "workspace-b",
+            checkoutID: "checkout-b",
+            label: "1",
+            empty: false,
+            panes: [CorePaneSnapshot(
+                id: "pane-b",
+                label: "pane-b",
+                cwd: "/tmp/hide-workspace-b",
+                state: "attached",
+                summary: nil,
+                activityAt: nil
+            )]
+        )]
+    )
+
+    #expect(TerminalLayoutPolicy.belongs(
+        workspaceID: "herdr-live-workspace-b",
+        tabID: "tab-b",
+        paneIDs: ["pane-b"],
+        checkout: checkout
+    ))
+    #expect(!TerminalLayoutPolicy.belongs(
+        workspaceID: "workspace-a",
+        tabID: "tab-a",
+        paneIDs: ["pane-a"],
+        checkout: checkout
+    ))
+}
+
+@Test func remoteSnapshotProjectionCarriesContextAndPaneCwd() throws {
+    let data = Data("""
+    {
+      "result": {
+        "snapshot": {
+          "focused_workspace_id": "w1",
+          "focused_tab_id": "w1:t1",
+          "focused_pane_id": "w1:p1",
+          "workspaces": [{
+            "workspace_id": "w1",
+            "label": "remote-repo",
+            "active_tab_id": "w1:t1",
+            "pane_count": 1,
+            "tab_count": 1
+          }],
+          "tabs": [{
+            "tab_id": "w1:t1",
+            "workspace_id": "w1",
+            "label": "1",
+            "pane_count": 1
+          }],
+          "panes": [{
+            "pane_id": "w1:p1",
+            "workspace_id": "w1",
+            "tab_id": "w1:t1",
+            "cwd": "/Users/grab/projects/remote-repo",
+            "terminal_title": "remote-repo",
+            "terminal_title_stripped": "remote-repo"
+          }],
+          "agents": []
+        }
+      }
+    }
+    """.utf8)
+
+    let projection = try RemoteSnapshotProjection.decode(
+        data,
+        deviceID: "device:mini",
+        targetLabel: "Mac mini"
+    )
+    let workspace = try #require(projection.workspaces.first)
+    let checkout = try #require(workspace.checkouts.first)
+    let tab = try #require(checkout.tabs.first)
+    let pane = try #require(tab.panes.first)
+
+    #expect(projection.focusedWorkspaceID == workspace.id)
+    #expect(projection.focusedCheckoutID == checkout.id)
+    #expect(projection.focusedTabID == tab.id)
+    #expect(projection.focusedPaneID == pane.id)
+    #expect(checkout.path == "/Users/grab/projects/remote-repo")
+    #expect(pane.cwd == checkout.path)
+
+    let selected = projection.focused(workspaceID: workspace.id, checkoutID: checkout.id)
+    #expect(selected.focusedTabID == tab.id)
+    #expect(selected.focusedPaneID == pane.id)
+}
+
+@Test func remoteShellCommandQuotesPathsWithoutHandlingCredentials() {
+    #expect(RemoteShellCommand.quote("/tmp/remote checkout") == "'/tmp/remote checkout'")
+    #expect(RemoteShellCommand.quote("it's safe") == "'it'\\''s safe'")
+    #expect(
+        RemoteShellCommand.loginShell("herdr api snapshot")
+            == "zsh -ilc 'herdr api snapshot'"
+    )
+    let attach = RemoteShellCommand.attach(paneID: "w1:p2")
+    #expect(attach.contains("herdr pane attach 'w1:p2' 2>/dev/null"))
+    #expect(attach.contains("remote terminal initialization failed on mini"))
+    #expect(!attach.contains("panic"))
+}
+
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {
     let visible = CGRect(x: 0, y: 25, width: 1_440, height: 875)
     let resolved = PetPlacement.clampedOrigin(

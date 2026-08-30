@@ -381,6 +381,7 @@ struct PaneLayoutCanvas: View {
                 transaction.animation = nil
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -395,38 +396,115 @@ struct PaneTerminalCell: View {
         bridge.snapshot?.terminal.panes.first { $0.paneID == paneID }
     }
 
+    private var paneMetadata: CorePaneSnapshot? {
+        bridge.snapshot?.navigator.workspaces
+            .flatMap { $0.checkouts }
+            .flatMap { $0.tabs }
+            .flatMap { $0.panes }
+            .first { $0.id == paneID }
+    }
+
+    private var paneTitle: String {
+        let label = paneMetadata?.label.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return label.isEmpty ? paneID : label
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            Button {
+        HideTerminalPaneCard(
+            paneID: paneID,
+            title: paneTitle,
+            cwd: paneMetadata?.cwd ?? "",
+            status: paneState?.closed == true ? "closed" : "attached",
+            isFocused: isFocused,
+            onFocus: {
                 bridge.focusPane(paneID)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: isFocused ? "circle.inset.filled" : "circle")
-                        .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
-                    Text(paneID)
-                        .font(.caption.monospaced().weight(.semibold))
-                    Spacer(minLength: 4)
-                    Text(paneState?.closed == true ? "closed" : "attached")
-                        .font(.caption2)
-                        .foregroundStyle(paneState?.closed == true ? .red : .secondary)
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 26)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Focus terminal pane \(paneID)")
-
-            Divider()
-
+        ) {
             TerminalHost(bridge: bridge, paneID: paneID)
                 .accessibilityLabel("SwiftTerm terminal for \(paneID)")
         }
-        .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+/// Shared chrome for local and remote panes.
+///
+/// The terminal implementation is supplied by the caller, but the pane
+/// identity, cwd, focus affordance, border, and sizing stay identical across
+/// devices. This keeps a remote pane from becoming a separate visual mode.
+struct HideTerminalPaneCard<Content: View>: View {
+    let paneID: String
+    let title: String
+    let cwd: String
+    let status: String
+    let isFocused: Bool
+    let onFocus: () -> Void
+    private let content: () -> Content
+
+    init(
+        paneID: String,
+        title: String,
+        cwd: String,
+        status: String,
+        isFocused: Bool,
+        onFocus: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.paneID = paneID
+        self.title = title
+        self.cwd = cwd
+        self.status = status
+        self.isFocused = isFocused
+        self.onFocus = onFocus
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: onFocus) {
+                HStack(spacing: 8) {
+                    Image(systemName: isFocused ? "circle.inset.filled" : "circle")
+                        .foregroundStyle(isFocused ? HideTheme.accent : HideTheme.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .hideFont(size: 10, weight: .semibold)
+                            .foregroundStyle(HideTheme.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if !cwd.isEmpty {
+                            Text(cwd)
+                                .hideFont(size: 9, design: .monospaced)
+                                .foregroundStyle(HideTheme.muted)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    Text(status)
+                        .hideFont(size: 9)
+                        .foregroundStyle(status == "closed" ? HideTheme.danger : HideTheme.secondary)
+                }
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+
+            Rectangle()
+                .fill(HideTheme.divider)
+                .frame(height: 1)
+
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+                .clipped()
+        }
+        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity)
+        .background(HideTheme.panel)
         .overlay {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(
-                    isFocused ? Color.accentColor : Color(nsColor: .separatorColor),
+                    isFocused ? HideTheme.accent : HideTheme.divider,
                     lineWidth: isFocused ? 2 : 1
                 )
         }

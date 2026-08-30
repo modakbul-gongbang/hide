@@ -770,6 +770,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var runtimeInitializationStarted = false
     private var lastLoggedHerdrState: String?
     private var lastLoggedErrorKind: String?
+    private var lastLoggedProjection: String?
+    private var lastLoggedSnapshotRevision: UInt64?
     private var lastTerminalSequence: UInt64 = 0
     private var haveRevision: UInt64 = 0
     private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
@@ -1219,6 +1221,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         expandedPaths: [String]? = nil,
         selectedPath: String? = nil,
         selectedPaneID: String? = nil,
+        focusedCheckoutID: String? = nil,
         shortcutBindings: [String: String]? = nil,
         accentHex: String? = nil,
         fontSize: Double? = nil,
@@ -1227,38 +1230,39 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
         let effectivePaneID = selectedPaneID ?? current?.selectedPaneID
-        dispatch(kind: "ui_state_update", payload: [
+        var payload: [String: Any] = [
             "expanded_paths": expandedPaths ?? current?.expandedPaths ?? [],
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
             "selected_pane_id": effectivePaneID.map { $0 as Any } ?? NSNull(),
             "shortcut_bindings": shortcutBindings ?? current?.shortcutBindings ?? [:],
-            "focused_device_id": current?.focusedDeviceID.map { $0 as Any } ?? NSNull(),
-            "focused_checkout_id": current?.focusedCheckoutID.map { $0 as Any } ?? NSNull(),
-            "workspace_registrations": current?.workspaceRegistrations.map {
-                [
-                    "id": $0.id,
-                    "label": $0.label,
-                    "path": $0.path,
-                    "device_id": $0.deviceID,
-                ]
-            } ?? [],
-            "device_registrations": current?.deviceRegistrations.map {
-                [
-                    "id": $0.id,
-                    "label": $0.label,
-                    "ssh_alias": $0.sshAlias.map { $0 as Any } ?? NSNull(),
-                ]
-            } ?? [],
             "accent_hex": accentHex ?? current?.accentHex ?? "#B9FF66",
             "font_size": fontSize ?? current?.fontSize ?? 13,
             "bypass_warnings": bypassWarnings ?? current?.bypassWarnings ?? false,
-        ])
+        ]
+        // Registration events own durable workspace/device lists. A generic
+        // UI-state save must not replay a stale snapshot and erase the
+        // session-derived temporary catalog.
+        if let focusedCheckoutID {
+            // This is the one explicit local-selection anchor used after a
+            // terminal launcher returns. It never asks Herdr to change focus.
+            payload["focused_checkout_id"] = focusedCheckoutID
+        }
+        if selectedPaneID != nil || focusedCheckoutID != nil {
+            HideLaunchTrace.mark(
+                "core.dispatch.anchor",
+                detail: "selected_pane_id=\(effectivePaneID ?? "nil") focused_checkout_id=\(focusedCheckoutID ?? "preserve")"
+            )
+        }
+        dispatch(kind: "ui_state_update", payload: payload)
     }
 
     func dispatch(kind: String, payload: [String: Any]) {
         guard let core else {
             bridgeError = "Hide is still starting. Try again when the Herdr status is available."
             return
+        }
+        if let detail = dispatchTraceDetail(kind: kind, payload: payload) {
+            HideLaunchTrace.mark("core.dispatch", detail: detail)
         }
         let envelope: [String: Any] = [
             "schema_version": coreSchemaVersion,
@@ -1272,6 +1276,22 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         data.withUnsafeBytes { buffer in
             herdr_core_dispatch(core, buffer.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
+    }
+
+    private func dispatchTraceDetail(kind: String, payload: [String: Any]) -> String? {
+        switch kind {
+        case "focus_checkout":
+            return "kind=focus_checkout workspace_id=\(traceValue(payload, key: "workspace_id")) checkout_id=\(traceValue(payload, key: "checkout_id"))"
+        case "ui_state_update":
+            return "kind=ui_state_update selected_pane_id=\(traceValue(payload, key: "selected_pane_id")) focused_checkout_id=\(traceValue(payload, key: "focused_checkout_id")) workspace_registrations=\(payload["workspace_registrations"] == nil ? "omitted" : "present")"
+        default:
+            return nil
+        }
+    }
+
+    private func traceValue(_ payload: [String: Any], key: String) -> String {
+        guard let value = payload[key], !(value is NSNull) else { return "nil" }
+        return String(describing: value)
     }
 
     func environmentState(for key: String) -> String? {
@@ -1305,6 +1325,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         do {
             let data = Data(bytes: pointer, count: owned.len)
             let decoded = try JSONDecoder().decode(CoreSnapshotDelta.self, from: data)
+            if decoded.revision != lastLoggedSnapshotRevision {
+                lastLoggedSnapshotRevision = decoded.revision
+                HideLaunchTrace.mark(
+                    "core.snapshot.refresh",
+                    detail: "revision=\(decoded.revision) rest=\(decoded.rest != nil) editor=\(decoded.editor != nil) terminal_sequence=\(decoded.terminalSequence)"
+                )
+            }
             if decoded.chunksDropped {
                 HideLaunchTrace.mark(
                     "terminal.chunks_dropped",
@@ -1380,6 +1407,31 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             }
         } else {
             lastLoggedErrorKind = nil
+        }
+        let focusedCheckout = decoded.navigator.focusedCheckoutID.flatMap { checkoutID in
+            decoded.navigator.workspaces
+                .lazy
+                .flatMap(\.checkouts)
+                .first(where: { $0.id == checkoutID })
+        }
+        let layoutBelongs = decoded.paneLayout.flatMap { layout in
+            focusedCheckout.map { checkout in
+                TerminalLayoutPolicy.belongs(layout: layout, to: checkout)
+            }
+        } ?? false
+        let projection = [
+            "focused_workspace_id=\(decoded.navigator.focusedWorkspaceID ?? "nil")",
+            "focused_checkout_id=\(decoded.navigator.focusedCheckoutID ?? "nil")",
+            "checkout_workspace_id=\(focusedCheckout?.workspaceID ?? "nil")",
+            "layout_workspace_id=\(decoded.paneLayout?.workspaceID ?? "nil")",
+            "layout_tab_id=\(decoded.paneLayout?.tabID ?? "nil")",
+            "layout_pane_ids=\(decoded.paneLayout?.root.paneIDs.joined(separator: ",") ?? "nil")",
+            "terminal_pane_id=\(decoded.terminal.paneID ?? "nil")",
+            "layout_belongs=\(layoutBelongs)"
+        ].joined(separator: " ")
+        if projection != lastLoggedProjection {
+            lastLoggedProjection = projection
+            HideLaunchTrace.mark("core.snapshot.projection", detail: projection)
         }
         let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
             ?? snapshot?.terminal.paneID

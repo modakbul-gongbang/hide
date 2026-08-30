@@ -40,12 +40,20 @@ enum HideRuntimeEnvironment {
     static let bundledVersion = "0.8.2"
     static let bundledSHA256 = "bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328"
     private static let loginShellTimeout: TimeInterval = 2
+    private static let resolvedLoginShellPath: String? = resolveLoginShellPath()
 
     static func loginShellPath() -> String? {
+        resolvedLoginShellPath
+    }
+
+    private static func resolveLoginShellPath() -> String? {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-ilc", "printf '%s' \"$PATH\""]
+        // Login mode reads the user's PATH setup without running the
+        // interactive-only .zshrc hooks that can block Finder startup.
+        process.arguments = ["-lc", "printf '%s' \"$PATH\""]
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do {
@@ -321,6 +329,12 @@ struct AgentLaunchResult: Sendable {
     let message: String
 }
 
+struct TerminalLaunchResult: Sendable {
+    let succeeded: Bool
+    let message: String
+    let paneID: String?
+}
+
 private struct HerdrCommandResult {
     let status: Int32
     let output: Data
@@ -431,6 +445,79 @@ enum HerdrAgentLauncher {
             return nil
         }
         return paneID
+    }
+
+    private static func run(herdrPath: String, arguments: [String]) -> HerdrCommandResult {
+        let process = Process()
+        let output = Pipe()
+        let error = Pipe()
+        process.executableURL = URL(fileURLWithPath: herdrPath)
+        process.arguments = arguments
+        process.environment = HideRuntimeEnvironment.childEnvironment()
+        process.standardOutput = output
+        process.standardError = error
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return HerdrCommandResult(
+                status: 127,
+                output: Data(),
+                error: Data(error.localizedDescription.utf8)
+            )
+        }
+        return HerdrCommandResult(
+            status: process.terminationStatus,
+            output: output.fileHandleForReading.readDataToEndOfFile(),
+            error: error.fileHandleForReading.readDataToEndOfFile()
+        )
+    }
+}
+
+/// Starts the first terminal for a checkout that has no live Herdr pane yet.
+/// The command creates a dedicated Herdr workspace rooted at the checkout;
+/// herdr-core then reconciles that pane back onto the selected checkout by its
+/// returned pane ID, with cwd remaining the catalog identity fallback.
+/// The operation is intentionally no-focus so selecting a row in Hide does not
+/// steal focus from an unrelated Herdr session.
+enum HerdrTerminalLauncher {
+    static func launch(
+        herdrPath: String,
+        checkoutPath: String,
+        checkoutLabel: String
+    ) -> TerminalLaunchResult {
+        let result = run(
+            herdrPath: herdrPath,
+            arguments: [
+                "workspace", "create",
+                "--cwd", checkoutPath,
+                "--label", "hide \(checkoutLabel)",
+                "--no-focus",
+            ]
+        )
+        guard result.status == 0 else {
+            let detail = String(decoding: result.error, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return TerminalLaunchResult(
+                succeeded: false,
+                message: detail.isEmpty
+                    ? "Hide could not start a terminal for this checkout. Check Herdr status and retry."
+                    : detail,
+                paneID: nil
+            )
+        }
+
+        let paneID = (try? JSONSerialization.jsonObject(with: result.output))
+            .flatMap { $0 as? [String: Any] }
+            .flatMap { $0["result"] as? [String: Any] }
+            .flatMap { $0["root_pane"] as? [String: Any] }
+            .flatMap { $0["pane_id"] as? String }
+
+        return TerminalLaunchResult(
+            succeeded: true,
+            message: "Started a terminal in \(URL(fileURLWithPath: checkoutPath).lastPathComponent).",
+            paneID: paneID
+        )
     }
 
     private static func run(herdrPath: String, arguments: [String]) -> HerdrCommandResult {

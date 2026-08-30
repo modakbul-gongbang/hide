@@ -54,12 +54,15 @@ struct WorkbenchPanel: View {
     @State private var markdownMode = "Preview"
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
-    private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
+    private var selectedURL: URL? {
+        guard !model.isRemoteContext else { return nil }
+        return editor?.path.map(URL.init(fileURLWithPath:))
+    }
     private var activeRoot: URL? {
         model.focusedPath
     }
     private var effectiveReadonlyReason: String? {
-        if model.core.isRemoteWorkspace {
+        if model.isRemoteContext {
             return "Remote inline editing is disabled in v1. Use the attached remote terminal so SSH remains the single write owner."
         }
         return editor?.readonlyReason
@@ -70,7 +73,7 @@ struct WorkbenchPanel: View {
             PanelHeader(
                 title: "Workbench",
                 systemImage: "doc.text.magnifyingglass",
-                trailing: selectedURL?.lastPathComponent ?? "No file selected"
+                trailing: selectedURL?.lastPathComponent ?? (model.isRemoteContext ? "Remote" : "No file selected")
             )
             Divider()
             VStack(spacing: 0) {
@@ -82,7 +85,14 @@ struct WorkbenchPanel: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
-        .task(id: activeRoot?.path) {
+        .task(id: "\(model.isRemoteContext)-\(activeRoot?.path ?? "")") {
+            if model.isRemoteContext {
+                roots = []
+                if let activeRoot {
+                    model.remote.loadFiles(path: activeRoot.path)
+                }
+                return
+            }
             let root = activeRoot
             let loaded = await Task.detached(priority: .userInitiated) {
                 WorkspaceTree.load(root: root)
@@ -91,7 +101,8 @@ struct WorkbenchPanel: View {
             roots = loaded
         }
         .onAppear {
-            if let restored = model.core.snapshot?.uiState.selectedPath {
+            if !model.isRemoteContext,
+               let restored = model.core.snapshot?.uiState.selectedPath {
                 model.core.openFile(URL(fileURLWithPath: restored))
             }
         }
@@ -107,7 +118,57 @@ struct WorkbenchPanel: View {
     @ViewBuilder
     private var fileTree: some View {
         Group {
-            if activeRoot == nil {
+            if model.isRemoteContext {
+                if let fileError = model.remote.fileError {
+                    ContentUnavailableView {
+                        Label("Remote files unavailable", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(fileError)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(ShellMetrics.panelPadding)
+                } else if activeRoot == nil {
+                    ContentUnavailableView {
+                        Label("Remote checkout has no path", systemImage: "externaldrive")
+                    } description: {
+                        Text(model.remote.message)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(ShellMetrics.panelPadding)
+                } else if model.remote.files.isEmpty {
+                    ContentUnavailableView {
+                        Label("No remote files", systemImage: "folder")
+                    } description: {
+                        Text("The selected remote checkout has no visible top-level files.")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(ShellMetrics.panelPadding)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.remote.files) { node in
+                                HStack(spacing: 6) {
+                                    Image(systemName: node.isDirectory ? "folder" : "doc")
+                                        .foregroundStyle(node.isDirectory ? .blue : .secondary)
+                                    Text(node.name)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .contentShape(Rectangle())
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        Text("Remote, read-only tree")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                    }
+                }
+            } else if activeRoot == nil {
                 ContentUnavailableView {
                     Label("No workspace", systemImage: "folder")
                 } description: {
@@ -155,7 +216,22 @@ struct WorkbenchPanel: View {
 
     @ViewBuilder
     private var viewer: some View {
-        if let selectedURL {
+        if model.isRemoteContext {
+            VStack(spacing: 10) {
+                Image(systemName: "terminal")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("Remote terminal owns edits")
+                    .font(.headline)
+                Text("Hide keeps remote file writes in the attached Herdr terminal. Credentials and file contents stay outside Hide.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 300)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(24)
+        } else if let selectedURL {
             VStack(spacing: 0) {
                 editorToolbar(for: selectedURL)
                 Divider()

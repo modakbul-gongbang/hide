@@ -1,0 +1,2229 @@
+{
+  "debug_logs" : [
+    "[2026-08-30T03:35:08.076Z] DEBUG: Runtime host: local (in-process)",
+    "[2026-08-30T03:35:08.076Z] VERBOSE [Operation]: Starting operation {mode=auto, menubar=false, annotate=false, operation=see_command, app=hide, hasAnalyzePrompt=false}",
+    "[2026-08-30T03:35:08.076Z] VERBOSE [Performance]: Starting timer 'see_command'",
+    "[2026-08-30T03:35:08.079Z] VERBOSE [Capture]: Starting capture and detection phase",
+    "[2026-08-30T03:35:08.079Z] VERBOSE [Capture]: Using desktop observation pipeline {target=app:hide}",
+    "[2026-08-30T03:35:08.079Z] VERBOSE [Operation]: Starting operation {mode=window, operation=capture_phase}",
+    "[2026-08-30T03:35:08.079Z] VERBOSE [Performance]: Starting timer 'capture_phase'",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Operation]: Operation completed {operation=capture_phase, success=true, mode=window}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Timer 'capture_phase' completed {duration_ms=502}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=26, span=state.snapshot}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=3, span=target.resolve}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=174, span=capture.window}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=161, span=detection.ax}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=5, span=output.write}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=1, span=output.raw.write}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=4, span=snapshot.write}",
+    "[2026-08-30T03:35:08.581Z] VERBOSE [Performance]: Desktop observation span {duration_ms=501, span=desktop.observe}",
+    "[2026-08-30T03:35:08.582Z] VERBOSE [Capture]: Capture completed successfully {elementCount=127, screenshotSize=348327, snapshotId=1788060908076-5579}"
+  ],
+  "target_receipt" : {
+    "process_start_identity" : 1788060843658885,
+    "process_start_identity_decimal" : "1788060843658885",
+    "pid" : 77660,
+    "window_id" : 7789
+  },
+  "success" : true,
+  "data" : {
+    "observation" : {
+      "spans" : [
+        {
+          "duration_ms" : 26.413167,
+          "name" : "state.snapshot",
+          "metadata" : {
+
+          }
+        },
+        {
+          "name" : "target.resolve",
+          "metadata" : {
+
+          },
+          "duration_ms" : 2.62575
+        },
+        {
+          "duration_ms" : 174.316792,
+          "name" : "capture.window",
+          "metadata" : {
+            "engine" : "CGWindowList"
+          }
+        },
+        {
+          "metadata" : {
+
+          },
+          "name" : "detection.ax",
+          "duration_ms" : 160.94375
+        },
+        {
+          "metadata" : {
+
+          },
+          "name" : "output.write",
+          "duration_ms" : 4.715625
+        },
+        {
+          "metadata" : {
+
+          },
+          "name" : "output.raw.write",
+          "duration_ms" : 0.513292
+        },
+        {
+          "metadata" : {
+
+          },
+          "duration_ms" : 4.198542,
+          "name" : "snapshot.write"
+        },
+        {
+          "duration_ms" : 501.10525,
+          "metadata" : {
+
+          },
+          "name" : "desktop.observe"
+        }
+      ],
+      "warnings" : [
+
+      ],
+      "state_snapshot" : {
+        "display_count" : 0,
+        "window_count" : 0,
+        "running_application_count" : 117
+      },
+      "target" : {
+        "bounds" : [
+          [
+            144,
+            72
+          ],
+          [
+            1440,
+            928
+          ]
+        ],
+        "source" : "window-id",
+        "resolved_kind" : "window-id",
+        "requested_kind" : "app",
+        "open_if_needed" : false,
+        "hints" : [
+
+        ],
+        "window_id" : 7789
+      }
+    },
+    "coordinate_context" : {
+      "origin" : "top_left",
+      "requested_scale" : {
+        "logical1x" : {
+
+        }
+      },
+      "reference_id" : "1788060908076-5579",
+      "logical_bounds" : [
+        [
+          144,
+          72
+        ],
+        [
+          1440,
+          928
+        ]
+      ],
+      "native_scale" : 2,
+      "output_scale" : 2,
+      "display" : {
+        "index" : 0
+      },
+      "logical_space" : "global_display_points",
+      "version" : 1,
+      "delivered_image_size" : [
+        2880,
+        1856
+      ],
+      "window" : {
+        "window_id" : 7789,
+        "title" : "hide",
+        "index" : 0
+      }
+    },
+    "window_title" : "hide",
+    "is_dialog" : false,
+    "execution_time" : 0.5060750246047974,
+    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788060908076-5579\/snapshot.json",
+    "snapshot_id" : "1788060908076-5579",
+    "application_name" : "hide",
+    "ui_elements" : [
+      {
+        "bounds" : {
+          "y" : 113,
+          "x" : 1427.5,
+          "height" : 28.5,
+          "width" : 100
+        },
+        "identifier" : "hide-shell",
+        "id" : "elem_8",
+        "is_enabled" : true,
+        "is_actionable" : true,
+        "role" : "button",
+        "ax_role" : "AXButton",
+        "role_description" : "button",
+        "description" : "New Agent",
+        "label" : "New Agent"
+      },
+      {
+        "description" : "Add",
+        "bounds" : {
+          "x" : 1537.5,
+          "width" : 28.5,
+          "height" : 25.5,
+          "y" : 114.5
+        },
+        "identifier" : "hide-shell",
+        "role_description" : "button",
+        "id" : "elem_9",
+        "is_actionable" : true,
+        "label" : "Add",
+        "ax_role" : "AXButton",
+        "help" : "New tab",
+        "is_enabled" : true,
+        "role" : "button"
+      },
+      {
+        "identifier" : "hide-shell",
+        "bounds" : {
+          "y" : 163,
+          "height" : 33,
+          "width" : 264,
+          "x" : 158
+        },
+        "is_actionable" : true,
+        "id" : "elem_10",
+        "is_enabled" : true,
+        "description" : "New Workspace, ⌘N",
+        "role_description" : "button",
+        "ax_role" : "AXButton",
+        "label" : "New Workspace, ⌘N",
+        "role" : "button"
+      },
+      {
+        "is_enabled" : true,
+        "bounds" : {
+          "y" : 201,
+          "x" : 158,
+          "height" : 34,
+          "width" : 264
+        },
+        "label" : "New Agent, ⌘⇧N",
+        "is_actionable" : true,
+        "role" : "button",
+        "description" : "New Agent, ⌘⇧N",
+        "identifier" : "hide-shell",
+        "role_description" : "button",
+        "id" : "elem_11",
+        "ax_role" : "AXButton"
+      },
+      {
+        "identifier" : "hide-shell",
+        "id" : "elem_12",
+        "bounds" : {
+          "width" : 264,
+          "height" : 33,
+          "y" : 240,
+          "x" : 158
+        },
+        "is_actionable" : true,
+        "role" : "button",
+        "label" : "Search, ⌘K",
+        "role_description" : "button",
+        "ax_role" : "AXButton",
+        "description" : "Search, ⌘K",
+        "is_enabled" : true
+      },
+      {
+        "role" : "button",
+        "bounds" : {
+          "width" : 115.5,
+          "y" : 334.5,
+          "height" : 14,
+          "x" : 305.5
+        },
+        "is_actionable" : true,
+        "id" : "elem_18",
+        "role_description" : "pop up button",
+        "label" : "More",
+        "title" : "More",
+        "is_value_settable" : false,
+        "is_enabled" : true,
+        "ax_role" : "AXPopUpButton"
+      },
+      {
+        "is_enabled" : true,
+        "label" : "main, main · 1 tabs",
+        "description" : "main, main · 1 tabs",
+        "role_description" : "button",
+        "bounds" : {
+          "width" : 292,
+          "x" : 144,
+          "height" : 38,
+          "y" : 353
+        },
+        "ax_role" : "AXButton",
+        "id" : "elem_19",
+        "is_actionable" : true,
+        "role" : "button"
+      },
+      {
+        "label" : "worktree-apify-migration, worktree-apify-migration · 0 tabs",
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "role_description" : "button",
+        "is_actionable" : true,
+        "id" : "elem_20",
+        "is_enabled" : true,
+        "description" : "worktree-apify-migration, worktree-apify-migration · 0 tabs",
+        "bounds" : {
+          "y" : 393,
+          "x" : 144,
+          "height" : 38,
+          "width" : 292
+        }
+      },
+      {
+        "role_description" : "button",
+        "ax_role" : "AXButton",
+        "description" : "hotfix-clean, hotfix-clean · 0 tabs",
+        "bounds" : {
+          "y" : 433,
+          "height" : 38,
+          "width" : 292,
+          "x" : 144
+        },
+        "label" : "hotfix-clean, hotfix-clean · 0 tabs",
+        "is_enabled" : true,
+        "role" : "button",
+        "id" : "elem_21",
+        "is_actionable" : true
+      },
+      {
+        "label" : "771-instagram-profile-crawling, 771-instagram-profile-crawling · 0 tabs",
+        "is_enabled" : true,
+        "id" : "elem_22",
+        "bounds" : {
+          "x" : 144,
+          "height" : 38,
+          "width" : 292,
+          "y" : 473
+        },
+        "role_description" : "button",
+        "role" : "button",
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "description" : "771-instagram-profile-crawling, 771-instagram-profile-crawling · 0 tabs"
+      },
+      {
+        "id" : "elem_25",
+        "label" : "More",
+        "title" : "More",
+        "bounds" : {
+          "height" : 14,
+          "y" : 522.5,
+          "x" : 246,
+          "width" : 175
+        },
+        "ax_role" : "AXPopUpButton",
+        "role" : "button",
+        "role_description" : "pop up button",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "is_value_settable" : false
+      },
+      {
+        "label" : "main, main · 1 tabs",
+        "is_enabled" : true,
+        "role" : "button",
+        "description" : "main, main · 1 tabs",
+        "ax_role" : "AXButton",
+        "bounds" : {
+          "x" : 144,
+          "width" : 292,
+          "y" : 541,
+          "height" : 38
+        },
+        "id" : "elem_26",
+        "is_actionable" : true,
+        "role_description" : "button"
+      },
+      {
+        "is_enabled" : true,
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "is_actionable" : true,
+        "bounds" : {
+          "y" : 581,
+          "width" : 292,
+          "height" : 38,
+          "x" : 144
+        },
+        "role_description" : "button",
+        "label" : "worktree-apify-migration, worktree-apify-migration · 0 tabs",
+        "id" : "elem_27",
+        "description" : "worktree-apify-migration, worktree-apify-migration · 0 tabs"
+      },
+      {
+        "bounds" : {
+          "height" : 38,
+          "x" : 144,
+          "width" : 292,
+          "y" : 621
+        },
+        "role_description" : "button",
+        "ax_role" : "AXButton",
+        "description" : "hotfix-clean, hotfix-clean · 0 tabs",
+        "is_enabled" : true,
+        "role" : "button",
+        "is_actionable" : true,
+        "label" : "hotfix-clean, hotfix-clean · 0 tabs",
+        "id" : "elem_28"
+      },
+      {
+        "id" : "elem_29",
+        "is_enabled" : true,
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "description" : "771-instagram-profile-crawling, 771-instagram-profile-crawling · 0 tabs",
+        "role_description" : "button",
+        "label" : "771-instagram-profile-crawling, 771-instagram-profile-crawling · 0 tabs",
+        "bounds" : {
+          "y" : 661,
+          "x" : 144,
+          "width" : 292,
+          "height" : 38
+        },
+        "is_actionable" : true
+      },
+      {
+        "bounds" : {
+          "height" : 14,
+          "y" : 710.5,
+          "x" : 281,
+          "width" : 140
+        },
+        "is_value_settable" : false,
+        "id" : "elem_32",
+        "title" : "More",
+        "role" : "button",
+        "label" : "More",
+        "ax_role" : "AXPopUpButton",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "role_description" : "pop up button"
+      },
+      {
+        "role" : "button",
+        "id" : "elem_33",
+        "is_enabled" : true,
+        "role_description" : "button",
+        "label" : "main, main · 1 tabs",
+        "bounds" : {
+          "y" : 729,
+          "width" : 292,
+          "x" : 144,
+          "height" : 38
+        },
+        "is_actionable" : true,
+        "description" : "main, main · 1 tabs",
+        "ax_role" : "AXButton"
+      },
+      {
+        "role_description" : "pop up button",
+        "ax_role" : "AXPopUpButton",
+        "role" : "button",
+        "id" : "elem_36",
+        "is_actionable" : true,
+        "is_value_settable" : false,
+        "is_enabled" : true,
+        "title" : "More",
+        "bounds" : {
+          "y" : 778.5,
+          "height" : 14,
+          "width" : 116,
+          "x" : 305
+        },
+        "label" : "More"
+      },
+      {
+        "ax_role" : "AXButton",
+        "bounds" : {
+          "height" : 38,
+          "y" : 797,
+          "width" : 292,
+          "x" : 144
+        },
+        "is_enabled" : true,
+        "is_actionable" : true,
+        "description" : "main, main · 1 tabs",
+        "label" : "main, main · 1 tabs",
+        "role" : "button",
+        "role_description" : "button",
+        "id" : "elem_37"
+      },
+      {
+        "title" : "More",
+        "label" : "More",
+        "bounds" : {
+          "y" : 846.5,
+          "x" : 251.5,
+          "width" : 169.5,
+          "height" : 14
+        },
+        "is_enabled" : true,
+        "role" : "button",
+        "is_value_settable" : false,
+        "id" : "elem_40",
+        "role_description" : "pop up button",
+        "ax_role" : "AXPopUpButton",
+        "is_actionable" : true
+      },
+      {
+        "role" : "button",
+        "ax_role" : "AXButton",
+        "role_description" : "button",
+        "id" : "elem_41",
+        "is_actionable" : true,
+        "description" : "main, main · 3 tabs",
+        "label" : "main, main · 3 tabs",
+        "bounds" : {
+          "height" : 38,
+          "x" : 144,
+          "width" : 292,
+          "y" : 865
+        },
+        "is_enabled" : true
+      },
+      {
+        "is_actionable" : true,
+        "id" : "elem_42",
+        "label" : "prd\/herdr-ide-shell-ux, prd\/herdr-ide-shell-ux · 0 tabs",
+        "bounds" : {
+          "height" : 38,
+          "y" : 905,
+          "x" : 144,
+          "width" : 292
+        },
+        "description" : "prd\/herdr-ide-shell-ux, prd\/herdr-ide-shell-ux · 0 tabs",
+        "is_enabled" : true,
+        "role" : "button",
+        "ax_role" : "AXButton",
+        "role_description" : "button"
+      },
+      {
+        "description" : "prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs",
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "label" : "prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs",
+        "bounds" : {
+          "width" : 292,
+          "height" : 38,
+          "y" : 945,
+          "x" : 144
+        },
+        "role" : "button",
+        "role_description" : "button",
+        "is_enabled" : true,
+        "id" : "elem_43"
+      },
+      {
+        "id" : "elem_44",
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "label" : "prd\/pet-integration, prd\/pet-integration · 0 tabs",
+        "bounds" : {
+          "y" : 985,
+          "width" : 292,
+          "x" : 144,
+          "height" : 38
+        },
+        "is_actionable" : true,
+        "role_description" : "button",
+        "description" : "prd\/pet-integration, prd\/pet-integration · 0 tabs",
+        "is_enabled" : true
+      },
+      {
+        "id" : "elem_45",
+        "is_enabled" : true,
+        "label" : "prd\/swift-shell-pivot, prd\/swift-shell-pivot · 0 tabs",
+        "is_actionable" : true,
+        "description" : "prd\/swift-shell-pivot, prd\/swift-shell-pivot · 0 tabs",
+        "role_description" : "button",
+        "role" : "button",
+        "bounds" : {
+          "height" : 38,
+          "x" : 144,
+          "width" : 292,
+          "y" : 1025
+        },
+        "ax_role" : "AXButton"
+      },
+      {
+        "label" : "More",
+        "bounds" : {
+          "y" : 1074.5,
+          "x" : 305,
+          "width" : 116,
+          "height" : 14
+        },
+        "role" : "button",
+        "is_value_settable" : false,
+        "is_actionable" : true,
+        "title" : "More",
+        "id" : "elem_48",
+        "ax_role" : "AXPopUpButton",
+        "role_description" : "pop up button",
+        "is_enabled" : true
+      },
+      {
+        "role" : "button",
+        "description" : "main, main · 0 tabs",
+        "label" : "main, main · 0 tabs",
+        "role_description" : "button",
+        "is_enabled" : true,
+        "bounds" : {
+          "height" : 38,
+          "y" : 1093,
+          "width" : 292,
+          "x" : 144
+        },
+        "id" : "elem_49",
+        "ax_role" : "AXButton",
+        "is_actionable" : true
+      },
+      {
+        "id" : "elem_50",
+        "ax_role" : "AXButton",
+        "label" : "prd\/herdr-ide-shell-ux, prd\/herdr-ide-shell-ux · 1 tabs",
+        "is_enabled" : true,
+        "role" : "button",
+        "description" : "prd\/herdr-ide-shell-ux, prd\/herdr-ide-shell-ux · 1 tabs",
+        "role_description" : "button",
+        "bounds" : {
+          "y" : 1133,
+          "x" : 144,
+          "width" : 292,
+          "height" : 38
+        },
+        "is_actionable" : true
+      },
+      {
+        "id" : "elem_51",
+        "role" : "button",
+        "role_description" : "button",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "description" : "prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs",
+        "bounds" : {
+          "x" : 144,
+          "y" : 1173,
+          "width" : 292,
+          "height" : 38
+        },
+        "ax_role" : "AXButton",
+        "label" : "prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs"
+      },
+      {
+        "description" : "prd\/pet-integration, prd\/pet-integration · 0 tabs",
+        "id" : "elem_52",
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "bounds" : {
+          "height" : 38,
+          "width" : 292,
+          "x" : 144,
+          "y" : 1213
+        },
+        "role_description" : "button",
+        "is_enabled" : true,
+        "label" : "prd\/pet-integration, prd\/pet-integration · 0 tabs",
+        "is_actionable" : true
+      },
+      {
+        "role" : "button",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "id" : "elem_53",
+        "bounds" : {
+          "height" : 38,
+          "x" : 144,
+          "width" : 292,
+          "y" : 1253
+        },
+        "description" : "prd\/swift-shell-pivot, prd\/swift-shell-pivot · 0 tabs",
+        "ax_role" : "AXButton",
+        "label" : "prd\/swift-shell-pivot, prd\/swift-shell-pivot · 0 tabs",
+        "role_description" : "button"
+      },
+      {
+        "ax_role" : "AXPopUpButton",
+        "bounds" : {
+          "height" : 14,
+          "width" : 147,
+          "x" : 274,
+          "y" : 1302.5
+        },
+        "role_description" : "pop up button",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "is_value_settable" : false,
+        "id" : "elem_56",
+        "role" : "button",
+        "title" : "More",
+        "label" : "More"
+      },
+      {
+        "is_enabled" : true,
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "is_actionable" : true,
+        "label" : "main, main · 0 tabs",
+        "id" : "elem_57",
+        "description" : "main, main · 0 tabs",
+        "role_description" : "button",
+        "bounds" : {
+          "width" : 292,
+          "y" : 1321,
+          "height" : 38,
+          "x" : 144
+        }
+      },
+      {
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "bounds" : {
+          "width" : 292,
+          "height" : 38,
+          "y" : 1361,
+          "x" : 144
+        },
+        "id" : "elem_58",
+        "is_enabled" : true,
+        "description" : "prd\/herdr-ide-shell-ux, prd\/herdr-ide-shell-ux · 0 tabs",
+        "role" : "button",
+        "role_description" : "button",
+        "label" : "prd\/herdr-ide-shell-ux, prd\/herdr-ide-shell-ux · 0 tabs"
+      },
+      {
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "role" : "button",
+        "role_description" : "button",
+        "bounds" : {
+          "x" : 144,
+          "y" : 1401,
+          "width" : 292,
+          "height" : 38
+        },
+        "description" : "prd\/hide-rebrand, prd\/hide-rebrand · 4 tabs",
+        "id" : "elem_59",
+        "ax_role" : "AXButton",
+        "label" : "prd\/hide-rebrand, prd\/hide-rebrand · 4 tabs"
+      },
+      {
+        "role" : "button",
+        "bounds" : {
+          "width" : 292,
+          "y" : 1441,
+          "height" : 38,
+          "x" : 144
+        },
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "id" : "elem_60",
+        "label" : "prd\/pet-integration, prd\/pet-integration · 0 tabs",
+        "role_description" : "button",
+        "is_enabled" : true,
+        "description" : "prd\/pet-integration, prd\/pet-integration · 0 tabs"
+      },
+      {
+        "role" : "button",
+        "description" : "prd\/swift-shell-pivot, prd\/swift-shell-pivot · 0 tabs",
+        "id" : "elem_61",
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "bounds" : {
+          "x" : 144,
+          "y" : 1481,
+          "height" : 38,
+          "width" : 292
+        },
+        "label" : "prd\/swift-shell-pivot, prd\/swift-shell-pivot · 0 tabs",
+        "role_description" : "button"
+      },
+      {
+        "ax_role" : "AXPopUpButton",
+        "is_enabled" : true,
+        "role" : "button",
+        "role_description" : "pop up button",
+        "bounds" : {
+          "y" : 1530.5,
+          "x" : 254.5,
+          "width" : 166.5,
+          "height" : 14
+        },
+        "title" : "More",
+        "is_actionable" : true,
+        "label" : "More",
+        "id" : "elem_64",
+        "is_value_settable" : false
+      },
+      {
+        "id" : "elem_65",
+        "role" : "button",
+        "bounds" : {
+          "y" : 1549,
+          "width" : 292,
+          "x" : 144,
+          "height" : 38
+        },
+        "is_actionable" : true,
+        "ax_role" : "AXButton",
+        "is_enabled" : true,
+        "label" : "main, main · 1 tabs",
+        "role_description" : "button",
+        "description" : "main, main · 1 tabs"
+      },
+      {
+        "role_description" : "pop up button",
+        "is_enabled" : true,
+        "is_value_settable" : false,
+        "is_actionable" : true,
+        "ax_role" : "AXPopUpButton",
+        "title" : "More",
+        "role" : "button",
+        "label" : "More",
+        "id" : "elem_68",
+        "bounds" : {
+          "x" : 291.5,
+          "height" : 14,
+          "width" : 129.5,
+          "y" : 1598.5
+        }
+      },
+      {
+        "is_enabled" : true,
+        "ax_role" : "AXButton",
+        "description" : "main, main · 1 tabs",
+        "is_actionable" : true,
+        "id" : "elem_69",
+        "label" : "main, main · 1 tabs",
+        "bounds" : {
+          "y" : 1617,
+          "x" : 144,
+          "width" : 292,
+          "height" : 38
+        },
+        "role" : "button",
+        "role_description" : "button"
+      },
+      {
+        "is_value_settable" : false,
+        "role" : "button",
+        "label" : "More",
+        "title" : "More",
+        "role_description" : "pop up button",
+        "bounds" : {
+          "y" : 1666.5,
+          "width" : 197.5,
+          "height" : 14,
+          "x" : 223.5
+        },
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "id" : "elem_72",
+        "ax_role" : "AXPopUpButton"
+      },
+      {
+        "label" : "main, main · 1 tabs",
+        "bounds" : {
+          "width" : 292,
+          "y" : 1685,
+          "x" : 144,
+          "height" : 38
+        },
+        "role" : "button",
+        "description" : "main, main · 1 tabs",
+        "id" : "elem_73",
+        "is_actionable" : true,
+        "role_description" : "button",
+        "ax_role" : "AXButton",
+        "is_enabled" : true
+      },
+      {
+        "label" : "prd\/implement-bc, prd\/implement-bc · 0 tabs",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "bounds" : {
+          "height" : 38,
+          "x" : 144,
+          "width" : 292,
+          "y" : 1725
+        },
+        "role" : "button",
+        "role_description" : "button",
+        "description" : "prd\/implement-bc, prd\/implement-bc · 0 tabs",
+        "id" : "elem_74",
+        "ax_role" : "AXButton"
+      },
+      {
+        "is_actionable" : true,
+        "role" : "button",
+        "role_description" : "pop up button",
+        "is_enabled" : true,
+        "ax_role" : "AXPopUpButton",
+        "title" : "More",
+        "is_value_settable" : false,
+        "id" : "elem_77",
+        "bounds" : {
+          "width" : 124,
+          "x" : 297,
+          "height" : 14,
+          "y" : 1774.5
+        },
+        "label" : "More"
+      },
+      {
+        "role_description" : "button",
+        "bounds" : {
+          "y" : 1793,
+          "width" : 292,
+          "x" : 144,
+          "height" : 38
+        },
+        "label" : "main, main · 1 tabs",
+        "role" : "button",
+        "is_actionable" : true,
+        "ax_role" : "AXButton",
+        "id" : "elem_78",
+        "description" : "main, main · 1 tabs",
+        "is_enabled" : true
+      },
+      {
+        "ax_role" : "AXButton",
+        "id" : "elem_81",
+        "role" : "button",
+        "is_actionable" : true,
+        "description" : "O, herdr-ide, 3h, 미니 선택·워크스페이스 전환 결함 수정, working",
+        "role_description" : "button",
+        "is_enabled" : true,
+        "bounds" : {
+          "height" : 56,
+          "width" : 292,
+          "x" : 144,
+          "y" : 1872
+        },
+        "label" : "O, herdr-ide, 3h, 미니 선택·워크스페이스 전환 결함 수정, working"
+      },
+      {
+        "description" : "O, herdr-ide, 3h, Mac mini·워크스페이스 전환 결함 수정, working",
+        "bounds" : {
+          "height" : 56,
+          "width" : 292,
+          "y" : 1928,
+          "x" : 144
+        },
+        "ax_role" : "AXButton",
+        "is_enabled" : true,
+        "role_description" : "button",
+        "role" : "button",
+        "id" : "elem_82",
+        "label" : "O, herdr-ide, 3h, Mac mini·워크스페이스 전환 결함 수정, working",
+        "is_actionable" : true
+      },
+      {
+        "label" : "C, sasu, 15m, 위임 판단 및 백엔드 수리 진행, idle",
+        "role" : "button",
+        "bounds" : {
+          "height" : 56,
+          "y" : 1984,
+          "width" : 292,
+          "x" : 144
+        },
+        "role_description" : "button",
+        "id" : "elem_83",
+        "is_actionable" : true,
+        "description" : "C, sasu, 15m, 위임 판단 및 백엔드 수리 진행, idle",
+        "ax_role" : "AXButton",
+        "is_enabled" : true
+      },
+      {
+        "bounds" : {
+          "height" : 56,
+          "width" : 292,
+          "y" : 2040,
+          "x" : 144
+        },
+        "id" : "elem_84",
+        "is_enabled" : true,
+        "label" : "C, sasu, 1h, 구현 번들 병합 완료 후 원격 반영·정리 결정, idle",
+        "is_actionable" : true,
+        "role" : "button",
+        "role_description" : "button",
+        "ax_role" : "AXButton",
+        "description" : "C, sasu, 1h, 구현 번들 병합 완료 후 원격 반영·정리 결정, idle"
+      },
+      {
+        "id" : "elem_85",
+        "description" : "C, creator-studio, 5h, 콘텐츠 레퍼런스와 채널 워크플로우 설계, idle",
+        "bounds" : {
+          "width" : 292,
+          "y" : 2096,
+          "height" : 56,
+          "x" : 144
+        },
+        "ax_role" : "AXButton",
+        "role_description" : "button",
+        "label" : "C, creator-studio, 5h, 콘텐츠 레퍼런스와 채널 워크플로우 설계, idle",
+        "role" : "button",
+        "is_enabled" : true,
+        "is_actionable" : true
+      },
+      {
+        "ax_role" : "AXButton",
+        "bounds" : {
+          "y" : 2152,
+          "height" : 56,
+          "width" : 292,
+          "x" : 144
+        },
+        "is_enabled" : true,
+        "label" : "C, herdr-agent-context-labels, 5h, Herdr 재실행 후 변경사항 커밋 푸시, idle",
+        "id" : "elem_86",
+        "role_description" : "button",
+        "is_actionable" : true,
+        "description" : "C, herdr-agent-context-labels, 5h, Herdr 재실행 후 변경사항 커밋 푸시, idle",
+        "role" : "button"
+      },
+      {
+        "bounds" : {
+          "x" : 144,
+          "height" : 56,
+          "width" : 292,
+          "y" : 2208
+        },
+        "is_enabled" : true,
+        "role" : "button",
+        "description" : "C, sasu, 1h, 병합된 구현 변경사항 확인 및 후속 작업 진행, idle",
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "role_description" : "button",
+        "label" : "C, sasu, 1h, 병합된 구현 변경사항 확인 및 후속 작업 진행, idle",
+        "id" : "elem_87"
+      },
+      {
+        "bounds" : {
+          "height" : 56,
+          "x" : 144,
+          "y" : 2264,
+          "width" : 292
+        },
+        "is_actionable" : true,
+        "ax_role" : "AXButton",
+        "id" : "elem_88",
+        "role" : "button",
+        "role_description" : "button",
+        "label" : "C, herdr-ide, 1h, 델타 스냅샷 아키텍처 구현 요청, idle",
+        "is_enabled" : true,
+        "description" : "C, herdr-ide, 1h, 델타 스냅샷 아키텍처 구현 요청, idle"
+      },
+      {
+        "role" : "button",
+        "role_description" : "button",
+        "description" : "C, herdr-ide, 2h, 워크스페이스 전환과 브랜치별 패널 동작 수정, idle",
+        "ax_role" : "AXButton",
+        "id" : "elem_89",
+        "label" : "C, herdr-ide, 2h, 워크스페이스 전환과 브랜치별 패널 동작 수정, idle",
+        "is_enabled" : true,
+        "is_actionable" : true,
+        "bounds" : {
+          "height" : 56,
+          "y" : 2320,
+          "width" : 292,
+          "x" : 144
+        }
+      },
+      {
+        "role" : "button",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "ax_role" : "AXButton",
+        "bounds" : {
+          "height" : 56,
+          "x" : 144,
+          "width" : 292,
+          "y" : 2376
+        },
+        "role_description" : "button",
+        "description" : "C, oh-my-principle, 5h, 하네스 기반 원칙 준수 강화 방안 검토, idle",
+        "label" : "C, oh-my-principle, 5h, 하네스 기반 원칙 준수 강화 방안 검토, idle",
+        "id" : "elem_90"
+      },
+      {
+        "ax_role" : "AXButton",
+        "is_enabled" : true,
+        "bounds" : {
+          "x" : 144,
+          "height" : 56,
+          "width" : 292,
+          "y" : 2432
+        },
+        "id" : "elem_91",
+        "role" : "button",
+        "role_description" : "button",
+        "is_actionable" : true,
+        "description" : "C, herdr-ide, 5h, 펫 통합 결과와 AC5 검증 상태 정리, idle",
+        "label" : "C, herdr-ide, 5h, 펫 통합 결과와 AC5 검증 상태 정리, idle"
+      },
+      {
+        "id" : "elem_92",
+        "ax_role" : "AXButton",
+        "description" : "C, modakbul, 5h, 결과 문서의 커밋·배포 사실 정정, idle",
+        "role" : "button",
+        "role_description" : "button",
+        "bounds" : {
+          "height" : 56,
+          "width" : 292,
+          "y" : 2488,
+          "x" : 144
+        },
+        "is_actionable" : true,
+        "label" : "C, modakbul, 5h, 결과 문서의 커밋·배포 사실 정정, idle",
+        "is_enabled" : true
+      },
+      {
+        "is_enabled" : true,
+        "bounds" : {
+          "x" : 144,
+          "height" : 56,
+          "y" : 2544,
+          "width" : 292
+        },
+        "ax_role" : "AXButton",
+        "description" : "C, herdr-ide, 5h, herdr 관련 디렉터리 삭제 여부 확인, idle",
+        "label" : "C, herdr-ide, 5h, herdr 관련 디렉터리 삭제 여부 확인, idle",
+        "id" : "elem_93",
+        "role" : "button",
+        "role_description" : "button",
+        "is_actionable" : true
+      },
+      {
+        "is_actionable" : true,
+        "label" : "O, sasu, 9h, local·pr 배송 모드 개선안 검토, idle",
+        "id" : "elem_94",
+        "bounds" : {
+          "x" : 144,
+          "width" : 292,
+          "y" : 2600,
+          "height" : 56
+        },
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "is_enabled" : true,
+        "role_description" : "button",
+        "description" : "O, sasu, 9h, local·pr 배송 모드 개선안 검토, idle"
+      },
+      {
+        "ax_role" : "AXButton",
+        "id" : "elem_95",
+        "role_description" : "button",
+        "role" : "button",
+        "bounds" : {
+          "y" : 2656,
+          "x" : 144,
+          "width" : 292,
+          "height" : 56
+        },
+        "label" : "O, modakbul, 10h, 변경사항 커밋 및 원격 푸시, idle",
+        "is_enabled" : true,
+        "description" : "O, modakbul, 10h, 변경사항 커밋 및 원격 푸시, idle",
+        "is_actionable" : true
+      },
+      {
+        "id" : "elem_96",
+        "label" : "O, herdr-ide, 1d, 작업 진행 상태 확인, idle",
+        "is_enabled" : true,
+        "role" : "button",
+        "is_actionable" : true,
+        "bounds" : {
+          "height" : 56,
+          "x" : 144,
+          "width" : 292,
+          "y" : 2712
+        },
+        "ax_role" : "AXButton",
+        "description" : "O, herdr-ide, 1d, 작업 진행 상태 확인, idle",
+        "role_description" : "button"
+      },
+      {
+        "description" : "O, herdr-ide, 1d, Rust 파서 신규 worktree 전체 구현, idle",
+        "role" : "button",
+        "label" : "O, herdr-ide, 1d, Rust 파서 신규 worktree 전체 구현, idle",
+        "ax_role" : "AXButton",
+        "id" : "elem_97",
+        "bounds" : {
+          "y" : 2768,
+          "x" : 144,
+          "width" : 292,
+          "height" : 56
+        },
+        "is_enabled" : true,
+        "is_actionable" : true,
+        "role_description" : "button"
+      },
+      {
+        "label" : "increment page button",
+        "role" : "button",
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "id" : "elem_100",
+        "bounds" : {
+          "x" : 424,
+          "height" : 432.5,
+          "width" : 12,
+          "y" : 411.5
+        },
+        "role_description" : "increment page button"
+      },
+      {
+        "is_enabled" : true,
+        "bounds" : {
+          "width" : 272,
+          "x" : 154,
+          "y" : 895,
+          "height" : 28
+        },
+        "ax_role" : "AXButton",
+        "identifier" : "hide-shell",
+        "label" : "This Mac, 17",
+        "role" : "button",
+        "is_actionable" : true,
+        "id" : "elem_102",
+        "description" : "This Mac, 17",
+        "role_description" : "button"
+      },
+      {
+        "role" : "button",
+        "id" : "elem_103",
+        "role_description" : "button",
+        "label" : "Mac mini",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "bounds" : {
+          "height" : 28,
+          "width" : 272,
+          "y" : 927,
+          "x" : 154
+        },
+        "identifier" : "hide-shell",
+        "description" : "Mac mini",
+        "ax_role" : "AXButton"
+      },
+      {
+        "role_description" : "button",
+        "identifier" : "hide-shell",
+        "id" : "elem_118",
+        "bounds" : {
+          "x" : 167,
+          "height" : 15,
+          "width" : 70.5,
+          "y" : 966.9775390625
+        },
+        "ax_role" : "AXButton",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "label" : "Settings",
+        "description" : "Settings",
+        "role" : "button"
+      },
+      {
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "role_description" : "close button",
+        "bounds" : {
+          "height" : 16,
+          "width" : 16,
+          "y" : 78,
+          "x" : 150
+        },
+        "role" : "button",
+        "id" : "elem_122",
+        "label" : "close button",
+        "ax_role" : "AXButton"
+      },
+      {
+        "is_enabled" : true,
+        "id" : "elem_123",
+        "role_description" : "full screen button",
+        "is_actionable" : true,
+        "help" : "this button also has an action to zoom the window",
+        "ax_role" : "AXButton",
+        "role" : "button",
+        "label" : "full screen button",
+        "bounds" : {
+          "width" : 16,
+          "y" : 78,
+          "height" : 16,
+          "x" : 190
+        }
+      },
+      {
+        "role" : "button",
+        "ax_role" : "AXButton",
+        "role_description" : "minimize button",
+        "bounds" : {
+          "x" : 170,
+          "height" : 16,
+          "width" : 16,
+          "y" : 78
+        },
+        "id" : "elem_125",
+        "is_actionable" : true,
+        "is_enabled" : true,
+        "label" : "minimize button"
+      },
+      {
+        "identifier" : "hide-shell",
+        "ax_role" : "AXImage",
+        "is_enabled" : true,
+        "role_description" : "image",
+        "bounds" : {
+          "height" : 12,
+          "x" : 455.5,
+          "width" : 18,
+          "y" : 121
+        },
+        "is_actionable" : false,
+        "description" : "rectangle.3.group",
+        "label" : "rectangle.3.group",
+        "role" : "image",
+        "id" : "elem_4"
+      },
+      {
+        "identifier" : "folder.badge.gearshape",
+        "id" : "elem_16",
+        "role_description" : "image",
+        "description" : "folder.badge.gearshape",
+        "role" : "image",
+        "label" : "folder.badge.gearshape",
+        "bounds" : {
+          "height" : 12.5,
+          "x" : 160,
+          "width" : 17,
+          "y" : 335.5
+        },
+        "ax_role" : "AXImage",
+        "is_actionable" : false,
+        "is_enabled" : true
+      },
+      {
+        "ax_role" : "AXImage",
+        "id" : "elem_23",
+        "label" : "folder.badge.gearshape",
+        "role_description" : "image",
+        "is_actionable" : false,
+        "description" : "folder.badge.gearshape",
+        "is_enabled" : true,
+        "role" : "image",
+        "bounds" : {
+          "width" : 17,
+          "height" : 12.5,
+          "y" : 523.5,
+          "x" : 160
+        },
+        "identifier" : "folder.badge.gearshape"
+      },
+      {
+        "label" : "folder.badge.gearshape",
+        "id" : "elem_30",
+        "role" : "image",
+        "identifier" : "folder.badge.gearshape",
+        "description" : "folder.badge.gearshape",
+        "ax_role" : "AXImage",
+        "bounds" : {
+          "height" : 12.5,
+          "x" : 160,
+          "width" : 17,
+          "y" : 711.5
+        },
+        "role_description" : "image",
+        "is_actionable" : false,
+        "is_enabled" : true
+      },
+      {
+        "label" : "folder.badge.gearshape",
+        "description" : "folder.badge.gearshape",
+        "id" : "elem_34",
+        "ax_role" : "AXImage",
+        "bounds" : {
+          "width" : 17,
+          "height" : 12.5,
+          "x" : 160,
+          "y" : 779.5
+        },
+        "identifier" : "folder.badge.gearshape",
+        "role" : "image",
+        "is_actionable" : false,
+        "role_description" : "image",
+        "is_enabled" : true
+      },
+      {
+        "identifier" : "folder.badge.gearshape",
+        "bounds" : {
+          "x" : 160,
+          "y" : 847.5,
+          "width" : 17,
+          "height" : 12.5
+        },
+        "id" : "elem_38",
+        "role" : "image",
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "description" : "folder.badge.gearshape",
+        "ax_role" : "AXImage",
+        "role_description" : "image",
+        "label" : "folder.badge.gearshape"
+      },
+      {
+        "role_description" : "image",
+        "role" : "image",
+        "bounds" : {
+          "height" : 12.5,
+          "x" : 160,
+          "y" : 1075.5,
+          "width" : 17
+        },
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "description" : "folder.badge.gearshape",
+        "label" : "folder.badge.gearshape",
+        "ax_role" : "AXImage",
+        "id" : "elem_46",
+        "identifier" : "folder.badge.gearshape"
+      },
+      {
+        "label" : "folder.badge.gearshape",
+        "ax_role" : "AXImage",
+        "identifier" : "folder.badge.gearshape",
+        "bounds" : {
+          "y" : 1303.5,
+          "x" : 160,
+          "height" : 12.5,
+          "width" : 17
+        },
+        "description" : "folder.badge.gearshape",
+        "role_description" : "image",
+        "role" : "image",
+        "is_enabled" : true,
+        "is_actionable" : false,
+        "id" : "elem_54"
+      },
+      {
+        "role_description" : "image",
+        "bounds" : {
+          "width" : 17,
+          "y" : 1531.5,
+          "x" : 160,
+          "height" : 12.5
+        },
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "ax_role" : "AXImage",
+        "description" : "folder.badge.gearshape",
+        "label" : "folder.badge.gearshape",
+        "identifier" : "folder.badge.gearshape",
+        "id" : "elem_62",
+        "role" : "image"
+      },
+      {
+        "identifier" : "folder.badge.gearshape",
+        "is_enabled" : true,
+        "label" : "folder.badge.gearshape",
+        "id" : "elem_66",
+        "is_actionable" : false,
+        "bounds" : {
+          "x" : 160,
+          "width" : 17,
+          "height" : 12.5,
+          "y" : 1599.5
+        },
+        "role_description" : "image",
+        "ax_role" : "AXImage",
+        "role" : "image",
+        "description" : "folder.badge.gearshape"
+      },
+      {
+        "role_description" : "image",
+        "description" : "folder.badge.gearshape",
+        "bounds" : {
+          "height" : 12.5,
+          "x" : 160,
+          "y" : 1667.5,
+          "width" : 17
+        },
+        "id" : "elem_70",
+        "is_enabled" : true,
+        "label" : "folder.badge.gearshape",
+        "is_actionable" : false,
+        "ax_role" : "AXImage",
+        "role" : "image",
+        "identifier" : "folder.badge.gearshape"
+      },
+      {
+        "is_enabled" : true,
+        "role_description" : "image",
+        "description" : "folder.badge.gearshape",
+        "ax_role" : "AXImage",
+        "bounds" : {
+          "width" : 17,
+          "x" : 160,
+          "height" : 12.5,
+          "y" : 1775.5
+        },
+        "id" : "elem_75",
+        "label" : "folder.badge.gearshape",
+        "role" : "image",
+        "identifier" : "folder.badge.gearshape",
+        "is_actionable" : false
+      },
+      {
+        "bounds" : {
+          "y" : 512.5,
+          "height" : 27,
+          "x" : 794.5,
+          "width" : 34.5
+        },
+        "description" : "terminal",
+        "id" : "elem_107",
+        "identifier" : "hide-terminal-surface",
+        "label" : "terminal",
+        "is_enabled" : true,
+        "ax_role" : "AXImage",
+        "role" : "image",
+        "is_actionable" : false,
+        "role_description" : "image"
+      },
+      {
+        "label" : "group",
+        "is_actionable" : false,
+        "bounds" : {
+          "x" : 144,
+          "width" : 1440,
+          "y" : 100,
+          "height" : 900
+        },
+        "ax_role" : "AXGroup",
+        "role_description" : "group",
+        "role" : "group",
+        "id" : "elem_1"
+      },
+      {
+        "is_actionable" : false,
+        "role_description" : "group",
+        "ax_role" : "AXGroup",
+        "label" : "group",
+        "id" : "elem_105",
+        "role" : "group",
+        "bounds" : {
+          "width" : 751,
+          "y" : 155,
+          "x" : 436,
+          "height" : 818
+        }
+      },
+      {
+        "role" : "group",
+        "bounds" : {
+          "height" : 818,
+          "width" : 396,
+          "x" : 1188,
+          "y" : 155
+        },
+        "label" : "group",
+        "role_description" : "group",
+        "ax_role" : "AXGroup",
+        "is_actionable" : false,
+        "id" : "elem_110"
+      },
+      {
+        "ax_role" : "AXGroup",
+        "bounds" : {
+          "width" : 14,
+          "height" : 16,
+          "x" : 191,
+          "y" : 78
+        },
+        "id" : "elem_124",
+        "role_description" : "group",
+        "role" : "group",
+        "is_actionable" : false,
+        "label" : "group"
+      },
+      {
+        "is_actionable" : false,
+        "label" : "hide",
+        "ax_role" : "AXWindow",
+        "id" : "elem_0",
+        "title" : "hide",
+        "role" : "other",
+        "role_description" : "standard window",
+        "bounds" : {
+          "x" : 144,
+          "height" : 928,
+          "y" : 72,
+          "width" : 1440
+        }
+      },
+      {
+        "is_enabled" : true,
+        "id" : "elem_2",
+        "ax_role" : "AXStaticText",
+        "identifier" : "hide-shell",
+        "value" : "hide",
+        "role_description" : "text",
+        "role" : "other",
+        "bounds" : {
+          "width" : 42,
+          "x" : 162,
+          "height" : 26,
+          "y" : 119
+        },
+        "is_actionable" : false,
+        "label" : "hide"
+      },
+      {
+        "role_description" : "text",
+        "is_actionable" : false,
+        "ax_role" : "AXStaticText",
+        "identifier" : "hide-shell",
+        "bounds" : {
+          "height" : 13,
+          "y" : 125.5,
+          "x" : 387,
+          "width" : 31
+        },
+        "value" : "0.8.2",
+        "role" : "other",
+        "label" : "0.8.2",
+        "is_enabled" : true,
+        "id" : "elem_3"
+      },
+      {
+        "is_enabled" : true,
+        "role_description" : "text",
+        "label" : "herdr-ide-shell-ux",
+        "identifier" : "hide-shell",
+        "id" : "elem_5",
+        "ax_role" : "AXStaticText",
+        "bounds" : {
+          "y" : 112,
+          "width" : 116.5,
+          "x" : 485,
+          "height" : 16
+        },
+        "role" : "other",
+        "value" : "herdr-ide-shell-ux",
+        "is_actionable" : false
+      },
+      {
+        "label" : "herdr 0.8.2",
+        "ax_role" : "AXStaticText",
+        "id" : "elem_6",
+        "is_actionable" : false,
+        "bounds" : {
+          "width" : 74,
+          "y" : 120.511474609375,
+          "x" : 1343.5,
+          "height" : 13
+        },
+        "is_enabled" : true,
+        "identifier" : "hide-shell",
+        "value" : "herdr 0.8.2",
+        "role_description" : "text",
+        "role" : "other"
+      },
+      {
+        "value" : "prd\/hide-rebrand  ·  prd\/hide-rebrand",
+        "role_description" : "text",
+        "bounds" : {
+          "x" : 485,
+          "height" : 13,
+          "y" : 129,
+          "width" : 229
+        },
+        "ax_role" : "AXStaticText",
+        "role" : "other",
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "label" : "prd\/hide-rebrand  ·  prd\/hide-rebrand",
+        "id" : "elem_7",
+        "identifier" : "hide-shell"
+      },
+      {
+        "identifier" : "hide-shell",
+        "is_actionable" : false,
+        "bounds" : {
+          "height" : 554,
+          "y" : 290,
+          "width" : 292,
+          "x" : 144
+        },
+        "id" : "elem_13",
+        "role" : "other",
+        "ax_role" : "AXScrollArea",
+        "role_description" : "scroll area",
+        "label" : "scroll area"
+      },
+      {
+        "value" : "WORKSPACES",
+        "id" : "elem_14",
+        "bounds" : {
+          "y" : 307,
+          "height" : 13,
+          "width" : 85.5,
+          "x" : 161
+        },
+        "is_actionable" : false,
+        "label" : "WORKSPACES",
+        "role_description" : "text",
+        "is_enabled" : true,
+        "ax_role" : "AXStaticText",
+        "role" : "other"
+      },
+      {
+        "label" : "11",
+        "is_actionable" : false,
+        "value" : "11",
+        "bounds" : {
+          "height" : 13,
+          "y" : 307,
+          "width" : 12.5,
+          "x" : 253.5
+        },
+        "id" : "elem_15",
+        "is_enabled" : true,
+        "role" : "other",
+        "ax_role" : "AXStaticText",
+        "role_description" : "text"
+      },
+      {
+        "id" : "elem_17",
+        "label" : "771-instagram-profile-crawling",
+        "role_description" : "text",
+        "is_enabled" : true,
+        "ax_role" : "AXStaticText",
+        "is_actionable" : false,
+        "role" : "other",
+        "bounds" : {
+          "height" : 15,
+          "x" : 182,
+          "width" : 109.5,
+          "y" : 334
+        },
+        "value" : "771-instagram-profile-crawling"
+      },
+      {
+        "is_actionable" : false,
+        "value" : "backpac",
+        "id" : "elem_24",
+        "is_enabled" : true,
+        "ax_role" : "AXStaticText",
+        "label" : "backpac",
+        "role" : "other",
+        "bounds" : {
+          "x" : 182,
+          "y" : 522,
+          "width" : 50,
+          "height" : 15
+        },
+        "role_description" : "text"
+      },
+      {
+        "ax_role" : "AXStaticText",
+        "label" : "creator-studio",
+        "role" : "other",
+        "bounds" : {
+          "height" : 15,
+          "width" : 85,
+          "x" : 182,
+          "y" : 710
+        },
+        "is_actionable" : false,
+        "id" : "elem_31",
+        "role_description" : "text",
+        "is_enabled" : true,
+        "value" : "creator-studio"
+      },
+      {
+        "label" : "herdr-agent-context-labels",
+        "value" : "herdr-agent-context-labels",
+        "id" : "elem_35",
+        "bounds" : {
+          "width" : 109,
+          "x" : 182,
+          "height" : 15,
+          "y" : 778
+        },
+        "role" : "other",
+        "is_enabled" : true,
+        "role_description" : "text",
+        "is_actionable" : false,
+        "ax_role" : "AXStaticText"
+      },
+      {
+        "role" : "other",
+        "value" : "herdr-ide",
+        "role_description" : "text",
+        "label" : "herdr-ide",
+        "bounds" : {
+          "width" : 55.5,
+          "y" : 846,
+          "x" : 182,
+          "height" : 15
+        },
+        "ax_role" : "AXStaticText",
+        "is_actionable" : false,
+        "id" : "elem_39",
+        "is_enabled" : true
+      },
+      {
+        "role_description" : "text",
+        "value" : "herdr-ide-shell-ux",
+        "role" : "other",
+        "is_enabled" : true,
+        "bounds" : {
+          "width" : 109,
+          "y" : 1074,
+          "x" : 182,
+          "height" : 15
+        },
+        "ax_role" : "AXStaticText",
+        "label" : "herdr-ide-shell-ux",
+        "id" : "elem_47",
+        "is_actionable" : false
+      },
+      {
+        "is_actionable" : false,
+        "role" : "other",
+        "value" : "hide-rebrand",
+        "bounds" : {
+          "height" : 15,
+          "width" : 78,
+          "x" : 182,
+          "y" : 1302
+        },
+        "id" : "elem_55",
+        "role_description" : "text",
+        "is_enabled" : true,
+        "ax_role" : "AXStaticText",
+        "label" : "hide-rebrand"
+      },
+      {
+        "role_description" : "text",
+        "is_actionable" : false,
+        "value" : "modakbul",
+        "id" : "elem_63",
+        "ax_role" : "AXStaticText",
+        "is_enabled" : true,
+        "label" : "modakbul",
+        "bounds" : {
+          "x" : 182,
+          "width" : 58.5,
+          "height" : 15,
+          "y" : 1530
+        },
+        "role" : "other"
+      },
+      {
+        "role" : "other",
+        "id" : "elem_67",
+        "label" : "oh-my-principle",
+        "bounds" : {
+          "height" : 15,
+          "width" : 95.5,
+          "y" : 1598,
+          "x" : 182
+        },
+        "role_description" : "text",
+        "ax_role" : "AXStaticText",
+        "value" : "oh-my-principle",
+        "is_enabled" : true,
+        "is_actionable" : false
+      },
+      {
+        "role" : "other",
+        "label" : "sasu",
+        "ax_role" : "AXStaticText",
+        "value" : "sasu",
+        "role_description" : "text",
+        "is_enabled" : true,
+        "bounds" : {
+          "x" : 182,
+          "y" : 1666,
+          "width" : 27.5,
+          "height" : 15
+        },
+        "is_actionable" : false,
+        "id" : "elem_71"
+      },
+      {
+        "label" : "vibecoding-class",
+        "value" : "vibecoding-class",
+        "bounds" : {
+          "y" : 1774,
+          "height" : 15,
+          "x" : 182,
+          "width" : 101
+        },
+        "is_actionable" : false,
+        "role" : "other",
+        "is_enabled" : true,
+        "ax_role" : "AXStaticText",
+        "id" : "elem_76",
+        "role_description" : "text"
+      },
+      {
+        "label" : "AGENTS",
+        "ax_role" : "AXStaticText",
+        "is_actionable" : false,
+        "id" : "elem_79",
+        "value" : "AGENTS",
+        "is_enabled" : true,
+        "role_description" : "text",
+        "role" : "other",
+        "bounds" : {
+          "height" : 13,
+          "width" : 50,
+          "y" : 1852,
+          "x" : 161
+        }
+      },
+      {
+        "is_actionable" : false,
+        "label" : "17",
+        "id" : "elem_80",
+        "ax_role" : "AXStaticText",
+        "bounds" : {
+          "x" : 218,
+          "width" : 12.5,
+          "height" : 13,
+          "y" : 1852
+        },
+        "role_description" : "text",
+        "role" : "other",
+        "is_enabled" : true,
+        "value" : "17"
+      },
+      {
+        "is_value_settable" : true,
+        "ax_role" : "AXScrollBar",
+        "role_description" : "scroll bar",
+        "role" : "other",
+        "id" : "elem_98",
+        "is_actionable" : true,
+        "label" : "0",
+        "is_enabled" : true,
+        "value" : "0",
+        "bounds" : {
+          "x" : 419,
+          "y" : 289,
+          "width" : 18,
+          "height" : 556
+        }
+      },
+      {
+        "bounds" : {
+          "x" : 424,
+          "height" : 120,
+          "width" : 12,
+          "y" : 291
+        },
+        "ax_role" : "AXValueIndicator",
+        "role" : "other",
+        "id" : "elem_99",
+        "is_actionable" : false,
+        "value" : "0",
+        "label" : "0",
+        "role_description" : "value indicator"
+      },
+      {
+        "id" : "elem_101",
+        "role" : "other",
+        "identifier" : "hide-shell",
+        "ax_role" : "AXStaticText",
+        "value" : "DEVICES",
+        "label" : "DEVICES",
+        "role_description" : "text",
+        "bounds" : {
+          "y" : 870.9775390625,
+          "width" : 54,
+          "height" : 13,
+          "x" : 171
+        },
+        "is_actionable" : false,
+        "is_enabled" : true
+      },
+      {
+        "is_actionable" : false,
+        "label" : "split group",
+        "id" : "elem_104",
+        "ax_role" : "AXSplitGroup",
+        "role_description" : "split group",
+        "role" : "other",
+        "bounds" : {
+          "x" : 436,
+          "height" : 818,
+          "width" : 1148,
+          "y" : 155
+        }
+      },
+      {
+        "identifier" : "hide-terminal-surface",
+        "bounds" : {
+          "width" : 323,
+          "x" : 454,
+          "y" : 162,
+          "height" : 11
+        },
+        "role" : "other",
+        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "ax_role" : "AXStaticText",
+        "id" : "elem_106",
+        "role_description" : "text"
+      },
+      {
+        "role" : "other",
+        "role_description" : "text",
+        "value" : "Preparing terminal",
+        "label" : "Preparing terminal",
+        "identifier" : "hide-terminal-surface",
+        "is_enabled" : true,
+        "id" : "elem_108",
+        "is_actionable" : false,
+        "bounds" : {
+          "x" : 737.75,
+          "width" : 147.5,
+          "height" : 20,
+          "y" : 555
+        },
+        "ax_role" : "AXStaticText"
+      },
+      {
+        "role_description" : "text",
+        "identifier" : "hide-terminal-surface",
+        "ax_role" : "AXStaticText",
+        "id" : "elem_109",
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "role" : "other",
+        "label" : "Hide will start a new Herdr tab and terminal pane at this checkout.",
+        "bounds" : {
+          "x" : 664.5,
+          "width" : 294,
+          "y" : 588,
+          "height" : 30
+        },
+        "value" : "Hide will start a new Herdr tab and terminal pane at this checkout."
+      },
+      {
+        "is_enabled" : true,
+        "value" : "Workbench",
+        "role_description" : "text",
+        "ax_role" : "AXStaticText",
+        "label" : "Workbench",
+        "bounds" : {
+          "x" : 1203.5,
+          "height" : 17.670166015625,
+          "width" : 94.5,
+          "y" : 167.829833984375
+        },
+        "id" : "elem_111",
+        "is_actionable" : false,
+        "role" : "other"
+      },
+      {
+        "label" : "No file selected",
+        "value" : "No file selected",
+        "role_description" : "text",
+        "id" : "elem_112",
+        "is_enabled" : true,
+        "role" : "other",
+        "bounds" : {
+          "y" : 170.5,
+          "width" : 75.5,
+          "x" : 1494.5,
+          "height" : 13
+        },
+        "is_actionable" : false,
+        "ax_role" : "AXStaticText"
+      },
+      {
+        "id" : "elem_113",
+        "identifier" : "workbench-file-tree",
+        "label" : "Local, existing files only",
+        "is_actionable" : false,
+        "bounds" : {
+          "width" : 118.5,
+          "y" : 208,
+          "height" : 13,
+          "x" : 1457.5
+        },
+        "role_description" : "text",
+        "is_enabled" : true,
+        "value" : "Local, existing files only",
+        "ax_role" : "AXStaticText",
+        "role" : "other"
+      },
+      {
+        "is_actionable" : false,
+        "id" : "elem_114",
+        "role" : "other",
+        "role_description" : "scroll area",
+        "bounds" : {
+          "y" : 200,
+          "x" : 1188,
+          "height" : 386,
+          "width" : 396
+        },
+        "identifier" : "workbench-file-tree",
+        "label" : "scroll area",
+        "ax_role" : "AXScrollArea"
+      },
+      {
+        "bounds" : {
+          "y" : 214,
+          "width" : 394.5,
+          "x" : 1175.5,
+          "height" : 16
+        },
+        "is_actionable" : false,
+        "role" : "other",
+        "value" : "false",
+        "role_description" : "disclosure triangle",
+        "identifier" : "workspace-file-hide-rebrand",
+        "label" : "false",
+        "ax_role" : "AXDisclosureTriangle",
+        "id" : "elem_115",
+        "is_enabled" : true
+      },
+      {
+        "is_actionable" : false,
+        "bounds" : {
+          "width" : 156.5,
+          "height" : 98.5,
+          "y" : 704,
+          "x" : 1307.75
+        },
+        "ax_role" : "AXStaticText",
+        "label" : "Choose a file",
+        "value" : "Choose a file",
+        "is_enabled" : true,
+        "id" : "elem_116",
+        "role" : "other",
+        "role_description" : "text"
+      },
+      {
+        "role" : "other",
+        "role_description" : "text",
+        "id" : "elem_117",
+        "value" : "Browse the local tree above to preview or edit an existing file.",
+        "label" : "Browse the local tree above to preview or edit an existing file.",
+        "ax_role" : "AXStaticText",
+        "is_enabled" : true,
+        "is_actionable" : false,
+        "bounds" : {
+          "width" : 298.5,
+          "y" : 814.5,
+          "height" : 32,
+          "x" : 1236.75
+        }
+      },
+      {
+        "role" : "other",
+        "is_enabled" : true,
+        "identifier" : "hide-shell",
+        "is_actionable" : false,
+        "role_description" : "text",
+        "ax_role" : "AXStaticText",
+        "bounds" : {
+          "x" : 468,
+          "height" : 13,
+          "y" : 980,
+          "width" : 85
+        },
+        "value" : "Waiting for Herdr",
+        "id" : "elem_119",
+        "label" : "Waiting for Herdr"
+      },
+      {
+        "role" : "other",
+        "bounds" : {
+          "y" : 980,
+          "width" : 47.5,
+          "x" : 1472,
+          "height" : 13
+        },
+        "value" : "17 agents",
+        "id" : "elem_120",
+        "identifier" : "hide-shell",
+        "is_enabled" : true,
+        "label" : "17 agents",
+        "is_actionable" : false,
+        "role_description" : "text",
+        "ax_role" : "AXStaticText"
+      },
+      {
+        "is_enabled" : true,
+        "is_actionable" : false,
+        "role" : "other",
+        "bounds" : {
+          "width" : 21.5,
+          "y" : 980,
+          "height" : 13,
+          "x" : 1548.5
+        },
+        "value" : "hide",
+        "label" : "hide",
+        "ax_role" : "AXStaticText",
+        "identifier" : "hide-shell",
+        "id" : "elem_121",
+        "role_description" : "text"
+      },
+      {
+        "role" : "other",
+        "id" : "elem_126",
+        "label" : "hide",
+        "is_actionable" : false,
+        "is_enabled" : true,
+        "bounds" : {
+          "x" : 848,
+          "y" : 77,
+          "height" : 16,
+          "width" : 32
+        },
+        "role_description" : "text",
+        "value" : "hide",
+        "ax_role" : "AXStaticText"
+      }
+    ],
+    "capture_mode" : "window",
+    "interactable_count" : 71,
+    "element_count" : 127,
+    "screenshot_raw" : "",
+    "screenshot_annotated" : ""
+  }
+}

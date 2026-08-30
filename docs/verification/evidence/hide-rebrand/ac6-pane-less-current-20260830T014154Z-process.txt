@@ -1,0 +1,1 @@
+ 2841     1 S    04:37 /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS

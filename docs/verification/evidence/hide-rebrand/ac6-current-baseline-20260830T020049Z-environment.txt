@@ -1,0 +1,7 @@
+HOME=/Users/hoyeonlee
+LOGNAME=hoyeonlee
+PATH=/opt/homebrew/opt/grep/libexec/gnubin:/Users/hoyeonlee/.local/bin:/Users/hoyeonlee/.bun/bin:/Users/hoyeonlee/.antigravity/antigravity/bin:/Users/hoyeonlee/go/bin:/Users/hoyeonlee/.moon/bin:/Applications/Android
+SHELL=/bin/zsh
+TMPDIR=/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/
+USER=hoyeonlee
+__CFBundleIdentifier=me.grab.hide

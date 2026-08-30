@@ -1,0 +1,1 @@
+49138 Sun Aug 30 11:54:28 2026     /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS

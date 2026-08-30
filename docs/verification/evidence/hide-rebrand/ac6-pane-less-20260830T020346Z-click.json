@@ -1,0 +1,57 @@
+{
+  "outcome" : {
+    "dispatched_unit_count" : 1,
+    "route" : "bridge",
+    "effect" : "unverifiable",
+    "mutation_dispatched" : true,
+    "escalation" : "observe_before_retry",
+    "retry_safe" : false,
+    "requires_fresh_observation" : true,
+    "state" : "dispatched_unverified",
+    "dispatch_state" : "dispatched",
+    "evidence" : "delivery_accepted",
+    "retry_safety" : "unsafe",
+    "delivery_mode" : "background",
+    "delivery_mechanism" : "accessibility_action"
+  },
+  "debug_logs" : [
+    "[2026-08-30T02:03:52.075Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))"
+  ],
+  "effect" : "unverifiable",
+  "data" : {
+    "executionTime" : 0.563912034034729,
+    "clickLocation" : {
+      "x" : 290,
+      "y" : 964
+    },
+    "clickType" : "single",
+    "targetPoint" : {
+      "original" : {
+        "y" : 964,
+        "x" : 290
+      },
+      "resolved" : {
+        "x" : 290,
+        "y" : 964
+      },
+      "source" : "element",
+      "elementId" : "elem_43",
+      "snapshotId" : "1788055427004-4509"
+    },
+    "waitTime" : 0,
+    "clickedElement" : "Button: prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs",
+    "targetApp" : "hide",
+    "deliveryMode" : "background"
+  },
+  "target_identity" : {
+    "kind" : "process",
+    "pid" : 31183,
+    "process_start_identity_decimal" : "1788055307058926"
+  },
+  "success" : true,
+  "target_receipt" : {
+    "pid" : 31183,
+    "process_start_identity" : 1788055307058926,
+    "process_start_identity_decimal" : "1788055307058926"
+  }
+}

@@ -610,7 +610,18 @@ fn session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
 
     let snapshot = snapshot(core);
     assert_eq!(snapshot["terminal"]["pane_id"], "fixture:p1");
-    assert_eq!(snapshot["pane_layout"]["workspace_id"], "fixture");
+    assert!(snapshot["pane_layout"].is_null());
+    assert!(
+        snapshot["terminal"]["panes"]
+            .as_array()
+            .expect("terminal pane state")
+            .is_empty()
+    );
+    assert_eq!(
+        snapshot["status"]["last_error"]["kind"],
+        "pane.projection_unavailable"
+    );
+    assert_eq!(snapshot["status"]["last_error"]["retryable"], true);
 
     herdr_core_destroy(core);
 }

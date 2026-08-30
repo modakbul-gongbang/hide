@@ -23,7 +23,7 @@ use crate::model::{
 use crate::runtime::Runtime;
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
-    SessionPanePayload, SessionSnapshotPayload,
+    SessionPanePayload, SessionSnapshotPayload, SessionTabPayload,
 };
 use crate::workspace;
 
@@ -487,6 +487,14 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
         .map_err(|error| {
             SessionFetchError::Malformed(format!("snapshot layouts are malformed: {error}"))
         })?;
+    let tabs = match snapshot.get("tabs") {
+        Some(value) => {
+            serde_json::from_value::<Vec<SessionTabPayload>>(value.clone()).map_err(|error| {
+                SessionFetchError::Malformed(format!("snapshot tabs are malformed: {error}"))
+            })?
+        }
+        None => Vec::new(),
+    };
     let focused_pane_id = snapshot
         .get("focused_pane_id")
         .and_then(Value::as_str)
@@ -509,6 +517,7 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
 
     Ok(SessionSnapshotPayload {
         focused_pane_id,
+        tabs,
         layouts,
         agents,
         panes,
@@ -1125,6 +1134,30 @@ mod tests {
         let projected = crate::sidebar::project_agents(payload).agents;
         assert_eq!(projected[0].state, "working");
         assert_eq!(projected[1].state, "idle");
+    }
+
+    #[test]
+    fn wire_snapshot_preserves_herdr_tab_labels() {
+        let snapshot = json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "workspaces": [{"workspace_id": "w1", "label": "verify"}],
+            "tabs": [{
+                "workspace_id": "w1",
+                "tab_id": "w1:t1",
+                "label": "2",
+                "number": 2,
+                "focused": true,
+                "pane_count": 1,
+                "agent_status": "idle"
+            }],
+            "layouts": [],
+            "agents": []
+        });
+
+        let payload = project_session(&snapshot).expect("projects tab metadata");
+        assert_eq!(payload.tabs.len(), 1);
+        assert_eq!(payload.tabs[0].tab_id, "w1:t1");
+        assert_eq!(payload.tabs[0].label, "2");
     }
 
     #[test]

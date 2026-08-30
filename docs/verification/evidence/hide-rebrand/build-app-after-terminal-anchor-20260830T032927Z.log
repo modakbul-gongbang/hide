@@ -1,0 +1,48 @@
+   Compiling herdr-core v0.1.0 (/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core)
+    Finished `release` profile [optimized] target(s) in 23.57s
+Building for production...
+[0/2] Write swift-version--1AB21518FC5DEDBE.txt
+Build of product 'SwiftTermBuildInfoGenerator' complete! (0.23s)
+[0/1] Planning build
+[1/1] Compiling plugin GenerateDoccReference
+[2/2] Compiling plugin GenerateManual
+[3/3] Compiling plugin SwiftTermBuildInfoPlugin
+Building for production...
+[3/6] Write sources
+[4/6] Write swift-version--1AB21518FC5DEDBE.txt
+[5/7] Generate SwiftTerm build information
+[7/8] Compiling HerdrMacOS CoreBridge.swift
+[7/9] Write Objects.LinkFileList
+ld: warning: object file (../target/release/libherdr_core.a[41](25ac62e5b3c53843-curve25519.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[42](0bbbd18bda93c05b-aes_nohw.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[43](00c879ee3285a50d-montgomery.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[44](00c879ee3285a50d-montgomery_inv.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[45](a0330e891e733f4e-ecp_nistz.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[47](a0330e891e733f4e-gfp_p384.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[49](aaa1ba3e455ee2e1-limbs.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[50](a4019cc0736b0423-mem.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[51](d5a9841f3dc6e253-poly1305.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[52](a0330e891e733f4e-p256-nistz.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[53](c322a0bcc369f531-chacha-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[54](c322a0bcc369f531-chacha20_poly1305_armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[55](c322a0bcc369f531-aesv8-armx-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[56](c322a0bcc369f531-aesv8-gcm-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[57](c322a0bcc369f531-ghash-neon-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[58](c322a0bcc369f531-ghashv8-armx-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[59](c322a0bcc369f531-vpaes-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[60](c322a0bcc369f531-armv8-mont-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[61](c322a0bcc369f531-p256-armv8-asm-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[62](c322a0bcc369f531-sha512-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[63](c322a0bcc369f531-sha256-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+[8/9] Linking HerdrMacOS
+Build complete! (15.07s)
+/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app/Contents/Info.plist: OK
+/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app: replacing existing signature
+/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app: valid on disk
+/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app: satisfies its Designated Requirement
+bundle=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app
+archive=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide-v0.1.0-macos-arm64.zip
+herdr_version=0.8.2
+herdr_sha256=bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328
+archive_sha256=cc62fd41bf75e4fc86fd1b9fb42dfa4d109f5094ffa19c752aa04daaab763ca4
+build_exit=0

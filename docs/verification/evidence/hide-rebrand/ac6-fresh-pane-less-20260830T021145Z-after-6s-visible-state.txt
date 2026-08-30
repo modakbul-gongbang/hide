@@ -1,0 +1,50 @@
+elem_19	button	main, main · 1 tabs		
+elem_20	button	worktree-apify-migration, worktree-apify-migration · 0 tabs		
+elem_21	button	hotfix-clean, hotfix-clean · 0 tabs		
+elem_22	button	771-instagram-profile-crawling, 771-instagram-profile-crawling · 0 tabs		
+elem_26	button	main, main · 1 tabs		
+elem_27	button	worktree-apify-migration, worktree-apify-migration · 0 tabs		
+elem_28	button	hotfix-clean, hotfix-clean · 0 tabs		
+elem_29	button	771-instagram-profile-crawling, 771-instagram-profile-crawling · 0 tabs		
+elem_33	button	main, main · 1 tabs		
+elem_37	button	main, main · 1 tabs		
+elem_41	button	main, main · 3 tabs		
+elem_42	button	baseline-wt, Folder · 0 tabs		
+elem_43	button	prd/herdr-ide-shell-ux, prd/herdr-ide-shell-ux · 0 tabs		
+elem_44	button	prd/hide-rebrand, prd/hide-rebrand · 0 tabs		
+elem_45	button	prd/pet-integration, prd/pet-integration · 0 tabs		
+elem_46	button	prd/swift-shell-pivot, prd/swift-shell-pivot · 0 tabs		
+elem_50	button	main, main · 0 tabs		
+elem_51	button	baseline-wt, Folder · 0 tabs		
+elem_52	button	prd/herdr-ide-shell-ux, prd/herdr-ide-shell-ux · 1 tabs		
+elem_53	button	prd/hide-rebrand, prd/hide-rebrand · 0 tabs		
+elem_54	button	prd/pet-integration, prd/pet-integration · 0 tabs		
+elem_55	button	prd/swift-shell-pivot, prd/swift-shell-pivot · 0 tabs		
+elem_59	button	main, main · 0 tabs		
+elem_60	button	baseline-wt, Folder · 0 tabs		
+elem_61	button	prd/herdr-ide-shell-ux, prd/herdr-ide-shell-ux · 0 tabs		
+elem_62	button	prd/hide-rebrand, prd/hide-rebrand · 2 tabs		
+elem_63	button	prd/pet-integration, prd/pet-integration · 0 tabs		
+elem_64	button	prd/swift-shell-pivot, prd/swift-shell-pivot · 0 tabs		
+elem_68	button	main, main · 1 tabs		
+elem_72	button	main, main · 1 tabs		
+elem_76	button	main, main · 1 tabs		
+elem_77	button	prd/implement-bc, prd/implement-bc · 0 tabs		
+elem_81	button	main, main · 1 tabs		
+elem_86	button	C, herdr-ide, 28m, 폼 델타 아키텍처 개선 및 검증, working		
+elem_87	button	O, herdr-ide, 2h, 미니 선택·워크스페이스 전환 결함 수정, working		
+elem_88	button	O, herdr-ide, 2h, Mac mini·워크스페이스 전환 결함 수정, working		
+elem_91	button	C, herdr-ide, 1h, 워크스페이스 전환과 브랜치별 패널 동작 수정, idle		
+elem_94	button	C, herdr-ide, 3h, 펫 통합 결과와 AC5 검증 상태 정리, idle		
+elem_96	button	C, herdr-ide, 3h, herdr 관련 디렉터리 삭제 여부 확인, idle		
+elem_99	button	O, herdr-ide, 1d, 작업 진행 상태 확인, idle		
+elem_100	button	O, herdr-ide, 1d, Rust 파서 신규 worktree 전체 구현, idle		
+elem_5	other	herdr-ide	herdr-ide	hide-shell
+elem_7	other	prd/hide-rebrand  ·  prd/hide-rebrand	prd/hide-rebrand  ·  prd/hide-rebrand	hide-shell
+elem_39	other	herdr-ide	herdr-ide	
+elem_48	other	herdr-ide-shell-ux	herdr-ide-shell-ux	
+elem_57	other	hide-rebrand	hide-rebrand	
+elem_109	other	/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand	/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand	hide-terminal-surface
+elem_111	other	Terminal is starting	Terminal is starting	hide-terminal-surface
+elem_112	other	Waiting for Herdr to attach the new pane to this checkout.	Waiting for Herdr to attach the new pane to this checkout.	hide-terminal-surface
+elem_122	other	Waiting for Herdr	Waiting for Herdr	hide-shell
