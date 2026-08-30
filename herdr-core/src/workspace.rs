@@ -401,7 +401,7 @@ fn normalized_path(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-fn normalized_for_comparison(path: &Path) -> String {
+pub fn normalized_for_comparison(path: &Path) -> String {
     normalized_path(path)
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
