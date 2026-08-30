@@ -79,7 +79,6 @@ struct BrowserStatusPayload {
 struct CreateWorkspacePayload {
     path: String,
     label: String,
-    #[serde(alias = "create_worktree")]
     initialize_git: bool,
 }
 
@@ -1196,9 +1195,7 @@ impl Runtime {
                     format!("Pane {pane_id} focused in {elapsed_ms} ms"),
                 );
                 self.snapshot.ui_state.selected_pane_id = Some(pane_id);
-                if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
-                    self.set_error("ui_state.save_failed", message, true);
-                }
+                self.persist_ui_state();
                 self.apply_pane_layout(layout);
                 true
             }
@@ -1260,9 +1257,7 @@ impl Runtime {
                 let authoritative_focus = layout.focused_pane_id.clone();
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.ui_state.selected_pane_id = Some(authoritative_focus);
-                if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
-                    self.set_error("ui_state.save_failed", message, true);
-                }
+                self.persist_ui_state();
                 self.apply_pane_layout(layout);
                 true
             }
@@ -1339,9 +1334,7 @@ impl Runtime {
                     self.snapshot.terminal.panes.clear();
                     self.snapshot.ui_state.selected_pane_id = None;
                 }
-                if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
-                    self.set_error("ui_state.save_failed", message, true);
-                }
+                self.persist_ui_state();
                 self.sync_focused_terminal_projection();
                 true
             }
