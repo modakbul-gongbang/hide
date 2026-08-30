@@ -55,6 +55,9 @@ Its recorded SHA-256 is `a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc
 
 The bundle records that digest and includes the Herdr Apache-2.0 notice.
 
+Earlier pre-release evidence records `bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328` for a superseded candidate.
+That digest is not the shipped v0.1.9 binary; the release candidate and installed bundle use the official v0.8.2 asset recorded above.
+
 Earlier release attempts were retained as ordinary non-force history while the release workflow was corrected for the Swift runner, compiler workaround, official Herdr digest, and portable checksum sidecar.
 
 The final `v0.1.9` run is the successful draft-release candidate.

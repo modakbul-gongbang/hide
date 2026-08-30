@@ -25,11 +25,13 @@ The scan also checked the intentionally synthetic remote fixture markers used by
 | Personal email address | 0 | No personal email address is present in the current public tree. |
 | Credential-shaped token values | 0 | No checked GitHub, AWS, Slack, npm, Google, Stripe, OpenAI, Anthropic, bearer, or private-key value was detected. |
 | Secret-like assignments with a value | 0 | No checked credential assignment contains a value. |
-| Intentional synthetic fixture markers | 2 lines | The two lines are `hide@example.invalid` and `/private/tmp/hide-remote-repo` in the remote workspace test. |
+| Intentional synthetic fixture markers | 3 lines | One `hide@example.invalid` line is used for a disposable Rust git commit, and two `/private/tmp/hide-remote-repo` lines are used by the Swift remote projection fixture. |
 
 The current public `main` tree contains 981 tracked files.
 
-The two synthetic fixture lines are not user identity or credentials, and the `/private/tmp` spelling is required because the test passes that literal disposable path to the library rather than asking a shell to expand `~`.
+The three synthetic fixture lines are not user identity or credentials.
+The `/private/tmp` spelling is required because the Swift test passes that literal disposable path to the library rather than asking a shell to expand `~`.
+The fixture literals are retained because they are executable test inputs, and the Swift fixture is outside this implementation lane's owned source paths.
 
 ## History boundary
 
