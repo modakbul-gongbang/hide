@@ -810,21 +810,38 @@ struct RemoteNavigationSnapshot {
             .first(where: { $0.id == workspaceID })?
             .checkouts
             .first(where: { $0.id == checkoutID })
-        let selectedTab = paneID.flatMap { paneID in
-            selectedCheckout?.tabs.first(where: { tab in
-                tab.panes.contains(where: { $0.id == paneID })
-            })
-        }
-            ?? tabID.flatMap { tabID in
-                selectedCheckout?.tabs.first(where: { $0.id == tabID })
+        let selectedTabs: [CoreTabSnapshot] = selectedCheckout?.tabs ?? []
+        var selectedTab: CoreTabSnapshot?
+
+        if let paneID {
+            selectedTab = selectedTabs.first { tab in
+                tab.panes.contains { pane in pane.id == paneID }
             }
-            ??
-            selectedCheckout?.tabs
-            .first(where: { $0.id == activeTabIDs[workspaceID] })
-            ?? selectedCheckout?.tabs.first
-        let selectedPaneID = paneID.flatMap { paneID in
-            selectedTab?.panes.contains(where: { $0.id == paneID }) == true ? paneID : nil
-        } ?? selectedTab?.panes.first?.id
+        }
+
+        if selectedTab == nil, let tabID {
+            selectedTab = selectedTabs.first { tab in
+                tab.id == tabID
+            }
+        }
+
+        if selectedTab == nil, let activeTabID = activeTabIDs[workspaceID] {
+            selectedTab = selectedTabs.first { tab in
+                tab.id == activeTabID
+            }
+        }
+
+        if selectedTab == nil {
+            selectedTab = selectedTabs.first
+        }
+
+        let selectedPaneID: String?
+        if let paneID,
+           selectedTab?.panes.contains(where: { pane in pane.id == paneID }) == true {
+            selectedPaneID = paneID
+        } else {
+            selectedPaneID = selectedTab?.panes.first?.id
+        }
         return RemoteNavigationSnapshot(
             deviceID: deviceID,
             targetLabel: targetLabel,
