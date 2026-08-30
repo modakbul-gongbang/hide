@@ -25,7 +25,7 @@ jobs:
         run: |
           test -s dist/*.zip
           test -s dist/*.zip.sha256
-          shasum -a 256 -c dist/*.zip.sha256
+          (cd dist && shasum -a 256 -c ./*.zip.sha256)
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
