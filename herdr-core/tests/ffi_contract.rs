@@ -25,7 +25,7 @@ fn options_with_state(state_path: &std::path::Path) -> Vec<u8> {
     // A null socket keeps the core in loopback mode so byte-echo tests stay
     // deterministic; live semantics are covered by the dedicated live test.
     serde_json::to_vec(&json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "herdr_socket_path": null,
         "remote_targets": [
             {"id": "mini", "label": "Mac mini", "ssh_alias": "mini"}
@@ -37,7 +37,7 @@ fn options_with_state(state_path: &std::path::Path) -> Vec<u8> {
 
 fn slow_live_options(state_path: &std::path::Path, herdr_bin_path: &std::path::Path) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "herdr_socket_path": "/tmp/herdr-core-dispatch-latency.sock",
         "herdr_bin_path": herdr_bin_path,
         "remote_targets": [],
@@ -68,7 +68,7 @@ fn live_key_without_attach_surfaces_an_explicit_error() {
     let missing_state =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/missing-ui-state.json");
     let options = serde_json::to_vec(&json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "herdr_socket_path": "/tmp/herdr-core-ffi-test-missing.sock",
         "remote_targets": [],
         "app_state_path": missing_state
@@ -79,7 +79,7 @@ fn live_key_without_attach_surfaces_an_explicit_error() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "key", "payload": {"pane_id": "p1", "bytes_base64": "fw=="}}),
+        json!({"schema_version": 2, "kind": "key", "payload": {"pane_id": "p1", "bytes_base64": "fw=="}}),
     );
     let after = snapshot(core);
     assert_eq!(
@@ -108,13 +108,31 @@ fn dispatch(core: *mut HerdrCore, event: Value) {
     herdr_core_dispatch(core, bytes.as_ptr(), bytes.len());
 }
 
-fn snapshot(core: *mut HerdrCore) -> Value {
-    let bytes = herdr_core_snapshot(core);
+fn snapshot_delta(core: *mut HerdrCore, have_revision: u64, have_sequence: u64) -> Value {
+    let bytes = herdr_core_snapshot(core, have_revision, have_sequence);
     assert!(!bytes.ptr.is_null());
     let parsed = unsafe { serde_json::from_slice(slice::from_raw_parts(bytes.ptr, bytes.len)) }
         .expect("snapshot JSON");
     herdr_core_free_bytes(bytes);
     parsed
+}
+
+/// Full read composed the way the shell composes it: a 0/0 cursor read must
+/// carry `rest` and `editor`, and chunks join the terminal section.
+fn snapshot(core: *mut HerdrCore) -> Value {
+    let delta = snapshot_delta(core, 0, 0);
+    let mut full = delta["rest"].clone();
+    assert!(full.is_object(), "a 0/0 read must include rest: {delta}");
+    assert!(
+        delta["editor"].is_object(),
+        "a 0/0 read must include editor: {delta}"
+    );
+    full["editor"] = delta["editor"].clone();
+    full["schema_version"] = delta["schema_version"].clone();
+    full["input_generation"] = delta["input_generation"].clone();
+    full["terminal"]["chunks"] = delta["chunks"].clone();
+    full["terminal"]["sequence"] = delta["terminal_sequence"].clone();
+    full
 }
 
 fn single_pane_layout(workspace_id: &str, pane_id: &str) -> Value {
@@ -183,7 +201,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "zoomed",
         ]
     );
-    assert_eq!(snapshot["schema_version"], 1);
+    assert_eq!(snapshot["schema_version"], 2);
     // The default test options leave the herdr socket unconfigured.
     assert_eq!(snapshot["status"]["herdr"]["state"], "unconfigured");
     assert_eq!(snapshot["status"]["remote"][0]["target_id"], "mini");
@@ -233,10 +251,12 @@ fn snapshot_exposes_the_production_schema_and_status() {
     assert_eq!(snapshot["pet"]["pose"], "disconnected");
     assert_eq!(snapshot["pet"]["visible"], true);
     assert_eq!(snapshot["pet"]["theme_id"], "default");
-    assert!(snapshot["pet"]["attention_pane_ids"]
-        .as_array()
-        .expect("attention array")
-        .is_empty());
+    assert!(
+        snapshot["pet"]["attention_pane_ids"]
+            .as_array()
+            .expect("attention array")
+            .is_empty()
+    );
 
     herdr_core_destroy(core);
 }
@@ -256,7 +276,7 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     let core = create();
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
                 pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
                 pet_agent("busy-b", "status_working", "\u{25cf}", "05", "0000000000003"),
@@ -266,7 +286,10 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
         }}),
     );
     let working = snapshot(core);
-    assert_eq!(working["pet"]["pose"], "juggling", "two working panes juggle");
+    assert_eq!(
+        working["pet"]["pose"], "juggling",
+        "two working panes juggle"
+    );
     assert_eq!(working["pet"]["badges"]["working"], 2);
     assert_eq!(working["pet"]["badges"]["attention"], 0);
     assert_eq!(working["pet"]["badges"]["error"], 0);
@@ -276,7 +299,7 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     // acknowledged one on the same snapshot does not.
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
                 pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
                 json!({"pane_id": "asked", "workspace_label": "Fixture", "agent": "claude",
@@ -307,16 +330,14 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
 fn pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen() {
     // A click persists the pane selection, so this run needs its own state
     // file rather than the shared "this file is absent" fixture path.
-    let state_path = std::env::temp_dir().join(format!(
-        "herdr-core-pet-click-{}.json",
-        std::process::id()
-    ));
+    let state_path =
+        std::env::temp_dir().join(format!("herdr-core-pet-click-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_path);
     let core = create_with_socket_override_hidden(&options_with_state(&state_path));
     assert!(!core.is_null());
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [pet_agent("earlier", "status_error_new", "\u{d7}", "00", "0000000000009")],
             "layouts": [single_pane_layout("w1", "earlier")]
         }}),
@@ -325,7 +346,7 @@ fn pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen()
     // first by rank; click order must still follow first observation.
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
                 pet_agent("later", "status_question_new", "?", "01", "0000000000001"),
                 pet_agent("earlier", "status_error_new", "\u{d7}", "00", "0000000000009")
@@ -340,7 +361,10 @@ fn pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen()
         "the pane observed unseen first is clicked first"
     );
 
-    dispatch(core, json!({"schema_version": 1, "kind": "pet_click", "payload": {}}));
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "pet_click", "payload": {}}),
+    );
     let clicked = snapshot(core);
     assert_eq!(clicked["pet"]["last_click"]["selected_pane_id"], "earlier");
     assert_eq!(clicked["ui_state"]["selected_pane_id"], "earlier");
@@ -349,17 +373,22 @@ fn pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen()
     // its own window.
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [pet_agent("quiet", "status_idle", "\u{25cb}", "10", "0000000000001")],
             "layouts": [single_pane_layout("w1", "quiet")]
         }}),
     );
-    dispatch(core, json!({"schema_version": 1, "kind": "pet_click", "payload": {}}));
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "pet_click", "payload": {}}),
+    );
     let quiet = snapshot(core);
-    assert!(quiet["pet"]["attention_pane_ids"]
-        .as_array()
-        .expect("attention array")
-        .is_empty());
+    assert!(
+        quiet["pet"]["attention_pane_ids"]
+            .as_array()
+            .expect("attention array")
+            .is_empty()
+    );
     assert!(quiet["pet"]["last_click"]["selected_pane_id"].is_null());
 
     herdr_core_destroy(core);
@@ -382,30 +411,36 @@ fn every_pet_toggle_surface_writes_one_shared_visibility_that_survives_relaunch(
     // toggle (menu bar, shortcut, URL scheme toggle) reach the same state.
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "pet_set_visible", "payload": {"visible": false}}),
+        json!({"schema_version": 2, "kind": "pet_set_visible", "payload": {"visible": false}}),
     );
     assert_eq!(snapshot(core)["pet"]["visible"], false);
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "pet_set_visible", "payload": {"visible": false}}),
+        json!({"schema_version": 2, "kind": "pet_set_visible", "payload": {"visible": false}}),
     );
     assert_eq!(
         snapshot(core)["pet"]["visible"],
         false,
         "setting the same visibility twice converges"
     );
-    dispatch(core, json!({"schema_version": 1, "kind": "pet_toggle_visible", "payload": {}}));
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "pet_toggle_visible", "payload": {}}),
+    );
     assert_eq!(snapshot(core)["pet"]["visible"], true);
-    dispatch(core, json!({"schema_version": 1, "kind": "pet_toggle_visible", "payload": {}}));
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "pet_toggle_visible", "payload": {}}),
+    );
     assert_eq!(snapshot(core)["pet"]["visible"], false);
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "pet_move", "payload": {"x": 320.0, "y": 96.0}}),
+        json!({"schema_version": 2, "kind": "pet_move", "payload": {"x": 320.0, "y": 96.0}}),
     );
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "pet_shortcut_update",
+        json!({"schema_version": 2, "kind": "pet_shortcut_update",
                "payload": {"accelerator": "command+option+p"}}),
     );
     herdr_core_destroy(core);
@@ -421,7 +456,7 @@ fn every_pet_toggle_surface_writes_one_shared_visibility_that_survives_relaunch(
     // A blank accelerator clears the binding so nothing is registered.
     dispatch(
         relaunched,
-        json!({"schema_version": 1, "kind": "pet_shortcut_update",
+        json!({"schema_version": 2, "kind": "pet_shortcut_update",
                "payload": {"accelerator": "  "}}),
     );
     assert!(snapshot(relaunched)["pet"]["shortcut"].is_null());
@@ -429,7 +464,7 @@ fn every_pet_toggle_surface_writes_one_shared_visibility_that_survives_relaunch(
     // A keyboard save must not erase the pet's own placement.
     dispatch(
         relaunched,
-        json!({"schema_version": 1, "kind": "ui_state_update", "payload": {
+        json!({"schema_version": 2, "kind": "ui_state_update", "payload": {
             "expanded_paths": [], "selected_path": null, "selected_pane_id": null,
             "shortcut_bindings": {"split_right": "command+option+r"}
         }}),
@@ -447,7 +482,7 @@ fn a_broken_agent_record_excludes_only_itself_and_reports_the_exclusion() {
     let core = create();
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "session_snapshot", "payload": {
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
                 pet_agent("intact", "status_working", "\u{25cf}", "05", "0000000000002"),
                 json!({"pane_id": "broken", "workspace_label": "Fixture", "agent": "codex",
@@ -496,7 +531,7 @@ fn session_snapshot_exposes_authoritative_recursive_layout_and_per_pane_state() 
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "focused_pane_id": "w-grid:p3",
@@ -551,7 +586,7 @@ fn session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "focused_pane_id": "fixture:p1",
@@ -563,7 +598,7 @@ fn session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "focused_pane_id": "user:p1",
@@ -586,7 +621,7 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "agents": [
@@ -601,7 +636,7 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
     for pane_id in ["working", "attention"] {
         dispatch(
             core,
-            json!({"schema_version": 1, "kind": "close_pane", "payload": {"pane_id": pane_id, "confirmed": false}}),
+            json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": pane_id, "confirmed": false}}),
         );
         let rejected = snapshot(core);
         assert_eq!(
@@ -612,7 +647,7 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "close_pane", "payload": {"pane_id": "idle", "confirmed": false}}),
+        json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": "idle", "confirmed": false}}),
     );
     let idle = snapshot(core);
     assert_eq!(
@@ -622,7 +657,7 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "close_pane", "payload": {"pane_id": "working", "confirmed": true}}),
+        json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": "working", "confirmed": true}}),
     );
     let confirmed = snapshot(core);
     assert_eq!(
@@ -639,7 +674,7 @@ fn unknown_kind_and_version_mismatch_are_observable() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "invented", "payload": {}}),
+        json!({"schema_version": 2, "kind": "invented", "payload": {}}),
     );
     let unknown = snapshot(core);
     assert_eq!(
@@ -668,7 +703,7 @@ fn malformed_payload_is_observable_and_valid_input_clears_it() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "focus_pane", "payload": {}}),
+        json!({"schema_version": 2, "kind": "focus_pane", "payload": {}}),
     );
     assert_eq!(
         snapshot(core)["status"]["last_error"]["kind"],
@@ -677,7 +712,7 @@ fn malformed_payload_is_observable_and_valid_input_clears_it() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "key", "payload": {"pane_id": "p1", "bytes_base64": "fw=="}}),
+        json!({"schema_version": 2, "kind": "key", "payload": {"pane_id": "p1", "bytes_base64": "fw=="}}),
     );
     let valid = snapshot(core);
     assert!(valid["status"]["last_error"].is_null());
@@ -693,7 +728,7 @@ fn pane_split_direction_and_zoom_events_reach_the_live_control_boundary() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "focused_pane_id": "w1:p1",
@@ -706,7 +741,7 @@ fn pane_split_direction_and_zoom_events_reach_the_live_control_boundary() {
         dispatch(
             core,
             json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "create_pane",
                 "payload": {
                     "tab_id": "t1",
@@ -724,7 +759,7 @@ fn pane_split_direction_and_zoom_events_reach_the_live_control_boundary() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "toggle_zoom",
             "payload": {"pane_id": "w1:p1"}
         }),
@@ -770,7 +805,7 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "focused_pane_id": "w-test:p1",
@@ -795,7 +830,7 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "create_pane",
             "payload": {
                 "tab_id": "w-test:t1",
@@ -816,7 +851,7 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
     let focus_started = Instant::now();
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "focus_pane", "payload": {"pane_id": "w-test:p3"}}),
+        json!({"schema_version": 2, "kind": "focus_pane", "payload": {"pane_id": "w-test:p3"}}),
     );
     let focus_elapsed = focus_started.elapsed();
     let focus_returned_without_waiting = focus_elapsed < Duration::from_millis(250);
@@ -829,7 +864,7 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "toggle_zoom",
             "payload": {"pane_id": "w-test:p3"}
         }),
@@ -903,7 +938,7 @@ fn multi_pane_attach_destroy_returns_without_waiting_and_reaps_children() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {
                 "focused_pane_id": "w-lifecycle:p1",
@@ -992,14 +1027,14 @@ fn callback_fires_for_snapshot_changes_and_unregisters_cleanly() {
 
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "focus_pane", "payload": {"pane_id": "p2"}}),
+        json!({"schema_version": 2, "kind": "focus_pane", "payload": {"pane_id": "p2"}}),
     );
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
     herdr_core_on_change(core, None, std::ptr::null_mut());
     dispatch(
         core,
-        json!({"schema_version": 1, "kind": "focus_pane", "payload": {"pane_id": "p3"}}),
+        json!({"schema_version": 2, "kind": "focus_pane", "payload": {"pane_id": "p3"}}),
     );
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
@@ -1011,7 +1046,7 @@ fn off_owner_dispatch_surfaces_a_thread_contract_failure() {
     let core = create();
     let core_address = core as usize;
     let event = serde_json::to_vec(
-        &json!({"schema_version": 1, "kind": "focus_pane", "payload": {"pane_id": "p4"}}),
+        &json!({"schema_version": 2, "kind": "focus_pane", "payload": {"pane_id": "p4"}}),
     )
     .expect("event serialize");
 
@@ -1032,7 +1067,7 @@ fn off_owner_snapshot_returns_no_bytes_and_preserves_the_violation() {
     let core_address = core as usize;
 
     std::thread::spawn(move || {
-        let bytes = herdr_core_snapshot(core_address as *mut HerdrCore);
+        let bytes = herdr_core_snapshot(core_address as *mut HerdrCore, 0, 0);
         assert!(bytes.ptr.is_null());
         assert_eq!(bytes.len, 0);
         assert_eq!(bytes.cap, 0);
@@ -1080,7 +1115,7 @@ fn create_rejects_invalid_options_and_snapshot_buffers_can_repeat() {
 
     let core = create();
     for _ in 0..1_000 {
-        let bytes = herdr_core_snapshot(core);
+        let bytes = herdr_core_snapshot(core, 0, 0);
         assert!(!bytes.ptr.is_null());
         herdr_core_free_bytes(bytes);
     }
@@ -1095,7 +1130,7 @@ fn terminal_bytes_round_trip_through_the_json_boundary_without_transcoding() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "key",
             "payload": {"pane_id": "pane-terminal", "bytes_base64": arbitrary_bytes}
         }),
@@ -1115,7 +1150,7 @@ fn terminal_bytes_round_trip_through_the_json_boundary_without_transcoding() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "terminal_output",
             "payload": {"pane_id": "pane-terminal", "bytes_base64": "4piD7ZWcCg=="}
         }),
@@ -1143,7 +1178,7 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "file_open",
             "payload": {"path": path}
         }),
@@ -1158,7 +1193,7 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "file_save",
             "payload": {
                 "path": path,
@@ -1205,7 +1240,7 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
     dispatch(
         core,
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {"agents": [
                 {"pane_id":"seen-old","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000010","summary":"Seen older","elapsed":"2h"}},
@@ -1223,6 +1258,84 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
     assert_eq!(agents[2]["pane_id"], "seen-old");
     assert_eq!(agents[0]["state"], "question");
     assert_eq!(agents[0]["symbol"], "?");
+
+    herdr_core_destroy(core);
+}
+
+#[test]
+fn delta_reads_send_only_what_the_cursors_have_not_seen() {
+    let core = create();
+    // First contact with a pane changes the rest sections (pane registry),
+    // so settle that before measuring the chunk-only path.
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "terminal_output", "payload": {"pane_id": "local-loopback", "bytes_base64": "aGk="}}),
+    );
+    let full = snapshot_delta(core, 0, 0);
+    let revision = full["revision"].as_u64().expect("revision");
+    let sequence = full["terminal_sequence"].as_u64().expect("sequence");
+    assert!(full["rest"].is_object());
+    assert!(full["editor"].is_object());
+    assert_eq!(full["chunks_dropped"], false);
+
+    // Caught-up cursors: nothing rides.
+    let idle = snapshot_delta(core, revision, sequence);
+    assert_eq!(idle["revision"], revision);
+    assert!(idle["rest"].is_null(), "unchanged rest must be omitted");
+    assert!(idle["editor"].is_null(), "unchanged editor must be omitted");
+    assert_eq!(idle["chunks"].as_array().map(Vec::len), Some(0));
+
+    // Output to an already-known pane moves only the chunk channel.
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "terminal_output", "payload": {"pane_id": "local-loopback", "bytes_base64": "bW8="}}),
+    );
+    let chunk_only = snapshot_delta(core, revision, sequence);
+    assert!(chunk_only["rest"].is_null());
+    assert!(chunk_only["editor"].is_null());
+    assert_eq!(chunk_only["chunks"].as_array().map(Vec::len), Some(1));
+    assert_eq!(chunk_only["chunks"][0]["bytes_base64"], "bW8=");
+    assert_eq!(chunk_only["terminal_sequence"].as_u64(), Some(sequence + 1));
+
+    // A read is not an ack: the same cursors return the same delta again.
+    let retried = snapshot_delta(core, revision, sequence);
+    assert_eq!(retried["chunks"], chunk_only["chunks"]);
+
+    // Advancing the sequence cursor drains the chunk channel.
+    let caught_up = snapshot_delta(core, revision, sequence + 1);
+    assert_eq!(caught_up["chunks"].as_array().map(Vec::len), Some(0));
+
+    // A section mutation rides as a new rest revision, not as chunks.
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "focus_pane", "payload": {"pane_id": "local-loopback"}}),
+    );
+    let rest_changed = snapshot_delta(core, revision, sequence + 1);
+    assert!(rest_changed["rest"].is_object());
+    assert!(rest_changed["revision"].as_u64() > Some(revision));
+    assert_eq!(rest_changed["chunks"].as_array().map(Vec::len), Some(0));
+
+    herdr_core_destroy(core);
+}
+
+#[test]
+fn chunk_ring_overflow_is_reported_to_a_lagging_cursor() {
+    let core = create();
+    // The ring retains 512 chunks; push past it while the cursor stays at 0.
+    for _ in 0..600 {
+        dispatch(
+            core,
+            json!({"schema_version": 2, "kind": "terminal_output", "payload": {"pane_id": "local-loopback", "bytes_base64": "eA=="}}),
+        );
+    }
+    let lagging = snapshot_delta(core, 0, 0);
+    assert_eq!(lagging["chunks_dropped"], true);
+    assert_eq!(lagging["chunks"].as_array().map(Vec::len), Some(512));
+
+    let sequence = lagging["terminal_sequence"].as_u64().expect("sequence");
+    let current = snapshot_delta(core, 0, sequence);
+    assert_eq!(current["chunks_dropped"], false);
+    assert_eq!(current["chunks"].as_array().map(Vec::len), Some(0));
 
     herdr_core_destroy(core);
 }

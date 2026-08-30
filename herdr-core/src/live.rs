@@ -21,11 +21,11 @@ use crate::model::{
     WorkspaceSnapshot,
 };
 use crate::runtime::Runtime;
-use crate::workspace;
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
     SessionPanePayload, SessionSnapshotPayload,
 };
+use crate::workspace;
 
 /// Herdr API protocol revision this core speaks. A mismatch is a hard,
 /// explicit failure instead of a partially working sidebar.
@@ -345,9 +345,7 @@ fn spawn_session_poller(context: LiveContext) {
                             return;
                         };
                         let registrations = match runtime.lock() {
-                            Ok(guard) => {
-                                guard.snapshot().ui_state.workspace_registrations.clone()
-                            }
+                            Ok(guard) => guard.snapshot().ui_state.workspace_registrations.clone(),
                             Err(_) => return,
                         };
                         drop(runtime);

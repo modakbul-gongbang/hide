@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreOptions {
@@ -162,7 +162,7 @@ pub struct CheckoutSnapshot {
     pub tabs: Vec<TabSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OverlaySnapshot {
     pub kind: Option<String>,
     pub title: Option<String>,
@@ -170,7 +170,7 @@ pub struct OverlaySnapshot {
     pub actions: Vec<OverlayActionSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OverlayActionSnapshot {
     pub id: String,
     pub label: String,
@@ -197,7 +197,7 @@ pub struct PaneSnapshot {
     pub activity_at_unix_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ConnectionSnapshot {
     pub kind: String,
     pub state: String,
@@ -269,7 +269,7 @@ impl PaneLayoutNodeSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalSnapshot {
     pub pane_id: Option<String>,
     pub sequence: u64,
@@ -279,21 +279,21 @@ pub struct TerminalSnapshot {
     pub panes: Vec<TerminalPaneSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalChunk {
     pub pane_id: String,
     pub sequence: u64,
     pub bytes_base64: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalPaneSnapshot {
     pub pane_id: String,
     pub closed: bool,
     pub exit_code: Option<i32>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorSnapshot {
     pub path: Option<String>,
     pub language: Option<String>,
@@ -305,7 +305,7 @@ pub struct EditorSnapshot {
     pub diff: Option<DiffSnapshot>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     pub selected_path: Option<String>,
@@ -382,32 +382,32 @@ pub(crate) fn default_font_size() -> f32 {
     13.0
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorConflictSnapshot {
     pub disk_modified_at_unix_ms: u64,
     pub opened_modified_at_unix_ms: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiffSnapshot {
     pub added_lines: Vec<u32>,
     pub removed_lines: Vec<u32>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ImeSnapshot {
     pub marked_text: String,
     pub selected_range: TextRangeSnapshot,
     pub replacement_range: Option<TextRangeSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TextRangeSnapshot {
     pub location: u64,
     pub length: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StatusSnapshot {
     pub herdr: ProviderStatusSnapshot,
     pub remote: Vec<RemoteStatusSnapshot>,
@@ -417,7 +417,7 @@ pub struct StatusSnapshot {
     pub last_error: Option<LastErrorSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EnvironmentStatusSnapshot {
     pub key: String,
     pub required: bool,
@@ -427,14 +427,14 @@ pub struct EnvironmentStatusSnapshot {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiagnosticSnapshot {
     pub kind: String,
     pub message: String,
     pub occurred_at: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProviderStatusSnapshot {
     pub state: String,
     pub socket_path: Option<String>,
@@ -442,7 +442,7 @@ pub struct ProviderStatusSnapshot {
     pub last_checked_at_unix_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RemoteStatusSnapshot {
     pub target_id: String,
     pub state: String,
@@ -450,7 +450,7 @@ pub struct RemoteStatusSnapshot {
     pub last_checked_at_unix_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ChromuxStatusSnapshot {
     pub state: String,
     pub profile: String,
@@ -460,7 +460,7 @@ pub struct ChromuxStatusSnapshot {
     pub last_checked_at_unix_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct LastErrorSnapshot {
     pub kind: String,
     pub message: String,
@@ -591,9 +591,7 @@ impl PetSnapshot {
         Self {
             visible: true,
             connection: "not_connected".to_owned(),
-            connection_message: Some(
-                "Waiting for the first herdr connection attempt".to_owned(),
-            ),
+            connection_message: Some("Waiting for the first herdr connection attempt".to_owned()),
             pose: "disconnected".to_owned(),
             sleep_phase: "awake".to_owned(),
             roam_allowed: false,
@@ -606,4 +604,109 @@ impl PetSnapshot {
             last_click: None,
         }
     }
+}
+
+/// The sections of [`Snapshot`] that ride the revisioned `rest` channel of
+/// the delta wire: everything except the editor (its own revision), the
+/// terminal chunk ring (sequence cursor), and the per-event scalars.
+/// Owned copy retained by the runtime to stamp revisions by comparison, so
+/// no mutation site needs dirty-tracking discipline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RestSections {
+    pub navigator: NavigatorSnapshot,
+    pub overlay: OverlaySnapshot,
+    pub tab: TabSnapshot,
+    pub connection: ConnectionSnapshot,
+    pub zoomed: Option<String>,
+    pub focused: FocusedSnapshot,
+    pub pane_layout: Option<PaneLayoutSnapshot>,
+    pub terminal_pane_id: Option<String>,
+    pub terminal_closed: bool,
+    pub terminal_exit_code: Option<i32>,
+    pub terminal_panes: Vec<TerminalPaneSnapshot>,
+    pub ui_state: UiStateSnapshot,
+    pub ime: ImeSnapshot,
+    pub status: StatusSnapshot,
+    pub pet: PetSnapshot,
+}
+
+impl RestSections {
+    pub fn capture(snapshot: &Snapshot) -> Self {
+        Self {
+            navigator: snapshot.navigator.clone(),
+            overlay: snapshot.overlay.clone(),
+            tab: snapshot.tab.clone(),
+            connection: snapshot.connection.clone(),
+            zoomed: snapshot.zoomed.clone(),
+            focused: snapshot.focused.clone(),
+            pane_layout: snapshot.pane_layout.clone(),
+            terminal_pane_id: snapshot.terminal.pane_id.clone(),
+            terminal_closed: snapshot.terminal.closed,
+            terminal_exit_code: snapshot.terminal.exit_code,
+            terminal_panes: snapshot.terminal.panes.clone(),
+            ui_state: snapshot.ui_state.clone(),
+            ime: snapshot.ime.clone(),
+            status: snapshot.status.clone(),
+            pet: snapshot.pet.clone(),
+        }
+    }
+
+    /// Field-by-field equality against the live snapshot, so the unchanged
+    /// case costs a comparison instead of a clone.
+    pub fn matches(&self, snapshot: &Snapshot) -> bool {
+        self.navigator == snapshot.navigator
+            && self.overlay == snapshot.overlay
+            && self.tab == snapshot.tab
+            && self.connection == snapshot.connection
+            && self.zoomed == snapshot.zoomed
+            && self.focused == snapshot.focused
+            && self.pane_layout == snapshot.pane_layout
+            && self.terminal_pane_id == snapshot.terminal.pane_id
+            && self.terminal_closed == snapshot.terminal.closed
+            && self.terminal_exit_code == snapshot.terminal.exit_code
+            && self.terminal_panes == snapshot.terminal.panes
+            && self.ui_state == snapshot.ui_state
+            && self.ime == snapshot.ime
+            && self.status == snapshot.status
+            && self.pet == snapshot.pet
+    }
+}
+
+/// One delta response on the snapshot wire. `rest` and `editor` are present
+/// only when the caller's `have_revision` predates their last change;
+/// `chunks` carries only sequences past the caller's cursor.
+#[derive(Serialize)]
+pub struct SnapshotDeltaWire<'a> {
+    pub schema_version: u32,
+    pub revision: u64,
+    pub rest: Option<RestWire<'a>>,
+    pub editor: Option<&'a EditorSnapshot>,
+    pub input_generation: u64,
+    pub terminal_sequence: u64,
+    pub chunks: Vec<&'a TerminalChunk>,
+    pub chunks_dropped: bool,
+}
+
+#[derive(Serialize)]
+pub struct RestWire<'a> {
+    pub navigator: &'a NavigatorSnapshot,
+    pub overlay: &'a OverlaySnapshot,
+    pub tab: &'a TabSnapshot,
+    pub connection: &'a ConnectionSnapshot,
+    pub zoomed: &'a Option<String>,
+    pub focused: &'a FocusedSnapshot,
+    pub pane_layout: &'a Option<PaneLayoutSnapshot>,
+    pub terminal: TerminalMetaWire<'a>,
+    pub ui_state: &'a UiStateSnapshot,
+    pub ime: &'a ImeSnapshot,
+    pub status: &'a StatusSnapshot,
+    pub pet: &'a PetSnapshot,
+}
+
+#[derive(Serialize)]
+pub struct TerminalMetaWire<'a> {
+    pub pane_id: &'a Option<String>,
+    pub closed: bool,
+    pub exit_code: Option<i32>,
+    pub panes: &'a [TerminalPaneSnapshot],
 }

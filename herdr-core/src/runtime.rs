@@ -10,8 +10,8 @@ use crate::live::{
     SessionFetchError,
 };
 use crate::model::{
-    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PetBadgesSnapshot,
-    PaneSnapshot, PetClickSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot,
+    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
+    PetBadgesSnapshot, PetClickSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot,
     Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
@@ -302,6 +302,19 @@ pub struct Runtime {
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
+    delta: DeltaState,
+}
+
+/// Revision bookkeeping for the delta snapshot wire. Revisions are stamped
+/// lazily at read time by comparing live sections against the last stamped
+/// copy, so mutation sites carry no dirty-tracking obligations.
+#[derive(Default)]
+struct DeltaState {
+    revision: u64,
+    rest_revision: u64,
+    editor_revision: u64,
+    last_rest: Option<crate::model::RestSections>,
+    last_editor: Option<crate::model::EditorSnapshot>,
 }
 
 impl Runtime {
@@ -390,6 +403,7 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             pet_unseen_observed: std::collections::BTreeMap::new(),
+            delta: DeltaState::default(),
         };
         runtime.apply_persisted_pet_state();
         runtime.refresh_pet();
@@ -398,6 +412,84 @@ impl Runtime {
 
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    /// Serializes one delta response for the snapshot wire: sections whose
+    /// revision passed `have_revision`, plus terminal chunks past
+    /// `have_sequence`. Reading is idempotent - the same cursors return the
+    /// same delta again - so a caller that failed to apply a response
+    /// recovers by re-reading with its unadvanced cursors.
+    pub fn snapshot_delta(
+        &mut self,
+        have_revision: u64,
+        have_sequence: u64,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        use crate::model::{RestSections, RestWire, SnapshotDeltaWire, TerminalMetaWire};
+
+        if !self
+            .delta
+            .last_rest
+            .as_ref()
+            .is_some_and(|rest| rest.matches(&self.snapshot))
+        {
+            self.delta.revision += 1;
+            self.delta.rest_revision = self.delta.revision;
+            self.delta.last_rest = Some(RestSections::capture(&self.snapshot));
+        }
+        if self.delta.last_editor.as_ref() != Some(&self.snapshot.editor) {
+            self.delta.revision += 1;
+            self.delta.editor_revision = self.delta.revision;
+            self.delta.last_editor = Some(self.snapshot.editor.clone());
+        }
+        // A cursor from the future has no valid meaning in-process; treat it
+        // as a fresh reader so the response converges on full state.
+        let have_revision = if have_revision > self.delta.revision {
+            0
+        } else {
+            have_revision
+        };
+
+        let chunks: Vec<_> = self
+            .snapshot
+            .terminal
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.sequence > have_sequence)
+            .collect();
+        let chunks_dropped = match self.snapshot.terminal.chunks.first() {
+            Some(oldest) => have_sequence + 1 < oldest.sequence,
+            None => have_sequence < self.snapshot.terminal.sequence,
+        };
+
+        let wire = SnapshotDeltaWire {
+            schema_version: self.snapshot.schema_version,
+            revision: self.delta.revision,
+            rest: (self.delta.rest_revision > have_revision).then(|| RestWire {
+                navigator: &self.snapshot.navigator,
+                overlay: &self.snapshot.overlay,
+                tab: &self.snapshot.tab,
+                connection: &self.snapshot.connection,
+                zoomed: &self.snapshot.zoomed,
+                focused: &self.snapshot.focused,
+                pane_layout: &self.snapshot.pane_layout,
+                terminal: TerminalMetaWire {
+                    pane_id: &self.snapshot.terminal.pane_id,
+                    closed: self.snapshot.terminal.closed,
+                    exit_code: self.snapshot.terminal.exit_code,
+                    panes: &self.snapshot.terminal.panes,
+                },
+                ui_state: &self.snapshot.ui_state,
+                ime: &self.snapshot.ime,
+                status: &self.snapshot.status,
+                pet: &self.snapshot.pet,
+            }),
+            editor: (self.delta.editor_revision > have_revision).then_some(&self.snapshot.editor),
+            input_generation: self.snapshot.input_generation,
+            terminal_sequence: self.snapshot.terminal.sequence,
+            chunks,
+            chunks_dropped,
+        };
+        serde_json::to_vec(&wire)
     }
 
     pub fn set_live(&mut self, context: LiveContext) {
@@ -442,20 +534,28 @@ impl Runtime {
         let projected_agents = project_agents(payload.clone()).agents;
 
         for layout in &payload.layouts {
-            let context_path = layout
-                .panes
-                .iter()
-                .filter_map(|pane| {
-                    payload
-                        .agents
-                        .iter()
-                        .find(|agent| {
-                            agent.pane_id.as_deref().or(agent.id.as_deref())
-                                == Some(pane.pane_id.as_str())
-                        })
-                        .and_then(|agent| agent.cwd.clone())
-                })
-                .next();
+            // A plain terminal pane is not necessarily represented in the
+            // agent list. Its cwd is still authoritative for attaching the
+            // live layout to the registered checkout. Falling back to the
+            // agent record keeps agent-specific cwd handling intact.
+            let context_path = layout.panes.iter().find_map(|pane| {
+                payload
+                    .panes
+                    .iter()
+                    .find(|source| source.pane_id == pane.pane_id)
+                    .and_then(|source| source.cwd.clone())
+                    .filter(|path| !path.trim().is_empty())
+                    .or_else(|| {
+                        payload
+                            .agents
+                            .iter()
+                            .find(|agent| {
+                                agent.pane_id.as_deref().or(agent.id.as_deref())
+                                    == Some(pane.pane_id.as_str())
+                            })
+                            .and_then(|agent| agent.cwd.clone())
+                    })
+            });
             let Some(workspace_snapshot) = find_workspace_for_context(
                 &mut workspaces,
                 context_path.as_deref(),
@@ -464,14 +564,10 @@ impl Runtime {
                 continue;
             };
             let checkout_index = context_path.as_deref().and_then(|path| {
-                let normalized = Path::new(path)
-                    .canonicalize()
-                    .unwrap_or_else(|_| PathBuf::from(path))
-                    .to_string_lossy()
-                    .trim_end_matches('/')
-                    .to_owned();
+                let normalized = workspace::normalized_for_comparison(Path::new(path));
                 workspace_snapshot.checkouts.iter().position(|checkout| {
-                    let checkout_path = checkout.path.trim_end_matches('/').to_owned();
+                    let checkout_path =
+                        workspace::normalized_for_comparison(Path::new(&checkout.path));
                     normalized == checkout_path
                         || normalized.starts_with(&format!("{checkout_path}/"))
                 })
@@ -666,6 +762,30 @@ impl Runtime {
             .unwrap_or(false);
         let (state, message, agents, layout) = match fetched {
             Ok(payload) => {
+                let focused_checkout = self
+                    .snapshot
+                    .navigator
+                    .focused_checkout_id
+                    .as_deref()
+                    .and_then(|focused_checkout_id| {
+                        self.snapshot
+                            .navigator
+                            .workspaces
+                            .iter()
+                            .flat_map(|workspace| workspace.checkouts.iter())
+                            .find(|checkout| checkout.id == focused_checkout_id)
+                    });
+                let focused_checkout_path = focused_checkout.map(|checkout| checkout.path.as_str());
+                let focused_checkout_pane_ids = focused_checkout
+                    .map(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| tab.panes.iter())
+                            .map(|pane| pane.id.clone())
+                            .collect::<HashSet<_>>()
+                    })
+                    .unwrap_or_default();
                 let selected_pane_id = self.snapshot.terminal.pane_id.as_deref().or(self
                     .snapshot
                     .ui_state
@@ -680,7 +800,35 @@ impl Runtime {
                 // Once the user or persisted state chooses a pane, a session
                 // snapshot that omits that workspace must not silently retarget
                 // commands to Herdr's unrelated globally focused workspace.
-                let target_pane_id = if selected_pane_id.is_some() && !selected_still_exists {
+                let target_pane_id = if focused_checkout.is_some() {
+                    selected_pane_id
+                        .filter(|pane_id| {
+                            selected_still_exists && focused_checkout_pane_ids.contains(*pane_id)
+                        })
+                        .or_else(|| {
+                            focused_checkout_pane_ids
+                                .iter()
+                                .find(|pane_id| {
+                                    payload.layouts.iter().any(|layout| {
+                                        layout
+                                            .panes
+                                            .iter()
+                                            .any(|pane| pane.pane_id == pane_id.as_str())
+                                    })
+                                })
+                                .map(|pane_id| pane_id.as_str())
+                        })
+                        .or_else(|| {
+                            focused_checkout_path.and_then(|checkout_path| {
+                                payload.panes.iter().find_map(|pane| {
+                                    pane.cwd
+                                        .as_deref()
+                                        .filter(|cwd| path_is_within_checkout(cwd, checkout_path))
+                                        .map(|_| pane.pane_id.as_str())
+                                })
+                            })
+                        })
+                } else if selected_pane_id.is_some() && !selected_still_exists {
                     None
                 } else {
                     selected_pane_id
@@ -1285,36 +1433,25 @@ impl Runtime {
         }
     }
 
+    /// Drops the previous checkout's rendered layout before selecting the
+    /// next one. Herdr's globally focused pane may belong to another
+    /// workspace, so retaining it here would let the next poll redraw stale
+    /// terminal content while the selected checkout has no pane yet.
+    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
+        self.snapshot.pane_layout = None;
+        self.snapshot.zoomed = None;
+        self.snapshot.terminal.panes.clear();
+        self.snapshot.terminal.closed = false;
+        self.snapshot.terminal.exit_code = None;
+        self.snapshot.terminal.pane_id = pane_id.clone();
+        self.snapshot.focused.surface = Surface::Terminal;
+        self.snapshot.focused.pane_id = pane_id.clone();
+        self.snapshot.ui_state.selected_pane_id = pane_id;
+        self.sync_focused_terminal_projection();
+    }
+
     fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
-        let Some(workspace_snapshot) = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.id == workspace_id)
-        else {
-            self.set_error(
-                "checkout.unknown_workspace",
-                format!("Workspace {workspace_id} is not registered"),
-                false,
-            );
-            return true;
-        };
-        if !workspace_snapshot
-            .checkouts
-            .iter()
-            .any(|checkout| checkout.id == checkout_id)
-        {
-            self.set_error(
-                "checkout.unknown",
-                format!("Checkout {checkout_id} is not available in {workspace_id}"),
-                false,
-            );
-            return true;
-        }
-        self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
-        self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
-        self.snapshot.navigator.root_path = self
+        let Some((checkout_path, next_pane_id)) = self
             .snapshot
             .navigator
             .workspaces
@@ -1325,8 +1462,43 @@ impl Runtime {
                     .checkouts
                     .iter()
                     .find(|checkout| checkout.id == checkout_id)
+                    .map(|checkout| {
+                        (
+                            checkout.path.clone(),
+                            checkout
+                                .tabs
+                                .iter()
+                                .flat_map(|tab| tab.panes.iter())
+                                .map(|pane| pane.id.clone())
+                                .next(),
+                        )
+                    })
             })
-            .map(|checkout| checkout.path.clone());
+        else {
+            let workspace_exists = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == workspace_id);
+            let (kind, message) = if workspace_exists {
+                (
+                    "checkout.unknown",
+                    format!("Checkout {checkout_id} is not available in {workspace_id}"),
+                )
+            } else {
+                (
+                    "checkout.unknown_workspace",
+                    format!("Workspace {workspace_id} is not registered"),
+                )
+            };
+            self.set_error(kind, message, false);
+            return true;
+        };
+        self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
+        self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
+        self.snapshot.navigator.root_path = Some(checkout_path);
+        self.reset_terminal_projection(next_pane_id);
         self.sync_active_tab_projection();
         self.persist_current_ui_state();
         true
@@ -1680,9 +1852,16 @@ impl Runtime {
                     let tab = checkout.tabs.remove(index);
                     checkout.tabs.insert(0, tab);
                 }
+                let checkout_path = checkout.path.clone();
+                let next_pane_id = checkout
+                    .tabs
+                    .first()
+                    .and_then(|tab| tab.panes.first())
+                    .map(|pane| pane.id.clone());
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id);
-                self.snapshot.navigator.root_path = Some(checkout.path.clone());
+                self.snapshot.navigator.root_path = Some(checkout_path);
+                self.reset_terminal_projection(next_pane_id);
                 self.sync_active_tab_projection();
                 self.persist_current_ui_state();
                 true
@@ -2212,36 +2391,66 @@ fn find_workspace_for_context<'a>(
     context_path: Option<&str>,
     session_workspace_id: &str,
 ) -> Option<&'a mut crate::model::WorkspaceSnapshot> {
+    let Some(raw_path) = context_path else {
+        return workspaces
+            .iter()
+            .position(|workspace| workspace.id == session_workspace_id)
+            .and_then(|index| workspaces.get_mut(index));
+    };
+    let path = Path::new(raw_path);
+    let root = workspace::git_root(path)
+        .map(|root| workspace::normalized_for_comparison(&root))
+        .unwrap_or_else(|| workspace::normalized_for_comparison(path));
+    let normalized = root.clone();
+    // A linked worktree can appear both as a registered checkout and as a
+    // temporary workspace whose root is the same path. The checkout cwd is
+    // the authoritative identity for projecting a plain Herdr pane, so prefer
+    // a non-temporary exact checkout before considering the session workspace.
+    if let Some(index) = workspaces.iter().position(|workspace| {
+        !workspace.temporary
+            && workspace.checkouts.iter().any(|checkout| {
+                workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
+            })
+    }) {
+        return workspaces.get_mut(index);
+    }
+    if let Some(index) = workspaces.iter().position(|workspace| {
+        workspace::normalized_for_comparison(Path::new(&workspace.path)) == normalized
+    }) {
+        return workspaces.get_mut(index);
+    }
+    if let Some(index) = workspaces.iter().position(|workspace| {
+        workspace.checkouts.iter().any(|checkout| {
+            workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
+        })
+    }) {
+        return workspaces.get_mut(index);
+    }
+    if let Some(index) = workspaces.iter().position(|workspace| {
+        let workspace_path = workspace::normalized_for_comparison(Path::new(&workspace.path));
+        normalized.starts_with(&format!("{workspace_path}/"))
+    }) {
+        return workspaces.get_mut(index);
+    }
     if let Some(index) = workspaces
         .iter()
         .position(|workspace| workspace.id == session_workspace_id)
     {
         return workspaces.get_mut(index);
     }
-    let Some(raw_path) = context_path else {
-        return None;
-    };
-    let path = Path::new(raw_path);
-    let root = workspace::git_root(path)
-        .or_else(|| path.canonicalize().ok())
-        .unwrap_or_else(|| path.to_path_buf());
-    let normalized = root.to_string_lossy().trim_end_matches('/').to_owned();
-    if let Some(index) = workspaces.iter().position(|workspace| {
-        let workspace_path = workspace.path.trim_end_matches('/');
-        normalized == workspace_path
-            || normalized.starts_with(&format!("{workspace_path}/"))
-            || workspace
-                .checkouts
-                .iter()
-                .any(|checkout| checkout.path == normalized)
-    }) {
-        return workspaces.get_mut(index);
-    }
     workspaces.push(workspace::inspect_temporary(
-        &root,
+        Path::new(&root),
         workspace::LOCAL_DEVICE_ID,
     ));
     workspaces.last_mut()
+}
+
+fn path_is_within_checkout(path: &str, checkout_path: &str) -> bool {
+    let path = PathBuf::from(workspace::normalized_for_comparison(Path::new(path)));
+    let checkout_path = PathBuf::from(workspace::normalized_for_comparison(Path::new(
+        checkout_path,
+    )));
+    path == checkout_path || path.starts_with(checkout_path)
 }
 
 struct EventValidationError {
@@ -2358,6 +2567,10 @@ fn unix_milliseconds() -> u64 {
 mod tests {
     use super::*;
     use crate::live::SessionFetchError;
+    use crate::model::{
+        CheckoutSnapshot, PaneSnapshot, TabSnapshot, TerminalPaneSnapshot, WorkspaceRegistration,
+        WorkspaceSnapshot,
+    };
     use crate::sidebar::SessionSnapshotPayload;
 
     fn runtime() -> Runtime {
@@ -2367,7 +2580,10 @@ mod tests {
             herdr_bin_path: None,
             remote_targets: Vec::new(),
             app_state_path: std::env::temp_dir()
-                .join(format!("herdr-core-pet-runtime-{}.json", std::process::id()))
+                .join(format!(
+                    "herdr-core-pet-runtime-{}.json",
+                    std::process::id()
+                ))
                 .to_string_lossy()
                 .into_owned(),
         };
@@ -2402,6 +2618,335 @@ mod tests {
             }]
         }))
         .expect("session payload")
+    }
+
+    fn pane(id: &str, cwd: &str) -> PaneSnapshot {
+        PaneSnapshot {
+            id: id.to_owned(),
+            label: id.to_owned(),
+            cwd: cwd.to_owned(),
+            state: "attached".to_owned(),
+            summary: None,
+            activity_at_unix_ms: None,
+        }
+    }
+
+    fn tab(workspace_id: &str, checkout_id: &str, pane: Option<PaneSnapshot>) -> TabSnapshot {
+        TabSnapshot {
+            id: Some(format!("{checkout_id}:tab")),
+            workspace_id: Some(workspace_id.to_owned()),
+            checkout_id: Some(checkout_id.to_owned()),
+            label: Some("Session".to_owned()),
+            empty: pane.is_none(),
+            panes: pane.into_iter().collect(),
+        }
+    }
+
+    fn checkout(
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        pane: Option<PaneSnapshot>,
+    ) -> CheckoutSnapshot {
+        CheckoutSnapshot {
+            id: checkout_id.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            label: checkout_id.to_owned(),
+            path: path.to_owned(),
+            branch: None,
+            is_worktree: false,
+            exists: true,
+            temporary: false,
+            tabs: pane
+                .clone()
+                .map(|pane| vec![tab(workspace_id, checkout_id, Some(pane))])
+                .unwrap_or_default(),
+        }
+    }
+
+    fn workspace(
+        id: &str,
+        label: &str,
+        path: &str,
+        checkouts: Vec<CheckoutSnapshot>,
+    ) -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            path: path.to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: label.to_owned(),
+            is_git: false,
+            default_branch: None,
+            registered: true,
+            temporary: false,
+            checkouts,
+        }
+    }
+
+    #[test]
+    fn focusing_checkout_selects_only_the_target_checkout_pane() {
+        let mut runtime = runtime();
+        let workspace_a = workspace(
+            "workspace-a",
+            "A",
+            "/tmp/hide-runtime-a",
+            vec![checkout(
+                "workspace-a",
+                "checkout-a",
+                "/tmp/hide-runtime-a",
+                Some(pane("pane-a", "/tmp/hide-runtime-a")),
+            )],
+        );
+        let workspace_b = workspace(
+            "workspace-b",
+            "B",
+            "/tmp/hide-runtime-b",
+            vec![
+                checkout(
+                    "workspace-b",
+                    "checkout-b",
+                    "/tmp/hide-runtime-b",
+                    Some(pane("pane-b", "/tmp/hide-runtime-b")),
+                ),
+                checkout(
+                    "workspace-b",
+                    "checkout-empty",
+                    "/tmp/hide-runtime-empty",
+                    None,
+                ),
+            ],
+        );
+        runtime.snapshot.navigator.workspaces = vec![workspace_a, workspace_b];
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace-a".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some("checkout-a".to_owned());
+        runtime.snapshot.navigator.root_path = Some("/tmp/hide-runtime-a".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("pane-a".to_owned());
+        runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+            pane_id: "pane-a".to_owned(),
+            closed: false,
+            exit_code: None,
+        }];
+        runtime.snapshot.ui_state.selected_pane_id = Some("pane-a".to_owned());
+
+        let focus_b = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": {"workspace_id": "workspace-b", "checkout_id": "checkout-b"}
+        }))
+        .expect("focus B event");
+        assert!(runtime.dispatch_json(&focus_b));
+        assert_eq!(
+            runtime.snapshot().navigator.focused_workspace_id.as_deref(),
+            Some("workspace-b")
+        );
+        assert_eq!(
+            runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+            Some("checkout-b")
+        );
+        assert_eq!(
+            runtime.snapshot().navigator.root_path.as_deref(),
+            Some("/tmp/hide-runtime-b")
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("pane-b")
+        );
+        assert_eq!(
+            runtime.snapshot().ui_state.selected_pane_id.as_deref(),
+            Some("pane-b")
+        );
+        assert!(runtime.snapshot().terminal.panes.is_empty());
+
+        let focus_empty = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": {"workspace_id": "workspace-b", "checkout_id": "checkout-empty"}
+        }))
+        .expect("focus pane-less checkout event");
+        assert!(runtime.dispatch_json(&focus_empty));
+        assert_eq!(
+            runtime.snapshot().navigator.root_path.as_deref(),
+            Some("/tmp/hide-runtime-empty")
+        );
+        assert!(runtime.snapshot().terminal.pane_id.is_none());
+        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().terminal.panes.is_empty());
+    }
+
+    #[test]
+    fn a_plain_terminal_pane_cwd_is_reconciled_into_its_registered_checkout() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-registered-checkout";
+        runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+            id: "workspace:registered".to_owned(),
+            label: "registered".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        }];
+        runtime.rebuild_catalog(&[]);
+        let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .id
+            .clone();
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:registered".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.reset_terminal_projection(None);
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "plain:p1", "cwd": checkout_path}],
+            "layouts": [{
+                "workspace_id": "herdr-workspace",
+                "tab_id": "herdr-workspace:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "plain:p1",
+                "panes": [{"pane_id": "plain:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("plain pane payload");
+
+        assert_eq!(runtime.snapshot.navigator.workspaces.len(), 1);
+        assert_eq!(runtime.snapshot.navigator.workspaces[0].checkouts.len(), 1);
+        assert!(runtime.ingest_session(Ok(payload)));
+        let checkout = runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == "workspace:registered")
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+            })
+            .expect("registered checkout");
+        assert_eq!(
+            checkout.tabs.len(),
+            1,
+            "plain pane layout should create one checkout tab"
+        );
+        assert_eq!(checkout.tabs[0].panes[0].id, "plain:p1");
+        assert_eq!(checkout.tabs[0].panes[0].cwd, checkout_path);
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("plain:p1")
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layout
+                .as_ref()
+                .map(|layout| layout.focused_pane_id.as_str()),
+            Some("plain:p1")
+        );
+    }
+
+    #[test]
+    fn an_unregistered_worktree_layout_projects_into_the_selected_checkout() {
+        let mut runtime = runtime();
+        let checkout_path = "/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let temporary_paths = vec![
+            "/Users/hoyeonlee/projects/herdr-ide".to_owned(),
+            checkout_path.to_owned(),
+        ];
+        runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &temporary_paths);
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.reset_terminal_projection(None);
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "w3M:p1", "cwd": checkout_path}],
+            "layouts": [{
+                "workspace_id": "w3M",
+                "tab_id": "w3M:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w3M:p1",
+                "panes": [{"pane_id": "w3M:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("unregistered worktree payload");
+        let catalog = live::PrecomputedCatalog {
+            registrations: Vec::new(),
+            workspaces: workspace::build_catalog(&[], &temporary_paths),
+        };
+
+        assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+        let checkout = runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+            })
+            .expect("selected temporary checkout");
+        assert_eq!(checkout.tabs.len(), 1);
+        assert_eq!(checkout.tabs[0].panes[0].id, "w3M:p1");
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w3M:p1")
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layout
+                .as_ref()
+                .map(|layout| layout.focused_pane_id.as_str()),
+            Some("w3M:p1")
+        );
+    }
+
+    #[test]
+    fn a_session_workspace_with_the_selected_checkout_cwd_does_not_steal_projection() {
+        let checkout_path = "/tmp/hide-selected-checkout";
+        let registered_checkout = checkout(
+            "registered-workspace",
+            "selected-checkout",
+            checkout_path,
+            None,
+        );
+        let temporary_checkout = checkout(
+            "session-workspace",
+            "temporary-checkout",
+            checkout_path,
+            None,
+        );
+        let mut workspaces = vec![
+            workspace(
+                "registered-workspace",
+                "Registered",
+                "/tmp/hide-registered-root",
+                vec![registered_checkout],
+            ),
+            workspace(
+                "session-workspace",
+                "Session",
+                checkout_path,
+                vec![temporary_checkout],
+            ),
+        ];
+
+        let selected =
+            find_workspace_for_context(&mut workspaces, Some(checkout_path), "session-workspace")
+                .expect("workspace for the selected checkout");
+
+        assert_eq!(selected.id, "registered-workspace");
     }
 
     #[test]

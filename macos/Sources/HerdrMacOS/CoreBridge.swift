@@ -1,7 +1,7 @@
 import CHerdrCore
 import Foundation
 
-private let coreSchemaVersion = 1
+private let coreSchemaVersion = 2
 
 private let coreChangeCallback: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
     guard let context else { return }
@@ -9,7 +9,11 @@ private let coreChangeCallback: @convention(c) (UnsafeMutableRawPointer?) -> Voi
     bridge.receiveCoreChange()
 }
 
-struct CoreSnapshot: Decodable {
+/// Composed view state the shell renders. Assembled from delta responses:
+/// rest sections replace wholesale when their revision moves, the editor
+/// rides its own revision, and terminal chunks stream past this value to the
+/// terminal views, so chunk-only updates leave it untouched.
+struct CoreSnapshot {
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
@@ -19,14 +23,45 @@ struct CoreSnapshot: Decodable {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+}
+
+/// One response on the delta snapshot wire: `herdr_core_snapshot` called
+/// with the bridge's revision and terminal-sequence cursors. `rest` and
+/// `editor` are absent when the cursor already covers them.
+struct CoreSnapshotDelta: Decodable {
+    let schemaVersion: UInt32
+    let revision: UInt64
+    let rest: CoreRestSnapshot?
+    let editor: CoreEditorSnapshot?
+    let terminalSequence: UInt64
+    let chunks: [CoreTerminalChunk]
+    let chunksDropped: Bool
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
+        case revision
+        case rest
+        case editor
+        case terminalSequence = "terminal_sequence"
+        case chunks
+        case chunksDropped = "chunks_dropped"
+    }
+}
+
+struct CoreRestSnapshot: Decodable {
+    let navigator: CoreNavigatorSnapshot
+    let zoomed: String?
+    let paneLayout: CorePaneLayoutSnapshot?
+    let terminal: CoreTerminalSnapshot
+    let uiState: CoreUIStateSnapshot
+    let status: CoreStatusSnapshot
+    let pet: CorePetSnapshot
+
+    enum CodingKeys: String, CodingKey {
         case navigator
         case zoomed
         case paneLayout = "pane_layout"
         case terminal
-        case editor
         case uiState = "ui_state"
         case status
         case pet
@@ -261,6 +296,34 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case checkouts
     }
 
+    init(
+        id: String,
+        label: String,
+        path: String,
+        remoteTargetID: String?,
+        expanded: Bool,
+        deviceID: String,
+        repoName: String,
+        isGit: Bool,
+        defaultBranch: String?,
+        registered: Bool,
+        temporary: Bool,
+        checkouts: [CoreCheckoutSnapshot]
+    ) {
+        self.id = id
+        self.label = label
+        self.path = path
+        self.remoteTargetID = remoteTargetID
+        self.expanded = expanded
+        self.deviceID = deviceID
+        self.repoName = repoName
+        self.isGit = isGit
+        self.defaultBranch = defaultBranch
+        self.registered = registered
+        self.temporary = temporary
+        self.checkouts = checkouts
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -300,6 +363,28 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case temporary
         case tabs
     }
+
+    init(
+        id: String,
+        workspaceID: String,
+        label: String,
+        path: String,
+        branch: String?,
+        isWorktree: Bool,
+        exists: Bool,
+        temporary: Bool,
+        tabs: [CoreTabSnapshot]
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.label = label
+        self.path = path
+        self.branch = branch
+        self.isWorktree = isWorktree
+        self.exists = exists
+        self.temporary = temporary
+        self.tabs = tabs
+    }
 }
 
 struct CoreTabSnapshot: Decodable, Identifiable {
@@ -321,6 +406,22 @@ struct CoreTabSnapshot: Decodable, Identifiable {
         case label
         case empty
         case panes
+    }
+
+    init(
+        id: String?,
+        workspaceID: String?,
+        checkoutID: String?,
+        label: String?,
+        empty: Bool,
+        panes: [CorePaneSnapshot]
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.checkoutID = checkoutID
+        self.label = label
+        self.empty = empty
+        self.panes = panes
     }
 
     init(from decoder: Decoder) throws {
@@ -349,6 +450,22 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case state
         case summary
         case activityAt = "activity_at_unix_ms"
+    }
+
+    init(
+        id: String,
+        label: String,
+        cwd: String,
+        state: String,
+        summary: String?,
+        activityAt: UInt64?
+    ) {
+        self.id = id
+        self.label = label
+        self.cwd = cwd
+        self.state = state
+        self.summary = summary
+        self.activityAt = activityAt
     }
 }
 
@@ -394,16 +511,12 @@ struct CoreAmbientSignal: Decodable, Equatable {
 
 struct CoreTerminalSnapshot: Decodable {
     let paneID: String?
-    let sequence: UInt64
-    let chunks: [CoreTerminalChunk]
     let closed: Bool
     let exitCode: Int32?
     let panes: [CoreTerminalPaneSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
-        case sequence
-        case chunks
         case closed
         case exitCode = "exit_code"
         case panes
@@ -658,6 +771,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var lastLoggedHerdrState: String?
     private var lastLoggedErrorKind: String?
     private var lastTerminalSequence: UInt64 = 0
+    private var haveRevision: UInt64 = 0
     private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
@@ -1182,7 +1296,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     private func refreshSnapshot() {
         guard let core else { return }
-        let owned = herdr_core_snapshot(core)
+        let owned = herdr_core_snapshot(core, haveRevision, lastTerminalSequence)
         defer { herdr_core_free_bytes(owned) }
         guard let pointer = owned.ptr, owned.len > 0 else {
             bridgeError = "herdr_core_snapshot returned empty bytes"
@@ -1190,33 +1304,51 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
         do {
             let data = Data(bytes: pointer, count: owned.len)
-            let decoded = try JSONDecoder().decode(CoreSnapshot.self, from: data)
-            if decoded.status.herdr.state != lastLoggedHerdrState {
-                lastLoggedHerdrState = decoded.status.herdr.state
-                HideLaunchTrace.mark("herdr.status", detail: decoded.status.herdr.state)
+            let decoded = try JSONDecoder().decode(CoreSnapshotDelta.self, from: data)
+            if decoded.chunksDropped {
+                HideLaunchTrace.mark(
+                    "terminal.chunks_dropped",
+                    detail: "cursor \(lastTerminalSequence) behind ring"
+                )
             }
-            if let lastError = decoded.status.lastError {
-                if lastError.kind != lastLoggedErrorKind {
-                    lastLoggedErrorKind = lastError.kind
-                    HideLaunchTrace.mark("core.error", detail: lastError.kind)
+            if let rest = decoded.rest {
+                // The protocol stamps both sections ahead of a fresh cursor,
+                // so a missing editor here is a contract violation, not a
+                // state to default over.
+                guard let editor = decoded.editor ?? snapshot?.editor else {
+                    bridgeError = "delta.protocol: first response carried no editor"
+                    return
                 }
-            } else {
-                lastLoggedErrorKind = nil
-            }
-            let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
-                ?? snapshot?.terminal.paneID
-            snapshot = decoded
-            bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" } ?? startupDiagnostic
-            restorePaneSelectionIfNeeded(decoded)
-            let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
-                ?? decoded.terminal.paneID
-            if authoritativeFocusedPaneID != previousFocusedPaneID,
-               let authoritativeFocusedPaneID {
-                DispatchQueue.main.async { [weak self] in
-                    self?.terminalRegistrations[authoritativeFocusedPaneID]?.focus()
+                apply(composed: CoreSnapshot(
+                    schemaVersion: decoded.schemaVersion,
+                    navigator: rest.navigator,
+                    zoomed: rest.zoomed,
+                    paneLayout: rest.paneLayout,
+                    terminal: rest.terminal,
+                    editor: editor,
+                    uiState: rest.uiState,
+                    status: rest.status,
+                    pet: rest.pet
+                ))
+            } else if let editor = decoded.editor {
+                guard let current = snapshot else {
+                    bridgeError = "delta.protocol: editor arrived before the first full snapshot"
+                    return
                 }
+                snapshot = CoreSnapshot(
+                    schemaVersion: current.schemaVersion,
+                    navigator: current.navigator,
+                    zoomed: current.zoomed,
+                    paneLayout: current.paneLayout,
+                    terminal: current.terminal,
+                    editor: editor,
+                    uiState: current.uiState,
+                    status: current.status,
+                    pet: current.pet
+                )
             }
-            for chunk in decoded.terminal.chunks
+            haveRevision = decoded.revision
+            for chunk in decoded.chunks
                 .filter({ $0.sequence > lastTerminalSequence })
                 .sorted(by: { $0.sequence < $1.sequence })
             {
@@ -1230,6 +1362,37 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             }
         } catch {
             bridgeError = "Snapshot decode failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Replaces the composed snapshot and runs the side effects that watch
+    /// it. Only rest-section changes reach here; chunk-only deltas never
+    /// touch the published snapshot.
+    private func apply(composed decoded: CoreSnapshot) {
+        if decoded.status.herdr.state != lastLoggedHerdrState {
+            lastLoggedHerdrState = decoded.status.herdr.state
+            HideLaunchTrace.mark("herdr.status", detail: decoded.status.herdr.state)
+        }
+        if let lastError = decoded.status.lastError {
+            if lastError.kind != lastLoggedErrorKind {
+                lastLoggedErrorKind = lastError.kind
+                HideLaunchTrace.mark("core.error", detail: lastError.kind)
+            }
+        } else {
+            lastLoggedErrorKind = nil
+        }
+        let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
+            ?? snapshot?.terminal.paneID
+        snapshot = decoded
+        bridgeError = decoded.status.lastError.map { "\($0.kind): \($0.message)" } ?? startupDiagnostic
+        restorePaneSelectionIfNeeded(decoded)
+        let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
+            ?? decoded.terminal.paneID
+        if authoritativeFocusedPaneID != previousFocusedPaneID,
+           let authoritativeFocusedPaneID {
+            DispatchQueue.main.async { [weak self] in
+                self?.terminalRegistrations[authoritativeFocusedPaneID]?.focus()
+            }
         }
     }
 
