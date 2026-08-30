@@ -345,23 +345,6 @@ impl Runtime {
         snapshot.navigator.focused_checkout_id = snapshot.ui_state.focused_checkout_id.clone();
         snapshot.navigator.workspaces =
             workspace::build_catalog(&snapshot.ui_state.workspace_registrations, &[]);
-        snapshot.navigator.root_path = snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .find(|checkout| {
-                snapshot.navigator.focused_checkout_id.as_deref() == Some(checkout.id.as_str())
-            })
-            .map(|checkout| checkout.path.clone())
-            .or_else(|| {
-                snapshot
-                    .navigator
-                    .workspaces
-                    .first()
-                    .and_then(|workspace| workspace.checkouts.first())
-                    .map(|checkout| checkout.path.clone())
-            });
         let diagnostic = match disposition {
             persistence::LoadDisposition::Loaded => None,
             persistence::LoadDisposition::Missing => Some((
@@ -404,6 +387,7 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             delta: DeltaState::default(),
         };
+        runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();
         runtime.refresh_pet();
         runtime
@@ -660,6 +644,15 @@ impl Runtime {
         if self.snapshot.navigator.focused_device_id.is_none() {
             self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
         }
+        self.resync_navigator_focus();
+        previous != self.snapshot.navigator
+    }
+
+    /// Reconciles the focused checkout, its owning workspace, root path, and
+    /// active tab projection after a catalog replacement. Catalog rebuilds
+    /// happen from both the live poller and event handlers, so this policy
+    /// must have one implementation to keep those paths convergent.
+    fn resync_navigator_focus(&mut self) {
         let focused_checkout_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
             workspace.checkouts.iter().any(|checkout| {
                 Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
@@ -675,30 +668,26 @@ impl Runtime {
                 .find(|checkout| checkout.exists)
                 .map(|checkout| checkout.id.clone());
         }
-        self.snapshot.navigator.focused_workspace_id = self
+        let focused = self
             .snapshot
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| {
-                workspace.checkouts.iter().any(|checkout| {
-                    Some(checkout.id.as_str())
-                        == self.snapshot.navigator.focused_checkout_id.as_deref()
-                })
-            })
-            .map(|workspace| workspace.id.clone());
-        self.snapshot.navigator.root_path = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .find(|checkout| {
-                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
-            })
-            .map(|checkout| checkout.path.clone());
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| {
+                        Some(checkout.id.as_str())
+                            == self.snapshot.navigator.focused_checkout_id.as_deref()
+                    })
+                    .map(|checkout| (workspace.id.clone(), checkout.path.clone()))
+            });
+        self.snapshot.navigator.focused_workspace_id = focused
+            .as_ref()
+            .map(|(workspace_id, _)| workspace_id.clone());
+        self.snapshot.navigator.root_path = focused.map(|(_, path)| path);
         self.sync_active_tab_projection();
-        previous != self.snapshot.navigator
     }
 
     fn sync_active_tab_projection(&mut self) {
@@ -1411,44 +1400,7 @@ impl Runtime {
             &self.remote_targets,
             &self.snapshot.ui_state.device_registrations,
         );
-        let focused_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
-            workspace.checkouts.iter().any(|checkout| {
-                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
-            })
-        });
-        if !focused_exists && self.snapshot.ui_state.focused_checkout_id.is_none() {
-            self.snapshot.navigator.focused_checkout_id = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .flat_map(|workspace| workspace.checkouts.iter())
-                .find(|checkout| checkout.exists)
-                .map(|checkout| checkout.id.clone());
-        }
-        self.snapshot.navigator.focused_workspace_id = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| {
-                workspace.checkouts.iter().any(|checkout| {
-                    Some(checkout.id.as_str())
-                        == self.snapshot.navigator.focused_checkout_id.as_deref()
-                })
-            })
-            .map(|workspace| workspace.id.clone());
-        self.snapshot.navigator.root_path = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .find(|checkout| {
-                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
-            })
-            .map(|checkout| checkout.path.clone());
-        self.sync_active_tab_projection();
+        self.resync_navigator_focus();
     }
 
     fn persist_current_ui_state(&mut self) {
@@ -1772,11 +1724,6 @@ impl Runtime {
                 {
                     self.set_error("workspace.git_init_failed", message, true);
                 }
-                let checkout_id =
-                    workspace::build_catalog(std::slice::from_ref(&registration), &[])
-                        .first()
-                        .and_then(|workspace| workspace.checkouts.first())
-                        .map(|checkout| checkout.id.clone());
                 if !self
                     .snapshot
                     .ui_state
@@ -1792,18 +1739,18 @@ impl Runtime {
                 self.rebuild_catalog(&[]);
                 self.snapshot.navigator.focused_device_id =
                     Some(workspace::LOCAL_DEVICE_ID.to_owned());
-                if let Some(checkout_id) = checkout_id.or_else(|| {
-                    self.snapshot
-                        .navigator
-                        .workspaces
-                        .iter()
-                        .find(|workspace| workspace.id == registration.id)
-                        .and_then(|workspace| workspace.checkouts.first())
-                        .map(|checkout| checkout.id.clone())
-                }) {
+                if let Some(checkout_id) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.id == registration.id)
+                    .and_then(|workspace| workspace.checkouts.first())
+                    .map(|checkout| checkout.id.clone())
+                {
                     self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 }
-                self.rebuild_catalog(&[]);
+                self.resync_navigator_focus();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "workspace.registered",
