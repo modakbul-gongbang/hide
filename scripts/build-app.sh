@@ -33,7 +33,9 @@ swift build \
   --configuration release \
   --disable-keychain \
   --disable-sandbox \
-  -Xswiftc -strict-concurrency=minimal
+  -Xswiftc -strict-concurrency=minimal \
+  -Xswiftc -Xfrontend \
+  -Xswiftc -disable-round-trip-debug-types
 
 mkdir -p \
   "$temporary_bundle/Contents/MacOS" \
