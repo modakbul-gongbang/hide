@@ -28,7 +28,12 @@ trap cleanup EXIT
 cd "$project_root"
 [[ -f "$icon_path" ]] || { print -u2 "app icon is missing: $icon_path"; exit 1; }
 cargo build --release --locked -p herdr-core
-swift build --package-path "$macos_root" --configuration release --disable-keychain --disable-sandbox
+swift build \
+  --package-path "$macos_root" \
+  --configuration release \
+  --disable-keychain \
+  --disable-sandbox \
+  -Xswiftc -strict-concurrency=minimal
 
 mkdir -p \
   "$temporary_bundle/Contents/MacOS" \
