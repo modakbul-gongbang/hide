@@ -18,7 +18,7 @@ downloaded_herdr="$temporary_root/herdr"
 
 herdr_version="0.8.2"
 herdr_url="https://github.com/herdrdev/herdr/releases/download/v${herdr_version}/herdr-macos-aarch64"
-herdr_sha256="bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328"
+herdr_sha256="a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
 
 cleanup() {
   rm -rf -- "$temporary_root"
