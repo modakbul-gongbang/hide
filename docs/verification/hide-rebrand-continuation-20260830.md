@@ -6,7 +6,7 @@ Worktree: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand`.
 
 Branch: `prd/hide-rebrand`.
 
-Implementation commit under verification: `a25af41` (`Fix remote device selection targeting`).
+Implementation commits under verification: `a25af41` (`Fix remote device selection targeting`), `c75be4d` (`Unify remote pane layout and focus rendering`), `c3b7173` (`Fix checkout selection targeting`), `d479d8f` (`Route terminal drags to local selection`), and `a61826a` (`Open terminal links through Hide`).
 
 ## User-reported layout failure
 
@@ -18,9 +18,11 @@ It also showed the pane fallback list instead of terminal surfaces and hardcoded
 
 The remote report showed a separate remote pane presentation, clipped panic output, and the same collapsed grid geometry.
 
-The layout correction is in `0853ecb` and uses one pane-card/grid presentation for local and remote panes.
+The initial layout correction is in `0853ecb` and the remote projection correction is in `c75be4d`; together they use one pane-card/grid presentation for local and remote panes.
 
 The workspace identity correction is in `f626816` and normalizes component-boundary paths before matching the focused checkout and authoritative pane layout.
+
+The checkout row targeting correction is in `c3b7173` and gives each checkout row a unique accessibility identifier instead of sharing the root shell identifier.
 
 The resulting pane grid fills the main viewport, renders SwiftTerm contents, retains pane headers with agent and cwd, and keeps the Workbench panel aligned to the same window height.
 
@@ -28,7 +30,7 @@ The tab strip now uses the Herdr tab payload label instead of the placeholder `S
 
 ## Mac mini selection and remote attach
 
-The installed release app was started from `/Applications/hide.app` with exactly one `HerdrMacOS` process, PID `27163`.
+The installed release app was started from `/Applications/hide.app` with exactly one `HerdrMacOS` process, PID `52310`.
 
 A fresh classic Peekaboo snapshot identified the Mac mini row as `Mac mini` with a distinct selected-state value.
 
@@ -38,9 +40,9 @@ After the click and an eight-second observation window, the fresh snapshot repor
 
 The main header changed to the remote device context and reported `mini ready`.
 
-The post-click observation is [final-installed-remote-after-device-20260830.json](evidence/hide-rebrand/final-installed-remote-after-device-20260830.json).
+The post-click observation is [final-installed-remote-a61826a-20260830-see.json](evidence/hide-rebrand/final-installed-remote-a61826a-20260830-see.json).
 
-The Swift-only fix is `a25af41` and contains only `macos/Sources/HerdrMacOS/HideUI.swift` and `macos/Sources/HerdrMacOS/ShellModel.swift`.
+The Swift-only device-target fix is `a25af41` and contains only `macos/Sources/HerdrMacOS/HideUI.swift` and `macos/Sources/HerdrMacOS/ShellModel.swift`.
 
 The fix gives each device row a stable `hide-device-*` accessibility target and a visible `Selected` or `Not selected` value.
 
@@ -64,16 +66,16 @@ Both screenshots were captured from the same installed `/Applications/hide.app` 
 
 | Surface | Evidence |
 | --- | --- |
-| Local | [final-installed-local-20260830.png](evidence/hide-rebrand/final-installed-local-20260830.png) |
-| Remote mini, dedicated test workspace | [final-installed-remote-20260830.png](evidence/hide-rebrand/final-installed-remote-20260830.png) |
+| Local, `modakbul/main` | [final-installed-local-a61826a-20260830.png](evidence/hide-rebrand/final-installed-local-a61826a-20260830.png) |
+| Remote mini, dedicated test workspace | [final-installed-remote-a61826a-20260830.png](evidence/hide-rebrand/final-installed-remote-a61826a-20260830.png) |
 
 The local screenshot shows the full-height pane grid, real terminal contents, actual workspace and tab labels, bottom status bar, and Workbench panel.
 
 The remote screenshot shows the same shared pane-card and grid geometry, a remote pane header with the mini cwd, terminal content, and the Workbench remote state.
 
-The corresponding fresh observation JSON files are [final-installed-local-20260830.json](evidence/hide-rebrand/final-installed-local-20260830.json) and [final-installed-remote-20260830.json](evidence/hide-rebrand/final-installed-remote-20260830.json).
+The corresponding fresh observation JSON files are [final-installed-local-a61826a-20260830-see.json](evidence/hide-rebrand/final-installed-local-a61826a-20260830-see.json) and [final-installed-remote-a61826a-20260830-see.json](evidence/hide-rebrand/final-installed-remote-a61826a-20260830-see.json).
 
-The dedicated workspace click receipt is [final-installed-remote-workspace-click-20260830.json](evidence/hide-rebrand/final-installed-remote-workspace-click-20260830.json).
+The dedicated workspace click receipt is [final-installed-remote-workspace-a61826a-20260830-click.json](evidence/hide-rebrand/final-installed-remote-workspace-a61826a-20260830-click.json).
 
 ## User-requested pane-less checkout deviation
 
@@ -95,17 +97,17 @@ The existing-pane path remains focus-only and is covered by `checkoutWithAExisti
 
 ## Dedicated mini workspace boundary
 
-The remote live check used only the dedicated workspace `w4M` labeled `hide-remote-verification` at `/tmp/hide-rebrand-remote-verify-20260830`.
+The final remote live check used only the dedicated workspace `w4Q` labeled `hide-remote-verification` at `/tmp/hide-rebrand-remote-verify-20260830`.
 
-The final remote screenshot was captured from that workspace before cleanup.
+The final remote screenshot was captured from that workspace after creating and splitting two panes, before cleanup.
 
-The exact workspace close command was `herdr workspace close w4M` on mini.
+The exact workspace close command was `herdr workspace close w4Q` on mini.
 
 The exact empty test directory was removed with `rmdir /tmp/hide-rebrand-remote-verify-20260830` after the workspace closed.
 
-The post-cleanup snapshot contains no `w4M`, `hide-remote-verification`, or test path match.
+The post-cleanup snapshot contains no `w4Q`, `hide-remote-verification`, or test path match.
 
-The cleanup evidence is [mini-cleanup-20260830.json](evidence/hide-rebrand/mini-cleanup-20260830.json).
+The cleanup evidence is [mini-dedicated-workspace-a61826a-20260830-after-close.json](evidence/hide-rebrand/mini-dedicated-workspace-a61826a-20260830-after-close.json).
 
 No other mini workspace was closed, deleted, or recreated.
 
@@ -121,17 +123,19 @@ The release Swift build passed with `swift build --package-path macos --configur
 
 The core build artifacts were kept outside the worktree with `CARGO_TARGET_DIR=/tmp/hide-finisher-cargo`.
 
-The release archive is `dist/hide-v0.1.0-macos-arm64.zip`.
+The release archive is `dist/hide-v0.1.0-macos-arm64.zip` built from `a61826a`.
 
-The archive SHA-256 is `5bf8f4534b66c68b3be40ef2b24194a590412548736184e6016eba7af706f3d2`.
+The archive SHA-256 is `2b2a976bb086736f8a8460591d5e5a65b3ef1edaadfd987e48efb9c878d12a35`.
 
 The bundled Herdr version is `0.8.2`.
 
 The bundled Herdr SHA-256 is `bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328`.
 
-The installed and packaged `HerdrMacOS` executable SHA-256 is `e883ca79b9ab4df26d08466ad4dfea57140724aa823d8864cd2e0b45e715f6d7`.
+The installed and packaged `HerdrMacOS` executable SHA-256 is `81e43ca57a8f08ba97edb06e670d1e48cecf40806e24997e4260b651511cb27e`.
 
 `codesign --verify --deep --strict` passed for both the dist bundle and the installed bundle.
+
+The previous exact dist artifacts and installed bundle were moved to unique `/tmp` backup directories before replacement, so the replacement was recoverable and no build artifact directory was deleted.
 
 The T8 and Spotlight details are in [t8-spotlight-install-20260830.md](evidence/hide-rebrand/t8-spotlight-install-20260830.md).
 
@@ -147,7 +151,7 @@ The root volume and `/Applications` both report `Indexing enabled`.
 
 `mdls` reports the installed bundle name and identifier as `hide.app` and `me.grab.hide`.
 
-The installed app remains running as the single coordinated instance PID `27163` for the UI agent's follow-up verification.
+The installed app remains running as the single coordinated instance PID `52310` for follow-up verification.
 
 ## Delivery gates
 
