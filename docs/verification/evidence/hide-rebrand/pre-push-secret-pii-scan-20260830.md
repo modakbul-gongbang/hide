@@ -44,7 +44,7 @@ The scan result is therefore a review input, not a public-push approval.
 
 ## Post-cleanup rescan
 
-After the path cleanup, the current tracked tree contains 980 files.
+After the path cleanup, the current tracked tree contains 981 files.
 
 The current tree has 2 absolute home-path lines in the one synthetic Swift fixture listed above, while owned documentation and evidence have 0 such lines.
 

@@ -34,7 +34,7 @@ That fixture is intentionally listed instead of silently changing a Swift test o
 
 ## Current-tree rescan
 
-The current tracked tree contains 980 files.
+The current tracked tree contains 981 files.
 
 The repository-wide rescan found 2 absolute home-path lines in 1 file, both the synthetic fixture described above.
 
