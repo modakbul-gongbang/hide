@@ -650,51 +650,57 @@ private struct HideTerminalSurface: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.isRemoteContext {
-                if panes.isEmpty {
-                    HideEmptyCheckoutState()
-                } else if let workspace = model.focusedWorkspace,
-                          let checkout = model.focusedCheckout {
-                    HideTerminalGrid(
-                        items: PaneGridPresentation.uniformItems(
-                            paneIDs: panes.map(\.id),
-                            focusedPaneID: model.focusedPaneID
-                        )
-                    ) { item in
-                        if let pane = panes.first(where: { $0.id == item.paneID }) {
-                            RemoteTerminalCell(
-                                pane: pane,
-                                model: model,
-                                workspaceID: workspace.id,
-                                checkoutID: checkout.id
-                            )
-                        } else {
-                            MissingTerminalPaneCell(paneID: item.paneID)
-                        }
-                    }
-                }
-            } else if let layout = model.focusedPaneLayout {
-                PaneLayoutCanvas(layout: layout, bridge: model.core)
+            if let notice = model.paneProjectionNotice {
+                PaneProjectionUnavailableState(notice: notice)
             } else if panes.isEmpty {
                 HideEmptyCheckoutState()
             } else {
-                HideTerminalGrid(
-                    items: PaneGridPresentation.uniformItems(
-                        paneIDs: panes.map(\.id),
-                        focusedPaneID: model.core.snapshot?.terminal.paneID
-                    )
-                ) { item in
-                    PaneTerminalCell(
-                        paneID: item.paneID,
-                        focusedPaneID: model.core.snapshot?.terminal.paneID,
-                        bridge: model.core
-                    )
+                PaneLayoutCanvas(items: model.focusedPaneGridItems) { item in
+                    if let pane = model.paneMetadata(for: item.paneID) {
+                        PaneTerminalCell(
+                            pane: pane,
+                            status: model.paneStatus(for: pane.id),
+                            isFocused: item.isFocused,
+                            onFocus: { model.focusPane(pane.id) }
+                        ) {
+                            if model.isRemoteContext {
+                                RemoteTerminalHost(
+                                    remote: model.remote,
+                                    sshAlias: model.remote.sshAlias,
+                                    paneID: pane.id
+                                )
+                                .accessibilityLabel("Remote SwiftTerm terminal for \(pane.id)")
+                            } else {
+                                TerminalHost(bridge: model.core, paneID: pane.id)
+                                    .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                            }
+                        }
+                    } else {
+                        MissingTerminalPaneCell(paneID: item.paneID)
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
         .accessibilityIdentifier("hide-terminal-surface")
+    }
+}
+
+private struct PaneProjectionUnavailableState: View {
+    let notice: String
+    @Environment(\.hideAccent) private var accent
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Pane layout unavailable", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text(notice)
+        }
+        .foregroundStyle(accent)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(HideTheme.background)
+        .accessibilityIdentifier("pane-layout-unavailable")
     }
 }
 
@@ -711,37 +717,6 @@ private struct MissingTerminalPaneCell: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.panel)
         .accessibilityIdentifier("missing-terminal-pane-\(paneID)")
-    }
-}
-
-private struct RemoteTerminalCell: View {
-    let pane: CorePaneSnapshot
-    @ObservedObject var model: ShellModel
-    let workspaceID: String
-    let checkoutID: String
-
-    var body: some View {
-        HideTerminalPaneCard(
-            paneID: pane.id,
-            title: pane.label.isEmpty ? pane.id : pane.label,
-            cwd: pane.cwd,
-            status: pane.state,
-            isFocused: model.focusedPaneID == pane.id,
-            onFocus: {
-                model.remote.focus(
-                    workspaceID: workspaceID,
-                    checkoutID: checkoutID,
-                    paneID: pane.id
-                )
-            }
-        ) {
-            RemoteTerminalHost(
-                remote: model.remote,
-                sshAlias: model.remote.sshAlias,
-                paneID: pane.id
-            )
-            .accessibilityLabel("Remote SwiftTerm terminal for \(pane.id)")
-        }
     }
 }
 

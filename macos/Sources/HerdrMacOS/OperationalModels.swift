@@ -497,6 +497,41 @@ private struct RemotePaneWire: Decodable, Sendable {
     }
 }
 
+private struct RemoteLayoutRectWire: Decodable, Sendable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+private struct RemoteLayoutPaneWire: Decodable, Sendable {
+    let paneID: String
+    let rect: RemoteLayoutRectWire
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case rect
+    }
+}
+
+private struct RemoteLayoutWire: Decodable, Sendable {
+    let workspaceID: String
+    let tabID: String
+    let focusedPaneID: String
+    let zoomed: Bool
+    let area: RemoteLayoutRectWire
+    let panes: [RemoteLayoutPaneWire]
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
+        case tabID = "tab_id"
+        case focusedPaneID = "focused_pane_id"
+        case zoomed
+        case area
+        case panes
+    }
+}
+
 private struct RemoteAgentWire: Decodable, Sendable {
     let agent: String
     let agentStatus: String
@@ -529,6 +564,7 @@ fileprivate struct RemoteSnapshotWire: Decodable, Sendable {
     let workspaces: [RemoteWorkspaceWire]
     let tabs: [RemoteTabWire]
     let panes: [RemotePaneWire]
+    let layouts: [RemoteLayoutWire]
     let agents: [RemoteAgentWire]
 
     enum CodingKeys: String, CodingKey {
@@ -538,6 +574,7 @@ fileprivate struct RemoteSnapshotWire: Decodable, Sendable {
         case workspaces
         case tabs
         case panes
+        case layouts
         case agents
     }
 
@@ -549,6 +586,7 @@ fileprivate struct RemoteSnapshotWire: Decodable, Sendable {
         workspaces = try container.decodeIfPresent([RemoteWorkspaceWire].self, forKey: .workspaces) ?? []
         tabs = try container.decodeIfPresent([RemoteTabWire].self, forKey: .tabs) ?? []
         panes = try container.decodeIfPresent([RemotePaneWire].self, forKey: .panes) ?? []
+        layouts = try container.decodeIfPresent([RemoteLayoutWire].self, forKey: .layouts) ?? []
         agents = try container.decodeIfPresent([RemoteAgentWire].self, forKey: .agents) ?? []
     }
 }
@@ -584,6 +622,42 @@ struct RemoteFileNode: Identifiable, Hashable, Sendable {
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
+struct RemotePaneLayoutFrame: Equatable, Sendable {
+    let paneID: String
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+struct RemotePaneLayoutSnapshot: Equatable, Sendable {
+    let workspaceID: String
+    let tabID: String
+    let focusedPaneID: String
+    let zoomed: Bool
+    let frames: [RemotePaneLayoutFrame]
+
+    fileprivate init(wire: RemoteLayoutWire) {
+        workspaceID = wire.workspaceID
+        tabID = wire.tabID
+        focusedPaneID = wire.focusedPaneID
+        zoomed = wire.zoomed
+        guard wire.area.width > 0, wire.area.height > 0 else {
+            frames = []
+            return
+        }
+        frames = wire.panes.map { pane in
+            RemotePaneLayoutFrame(
+                paneID: pane.paneID,
+                x: (pane.rect.x - wire.area.x) / wire.area.width,
+                y: (pane.rect.y - wire.area.y) / wire.area.height,
+                width: pane.rect.width / wire.area.width,
+                height: pane.rect.height / wire.area.height
+            )
+        }
+    }
+}
+
 struct RemoteNavigationSnapshot {
     let deviceID: String
     let targetLabel: String
@@ -593,7 +667,13 @@ struct RemoteNavigationSnapshot {
     let focusedCheckoutID: String?
     let focusedTabID: String?
     let focusedPaneID: String?
+    let paneLayouts: [RemotePaneLayoutSnapshot]
     private let activeTabIDs: [String: String]
+
+    var focusedPaneLayout: RemotePaneLayoutSnapshot? {
+        guard let focusedTabID else { return nil }
+        return paneLayouts.first(where: { $0.tabID == focusedTabID })
+    }
 
     fileprivate init(deviceID: String, targetLabel: String, wire: RemoteSnapshotWire) {
         self.deviceID = deviceID
@@ -693,6 +773,7 @@ struct RemoteNavigationSnapshot {
         }
         focusedTabID = wire.focusedTabID
         focusedPaneID = wire.focusedPaneID
+        paneLayouts = wire.layouts.map(RemotePaneLayoutSnapshot.init(wire:))
     }
 
     private init(
@@ -704,6 +785,7 @@ struct RemoteNavigationSnapshot {
         focusedCheckoutID: String?,
         focusedTabID: String?,
         focusedPaneID: String?,
+        paneLayouts: [RemotePaneLayoutSnapshot],
         activeTabIDs: [String: String]
     ) {
         self.deviceID = deviceID
@@ -714,6 +796,7 @@ struct RemoteNavigationSnapshot {
         self.focusedCheckoutID = focusedCheckoutID
         self.focusedTabID = focusedTabID
         self.focusedPaneID = focusedPaneID
+        self.paneLayouts = paneLayouts
         self.activeTabIDs = activeTabIDs
     }
 
@@ -743,6 +826,7 @@ struct RemoteNavigationSnapshot {
             focusedCheckoutID: checkoutID,
             focusedTabID: selectedTab?.id,
             focusedPaneID: selectedPaneID,
+            paneLayouts: paneLayouts,
             activeTabIDs: activeTabIDs
         )
     }
@@ -757,6 +841,7 @@ struct RemoteNavigationSnapshot {
             focusedCheckoutID: focusedCheckoutID,
             focusedTabID: focusedTabID,
             focusedPaneID: paneID,
+            paneLayouts: paneLayouts,
             activeTabIDs: activeTabIDs
         )
     }

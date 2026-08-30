@@ -204,6 +204,28 @@ final class ShellModel: ObservableObject {
         focusedTab?.panes ?? []
     }
 
+    var focusedPaneGridItems: [PaneGridItem] {
+        if isRemoteContext {
+            guard paneProjectionNotice == nil,
+                  let layout = remote.navigation?.focusedPaneLayout
+            else { return [] }
+            let items = PaneGridPresentation.items(
+                remoteLayout: layout,
+                focusedPaneID: focusedPaneID
+            )
+            return items
+        } else if let layout = focusedPaneLayout {
+            return PaneGridPresentation.items(
+                layout: layout,
+                focusedPaneID: focusedPaneID
+            )
+        }
+        return PaneGridPresentation.uniformItems(
+            paneIDs: focusedPanes.map(\.id),
+            focusedPaneID: focusedPaneID
+        )
+    }
+
     var focusedPaneLayout: CorePaneLayoutSnapshot? {
         guard let layout = core.snapshot?.paneLayout,
               let checkout = focusedCheckout,
@@ -229,6 +251,21 @@ final class ShellModel: ObservableObject {
         return "\(error.kind): \(error.message)"
     }
 
+    var paneProjectionNotice: String? {
+        guard isRemoteContext, !focusedPanes.isEmpty else {
+            return localProjectionNotice
+        }
+        guard let layout = remote.navigation?.focusedPaneLayout else {
+            return "remote.pane_layout_unavailable: The selected remote tab has panes but no layout in the Herdr snapshot. Retry the Mac mini connection."
+        }
+        let expectedPaneIDs = Set(focusedPanes.map(\.id))
+        let layoutPaneIDs = Set(layout.frames.map(\.paneID))
+        guard !layout.frames.isEmpty, layoutPaneIDs == expectedPaneIDs else {
+            return "remote.pane_layout_mismatch: The selected remote tab's panes do not match its layout. Retry the Mac mini connection."
+        }
+        return nil
+    }
+
     var isRemoteContext: Bool { activeRemoteDevice != nil }
 
     var selectedDeviceID: String {
@@ -245,7 +282,48 @@ final class ShellModel: ObservableObject {
         if isRemoteContext {
             return remote.navigation?.focusedPaneID
         }
-        return core.snapshot?.terminal.paneID
+        return core.snapshot?.paneLayout?.focusedPaneID
+            ?? core.snapshot?.terminal.paneID
+    }
+
+    func paneMetadata(for paneID: String) -> CorePaneSnapshot? {
+        focusedPanes.first(where: { $0.id == paneID })
+            ?? workspaces
+                .lazy
+                .flatMap(\.checkouts)
+                .flatMap(\.tabs)
+                .flatMap(\.panes)
+                .first(where: { $0.id == paneID })
+    }
+
+    func paneStatus(for paneID: String) -> String {
+        if isRemoteContext {
+            return paneMetadata(for: paneID)?.state ?? "unavailable"
+        }
+        return core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID })?.closed == true
+            ? "closed"
+            : "attached"
+    }
+
+    func focusPane(_ paneID: String) {
+        if isRemoteContext {
+            guard let workspace = focusedWorkspace,
+                  let checkout = focusedCheckout
+            else {
+                interactionNotice = "The remote pane cannot be focused because its workspace selection is unavailable."
+                return
+            }
+            remote.focus(
+                workspaceID: workspace.id,
+                checkoutID: checkout.id,
+                paneID: paneID
+            )
+            HideLaunchTrace.mark("pane.selection", detail: "remote_\(paneID)")
+        } else {
+            core.focusPane(paneID)
+            HideLaunchTrace.mark("pane.selection", detail: "local_\(paneID)")
+        }
+        focus(.terminal)
     }
 
     var herdrIsConnected: Bool {
