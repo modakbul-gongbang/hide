@@ -404,21 +404,41 @@ impl Runtime {
         self.live = Some(context);
     }
 
-    /// Rebuilds the navigator from durable registrations and the current
-    /// session's pane working directories. Pane directories that are not
-    /// registered become clearly marked temporary workspaces for this
-    /// session; they are never persisted as registrations.
-    fn reconcile_session_catalog(&mut self, payload: &SessionSnapshotPayload) -> bool {
-        let temporary_paths = payload
+    /// Collects the pane and agent working directories that seed temporary
+    /// workspaces. Shared with the live poller so a catalog precomputed
+    /// outside the runtime lock is built from the same inputs.
+    pub fn session_temporary_paths(payload: &SessionSnapshotPayload) -> Vec<String> {
+        payload
             .panes
             .iter()
             .filter_map(|pane| pane.cwd.clone())
             .chain(payload.agents.iter().filter_map(|agent| agent.cwd.clone()))
-            .collect::<Vec<_>>();
-        let mut workspaces = workspace::build_catalog(
-            &self.snapshot.ui_state.workspace_registrations,
-            &temporary_paths,
-        );
+            .collect()
+    }
+
+    /// Rebuilds the navigator from durable registrations and the current
+    /// session's pane working directories. Pane directories that are not
+    /// registered become clearly marked temporary workspaces for this
+    /// session; they are never persisted as registrations.
+    fn reconcile_session_catalog(
+        &mut self,
+        payload: &SessionSnapshotPayload,
+        precomputed: Option<live::PrecomputedCatalog>,
+    ) -> bool {
+        // The catalog shells out to git, so the poller builds it before
+        // taking the runtime lock; a catalog whose registrations no longer
+        // match current state is discarded and rebuilt inline.
+        let mut workspaces = match precomputed {
+            Some(catalog)
+                if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
+            {
+                catalog.workspaces
+            }
+            _ => workspace::build_catalog(
+                &self.snapshot.ui_state.workspace_registrations,
+                &Self::session_temporary_paths(payload),
+            ),
+        };
         let projected_agents = project_agents(payload.clone()).agents;
 
         for layout in &payload.layouts {
@@ -629,10 +649,20 @@ impl Runtime {
         &mut self,
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
     ) -> bool {
+        self.ingest_session_with_catalog(fetched, None)
+    }
+
+    /// Like [`Self::ingest_session`], with a workspace catalog the caller
+    /// built outside the runtime lock.
+    pub fn ingest_session_with_catalog(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<live::PrecomputedCatalog>,
+    ) -> bool {
         let mut excluded = Vec::new();
         let catalog_changed = fetched
             .as_ref()
-            .map(|payload| self.reconcile_session_catalog(payload))
+            .map(|payload| self.reconcile_session_catalog(payload, precomputed))
             .unwrap_or(false);
         let (state, message, agents, layout) = match fetched {
             Ok(payload) => {

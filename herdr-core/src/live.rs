@@ -16,8 +16,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
-use crate::model::{PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot};
+use crate::model::{
+    PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
+    WorkspaceSnapshot,
+};
 use crate::runtime::Runtime;
+use crate::workspace;
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
     SessionPanePayload, SessionSnapshotPayload,
@@ -37,6 +41,14 @@ pub struct LiveContext {
     pub herdr_bin: Option<PathBuf>,
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
+}
+
+/// A workspace catalog the poller built outside the runtime lock, together
+/// with the registrations it was built from so the runtime can detect and
+/// discard a stale one.
+pub struct PrecomputedCatalog {
+    pub registrations: Vec<WorkspaceRegistration>,
+    pub workspaces: Vec<WorkspaceSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -306,11 +318,38 @@ fn spawn_session_poller(context: LiveContext) {
         .spawn(move || {
             loop {
                 let fetched = fetch_session(&context.socket_path);
+                // The catalog shells out to git per workspace and pane cwd,
+                // so it is built here, outside the runtime lock; holding the
+                // lock through those subprocesses stalls every shell snapshot
+                // read behind them.
+                let precomputed = match &fetched {
+                    Ok(payload) => {
+                        let Some(runtime) = context.runtime.upgrade() else {
+                            return;
+                        };
+                        let registrations = match runtime.lock() {
+                            Ok(guard) => {
+                                guard.snapshot().ui_state.workspace_registrations.clone()
+                            }
+                            Err(_) => return,
+                        };
+                        drop(runtime);
+                        let workspaces = workspace::build_catalog(
+                            &registrations,
+                            &Runtime::session_temporary_paths(payload),
+                        );
+                        Some(PrecomputedCatalog {
+                            registrations,
+                            workspaces,
+                        })
+                    }
+                    Err(_) => None,
+                };
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_session(fetched),
+                    Ok(mut guard) => guard.ingest_session_with_catalog(fetched, precomputed),
                     Err(_) => return,
                 };
                 drop(runtime);
