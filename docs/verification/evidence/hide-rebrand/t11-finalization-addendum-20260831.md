@@ -10,9 +10,9 @@ The user's later exact approval `a` is recorded in [t11-public-push-approval-202
 
 The public branch was created from a separate orphan history and pushed without rewriting the local `main` or `prd/hide-rebrand` branches.
 
-The local merged `main` currently points to `3c41165a56920bb8c999e1acc4309cc172c3cde3`.
+The local merged `main` now points to `05cc15ec31ee87676d22e6f7d9b9207eead47a46`.
 
-The feature branch currently points to `27f0c25b20db47d69929a8c1d73672b2726a9218`.
+The feature commit included in that merge is `214b262b6e3c578134d9807e1f4bb593beb44d61`.
 
 The final public release candidate remains `7c0ca7e0dad68f2d4204d36d9e82cd3f3265e615` at tag `v0.1.9`, with the draft-release details in [t11-public-release-20260831.md](t11-public-release-20260831.md).
 
