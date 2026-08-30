@@ -938,6 +938,7 @@ private struct RemoteProbeResult: Sendable {
 @MainActor
 final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var phase: RuntimePhase = .idle
+    @Published private(set) var isRefreshing = false
     @Published private(set) var message = "Remote mini has not been checked yet."
     @Published private(set) var workspaces: [RemoteWorkspaceSummary] = []
     @Published private(set) var navigation: RemoteNavigationSnapshot?
@@ -964,6 +965,7 @@ final class RemoteRuntimeModel: ObservableObject {
 
     func clearNavigation() {
         refreshGeneration = UUID()
+        isRefreshing = false
         navigation = nil
         workspaces = []
         files = []
@@ -978,25 +980,31 @@ final class RemoteRuntimeModel: ObservableObject {
     func refresh(targetID: String, label: String, sshAlias: String) {
         let requestID = UUID()
         refreshGeneration = requestID
-        navigation = nil
-        workspaces = []
-        files = []
         fileError = nil
         attachError = nil
         actionError = nil
-        loadedFilePath = nil
+        isRefreshing = true
+        targetLabel = label
+        self.sshAlias = sshAlias
         guard environmentStateProvider?("SSH_AUTH_SOCK") == "available" else {
-            phase = .unavailable
-            targetLabel = label
-            self.sshAlias = sshAlias
-            message = "SSH_AUTH_SOCK is unavailable. Remote features are disabled; launch from a shell with the agent socket exported."
+            finishRefreshFailure(
+                "SSH_AUTH_SOCK is unavailable. Remote features are disabled; launch from a shell with the agent socket exported.",
+                phaseIfEmpty: .unavailable,
+                logKind: "remote.refresh_unavailable"
+            )
             checkedAt = ISO8601DateFormatter().string(from: Date())
             return
         }
-        phase = .loading
-        targetLabel = label
-        self.sshAlias = sshAlias
-        message = "Connecting to \(label) and loading remote workspaces…"
+        if navigation == nil {
+            phase = .loading
+            message = "Connecting to \(label) and loading remote workspaces…"
+        } else {
+            // Keep the last authoritative projection interactive while its
+            // replacement is fetched. Clearing it dismantles terminal hosts,
+            // kills their SSH children, and turns a refresh into a reconnect.
+            phase = .ready
+            message = "Refreshing \(label) while the current remote session stays attached…"
+        }
         Task {
             let probe = await Task.detached { () -> RemoteProbeResult in
                 let version = SafeProcess.run(
@@ -1015,39 +1023,51 @@ final class RemoteRuntimeModel: ObservableObject {
                 )
             }.value
             guard refreshGeneration == requestID else { return }
+            isRefreshing = false
             checkedAt = ISO8601DateFormatter().string(from: Date())
             guard probe.version.status == 0 else {
-                phase = .failed
-                message = remoteFailure(probe.version, label: label)
-                log(kind: "remote.refresh_failed")
+                finishRefreshFailure(
+                    remoteFailure(probe.version, label: label),
+                    phaseIfEmpty: .failed,
+                    logKind: "remote.refresh_failed"
+                )
                 return
             }
             guard let remoteVersion = version(from: probe.version.stdout) else {
-                phase = .failed
-                message = "The Herdr version response from \(label) was not readable. Retry after checking the remote installation."
-                log(kind: "remote.refresh_failed")
+                finishRefreshFailure(
+                    "The Herdr version response from \(label) was not readable. Retry after checking the remote installation.",
+                    phaseIfEmpty: .failed,
+                    logKind: "remote.refresh_failed"
+                )
                 return
             }
             if compare(remoteVersion, with: HideRuntimeEnvironment.bundledVersion) == .orderedAscending {
-                phase = .stale
-                message = "Herdr \(remoteVersion) on \(label) is below hide's supported \(HideRuntimeEnvironment.bundledVersion). Upgrade the remote Herdr installation, then retry. Hide does not install or upgrade it."
-                log(kind: "remote.stale")
+                finishRefreshFailure(
+                    "Herdr \(remoteVersion) on \(label) is below hide's supported \(HideRuntimeEnvironment.bundledVersion). Upgrade the remote Herdr installation, then retry. Hide does not install or upgrade it.",
+                    phaseIfEmpty: .stale,
+                    logKind: "remote.stale"
+                )
                 return
             }
             guard let snapshot = probe.snapshot else {
-                phase = .failed
-                message = "The remote snapshot from \(label) was not available. Retry after checking SSH and the remote Herdr service."
-                log(kind: "remote.refresh_failed")
+                finishRefreshFailure(
+                    "The remote snapshot from \(label) was not available. Retry after checking SSH and the remote Herdr service.",
+                    phaseIfEmpty: .failed,
+                    logKind: "remote.refresh_failed"
+                )
                 return
             }
             guard snapshot.status == 0,
                   let envelope = try? JSONDecoder().decode(RemoteSnapshotEnvelope.self, from: snapshot.stdout)
             else {
-                phase = .failed
-                message = snapshot.status == 0
+                let failure = snapshot.status == 0
                     ? "The remote snapshot from \(label) was malformed. Retry after checking the remote Herdr service."
                     : remoteFailure(snapshot, label: label)
-                log(kind: "remote.refresh_failed")
+                finishRefreshFailure(
+                    failure,
+                    phaseIfEmpty: .failed,
+                    logKind: "remote.refresh_failed"
+                )
                 return
             }
             let wire = envelope.result.snapshot
@@ -1062,11 +1082,28 @@ final class RemoteRuntimeModel: ObservableObject {
                 )
             }
             phase = .ready
+            actionError = nil
             message = workspaces.isEmpty
                 ? "\(label) is connected, but no remote workspace is open. Create one on \(label) and retry."
                 : "\(label) connected. Remote workspaces, file trees, and terminal panes are attached; inline editing stays disabled."
             log(kind: "remote.ready")
         }
+    }
+
+    private func finishRefreshFailure(
+        _ failure: String,
+        phaseIfEmpty: RuntimePhase,
+        logKind: String
+    ) {
+        isRefreshing = false
+        if navigation == nil {
+            phase = phaseIfEmpty
+        } else {
+            phase = .ready
+        }
+        actionError = failure
+        message = failure
+        log(kind: logKind)
     }
 
     func focus(
