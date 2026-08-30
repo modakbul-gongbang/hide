@@ -133,6 +133,23 @@ final class HideRemoteTerminalView: LocalProcessTerminalView, HideTerminalPointe
     var onPointerFocus: (() -> Void)?
     var onOpenLink: (@MainActor @Sendable (String) -> Void)?
 
+    override func interpretKeyEvents(_ eventArray: [NSEvent]) {
+        if let event = eventArray.first,
+           let bytes = ModifiedTerminalInputPolicy.shiftEnterBytes(
+               for: event,
+               kittyKeyboardEnabled: !terminal.keyboardEnhancementFlags.isEmpty,
+               composing: hasMarkedText()
+           ) {
+            // LocalProcessTerminalView owns the SSH child transport, so send
+            // the same legacy fallback through its delegate path. When kitty
+            // mode is active the shared policy returns nil and SwiftTerm emits
+            // CSI 13;2u through its normal keyboard encoder instead.
+            send(source: self, data: bytes[...])
+            return
+        }
+        super.interpretKeyEvents(eventArray)
+    }
+
     override func mouseDown(with event: NSEvent) {
         routeMouseDown(event)
     }
