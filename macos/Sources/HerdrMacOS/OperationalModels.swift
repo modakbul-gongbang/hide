@@ -800,7 +800,12 @@ struct RemoteNavigationSnapshot {
         self.activeTabIDs = activeTabIDs
     }
 
-    func focused(workspaceID: String, checkoutID: String, paneID: String? = nil) -> RemoteNavigationSnapshot {
+    func focused(
+        workspaceID: String,
+        checkoutID: String,
+        tabID: String? = nil,
+        paneID: String? = nil
+    ) -> RemoteNavigationSnapshot {
         let selectedCheckout = workspaces
             .first(where: { $0.id == workspaceID })?
             .checkouts
@@ -810,6 +815,9 @@ struct RemoteNavigationSnapshot {
                 tab.panes.contains(where: { $0.id == paneID })
             })
         }
+            ?? tabID.flatMap { tabID in
+                selectedCheckout?.tabs.first(where: { $0.id == tabID })
+            }
             ??
             selectedCheckout?.tabs
             .first(where: { $0.id == activeTabIDs[workspaceID] })
@@ -853,6 +861,66 @@ struct RemoteNavigationSnapshot {
     static func checkoutID(deviceID: String, remoteID: String) -> String {
         "remote:\(deviceID):checkout:\(remoteID)"
     }
+
+    func remoteWorkspaceID(for projectedID: String) -> String? {
+        let prefix = "remote:\(deviceID):workspace:"
+        guard projectedID.hasPrefix(prefix) else { return nil }
+        let remoteID = String(projectedID.dropFirst(prefix.count))
+        return remoteID.isEmpty ? nil : remoteID
+    }
+}
+
+enum RemoteTerminalCommand: Sendable {
+    case split(paneID: String, direction: PaneSplitDirection)
+    case toggleZoom(paneID: String)
+    case close(paneID: String)
+    case createTab(workspaceID: String, cwd: String, label: String)
+    case focusWorkspace(workspaceID: String)
+    case focusTab(tabID: String)
+    case focusAgent(paneID: String)
+
+    var shellCommand: String {
+        switch self {
+        case .split(let paneID, let direction):
+            "herdr pane split \(RemoteShellCommand.quote(paneID)) --direction \(direction.rawValue)"
+        case .toggleZoom(let paneID):
+            "herdr pane zoom \(RemoteShellCommand.quote(paneID)) --toggle"
+        case .close(let paneID):
+            "herdr pane close \(RemoteShellCommand.quote(paneID))"
+        case .createTab(let workspaceID, let cwd, let label):
+            "herdr tab create --workspace \(RemoteShellCommand.quote(workspaceID)) --cwd \(RemoteShellCommand.quote(cwd)) --label \(RemoteShellCommand.quote(label)) --focus"
+        case .focusWorkspace(let workspaceID):
+            "herdr workspace focus \(RemoteShellCommand.quote(workspaceID))"
+        case .focusTab(let tabID):
+            "herdr tab focus \(RemoteShellCommand.quote(tabID))"
+        case .focusAgent(let paneID):
+            "herdr agent focus \(RemoteShellCommand.quote(paneID))"
+        }
+    }
+
+    var successMessage: String {
+        switch self {
+        case .split(_, let direction): "Remote pane split \(direction.rawValue)."
+        case .toggleZoom: "Remote pane zoom toggled."
+        case .close: "Remote pane closed."
+        case .createTab: "Remote tab created."
+        case .focusWorkspace: "Remote workspace focused."
+        case .focusTab: "Remote tab focused."
+        case .focusAgent: "Remote agent pane focused."
+        }
+    }
+
+    var logKind: String {
+        switch self {
+        case .split: "split"
+        case .toggleZoom: "zoom"
+        case .close: "close"
+        case .createTab: "tab_create"
+        case .focusWorkspace: "workspace_focus"
+        case .focusTab: "tab_focus"
+        case .focusAgent: "agent_focus"
+        }
+    }
 }
 
 private struct RemoteProbeResult: Sendable {
@@ -869,6 +937,7 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var files: [RemoteFileNode] = []
     @Published private(set) var fileError: String?
     @Published private(set) var attachError: String?
+    @Published private(set) var actionError: String?
     @Published private(set) var checkedAt = "never"
     @Published private(set) var targetLabel = "mini"
     private(set) var sshAlias = "mini"
@@ -876,6 +945,11 @@ final class RemoteRuntimeModel: ObservableObject {
     private var loadedFilePath: String?
     private var pendingTerminalPaths: Set<String> = []
     var environmentStateProvider: ((String) -> String?)?
+    var onActionFailure: ((String) -> Void)?
+
+    var statusMessage: String {
+        actionError ?? attachError ?? message
+    }
 
     func refreshMini() {
         refresh(targetID: "mini", label: "mini", sshAlias: "mini")
@@ -888,6 +962,7 @@ final class RemoteRuntimeModel: ObservableObject {
         files = []
         fileError = nil
         attachError = nil
+        actionError = nil
         loadedFilePath = nil
         phase = .idle
         message = "Remote mini has not been checked yet."
@@ -901,6 +976,7 @@ final class RemoteRuntimeModel: ObservableObject {
         files = []
         fileError = nil
         attachError = nil
+        actionError = nil
         loadedFilePath = nil
         guard environmentStateProvider?("SSH_AUTH_SOCK") == "available" else {
             phase = .unavailable
@@ -986,52 +1062,57 @@ final class RemoteRuntimeModel: ObservableObject {
         }
     }
 
-    func focus(workspaceID: String, checkoutID: String, paneID: String? = nil) {
-        navigation = navigation?.focused(workspaceID: workspaceID, checkoutID: checkoutID, paneID: paneID)
+    func focus(
+        workspaceID: String,
+        checkoutID: String,
+        tabID: String? = nil,
+        paneID: String? = nil
+    ) {
+        navigation = navigation?.focused(
+            workspaceID: workspaceID,
+            checkoutID: checkoutID,
+            tabID: tabID,
+            paneID: paneID
+        )
     }
 
     func focusPane(_ paneID: String) {
         navigation = navigation?.focusedPane(paneID)
     }
 
+    func focusWorkspace(projectedID: String) {
+        guard let workspaceID = navigation?.remoteWorkspaceID(for: projectedID) else {
+            reportActionFailure(
+                "The selected workspace does not belong to the connected remote device. No focus command was sent.",
+                kind: "workspace_focus_mismatch"
+            )
+            return
+        }
+        perform(.focusWorkspace(workspaceID: workspaceID))
+    }
+
     func startTerminal(checkout: CoreCheckoutSnapshot) {
-        guard phase == .ready else {
-            attachError = "Remote Herdr is not ready. Retry the connection before starting a terminal."
-            message = attachError ?? message
-            return
-        }
-        guard !checkout.path.isEmpty else {
-            attachError = "The remote checkout path is unavailable, so Hide cannot start a terminal there."
-            message = attachError ?? message
-            return
-        }
         guard pendingTerminalPaths.insert(checkout.path).inserted else {
-            attachError = "A remote terminal is already starting for this checkout."
+            reportActionFailure(
+                "A remote terminal is already starting for this checkout.",
+                kind: "tab_create_duplicate"
+            )
             return
         }
-        let requestID = refreshGeneration
-        let alias = sshAlias
-        let label = checkout.label
-        let path = checkout.path
-        Task {
-            let result = await Task.detached {
-                let command = "herdr workspace create --cwd \(RemoteShellCommand.quote(path)) --label \(RemoteShellCommand.quote("hide \(label)")) --no-focus"
-                return SafeProcess.run(
-                    executable: "/usr/bin/ssh",
-                    arguments: [alias, RemoteShellCommand.loginShell(command)]
-                )
-            }.value
-            guard refreshGeneration == requestID else { return }
-            pendingTerminalPaths.remove(path)
-            guard result.status == 0 else {
-                attachError = remoteFailure(result, label: targetLabel)
-                message = attachError ?? message
-                log(kind: "remote.terminal_start_failed")
-                return
-            }
-            message = "Started a remote terminal in \(URL(fileURLWithPath: path).lastPathComponent). Refreshing the remote snapshot."
-            refresh(targetID: navigation?.deviceID ?? "mini", label: targetLabel, sshAlias: alias)
+        guard let command = createTabCommand(checkout: checkout, label: "hide \(checkout.label)") else {
+            pendingTerminalPaths.remove(checkout.path)
+            return
         }
+        perform(command, pendingTerminalPath: checkout.path)
+    }
+
+    func createTab(checkout: CoreCheckoutSnapshot) {
+        guard let command = createTabCommand(checkout: checkout, label: "New tab") else { return }
+        perform(command)
+    }
+
+    func perform(_ command: RemoteTerminalCommand) {
+        perform(command, pendingTerminalPath: nil)
     }
 
     func loadFiles(path: String) {
@@ -1075,6 +1156,89 @@ final class RemoteRuntimeModel: ObservableObject {
         let suffix = exitCode.map { " (exit \($0))" } ?? ""
         attachError = "Remote terminal initialization failed for \(paneID)\(suffix). Check the SSH PTY/TERM and remote Herdr session, then retry."
         log(kind: "remote.terminal_attach_failed")
+    }
+
+    private func createTabCommand(
+        checkout: CoreCheckoutSnapshot,
+        label: String
+    ) -> RemoteTerminalCommand? {
+        guard phase == .ready else {
+            reportActionFailure(
+                "Remote Herdr is not ready. Retry the connection before creating a tab.",
+                kind: "tab_create_not_ready"
+            )
+            return nil
+        }
+        guard !checkout.path.isEmpty else {
+            reportActionFailure(
+                "The remote checkout path is unavailable, so Hide cannot create a tab there.",
+                kind: "tab_create_path_missing"
+            )
+            return nil
+        }
+        guard let workspaceID = navigation?.remoteWorkspaceID(for: checkout.workspaceID) else {
+            reportActionFailure(
+                "The selected checkout does not belong to the connected remote workspace. No tab was created.",
+                kind: "tab_create_workspace_mismatch"
+            )
+            return nil
+        }
+        return .createTab(workspaceID: workspaceID, cwd: checkout.path, label: label)
+    }
+
+    private func perform(
+        _ command: RemoteTerminalCommand,
+        pendingTerminalPath: String?
+    ) {
+        guard phase == .ready else {
+            if let pendingTerminalPath { pendingTerminalPaths.remove(pendingTerminalPath) }
+            reportActionFailure(
+                "Remote Herdr is not ready. No command was sent to either device.",
+                kind: "command_not_ready"
+            )
+            return
+        }
+        guard let targetID = navigation?.deviceID else {
+            if let pendingTerminalPath { pendingTerminalPaths.remove(pendingTerminalPath) }
+            reportActionFailure(
+                "The selected remote device has no navigation snapshot. No command was sent to either device.",
+                kind: "command_navigation_missing"
+            )
+            return
+        }
+        actionError = nil
+        let requestID = refreshGeneration
+        let alias = sshAlias
+        let label = targetLabel
+        let shellCommand = command.shellCommand
+        Task {
+            let result = await Task.detached {
+                SafeProcess.run(
+                    executable: "/usr/bin/ssh",
+                    arguments: [alias, RemoteShellCommand.loginShell(shellCommand)]
+                )
+            }.value
+            guard refreshGeneration == requestID else { return }
+            if let pendingTerminalPath { pendingTerminalPaths.remove(pendingTerminalPath) }
+            guard result.status == 0 else {
+                reportActionFailure(
+                    remoteFailure(result, label: label),
+                    kind: "command_\(command.logKind)_failed"
+                )
+                return
+            }
+            actionError = nil
+            message = "\(command.successMessage) Refreshing \(label)."
+            log(kind: "remote.command_\(command.logKind)_ready")
+            refresh(targetID: targetID, label: label, sshAlias: alias)
+        }
+    }
+
+    private func reportActionFailure(_ failure: String, kind: String) {
+        actionError = failure
+        message = failure
+        onActionFailure?(failure)
+        log(kind: "remote.\(kind)")
     }
 
     private func version(from data: Data) -> String? {

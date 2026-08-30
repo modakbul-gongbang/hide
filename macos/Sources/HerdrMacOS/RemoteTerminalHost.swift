@@ -9,6 +9,7 @@ struct RemoteTerminalHost: NSViewRepresentable {
     let remote: RemoteRuntimeModel
     let sshAlias: String
     let paneID: String
+    let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -28,9 +29,7 @@ struct RemoteTerminalHost: NSViewRepresentable {
         terminal.onOpenLink = onOpenLink
         terminal.processDelegate = context.coordinator
         terminal.setAccessibilityIdentifier("remote-terminal-\(paneID)")
-        terminal.onPointerFocus = { [weak remote] in
-            remote?.focusPane(paneID)
-        }
+        terminal.onPointerFocus = onFocus
         terminal.startProcess(
             executable: "/usr/bin/ssh",
             args: [
@@ -45,11 +44,13 @@ struct RemoteTerminalHost: NSViewRepresentable {
     }
 
     func updateNSView(_ terminal: LocalProcessTerminalView, context: Context) {
+        (terminal as? HideRemoteTerminalView)?.onPointerFocus = onFocus
         (terminal as? HideRemoteTerminalView)?.onOpenLink = onOpenLink
     }
 
     static func dismantleNSView(_ terminal: LocalProcessTerminalView, coordinator: Coordinator) {
         terminal.processDelegate = nil
+        (terminal as? HideRemoteTerminalView)?.onPointerFocus = nil
         (terminal as? HideRemoteTerminalView)?.onOpenLink = nil
         terminal.terminate()
     }

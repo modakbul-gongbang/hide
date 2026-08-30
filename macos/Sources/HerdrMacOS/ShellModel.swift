@@ -19,7 +19,7 @@ enum ShellSurface: String, CaseIterable, Hashable {
     }
 }
 
-enum PaneSplitDirection: String, Decodable, Equatable {
+enum PaneSplitDirection: String, Decodable, Equatable, Sendable {
     case right
     case down
 }
@@ -96,7 +96,7 @@ final class ShellModel: ObservableObject {
     private var coreSubscription: AnyCancellable?
     private var browserSubscription: AnyCancellable?
     private var remoteSubscription: AnyCancellable?
-    private var pendingPaneCloseID: String?
+    private var pendingPaneCloseTarget: PaneCloseTarget?
     private var lastRemoteDevice: CoreDeviceSnapshot?
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
@@ -129,6 +129,9 @@ final class ShellModel: ObservableObject {
         }
         remote.environmentStateProvider = { [weak core] key in
             core?.environmentState(for: key)
+        }
+        remote.onActionFailure = { [weak self] message in
+            self?.interactionNotice = message
         }
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
@@ -319,6 +322,9 @@ final class ShellModel: ObservableObject {
                 checkoutID: checkout.id,
                 paneID: paneID
             )
+            if agents.contains(where: { $0.paneID == paneID }) {
+                remote.perform(.focusAgent(paneID: paneID))
+            }
             HideLaunchTrace.mark("pane.selection", detail: "remote_\(paneID)")
         } else {
             core.focusPane(paneID)
@@ -402,6 +408,8 @@ final class ShellModel: ObservableObject {
             focus(.terminal)
             if action == .startTerminal {
                 remote.startTerminal(checkout: checkout)
+            } else {
+                remote.focusWorkspace(projectedID: checkout.workspaceID)
             }
             return
         }
@@ -453,6 +461,7 @@ final class ShellModel: ObservableObject {
         }
         if isRemoteContext {
             remote.focus(workspaceID: workspace.id, checkoutID: checkout.id, paneID: agent.paneID)
+            remote.perform(.focusAgent(paneID: agent.paneID))
         } else {
             core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
             core.focusPane(agent.paneID)
@@ -487,10 +496,36 @@ final class ShellModel: ObservableObject {
             return
         }
         if isRemoteContext, let checkout = focusedCheckout {
-            remote.startTerminal(checkout: checkout)
+            remote.createTab(checkout: checkout)
         } else {
             core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
         }
+    }
+
+    func focusTab(_ tab: CoreTabSnapshot) {
+        guard let tabID = tab.id,
+              let workspace = focusedWorkspace,
+              let checkout = focusedCheckout
+        else {
+            interactionNotice = "The selected tab has no routable workspace context. No tab focus command was sent."
+            return
+        }
+        if isRemoteContext {
+            remote.focus(
+                workspaceID: workspace.id,
+                checkoutID: checkout.id,
+                tabID: tabID,
+                paneID: tab.panes.first?.id
+            )
+            remote.perform(.focusTab(tabID: tabID))
+        } else {
+            core.focusTab(
+                workspaceID: workspace.id,
+                checkoutID: checkout.id,
+                tabID: tabID
+            )
+        }
+        focus(.terminal)
     }
 
     func startAgent() {
@@ -615,22 +650,56 @@ final class ShellModel: ObservableObject {
         activeSurface = surface
     }
 
-    func splitCurrentPane(_ direction: PaneSplitDirection) {
+    private enum PaneCommandRoute {
+        case local
+        case remote(paneID: String)
+        case unavailable(String)
+    }
+
+    private enum PaneCloseTarget {
+        case local(paneID: String)
+        case remote(paneID: String)
+
+        var paneID: String {
+            switch self {
+            case .local(let paneID), .remote(let paneID): paneID
+            }
+        }
+    }
+
+    private var paneCommandRoute: PaneCommandRoute {
+        guard let device = activeRemoteDevice else { return .local }
+        guard remote.phase == .ready else {
+            return .unavailable("\(device.label) is not ready. No pane command was sent to either device.")
+        }
+        guard let navigation = remote.navigation,
+              navigation.deviceID == device.id
+        else {
+            return .unavailable("\(device.label) has no matching navigation snapshot. No pane command was sent to either device.")
+        }
+        guard let paneID = navigation.focusedPaneID else {
+            return .unavailable("Select a pane on \(device.label) before using a pane command. No local pane was changed.")
+        }
+        return .remote(paneID: paneID)
+    }
+
+    private func splitCurrentPane(_ direction: PaneSplitDirection) {
         core.splitCurrentPane(direction: direction)
         focus(.terminal)
     }
 
-    func toggleCurrentPaneZoom() {
+    private func toggleCurrentPaneZoom() {
         core.toggleCurrentPaneZoom()
         focus(.terminal)
     }
 
-    func closeCurrentPane() {
-        guard let paneID = core.snapshot?.terminal.paneID else {
+    private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
+        let paneID = closeTarget.paneID
+        guard paneMetadata(for: paneID) != nil else {
             consequenceResult = "Select a terminal pane before closing."
             return
         }
-        let agent = core.snapshot?.navigator.agents.first { $0.paneID == paneID }
+        let agent = agents.first { $0.paneID == paneID }
         let target = DestructiveTarget(
             id: paneID,
             label: paneID,
@@ -640,30 +709,44 @@ final class ShellModel: ObservableObject {
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
         consequenceResult = nil
         if notice.requiresConfirmation {
-            pendingPaneCloseID = paneID
+            pendingPaneCloseTarget = closeTarget
             consequenceNotice = notice
         } else {
-            pendingPaneCloseID = nil
-            core.closePane(paneID, confirmed: false)
+            pendingPaneCloseTarget = nil
+            executePaneClose(closeTarget, confirmed: false)
             consequenceResult = "Close requested for idle pane \(paneID)."
         }
         focus(.terminal)
     }
 
     func performPaneCommand(_ command: PaneCommand) {
-        guard !isRemoteContext else {
-            interactionNotice = "\(command.title) is not available until Hide can route it to \(activeContextLabel ?? "the selected remote device"). No local pane was changed."
+        switch paneCommandRoute {
+        case .unavailable(let message):
+            interactionNotice = message
             HideLaunchTrace.mark(
                 "pane.command.blocked",
                 detail: "command=\(command.rawValue) device_id=\(selectedDeviceID)"
             )
-            return
-        }
-        switch command {
-        case .splitRight: splitCurrentPane(.right)
-        case .splitDown: splitCurrentPane(.down)
-        case .toggleZoom: toggleCurrentPaneZoom()
-        case .closePane: closeCurrentPane()
+        case .local:
+            switch command {
+            case .splitRight: splitCurrentPane(.right)
+            case .splitDown: splitCurrentPane(.down)
+            case .toggleZoom: toggleCurrentPaneZoom()
+            case .closePane:
+                guard let paneID = focusedPaneID else {
+                    consequenceResult = "Select a terminal pane before closing."
+                    return
+                }
+                closeCurrentPane(target: .local(paneID: paneID))
+            }
+        case .remote(let paneID):
+            switch command {
+            case .splitRight: remote.perform(.split(paneID: paneID, direction: .right))
+            case .splitDown: remote.perform(.split(paneID: paneID, direction: .down))
+            case .toggleZoom: remote.perform(.toggleZoom(paneID: paneID))
+            case .closePane: closeCurrentPane(target: .remote(paneID: paneID))
+            }
+            focus(.terminal)
         }
     }
 
@@ -699,7 +782,7 @@ final class ShellModel: ObservableObject {
     var petShortcutRegistrar: ((String?) -> String?)?
 
     func previewConsequence(_ kind: DestructiveTargetKind) {
-        pendingPaneCloseID = nil
+        pendingPaneCloseTarget = nil
         let agents = core.snapshot?.navigator.agents ?? []
         let targets = agents.map {
             DestructiveTarget(id: $0.paneID, label: $0.workspaceLabel, state: $0.state, summary: $0.summary)
@@ -710,10 +793,11 @@ final class ShellModel: ObservableObject {
 
     func confirmConsequencePreview() {
         guard let consequenceNotice else { return }
-        if let paneID = pendingPaneCloseID {
-            core.closePane(paneID, confirmed: true)
+        if let target = pendingPaneCloseTarget {
+            let paneID = target.paneID
+            executePaneClose(target, confirmed: true)
             consequenceResult = "Confirmed close requested for pane \(paneID)."
-            pendingPaneCloseID = nil
+            pendingPaneCloseTarget = nil
         } else {
             consequenceResult = consequenceNotice.requiresConfirmation
                 ? "Confirmation recorded for the prefixed verification preview. No user resource was changed."
@@ -724,8 +808,17 @@ final class ShellModel: ObservableObject {
 
     func cancelConsequencePreview() {
         consequenceResult = "Cancelled before any process or checkout was affected."
-        pendingPaneCloseID = nil
+        pendingPaneCloseTarget = nil
         consequenceNotice = nil
+    }
+
+    private func executePaneClose(_ target: PaneCloseTarget, confirmed: Bool) {
+        switch target {
+        case .local(let paneID):
+            core.closePane(paneID, confirmed: confirmed)
+        case .remote(let paneID):
+            remote.perform(.close(paneID: paneID))
+        }
     }
 
     private static func uiStateDiagnostic(_ snapshot: CoreSnapshot?) -> String? {

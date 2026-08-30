@@ -585,23 +585,7 @@ private struct HideToolbar: View {
                     HStack(spacing: 3) {
                         ForEach(model.focusedTabs, id: \.stableID) { tab in
                             Button {
-                                guard let tabID = tab.id,
-                                      let workspace = model.focusedWorkspace,
-                                      let checkout = model.focusedCheckout
-                                else { return }
-                                if model.isRemoteContext {
-                                    model.remote.focus(
-                                        workspaceID: workspace.id,
-                                        checkoutID: checkout.id,
-                                        paneID: tab.panes.first?.id
-                                    )
-                                } else {
-                                    model.core.focusTab(
-                                        workspaceID: workspace.id,
-                                        checkoutID: checkout.id,
-                                        tabID: tabID
-                                    )
-                                }
+                                model.focusTab(tab)
                             } label: {
                                 HStack(spacing: 6) {
                                     Circle()
@@ -669,6 +653,7 @@ private struct HideTerminalSurface: View {
                                     remote: model.remote,
                                     sshAlias: model.remote.sshAlias,
                                     paneID: pane.id,
+                                    onFocus: { model.focusPane(pane.id) },
                                     onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                                 )
                                 .accessibilityLabel("Remote SwiftTerm terminal for \(pane.id)")
@@ -739,7 +724,7 @@ private struct HideEmptyCheckoutState: View {
                 Text(model.remote.phase == .loading ? "Connecting to \(model.remote.targetLabel)" : "Remote context")
                     .hideFont(size: 17, weight: .semibold)
                     .foregroundStyle(HideTheme.primary)
-                Text(model.remote.attachError ?? model.remote.message)
+                Text(model.remote.statusMessage)
                     .hideFont(size: 12)
                     .foregroundStyle(HideTheme.secondary)
                     .multilineTextAlignment(.center)
@@ -840,7 +825,7 @@ private struct HideStatusBar: View {
                 .fill(model.herdrIsConnected ? HideTheme.success : HideTheme.warning)
                 .frame(width: 6, height: 6)
             Text(model.isRemoteContext
-                ? (model.remote.attachError ?? model.remote.message)
+                ? model.remote.statusMessage
                 : (model.core.bridgeError ?? model.core.snapshot?.status.herdr.message ?? "Waiting for Herdr"))
                 .lineLimit(1)
             Spacer()
