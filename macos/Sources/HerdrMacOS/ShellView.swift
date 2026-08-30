@@ -282,6 +282,34 @@ enum PaneGridPresentation {
         }
     }
 
+    static func uniformItems(
+        paneIDs: [String],
+        focusedPaneID: String?
+    ) -> [PaneGridItem] {
+        guard !paneIDs.isEmpty else { return [] }
+
+        let columnCount = paneIDs.count > 1 ? 2 : 1
+        let rowCount = (paneIDs.count + columnCount - 1) / columnCount
+
+        return paneIDs.enumerated().map { index, paneID in
+            let column = index % columnCount
+            let row = index / columnCount
+            let frame = PaneGridFrame(
+                x: Double(column) / Double(columnCount),
+                y: Double(row) / Double(rowCount),
+                width: 1 / Double(columnCount),
+                height: 1 / Double(rowCount)
+            )
+            return PaneGridItem(
+                paneID: paneID,
+                retainedFrame: frame,
+                visualFrame: frame,
+                isVisible: true,
+                isFocused: paneID == focusedPaneID
+            )
+        }
+    }
+
     private static func flatten(
         node: CorePaneLayoutNode,
         frame: PaneGridFrame
@@ -348,32 +376,42 @@ struct PaneGridItem: Equatable {
     let isFocused: Bool
 }
 
-struct PaneLayoutCanvas: View {
-    let layout: CorePaneLayoutSnapshot
-    @ObservedObject var bridge: CoreBridge
+/// The single pane placement surface used by local and remote terminals.
+///
+/// Local panes supply the authoritative Herdr split frames while remote panes
+/// use uniform frames. Spacing, clipping, focus stacking, and viewport filling
+/// are intentionally shared so either runtime produces the same pane geometry.
+struct HideTerminalGrid<Content: View>: View {
+    let items: [PaneGridItem]
+    private let content: (PaneGridItem) -> Content
+
+    init(
+        items: [PaneGridItem],
+        @ViewBuilder content: @escaping (PaneGridItem) -> Content
+    ) {
+        self.items = items
+        self.content = content
+    }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                ForEach(PaneGridPresentation.items(layout: layout), id: \.paneID) { item in
+                ForEach(items, id: \.paneID) { item in
                     let frame = item.visualFrame
-                    PaneTerminalCell(
-                        paneID: item.paneID,
-                        focusedPaneID: layout.focusedPaneID,
-                        bridge: bridge
-                    )
-                    .frame(
-                        width: geometry.size.width * CGFloat(frame.width),
-                        height: geometry.size.height * CGFloat(frame.height)
-                    )
-                    .position(
-                        x: geometry.size.width * CGFloat(frame.x + frame.width / 2),
-                        y: geometry.size.height * CGFloat(frame.y + frame.height / 2)
-                    )
-                    .opacity(item.isVisible ? 1 : 0)
-                    .allowsHitTesting(item.isVisible)
-                    .accessibilityHidden(!item.isVisible)
-                    .zIndex(item.isFocused ? 1 : 0)
+                    content(item)
+                        .padding(4)
+                        .frame(
+                            width: geometry.size.width * CGFloat(frame.width),
+                            height: geometry.size.height * CGFloat(frame.height)
+                        )
+                        .position(
+                            x: geometry.size.width * CGFloat(frame.x + frame.width / 2),
+                            y: geometry.size.height * CGFloat(frame.y + frame.height / 2)
+                        )
+                        .opacity(item.isVisible ? 1 : 0)
+                        .allowsHitTesting(item.isVisible)
+                        .accessibilityHidden(!item.isVisible)
+                        .zIndex(item.isFocused ? 1 : 0)
                 }
             }
             .clipped()
@@ -381,7 +419,23 @@ struct PaneLayoutCanvas: View {
                 transaction.animation = nil
             }
         }
+        .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct PaneLayoutCanvas: View {
+    let layout: CorePaneLayoutSnapshot
+    @ObservedObject var bridge: CoreBridge
+
+    var body: some View {
+        HideTerminalGrid(items: PaneGridPresentation.items(layout: layout)) { item in
+            PaneTerminalCell(
+                paneID: item.paneID,
+                focusedPaneID: layout.focusedPaneID,
+                bridge: bridge
+            )
+        }
     }
 }
 

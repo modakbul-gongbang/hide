@@ -646,87 +646,62 @@ private struct HideTerminalSurface: View {
                     HideEmptyCheckoutState()
                 } else if let workspace = model.focusedWorkspace,
                           let checkout = model.focusedCheckout {
-                    HideTerminalGrid(itemCount: panes.count) { itemHeight in
-                        ForEach(panes) { pane in
+                    HideTerminalGrid(
+                        items: PaneGridPresentation.uniformItems(
+                            paneIDs: panes.map(\.id),
+                            focusedPaneID: model.focusedPaneID
+                        )
+                    ) { item in
+                        if let pane = panes.first(where: { $0.id == item.paneID }) {
                             RemoteTerminalCell(
                                 pane: pane,
                                 model: model,
                                 workspaceID: workspace.id,
                                 checkoutID: checkout.id
                             )
-                            .frame(height: itemHeight)
+                        } else {
+                            MissingTerminalPaneCell(paneID: item.paneID)
                         }
                     }
                 }
             } else if let layout = model.focusedPaneLayout {
                 PaneLayoutCanvas(layout: layout, bridge: model.core)
-                    .padding(12)
             } else if panes.isEmpty {
                 HideEmptyCheckoutState()
             } else {
-                HideTerminalGrid(itemCount: panes.count) { itemHeight in
-                    ForEach(panes) { pane in
-                        PaneTerminalCell(
-                            paneID: pane.id,
-                            focusedPaneID: model.core.snapshot?.terminal.paneID,
-                            bridge: model.core
-                        )
-                        .frame(height: itemHeight)
-                    }
+                HideTerminalGrid(
+                    items: PaneGridPresentation.uniformItems(
+                        paneIDs: panes.map(\.id),
+                        focusedPaneID: model.core.snapshot?.terminal.paneID
+                    )
+                ) { item in
+                    PaneTerminalCell(
+                        paneID: item.paneID,
+                        focusedPaneID: model.core.snapshot?.terminal.paneID,
+                        bridge: model.core
+                    )
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
-        .overlay(alignment: .topLeading) {
-            if let path = model.focusedPath {
-                Text(path.path)
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-                    .padding(.leading, 18)
-                    .padding(.top, 7)
-            }
-        }
         .accessibilityIdentifier("hide-terminal-surface")
     }
 }
 
-private struct HideTerminalGrid<Content: View>: View {
-    let itemCount: Int
-    private let content: (CGFloat) -> Content
-
-    init(
-        itemCount: Int,
-        @ViewBuilder content: @escaping (CGFloat) -> Content
-    ) {
-        self.itemCount = itemCount
-        self.content = content
-    }
+private struct MissingTerminalPaneCell: View {
+    let paneID: String
 
     var body: some View {
-        GeometryReader { geometry in
-            let columnCount = itemCount > 1 ? 2 : 1
-            let rowCount = max(1, (itemCount + columnCount - 1) / columnCount)
-            let innerHeight = max(120, geometry.size.height - 24 - CGFloat(rowCount - 1) * 8)
-            let itemHeight = innerHeight / CGFloat(rowCount)
-
-            LazyVGrid(
-                columns: Array(
-                    repeating: GridItem(.flexible(), spacing: 8),
-                    count: columnCount
-                ),
-                spacing: 8
-            ) {
-                content(itemHeight)
-            }
-            .padding(12)
-            .frame(
-                width: geometry.size.width,
-                height: geometry.size.height,
-                alignment: .topLeading
-            )
+        ContentUnavailableView {
+            Label("Terminal pane unavailable", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text("Hide received layout for \(paneID) without matching pane metadata.")
         }
+        .foregroundStyle(HideTheme.danger)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(HideTheme.panel)
+        .accessibilityIdentifier("missing-terminal-pane-\(paneID)")
     }
 }
 
