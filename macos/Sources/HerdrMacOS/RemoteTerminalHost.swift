@@ -15,7 +15,7 @@ struct RemoteTerminalHost: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let terminal = LocalProcessTerminalView(
+        let terminal = HideRemoteTerminalView(
             frame: .zero,
             font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
             options: .default
@@ -24,6 +24,9 @@ struct RemoteTerminalHost: NSViewRepresentable {
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         terminal.processDelegate = context.coordinator
         terminal.setAccessibilityIdentifier("remote-terminal-\(paneID)")
+        terminal.onPointerFocus = { [weak remote] in
+            remote?.focusPane(paneID)
+        }
         terminal.startProcess(
             executable: "/usr/bin/ssh",
             args: [

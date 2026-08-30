@@ -82,9 +82,11 @@ enum ModifiedTerminalInputPolicy {
 /// `interpretKeyEvents` is the IME entry point SwiftTerm routes key events
 /// through, so the composition state captured there brackets everything the
 /// input method does with the event.
-final class ImeTerminalView: TerminalView {
+final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     private var composingAtEvent = false
     private var plainBackspaceEvent = false
+    let pointerRouting = TerminalPointerRoutingState()
+    var onPointerFocus: (() -> Void)?
 
     /// Consulted by the terminal delegate before bytes are forwarded.
     func shouldDeliverToPane(_ bytes: ArraySlice<UInt8>) -> Bool {
@@ -118,6 +120,42 @@ final class ImeTerminalView: TerminalView {
             return
         }
         super.interpretKeyEvents(eventArray)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        routeMouseDown(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        routeMouseDragged(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        routeMouseUp(event)
+    }
+
+    func forwardMouseDown(_ event: NSEvent, selectingLocally: Bool) {
+        if selectingLocally {
+            withMouseReportingDisabled { super.mouseDown(with: event) }
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    func forwardMouseDragged(_ event: NSEvent, selectingLocally: Bool) {
+        if selectingLocally {
+            withMouseReportingDisabled { super.mouseDragged(with: event) }
+        } else {
+            super.mouseDragged(with: event)
+        }
+    }
+
+    func forwardMouseUp(_ event: NSEvent, selectingLocally: Bool) {
+        if selectingLocally {
+            withMouseReportingDisabled { super.mouseUp(with: event) }
+        } else {
+            super.mouseUp(with: event)
+        }
     }
 
     /// Repositions the marked-text (preedit) overlay to the current caret.

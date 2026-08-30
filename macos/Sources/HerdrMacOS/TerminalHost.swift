@@ -19,12 +19,10 @@ struct TerminalHost: NSViewRepresentable {
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
+        terminal.onPointerFocus = { [weak bridge] in
+            bridge?.focusPane(paneID)
+        }
         context.coordinator.terminal = terminal
-        let clickRecognizer = NSClickGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.terminalClicked(_:))
-        )
-        terminal.addGestureRecognizer(clickRecognizer)
         context.coordinator.registrationID = bridge.registerTerminal(
             paneID: paneID,
             receive: { [weak terminal] bytes in
@@ -69,11 +67,6 @@ struct TerminalHost: NSViewRepresentable {
             self.paneID = paneID
         }
 
-        @MainActor @objc func terminalClicked(_ recognizer: NSClickGestureRecognizer) {
-            guard recognizer.state == .ended else { return }
-            bridge.focusPane(paneID)
-        }
-
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             // SwiftTerm delivers delegate sends synchronously from key
             // handling on the main thread; the isolation assumption fails
@@ -105,5 +98,15 @@ struct TerminalHost: NSViewRepresentable {
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
         func scrolled(source: TerminalView, position: Double) {}
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+            // SwiftTerm invokes link delegates synchronously from AppKit mouse
+            // handling. Keep the activation marker synchronous so the router
+            // can suppress the TUI click replay in this same mouse-up event.
+            MainActor.assumeIsolated {
+                (source as? ImeTerminalView)?.noteTerminalLinkActivation()
+                TerminalView.openDefaultLink(link)
+            }
+        }
     }
 }

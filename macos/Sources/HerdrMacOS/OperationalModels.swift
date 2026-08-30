@@ -990,6 +990,10 @@ final class RemoteRuntimeModel: ObservableObject {
         navigation = navigation?.focused(workspaceID: workspaceID, checkoutID: checkoutID, paneID: paneID)
     }
 
+    func focusPane(_ paneID: String) {
+        navigation = navigation?.focusedPane(paneID)
+    }
+
     func startTerminal(checkout: CoreCheckoutSnapshot) {
         guard phase == .ready else {
             attachError = "Remote Herdr is not ready. Retry the connection before starting a terminal."
