@@ -453,6 +453,8 @@ mod tests {
             .arg(&root)
             .args([
                 "-c",
+                "commit.gpgsign=false",
+                "-c",
                 "user.email=hide@example.invalid",
                 "-c",
                 "user.name=hide-test",
