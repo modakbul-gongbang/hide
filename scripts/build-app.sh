@@ -101,10 +101,12 @@ mkdir -p "$dist_root"
 rm -rf -- "$bundle_path" "$archive_path" "$archive_path.sha256"
 mv "$temporary_bundle" "$bundle_path"
 /usr/bin/ditto -c -k --keepParent "$bundle_path" "$archive_path"
-/usr/bin/shasum -a 256 "$archive_path" > "$archive_path.sha256"
+archive_name=$(basename "$archive_path")
+archive_digest=$(/usr/bin/shasum -a 256 "$archive_path" | /usr/bin/awk '{print $1}')
+printf '%s  %s\n' "$archive_digest" "$archive_name" > "$archive_path.sha256"
 
 print -r -- "bundle=$bundle_path"
 print -r -- "archive=$archive_path"
 print -r -- "herdr_version=$actual_version"
 print -r -- "herdr_sha256=$actual_sha"
-print -r -- "archive_sha256=$(/usr/bin/awk '{print $1}' "$archive_path.sha256")"
+print -r -- "archive_sha256=$archive_digest"
