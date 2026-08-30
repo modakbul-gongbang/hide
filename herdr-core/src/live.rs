@@ -51,6 +51,20 @@ pub struct PrecomputedCatalog {
     pub workspaces: Vec<WorkspaceSnapshot>,
 }
 
+/// How long a catalog built from unchanged inputs keeps being reused before
+/// git is consulted again. Git topology changes made outside the app (a new
+/// worktree, a branch switch) surface within this window; changes made
+/// through the app rebuild inline in their own event handlers.
+const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// The poller's memo of the last catalog build and the inputs it came from.
+struct CatalogCache {
+    registrations: Vec<WorkspaceRegistration>,
+    temporary_paths: Vec<String>,
+    workspaces: Vec<WorkspaceSnapshot>,
+    built_at: Instant,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirection {
@@ -316,12 +330,15 @@ fn spawn_session_poller(context: LiveContext) {
     let result = thread::Builder::new()
         .name("herdr-core-session-poller".to_owned())
         .spawn(move || {
+            let mut catalog_cache: Option<CatalogCache> = None;
             loop {
                 let fetched = fetch_session(&context.socket_path);
                 // The catalog shells out to git per workspace and pane cwd,
                 // so it is built here, outside the runtime lock; holding the
                 // lock through those subprocesses stalls every shell snapshot
-                // read behind them.
+                // read behind them. It is also cached: git only runs again
+                // when the inputs change or the refresh window lapses, not on
+                // every poll tick.
                 let precomputed = match &fetched {
                     Ok(payload) => {
                         let Some(runtime) = context.runtime.upgrade() else {
@@ -334,13 +351,28 @@ fn spawn_session_poller(context: LiveContext) {
                             Err(_) => return,
                         };
                         drop(runtime);
-                        let workspaces = workspace::build_catalog(
-                            &registrations,
-                            &Runtime::session_temporary_paths(payload),
-                        );
+                        let temporary_paths = Runtime::session_temporary_paths(payload);
+                        let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
+                            cache.registrations == registrations
+                                && cache.temporary_paths == temporary_paths
+                                && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+                        });
+                        if !cache_is_fresh {
+                            let workspaces =
+                                workspace::build_catalog(&registrations, &temporary_paths);
+                            catalog_cache = Some(CatalogCache {
+                                registrations: registrations.clone(),
+                                temporary_paths,
+                                workspaces,
+                                built_at: Instant::now(),
+                            });
+                        }
+                        let cache = catalog_cache
+                            .as_ref()
+                            .expect("catalog cache is filled on a miss");
                         Some(PrecomputedCatalog {
                             registrations,
-                            workspaces,
+                            workspaces: cache.workspaces.clone(),
                         })
                     }
                     Err(_) => None,
