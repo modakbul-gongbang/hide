@@ -464,7 +464,10 @@ private struct AgentNavigatorRow: View {
 
 private struct DeviceNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
+    @Environment(\.hideAccent) private var accent
     let device: CoreDeviceSnapshot
+
+    private var isSelected: Bool { model.selectedDeviceID == device.id }
 
     var body: some View {
         Button {
@@ -475,8 +478,8 @@ private struct DeviceNavigatorRow: View {
                     .fill(device.state == "ready" || device.state == "available" ? HideTheme.success : HideTheme.warning)
                     .frame(width: 6, height: 6)
                 Text(device.label)
-                    .hideFont(size: 11, weight: .medium)
-                    .foregroundStyle(HideTheme.secondary)
+                    .hideFont(size: 11, weight: isSelected ? .semibold : .medium)
+                    .foregroundStyle(isSelected ? HideTheme.primary : HideTheme.secondary)
                 Spacer()
                 if device.agentCount > 0 {
                     Text("\(device.agentCount)")
@@ -486,9 +489,15 @@ private struct DeviceNavigatorRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
+            .background(isSelected ? accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // The shell-level identifier is inherited by direct SwiftUI controls
+        // on macOS. A per-device identifier keeps accessibility automation
+        // from resolving every device button to the first `hide-shell` match.
+        .accessibilityIdentifier("hide-device-\(device.id)")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }
 }
 

@@ -231,6 +231,12 @@ final class ShellModel: ObservableObject {
 
     var isRemoteContext: Bool { activeRemoteDevice != nil }
 
+    var selectedDeviceID: String {
+        activeRemoteDevice?.id
+            ?? devices.first(where: { $0.kind != "remote" })?.id
+            ?? "local"
+    }
+
     var activeContextLabel: String? {
         activeRemoteDevice?.label
     }
@@ -286,10 +292,18 @@ final class ShellModel: ObservableObject {
     }
 
     func selectDevice(_ device: CoreDeviceSnapshot) {
-        if device.kind == "remote", let alias = device.sshAlias {
+        if device.kind == "remote" {
+            guard let alias = device.sshAlias?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !alias.isEmpty
+            else {
+                interactionNotice = "\(device.label) is registered as remote but has no SSH alias. Repair the device in Settings before retrying."
+                HideLaunchTrace.mark("device.selection.failed", detail: "remote_alias_missing_\(device.id)")
+                return
+            }
             activeRemoteDevice = device
             lastRemoteDevice = device
             checkoutStartState = .idle
+            HideLaunchTrace.mark("device.selection", detail: "remote_\(device.id)")
             core.focusDevice(device.id)
             remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
             focus(.terminal)
@@ -298,6 +312,7 @@ final class ShellModel: ObservableObject {
         activeRemoteDevice = nil
         remote.clearNavigation()
         checkoutStartState = .idle
+        HideLaunchTrace.mark("device.selection", detail: "local_\(device.id)")
         core.focusDevice(device.id)
     }
 
