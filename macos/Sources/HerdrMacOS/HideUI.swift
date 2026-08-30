@@ -120,7 +120,6 @@ struct ShellView: View {
         } message: {
             Text(model.interactionNotice ?? "")
         }
-        .accessibilityIdentifier("hide-shell")
     }
 }
 
@@ -405,6 +404,9 @@ private struct CheckoutNavigatorRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("hide-checkout-\(checkout.id)")
+        .accessibilityLabel("\(workspace.repoName), \(checkout.label)")
+        .accessibilityValue(isFocused ? "Selected" : "Not selected")
         .contextMenu {
             Button("Start agent here") { model.openNewAgent(checkoutID: checkout.id) }
         }
@@ -493,9 +495,8 @@ private struct DeviceNavigatorRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // The shell-level identifier is inherited by direct SwiftUI controls
-        // on macOS. A per-device identifier keeps accessibility automation
-        // from resolving every device button to the first `hide-shell` match.
+        // Stable row identifiers keep repeated sidebar labels independently
+        // targetable by assistive technology and verification automation.
         .accessibilityIdentifier("hide-device-\(device.id)")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }

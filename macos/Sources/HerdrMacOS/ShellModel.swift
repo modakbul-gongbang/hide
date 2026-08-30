@@ -351,17 +351,22 @@ final class ShellModel: ObservableObject {
     }
 
     func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
+        let action = CheckoutSelectionPolicy.action(for: checkout)
+        HideLaunchTrace.mark(
+            "checkout.selection",
+            detail: "\(isRemoteContext ? "remote" : "local")_\(checkout.id)_\(action == .startTerminal ? "start_terminal" : "focus_existing")"
+        )
         if isRemoteContext {
             remote.focus(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
             focus(.terminal)
-            if CheckoutSelectionPolicy.action(for: checkout) == .startTerminal {
+            if action == .startTerminal {
                 remote.startTerminal(checkout: checkout)
             }
             return
         }
         core.focusCheckout(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
         focus(.terminal)
-        switch CheckoutSelectionPolicy.action(for: checkout) {
+        switch action {
         case .focusExisting:
             checkoutStartState = .idle
         case .startTerminal:
@@ -544,12 +549,14 @@ final class ShellModel: ObservableObject {
                     focusedCheckoutID: checkoutID
                 )
                 checkoutStartState = .started
+                HideLaunchTrace.mark("checkout.terminal_start.ready", detail: "\(checkoutID)_\(paneID)")
             } else {
                 let message = result.succeeded
                     ? "Herdr created a workspace but did not return its terminal pane. Check Herdr status and retry."
                     : result.message
                 checkoutStartState = .failed(message)
                 interactionNotice = message
+                HideLaunchTrace.mark("checkout.terminal_start.failed", detail: checkoutID)
             }
         }
     }
