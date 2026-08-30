@@ -1,0 +1,156 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.21s
+     Running unittests src/lib.rs (target/debug/deps/herdr_core-ff74fa361901db68)
+
+running 90 tests
+test chromux::tests::pure_planner_reuses_running_and_launches_known_stopped_profiles ... ok
+test chromux::tests::absent_runtime_input_and_unknown_profiles_remain_parked ... ok
+test files::tests::draft_updates_keep_unsaved_contents_in_memory ... ok
+test environment::tests::socket_override_and_path_capability_share_the_registry_boundary ... ok
+test environment::tests::every_registered_key_has_a_distinct_contract ... ok
+test domain::tests::invalid_layout_is_rejected_before_projection_changes ... ok
+test domain::tests::stale_projection_rejects_follow_up_events_until_full_snapshot ... ok
+test fixture::tests::manifest_validation_fails_closed_before_cleanup_for_unowned_names ... ok
+test environment::tests::absent_optional_socket_disables_only_remote_capability ... ok
+test domain::tests::active_workspace_is_derived_from_the_snapshot_not_map_order ... ok
+test fixture::tests::non_prefixed_targets_are_rejected_before_any_runtime_operation ... ok
+test domain::tests::missing_active_workspace_is_rejected_before_projection_changes ... ok
+test environment::tests::registry_is_enumerable_and_does_not_expose_values ... ok
+test files::tests::unified_diff_hunks_project_added_and_removed_document_lines ... ok
+test domain::tests::sequence_gap_marks_stale_without_applying_event ... ok
+test domain::tests::full_snapshot_recovers_stale_projection_with_same_ids ... ok
+test fixture::tests::remote_fixture_paths_reject_shell_syntax_before_process_launch ... ok
+test fixture::tests::prefixed_fixture_plan_is_deterministic_and_idempotent ... ok
+test fixture::tests::scale_plan_has_exact_requested_counts_and_prefixes ... ok
+test live::tests::missing_socket_file_is_distinguished_from_unreachable ... ok
+test live::tests::pane_control_plans_right_down_and_zoom_without_shell_interpolation ... ok
+test live::tests::protocol_mismatch_is_an_explicit_failure ... ok
+test persistence::tests::corrupt_and_unknown_schema_states_fall_back_without_blocking ... ok
+test live::tests::wire_snapshot_projects_agents_with_workspace_labels_and_verbatim_tokens ... ok
+test persistence::tests::valid_state_round_trips_through_the_stable_schema ... ok
+test pet::tests::a_lost_connection_outranks_every_other_pose ... ok
+test live::tests::session_layout_projects_authoritative_nested_tree_and_zoom ... ok
+test pet::tests::ambient_counts_sum_across_panes_and_go_quiet_while_disconnected ... ok
+test pet::tests::badge_buckets_follow_the_projected_agent_states ... ok
+test pet::tests::disconnected_agents_are_retained_but_never_counted_as_waiting ... ok
+test pet::tests::expanded_priority_keeps_urgent_states_above_activity ... ok
+test pet::tests::pose_walks_idle_through_roam_and_the_full_sleep_sequence ... ok
+test pet::tests::observing_the_same_snapshot_twice_keeps_the_first_moment ... ok
+test pet::tests::roam_is_cancelled_by_work_or_sleep ... ok
+test live::tests::focus_uses_the_direct_socket_contract_before_reading_authoritative_layout ... ok
+test pet::tests::sleep_sequence_has_four_second_transitions ... ok
+test pet::tests::the_oldest_observed_unseen_pane_is_selected_before_later_ones ... ok
+test pet::tests::without_observations_snapshot_order_decides_and_seen_panes_never_qualify ... ok
+test remote::tests::browser_bridge_requires_loopback_and_capability ... ok
+test remote::tests::read_only_git_command_quotes_absolute_root ... ok
+test remote::tests::alias_import_preserves_paths_but_never_reads_key_contents ... ok
+test remote::tests::remote_projection_rejects_foreign_workspace ... ok
+test remote::tests::remote_projection_marks_gap_stale_and_host_scope_is_preserved ... ok
+test remote::tests::remote_projection_preserves_domain_and_records_disconnect_reason ... ok
+test remote::tests::capability_report_has_staged_failure_and_visible_recovery ... ok
+test remote::tests::capability_report_requires_every_stage_before_connected ... ok
+test remote::tests::malformed_wire_snapshot_marks_projection_stale ... ok
+test remote::tests::connection_registry_converges_on_repeated_connect_and_surfaces_stale ... ok
+test remote::tests::remote_wire_snapshot_is_typed_and_protocol_checked ... ok
+test remote::tests::remote_wire_snapshot_rejects_duplicate_ids_and_protocol_wraparound ... ok
+test remote::tests::remote_wire_snapshot_rejects_protocol_mismatch ... ok
+test remote::tests::connection_registry_does_not_reuse_changed_alias_target ... ok
+test remote::tests::terminal_route_rejects_editor_and_accepts_typed_endpoint ... ok
+test remote::tests::tunnel_registry_is_idempotent_and_owner_scoped ... ok
+test remote::tests::remote_wire_snapshot_same_identity_is_idempotent ... ok
+test remote::tests::sparse_remote_wire_snapshot_requires_typed_bootstrap_for_events ... ok
+test remote_files::tests::remote_service_has_the_same_revision_and_git_contract ... ok
+test remote::tests::alias_import_ignores_wildcard_and_negated_entries ... ok
+test persistence::tests::shortcut_bindings_survive_save_and_relaunch_load ... ok
+test runtime::tests::a_wholly_broken_poll_keeps_the_last_valid_agents_and_says_it_is_disconnected ... ok
+test live::tests::protocol_revision_matches_the_canonical_contract ... ok
+test herdr_contract::tests::bundled_schema_is_the_generated_contract ... ok
+test runtime::tests::a_session_workspace_with_the_selected_checkout_cwd_does_not_steal_projection ... ok
+test runtime::tests::ingesting_the_same_poll_twice_reports_no_further_change ... ok
+test sidebar::tests::a_malformed_ambient_record_excludes_only_that_agent ... ok
+test runtime::tests::a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane ... ok
+test sidebar::tests::one_broken_agent_excludes_only_itself_and_names_why ... ok
+test sidebar::tests::ambient_counts_parse_and_unknown_keys_never_survive ... ok
+test sidebar::tests::sort_rank_is_primary_and_activity_descending_breaks_ties ... ok
+test sidebar::tests::summary_is_compact_and_missing_summary_has_an_actionable_label ... ok
+test sidebar::tests::seven_authoritative_states_keep_fixed_symbols_and_seen_tokens_stay_idle ... ok
+test version::tests::agent_cli_support_is_presence_based_without_a_version_gate ... ok
+test version::tests::compatible_installed_runtime_wins_when_socket_is_absent ... ok
+test version::tests::live_socket_wins_over_every_executable_candidate ... ok
+test version::tests::old_installation_falls_back_to_the_pinned_bundle_with_guidance ... ok
+test remote_files::tests::persisted_tree_expansion_converges_on_repeated_save ... ok
+test persistence::tests::pet_position_visibility_and_shortcut_survive_a_relaunch ... ok
+test runtime::tests::an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing ... ok
+test workspace::tests::flat_folder_is_visible_without_implicit_git_init ... ok
+test runtime::tests::checkout_path_matching_uses_component_boundaries ... ok
+test runtime::tests::focusing_checkout_selects_only_the_target_checkout_pane ... ok
+test remote_files::tests::local_service_lists_searches_and_opens_utf8_files ... ok
+test remote_files::tests::path_traversal_and_binary_open_are_explicit_failures ... ok
+test remote_files::tests::save_uses_revision_guard_and_atomic_publish ... ok
+test runtime::tests::a_plain_terminal_pane_cwd_is_reconciled_into_its_registered_checkout ... ok
+Initialized empty Git repository in /private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/hide-workspace-git-1788062727218399000/.git/
+test runtime::tests::a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd ... ok
+test workspace::tests::temporary_discovery_does_not_duplicate_a_registered_repository ... ok
+test remote_files::tests::diff_and_git_status_are_deterministic_and_redacted_to_relative_paths ... ok
+[main (root-commit) a14e358] fixture
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README.md
+Preparing worktree (new branch 'feature')
+HEAD is now at a14e358 fixture
+test workspace::tests::discovers_git_default_branch_and_worktrees_without_mutating_the_repository ... ok
+test runtime::tests::an_unregistered_worktree_layout_projects_into_the_selected_checkout ... ok
+
+test result: ok. 90 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running unittests src/bin/herdr-ide-fixture.rs (target/debug/deps/herdr_ide_fixture-331cf142805c05e3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ffi_contract.rs (target/debug/deps/ffi_contract-5a634d444e054340)
+
+running 25 tests
+test callback_fires_for_snapshot_changes_and_unregisters_cleanly ... ok
+test corrupt_ui_state_falls_back_to_defaults_with_structured_status ... ok
+test off_owner_dispatch_surfaces_a_thread_contract_failure ... ok
+test off_owner_destroy_is_rejected_until_the_owner_destroys ... ok
+test live_key_without_attach_surfaces_an_explicit_error ... ok
+test malformed_payload_is_observable_and_valid_input_clears_it ... ok
+test delta_reads_send_only_what_the_cursors_have_not_seen ... ok
+test a_broken_agent_record_excludes_only_itself_and_reports_the_exclusion ... ok
+test session_snapshot_exposes_authoritative_recursive_layout_and_per_pane_state ... ok
+test off_owner_snapshot_returns_no_bytes_and_preserves_the_violation ... ok
+test close_pane_requires_confirmation_only_for_working_or_attention_states ... ok
+test session_snapshot_keeps_authoritative_agent_order_and_tokens ... ok
+test session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace ... FAILED
+test pane_split_direction_and_zoom_events_reach_the_live_control_boundary ... ok
+test terminal_bytes_round_trip_through_the_json_boundary_without_transcoding ... ok
+test unknown_kind_and_version_mismatch_are_observable ... ok
+test snapshot_exposes_the_production_schema_and_status ... ok
+test pet_state_rides_the_snapshot_and_reflects_agent_status ... ok
+test chunk_ring_overflow_is_reported_to_a_lagging_cursor ... ok
+test pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen ... ok
+test existing_local_file_opens_and_idempotent_save_preserves_its_contents ... ok
+test every_pet_toggle_surface_writes_one_shared_visibility_that_survives_relaunch ... ok
+test create_rejects_invalid_options_and_snapshot_buffers_can_repeat ... ok
+test multi_pane_attach_destroy_returns_without_waiting_and_reaps_children ... ok
+test pane_control_dispatch_does_not_wait_for_the_child_process ... ok
+
+failures:
+
+---- session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace stdout ----
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+
+thread 'session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace' (47768419) panicked at herdr-core/tests/ffi_contract.rs:613:5:
+assertion `left == right` failed
+  left: Null
+ right: "fixture"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace
+
+test result: FAILED. 24 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.63s
+
+error: test failed, to rerun pass `--test ffi_contract`

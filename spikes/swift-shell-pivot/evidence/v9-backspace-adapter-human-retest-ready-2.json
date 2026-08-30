@@ -12,7 +12,7 @@
   "first_responder_class" : "DiagnosticTerminalView",
   "first_responder_identity" : "ObjectIdentifier(0x0000000125816200)",
   "first_responder_is_terminal" : true,
-  "ime_trace_path" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/swift-shell-pivot\/spikes\/swift-shell-pivot\/evidence\/v9-backspace-adapter-human-retest-trace-live-2.json",
+  "ime_trace_path" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/swift-shell-pivot\/spikes\/swift-shell-pivot\/evidence\/v9-backspace-adapter-human-retest-trace-live-2.json",
   "last_error" : "None",
   "remote_tui_ready" : true,
   "required_snapshot_keys" : [

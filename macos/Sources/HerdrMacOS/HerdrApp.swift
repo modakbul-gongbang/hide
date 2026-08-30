@@ -3,16 +3,40 @@ import Combine
 import SwiftUI
 
 @MainActor
+enum MainWindowPresentation {
+    static func present(_ window: NSWindow, application: NSApplication = .shared) {
+        application.setActivationPolicy(.regular)
+        application.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        window.makeKey()
+    }
+}
+
+@MainActor
 final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
-    let model = ShellModel()
+    let model: ShellModel
     private var mainWindow: NSWindow?
     private var petWindowController: PetWindowController?
     private var petMenuBarController: PetMenuBarController?
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
     private var petVisibilityObservation: AnyCancellable?
 
+    override init() {
+        let startedAt = Date()
+        HideLaunchTrace.mark("delegate.init.begin")
+        model = ShellModel()
+        super.init()
+        HideLaunchTrace.mark(
+            "delegate.init.ready",
+            durationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000)
+        )
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard mainWindow == nil else { return }
+        let startedAt = Date()
+        HideLaunchTrace.mark("application.did_finish.begin")
+        NSApplication.shared.setActivationPolicy(.regular)
         let content = ShellView()
             .environmentObject(model)
             .frame(
@@ -30,7 +54,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Herdr IDE"
+        window.title = "hide"
         window.paneCommandModel = model
         window.minSize = NSSize(
             width: ShellMetrics.windowMinWidth,
@@ -41,8 +65,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: content)
         window.center()
         mainWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        presentMainWindow(window, source: "launch")
         petWindowController = PetWindowController(mainWindow: window, model: model)
         petWindowController?.refreshVisibility()
 
@@ -90,6 +113,67 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             }
         }
         #endif
+        HideLaunchTrace.mark(
+            "application.did_finish.ready",
+            durationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000)
+        )
+        // Let AppKit return to its launch loop and draw the main window
+        // before runtime discovery can invoke a CLI or trigger a privacy
+        // prompt. The diagnostic then has a real window to render into.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let mainWindow = self.mainWindow else {
+                HideLaunchTrace.mark("runtime_initialization.failed", detail: "main_window_missing")
+                return
+            }
+            MainWindowPresentation.present(mainWindow)
+            HideLaunchTrace.mark(
+                "main_window.pre_runtime",
+                detail: "visible_\(mainWindow.isVisible)_windows_\(NSApplication.shared.windows.count)"
+            )
+            self.model.core.startRuntimeInitialization()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let mainWindow else { return false }
+        if !flag || !mainWindow.isVisible {
+            presentMainWindow(mainWindow, source: "reopen")
+        } else {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
+        NSApplication.shared.setActivationPolicy(.regular)
+        HideLaunchTrace.mark("application.reopen.handled", detail: flag ? "visible" : "restored")
+        return true
+    }
+
+    /// LaunchServices may deliver applicationDidFinishLaunching while the
+    /// app is still not active. `makeKeyAndOrderFront` is conditional in that
+    /// state and can leave a live foreground process with no visible window.
+    /// Activate first, then use unconditional ordering and verify the result
+    /// on the next main-run-loop turn.
+    private func presentMainWindow(_ window: NSWindow, source: String) {
+        let application = NSApplication.shared
+        MainWindowPresentation.present(window, application: application)
+        HideLaunchTrace.mark(
+            "main_window.visible",
+            detail: "source_\(source)_visible_\(window.isVisible)_windows_\(application.windows.count)"
+        )
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            if !window.isVisible {
+                MainWindowPresentation.present(window, application: application)
+                HideLaunchTrace.mark(
+                    "main_window.reasserted",
+                    detail: "source_\(source)_visible_\(window.isVisible)_windows_\(application.windows.count)"
+                )
+            } else {
+                HideLaunchTrace.mark(
+                    "main_window.observed",
+                    detail: "source_\(source)_visible_true_windows_\(application.windows.count)"
+                )
+            }
+            _ = self
+        }
     }
 
     /// `herdr-ide://show|hide|toggle`. The retired app's `herdr-pet://`
@@ -151,7 +235,7 @@ struct HerdrApp: App {
 
     var body: some Scene {
         Settings {
-            AppSettingsView(model: appDelegate.model)
+            HideSettingsView(model: appDelegate.model)
         }
         .commands {
             ShellCommands(model: appDelegate.model)

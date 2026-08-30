@@ -79,7 +79,7 @@
     "minimum_macos": "14.0"
   },
   "native_runtime": {
-    "bundle": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
+    "bundle": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
     "pid": 38574,
     "process_count": 1,
     "window_id": 2767,

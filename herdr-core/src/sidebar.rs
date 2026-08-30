@@ -5,16 +5,29 @@ use serde_json::Value;
 
 use crate::model::{AmbientSignal, PaneLayoutDirection, SidebarAgentSnapshot};
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
     #[serde(default)]
     pub focused_pane_id: Option<String>,
     #[serde(default)]
+    pub tabs: Vec<SessionTabPayload>,
+    #[serde(default)]
     pub layouts: Vec<SessionLayoutPayload>,
     pub agents: Vec<SessionAgentPayload>,
+    #[serde(default)]
+    pub panes: Vec<SessionPanePayload>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+pub struct SessionTabPayload {
+    pub tab_id: String,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct SessionLayoutPayload {
     pub workspace_id: String,
     pub tab_id: String,
@@ -39,14 +52,14 @@ pub struct SessionLayoutPanePayload {
     pub rect: SessionLayoutRect,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SessionLayoutSplitPayload {
     pub direction: PaneLayoutDirection,
     pub ratio: f32,
     pub rect: SessionLayoutRect,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SessionAgentPayload {
     #[serde(default)]
     pub id: Option<String>,
@@ -66,6 +79,13 @@ pub struct SessionAgentPayload {
     /// [`parse_ambient`] so a broken record can never partially survive.
     #[serde(default)]
     pub ambient: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SessionPanePayload {
+    pub pane_id: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,8 +145,8 @@ pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
     let mut projected = Vec::with_capacity(payload.agents.len());
     let mut excluded = Vec::new();
     for (source_index, agent) in payload.agents.into_iter().enumerate() {
-        let pane_id = non_empty(agent.pane_id.as_deref().or(agent.id.as_deref()))
-            .map(str::to_owned);
+        let pane_id =
+            non_empty(agent.pane_id.as_deref().or(agent.id.as_deref())).map(str::to_owned);
         match project_agent(agent, source_index) {
             Ok(ranked) => projected.push(ranked),
             Err(reason) => excluded.push(AgentExclusion {
@@ -350,7 +370,8 @@ mod tests {
                 "sort_rank": "10",
                 "activity": "0000000000001"
             }
-        }]))).agents;
+        }])))
+        .agents;
         assert_eq!(seen[0].state, "idle");
     }
 

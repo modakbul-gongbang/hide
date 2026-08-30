@@ -39,6 +39,7 @@ let package = Package(
             ],
             path: "Sources/HerdrMacOS",
             linkerSettings: [
+                .linkedFramework("SystemConfiguration"),
                 .unsafeFlags([
                     "-L", "../target/release",
                     "-lherdr_core",

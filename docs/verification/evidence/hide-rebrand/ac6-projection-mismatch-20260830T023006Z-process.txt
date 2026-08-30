@@ -1,0 +1,1 @@
+22061     1 05:57 S    ./dist/hide.app/Contents/MacOS/HerdrMacOS

@@ -258,8 +258,8 @@ T1 architecture preflight remains mandatory implementation work and must pass be
 
 **principles intake**
 
-- `/Users/hoyeonlee/projects/oh-my-principle/engineering/principles.md`와 `engineering/practices/env.md`, `engineering/practices/test.md`를 source commit `f03e930e8c5ad8c250a24d7f70be8c4889c2d6ca`에서 읽었다. -> R2, R4-R5, R21-R25, 11장 guardrails.
-- `/Users/hoyeonlee/projects/oh-my-principle/design/principles.md`를 같은 source commit에서 읽었다. -> R6, R13-R14, R17-R18, R20, R22-R23, 11장 guardrails.
+- `~/projects/oh-my-principle/engineering/principles.md`와 `engineering/practices/env.md`, `engineering/practices/test.md`를 source commit `f03e930e8c5ad8c250a24d7f70be8c4889c2d6ca`에서 읽었다. -> R2, R4-R5, R21-R25, 11장 guardrails.
+- `~/projects/oh-my-principle/design/principles.md`를 같은 source commit에서 읽었다. -> R6, R13-R14, R17-R18, R20, R22-R23, 11장 guardrails.
 - project-local native screenshot, exactly-one-instance, remote ownership, dirty-worktree 규칙이 일반 원칙보다 구체적이므로 해당 검증·안전 경계를 우선한다. -> R14, R24, AC13-AC14, AC23, V4-V6.
 
 **rejected 또는 deferred**

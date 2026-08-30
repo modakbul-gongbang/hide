@@ -1,7 +1,7 @@
 {
   "app": {
     "bundle_identifier": "com.hoyeon.herdr-ide.swift-shell",
-    "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS",
+    "executable": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS",
     "launch_count": 1,
     "pid": 55772,
     "process_count_after_cleanup": 0,

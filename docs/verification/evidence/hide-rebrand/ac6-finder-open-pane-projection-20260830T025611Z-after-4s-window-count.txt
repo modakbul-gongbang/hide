@@ -1,0 +1,4 @@
+captured_utc=20260830T025754Z
+phase=after-4s
+pid=49138
+window_count=2

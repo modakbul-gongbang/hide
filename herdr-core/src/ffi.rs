@@ -183,7 +183,11 @@ pub extern "C" fn herdr_core_dispatch(core: *mut HerdrCore, event_json: *const u
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn herdr_core_snapshot(core: *mut HerdrCore) -> HerdrBytes {
+pub extern "C" fn herdr_core_snapshot(
+    core: *mut HerdrCore,
+    have_revision: u64,
+    have_terminal_sequence: u64,
+) -> HerdrBytes {
     catch_unwind(AssertUnwindSafe(|| {
         let Some(core) = core_ref(core) else {
             return HerdrBytes::empty();
@@ -192,7 +196,7 @@ pub extern "C" fn herdr_core_snapshot(core: *mut HerdrCore) -> HerdrBytes {
             notify_change(core);
             return HerdrBytes::empty();
         }
-        match serde_json::to_vec(lock_recover(&core.runtime).snapshot()) {
+        match lock_recover(&core.runtime).snapshot_delta(have_revision, have_terminal_sequence) {
             Ok(bytes) => HerdrBytes::from_vec(bytes),
             Err(_) => HerdrBytes::empty(),
         }

@@ -1,0 +1,51 @@
+{
+  "debug_logs" : [
+    "[2026-08-30T03:39:04.328Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "effect" : "unverifiable",
+  "data" : {
+    "targetWindowId" : 7789,
+    "executionTime" : 0.3393290042877197,
+    "deliveryMode" : "foreground",
+    "clickedElement" : "Button: prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs",
+    "clickType" : "single",
+    "targetApp" : "hide",
+    "targetPoint" : {
+      "snapshotId" : "1788061089621-8689",
+      "original" : {
+        "x" : 290,
+        "y" : 752
+      },
+      "windowAdjustment" : {
+        "status" : "unchanged"
+      },
+      "source" : "element",
+      "elementId" : "elem_44",
+      "resolved" : {
+        "y" : 752,
+        "x" : 290
+      }
+    },
+    "waitTime" : 0.0014530420303344727,
+    "targetWindowTitle" : "hide",
+    "clickLocation" : {
+      "y" : 752,
+      "x" : 290
+    }
+  },
+  "outcome" : {
+    "delivery_mode" : "foreground",
+    "mutation_dispatched" : true,
+    "retry_safe" : false,
+    "escalation" : "observe_before_retry",
+    "evidence" : "delivery_accepted",
+    "delivery_mechanism" : "global_events",
+    "state" : "dispatched_unverified",
+    "dispatch_state" : "dispatched",
+    "route" : "local",
+    "effect" : "unverifiable",
+    "requires_fresh_observation" : true,
+    "retry_safety" : "unsafe"
+  },
+  "success" : true
+}

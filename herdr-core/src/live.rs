@@ -16,16 +16,20 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
-use crate::model::{PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot};
+use crate::model::{
+    PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
+    WorkspaceSnapshot,
+};
 use crate::runtime::Runtime;
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
-    SessionSnapshotPayload,
+    SessionPanePayload, SessionSnapshotPayload, SessionTabPayload,
 };
+use crate::workspace;
 
 /// Herdr API protocol revision this core speaks. A mismatch is a hard,
 /// explicit failure instead of a partially working sidebar.
-pub const HERDR_PROTOCOL_REVISION: u64 = 21;
+pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
 
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -37,6 +41,28 @@ pub struct LiveContext {
     pub herdr_bin: Option<PathBuf>,
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
+}
+
+/// A workspace catalog the poller built outside the runtime lock, together
+/// with the registrations it was built from so the runtime can detect and
+/// discard a stale one.
+pub struct PrecomputedCatalog {
+    pub registrations: Vec<WorkspaceRegistration>,
+    pub workspaces: Vec<WorkspaceSnapshot>,
+}
+
+/// How long a catalog built from unchanged inputs keeps being reused before
+/// git is consulted again. Git topology changes made outside the app (a new
+/// worktree, a branch switch) surface within this window; changes made
+/// through the app rebuild inline in their own event handlers.
+const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// The poller's memo of the last catalog build and the inputs it came from.
+struct CatalogCache {
+    registrations: Vec<WorkspaceRegistration>,
+    temporary_paths: Vec<String>,
+    workspaces: Vec<WorkspaceSnapshot>,
+    built_at: Instant,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -304,13 +330,56 @@ fn spawn_session_poller(context: LiveContext) {
     let result = thread::Builder::new()
         .name("herdr-core-session-poller".to_owned())
         .spawn(move || {
+            let mut catalog_cache: Option<CatalogCache> = None;
             loop {
                 let fetched = fetch_session(&context.socket_path);
+                // The catalog shells out to git per workspace and pane cwd,
+                // so it is built here, outside the runtime lock; holding the
+                // lock through those subprocesses stalls every shell snapshot
+                // read behind them. It is also cached: git only runs again
+                // when the inputs change or the refresh window lapses, not on
+                // every poll tick.
+                let precomputed = match &fetched {
+                    Ok(payload) => {
+                        let Some(runtime) = context.runtime.upgrade() else {
+                            return;
+                        };
+                        let registrations = match runtime.lock() {
+                            Ok(guard) => guard.snapshot().ui_state.workspace_registrations.clone(),
+                            Err(_) => return,
+                        };
+                        drop(runtime);
+                        let temporary_paths = Runtime::session_temporary_paths(payload);
+                        let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
+                            cache.registrations == registrations
+                                && cache.temporary_paths == temporary_paths
+                                && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+                        });
+                        if !cache_is_fresh {
+                            let workspaces =
+                                workspace::build_catalog(&registrations, &temporary_paths);
+                            catalog_cache = Some(CatalogCache {
+                                registrations: registrations.clone(),
+                                temporary_paths,
+                                workspaces,
+                                built_at: Instant::now(),
+                            });
+                        }
+                        let cache = catalog_cache
+                            .as_ref()
+                            .expect("catalog cache is filled on a miss");
+                        Some(PrecomputedCatalog {
+                            registrations,
+                            workspaces: cache.workspaces.clone(),
+                        })
+                    }
+                    Err(_) => None,
+                };
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_session(fetched),
+                    Ok(mut guard) => guard.ingest_session_with_catalog(fetched, precomputed),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -418,15 +487,40 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
         .map_err(|error| {
             SessionFetchError::Malformed(format!("snapshot layouts are malformed: {error}"))
         })?;
+    let tabs = match snapshot.get("tabs") {
+        Some(value) => {
+            serde_json::from_value::<Vec<SessionTabPayload>>(value.clone()).map_err(|error| {
+                SessionFetchError::Malformed(format!("snapshot tabs are malformed: {error}"))
+            })?
+        }
+        None => Vec::new(),
+    };
     let focused_pane_id = snapshot
         .get("focused_pane_id")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let panes = snapshot
+        .get("panes")
+        .and_then(Value::as_array)
+        .map(|panes| {
+            panes
+                .iter()
+                .filter_map(|pane| {
+                    Some(SessionPanePayload {
+                        pane_id: pane.get("pane_id")?.as_str()?.to_owned(),
+                        cwd: pane.get("cwd").and_then(Value::as_str).map(str::to_owned),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(SessionSnapshotPayload {
         focused_pane_id,
+        tabs,
         layouts,
         agents,
+        panes,
     })
 }
 
@@ -1040,6 +1134,30 @@ mod tests {
         let projected = crate::sidebar::project_agents(payload).agents;
         assert_eq!(projected[0].state, "working");
         assert_eq!(projected[1].state, "idle");
+    }
+
+    #[test]
+    fn wire_snapshot_preserves_herdr_tab_labels() {
+        let snapshot = json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "workspaces": [{"workspace_id": "w1", "label": "verify"}],
+            "tabs": [{
+                "workspace_id": "w1",
+                "tab_id": "w1:t1",
+                "label": "2",
+                "number": 2,
+                "focused": true,
+                "pane_count": 1,
+                "agent_status": "idle"
+            }],
+            "layouts": [],
+            "agents": []
+        });
+
+        let payload = project_session(&snapshot).expect("projects tab metadata");
+        assert_eq!(payload.tabs.len(), 1);
+        assert_eq!(payload.tabs[0].tab_id, "w1:t1");
+        assert_eq!(payload.tabs[0].label, "2");
     }
 
     #[test]

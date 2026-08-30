@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "recorded_at": "2026-08-29T19:49:57+09:00",
-  "working_root": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot",
+  "working_root": "~/projects/herdr-ide.worktrees/swift-shell-pivot",
   "baseline_commit": "99c4aa85e8b7b0c388c1848967690584a5e40754",
   "t5_commit": "99c4aa85e8b7b0c388c1848967690584a5e40754",
   "environment_registry": {

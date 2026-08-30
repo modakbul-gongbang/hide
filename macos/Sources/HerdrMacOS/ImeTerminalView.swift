@@ -51,13 +51,42 @@ enum CompositionInputPolicy {
     }
 }
 
+/// Encodes the one modified-key fallback that cannot be represented by the
+/// legacy terminal protocol without an explicit convention.
+///
+/// SwiftTerm owns kitty keyboard encoding. When the attached application has
+/// negotiated kitty mode, its normal `keyDown` path emits `CSI 13;2u` for
+/// Shift+Enter before `interpretKeyEvents` is reached. A newly attached Hide
+/// view may not have received that earlier negotiation, so the legacy fallback
+/// is ESC CR, which agent CLIs interpret as a newline rather than submission.
+enum ModifiedTerminalInputPolicy {
+    static let shiftEnterFallback: [UInt8] = [0x1b, 0x0d]
+
+    static func shiftEnterBytes(
+        for event: NSEvent,
+        kittyKeyboardEnabled: Bool,
+        composing: Bool
+    ) -> [UInt8]? {
+        guard !kittyKeyboardEnabled,
+              !composing,
+              event.type == .keyDown,
+              event.keyCode == 36 || event.keyCode == 76,
+              event.modifierFlags.contains(.shift),
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        else { return nil }
+        return shiftEnterFallback
+    }
+}
+
 /// SwiftTerm terminal view with deterministic IME composition handling.
 /// `interpretKeyEvents` is the IME entry point SwiftTerm routes key events
 /// through, so the composition state captured there brackets everything the
 /// input method does with the event.
-final class ImeTerminalView: TerminalView {
+final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     private var composingAtEvent = false
     private var plainBackspaceEvent = false
+    let pointerRouting = TerminalPointerRoutingState()
+    var onPointerFocus: (() -> Void)?
 
     /// Consulted by the terminal delegate before bytes are forwarded.
     func shouldDeliverToPane(_ bytes: ArraySlice<UInt8>) -> Bool {
@@ -81,7 +110,52 @@ final class ImeTerminalView: TerminalView {
             composingAtEvent = false
             plainBackspaceEvent = false
         }
+        if let event = eventArray.first,
+           let bytes = ModifiedTerminalInputPolicy.shiftEnterBytes(
+               for: event,
+               kittyKeyboardEnabled: !terminal.keyboardEnhancementFlags.isEmpty,
+               composing: composingAtEvent
+           ) {
+            terminalDelegate?.send(source: self, data: bytes[...])
+            return
+        }
         super.interpretKeyEvents(eventArray)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        routeMouseDown(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        routeMouseDragged(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        routeMouseUp(event)
+    }
+
+    func forwardMouseDown(_ event: NSEvent, selectingLocally: Bool) {
+        if selectingLocally {
+            withMouseReportingDisabled { super.mouseDown(with: event) }
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    func forwardMouseDragged(_ event: NSEvent, selectingLocally: Bool) {
+        if selectingLocally {
+            withMouseReportingDisabled { super.mouseDragged(with: event) }
+        } else {
+            super.mouseDragged(with: event)
+        }
+    }
+
+    func forwardMouseUp(_ event: NSEvent, selectingLocally: Bool) {
+        if selectingLocally {
+            withMouseReportingDisabled { super.mouseUp(with: event) }
+        } else {
+            super.mouseUp(with: event)
+        }
     }
 
     /// Repositions the marked-text (preedit) overlay to the current caret.

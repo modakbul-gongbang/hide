@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{PetOriginSnapshot, UiStateSnapshot};
+use crate::model::{
+    DeviceRegistration, PetOriginSnapshot, UiStateSnapshot, WorkspaceRegistration,
+    default_accent_hex, default_font_size,
+};
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -23,6 +26,20 @@ struct StoredUiState {
     pet_origin: Option<PetOriginSnapshot>,
     #[serde(default)]
     pet_shortcut: Option<String>,
+    #[serde(default)]
+    focused_device_id: Option<String>,
+    #[serde(default)]
+    focused_checkout_id: Option<String>,
+    #[serde(default)]
+    workspace_registrations: Vec<WorkspaceRegistration>,
+    #[serde(default)]
+    device_registrations: Vec<DeviceRegistration>,
+    #[serde(default = "default_accent_hex")]
+    accent_hex: String,
+    #[serde(default = "default_font_size")]
+    font_size: f32,
+    #[serde(default)]
+    bypass_warnings: bool,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -64,6 +81,13 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             pet_visible: stored.pet_visible,
             pet_origin: stored.pet_origin,
             pet_shortcut: stored.pet_shortcut,
+            focused_device_id: stored.focused_device_id,
+            focused_checkout_id: stored.focused_checkout_id,
+            workspace_registrations: stored.workspace_registrations,
+            device_registrations: stored.device_registrations,
+            accent_hex: stored.accent_hex,
+            font_size: stored.font_size,
+            bypass_warnings: stored.bypass_warnings,
         },
         LoadDisposition::Loaded,
     )
@@ -85,6 +109,13 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         pet_visible: state.pet_visible,
         pet_origin: state.pet_origin,
         pet_shortcut: state.pet_shortcut.clone(),
+        focused_device_id: state.focused_device_id.clone(),
+        focused_checkout_id: state.focused_checkout_id.clone(),
+        workspace_registrations: state.workspace_registrations.clone(),
+        device_registrations: state.device_registrations.clone(),
+        accent_hex: state.accent_hex.clone(),
+        font_size: state.font_size,
+        bypass_warnings: state.bypass_warnings,
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -140,7 +171,10 @@ mod tests {
         let (restored, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
-        assert!(!restored.pet_visible, "hidden at exit means hidden at start");
+        assert!(
+            !restored.pet_visible,
+            "hidden at exit means hidden at start"
+        );
         assert_eq!(
             restored.pet_origin,
             Some(PetOriginSnapshot { x: 120.0, y: 640.0 })

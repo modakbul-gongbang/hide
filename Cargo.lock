@@ -767,17 +767,9 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 name = "herdr-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64",
  "portable-pty",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "herdr-ide"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "russh",
  "russh-config",
  "russh-sftp",

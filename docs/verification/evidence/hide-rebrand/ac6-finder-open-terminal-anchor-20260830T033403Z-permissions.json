@@ -1,0 +1,29 @@
+{
+  "success" : true,
+  "debug_logs" : [
+    "[2026-08-30T03:34:38.857Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon.sock (build 4.2.2 (4.2.2))"
+  ],
+  "data" : {
+    "permissions" : [
+      {
+        "isGranted" : true,
+        "grantInstructions" : "System Settings > Privacy & Security > Screen Recording",
+        "isRequired" : true,
+        "name" : "Screen Recording"
+      },
+      {
+        "name" : "Accessibility",
+        "isGranted" : true,
+        "isRequired" : true,
+        "grantInstructions" : "System Settings > Privacy & Security > Accessibility"
+      },
+      {
+        "isRequired" : false,
+        "grantInstructions" : "System Settings > Privacy & Security > Accessibility",
+        "isGranted" : true,
+        "name" : "Event Synthesizing"
+      }
+    ],
+    "source" : "bridge"
+  }
+}

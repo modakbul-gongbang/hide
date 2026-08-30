@@ -1,0 +1,57 @@
+{
+  "effect" : "unverifiable",
+  "outcome" : {
+    "escalation" : "observe_before_retry",
+    "requires_fresh_observation" : true,
+    "retry_safe" : false,
+    "dispatched_unit_count" : 1,
+    "retry_safety" : "unsafe",
+    "delivery_mode" : "background",
+    "delivery_mechanism" : "accessibility_action",
+    "effect" : "unverifiable",
+    "state" : "dispatched_unverified",
+    "mutation_dispatched" : true,
+    "evidence" : "delivery_accepted",
+    "dispatch_state" : "dispatched",
+    "route" : "bridge"
+  },
+  "success" : true,
+  "target_identity" : {
+    "kind" : "process",
+    "pid" : 46115,
+    "process_start_identity_decimal" : "1788055859206192"
+  },
+  "target_receipt" : {
+    "process_start_identity" : 1788055859206192,
+    "pid" : 46115,
+    "process_start_identity_decimal" : "1788055859206192"
+  },
+  "debug_logs" : [
+    "[2026-08-30T02:11:52.264Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))"
+  ],
+  "data" : {
+    "clickLocation" : {
+      "x" : 290,
+      "y" : 1004
+    },
+    "clickedElement" : "Button: prd\/hide-rebrand, prd\/hide-rebrand · 0 tabs",
+    "targetApp" : "hide",
+    "targetPoint" : {
+      "elementId" : "elem_38",
+      "resolved" : {
+        "y" : 1004,
+        "x" : 290
+      },
+      "snapshotId" : "1788055910124-7911",
+      "source" : "element",
+      "original" : {
+        "x" : 290,
+        "y" : 1004
+      }
+    },
+    "deliveryMode" : "background",
+    "executionTime" : 0.5187619924545288,
+    "clickType" : "single",
+    "waitTime" : 0
+  }
+}

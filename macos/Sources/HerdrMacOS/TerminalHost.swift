@@ -5,9 +5,10 @@ import SwiftUI
 struct TerminalHost: NSViewRepresentable {
     @ObservedObject var bridge: CoreBridge
     let paneID: String
+    let onOpenLink: @MainActor @Sendable (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(bridge: bridge, paneID: paneID)
+        Coordinator(bridge: bridge, paneID: paneID, onOpenLink: onOpenLink)
     }
 
     func makeNSView(context: Context) -> TerminalView {
@@ -18,13 +19,13 @@ struct TerminalHost: NSViewRepresentable {
         terminal.terminalDelegate = context.coordinator
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
+        terminal.linkReporting = .implicit
+        terminal.linkHighlightMode = .hover
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
+        terminal.onPointerFocus = { [weak bridge] in
+            bridge?.focusPane(paneID)
+        }
         context.coordinator.terminal = terminal
-        let clickRecognizer = NSClickGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.terminalClicked(_:))
-        )
-        terminal.addGestureRecognizer(clickRecognizer)
         context.coordinator.registrationID = bridge.registerTerminal(
             paneID: paneID,
             receive: { [weak terminal] bytes in
@@ -46,6 +47,7 @@ struct TerminalHost: NSViewRepresentable {
 
     func updateNSView(_ terminal: TerminalView, context: Context) {
         context.coordinator.bridge = bridge
+        context.coordinator.onOpenLink = onOpenLink
     }
 
     static func dismantleNSView(_ terminal: TerminalView, coordinator: Coordinator) {
@@ -61,17 +63,18 @@ struct TerminalHost: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate {
         var bridge: CoreBridge
         let paneID: String
+        var onOpenLink: @MainActor @Sendable (String) -> Void
         var registrationID: UUID?
         weak var terminal: TerminalView?
 
-        init(bridge: CoreBridge, paneID: String) {
+        init(
+            bridge: CoreBridge,
+            paneID: String,
+            onOpenLink: @escaping @MainActor @Sendable (String) -> Void
+        ) {
             self.bridge = bridge
             self.paneID = paneID
-        }
-
-        @MainActor @objc func terminalClicked(_ recognizer: NSClickGestureRecognizer) {
-            guard recognizer.state == .ended else { return }
-            bridge.focusPane(paneID)
+            self.onOpenLink = onOpenLink
         }
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
@@ -105,5 +108,16 @@ struct TerminalHost: NSViewRepresentable {
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
         func scrolled(source: TerminalView, position: Double) {}
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+            // SwiftTerm invokes link delegates synchronously from AppKit mouse
+            // handling. Keep the activation marker synchronous so the router
+            // can suppress the TUI click replay in this same mouse-up event.
+            let handler = onOpenLink
+            MainActor.assumeIsolated {
+                (source as? ImeTerminalView)?.noteTerminalLinkActivation()
+                handler(link)
+            }
+        }
     }
 }

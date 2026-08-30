@@ -19,7 +19,7 @@ enum ShellMetrics {
     static let cardRadius: CGFloat = 10
 }
 
-struct ShellView: View {
+private struct LegacyShellView: View {
     @EnvironmentObject private var model: ShellModel
     @FocusState private var focusedSurface: ShellSurface?
 
@@ -130,8 +130,7 @@ private struct AgentsPanel: View {
                     LazyVStack(spacing: 6) {
                         ForEach(agents) { agent in
                             AgentRow(agent: agent) {
-                                model.core.focusPane(agent.paneID)
-                                model.focus(.terminal)
+                                model.selectAgent(agent)
                             }
                         }
                     }
@@ -231,20 +230,26 @@ private struct TerminalPanel: View {
 
             Divider()
 
-            if let layout = model.core.snapshot?.paneLayout {
-                PaneLayoutCanvas(
-                    layout: layout,
-                    bridge: model.core
-                )
+            if !model.focusedPaneGridItems.isEmpty {
+                PaneLayoutCanvas(items: model.focusedPaneGridItems) { item in
+                    if let pane = model.paneMetadata(for: item.paneID) {
+                        PaneTerminalCell(
+                            pane: pane,
+                            status: model.paneStatus(for: pane.id),
+                            isFocused: item.isFocused,
+                            onFocus: { model.focusPane(pane.id) }
+                        ) {
+                            TerminalHost(
+                                bridge: model.core,
+                                paneID: pane.id,
+                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                            )
+                                .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                        }
+                    }
+                }
                 .padding(3)
                 .accessibilityIdentifier("terminal-pane-grid")
-            } else if let paneID = model.core.snapshot?.terminal.paneID {
-                PaneTerminalCell(
-                    paneID: paneID,
-                    focusedPaneID: paneID,
-                    bridge: model.core
-                )
-                .padding(3)
             } else {
                 ContentUnavailableView {
                     Label("No terminal pane", systemImage: "terminal")
@@ -264,7 +269,11 @@ enum PaneGridPresentation {
         layout.root
     }
 
-    static func items(layout: CorePaneLayoutSnapshot) -> [PaneGridItem] {
+    static func items(
+        layout: CorePaneLayoutSnapshot,
+        focusedPaneID: String? = nil
+    ) -> [PaneGridItem] {
+        let effectiveFocusedPaneID = focusedPaneID ?? layout.focusedPaneID
         let retained = flatten(
             node: visibleRoot(layout: layout),
             frame: .unit
@@ -273,11 +282,70 @@ enum PaneGridPresentation {
             PaneGridItem(
                 paneID: item.paneID,
                 retainedFrame: item.retainedFrame,
-                visualFrame: layout.zoomed && item.paneID == layout.focusedPaneID
+                visualFrame: layout.zoomed && item.paneID == effectiveFocusedPaneID
                     ? .unit
                     : item.retainedFrame,
-                isVisible: !layout.zoomed || item.paneID == layout.focusedPaneID,
-                isFocused: item.paneID == layout.focusedPaneID
+                isVisible: !layout.zoomed || item.paneID == effectiveFocusedPaneID,
+                isFocused: item.paneID == effectiveFocusedPaneID
+            )
+        }
+    }
+
+    static func items(
+        remoteLayout: RemotePaneLayoutSnapshot,
+        focusedPaneID: String?
+    ) -> [PaneGridItem] {
+        let effectiveFocusedPaneID = focusedPaneID ?? remoteLayout.focusedPaneID
+        return remoteLayout.frames.compactMap { frame in
+            guard frame.x.isFinite,
+                  frame.y.isFinite,
+                  frame.width.isFinite,
+                  frame.height.isFinite,
+                  frame.width > 0,
+                  frame.height > 0
+            else { return nil }
+            let retainedFrame = PaneGridFrame(
+                x: frame.x,
+                y: frame.y,
+                width: frame.width,
+                height: frame.height
+            )
+            return PaneGridItem(
+                paneID: frame.paneID,
+                retainedFrame: retainedFrame,
+                visualFrame: remoteLayout.zoomed && frame.paneID == effectiveFocusedPaneID
+                    ? .unit
+                    : retainedFrame,
+                isVisible: !remoteLayout.zoomed || frame.paneID == effectiveFocusedPaneID,
+                isFocused: frame.paneID == effectiveFocusedPaneID
+            )
+        }
+    }
+
+    static func uniformItems(
+        paneIDs: [String],
+        focusedPaneID: String?
+    ) -> [PaneGridItem] {
+        guard !paneIDs.isEmpty else { return [] }
+
+        let columnCount = paneIDs.count > 1 ? 2 : 1
+        let rowCount = (paneIDs.count + columnCount - 1) / columnCount
+
+        return paneIDs.enumerated().map { index, paneID in
+            let column = index % columnCount
+            let row = index / columnCount
+            let frame = PaneGridFrame(
+                x: Double(column) / Double(columnCount),
+                y: Double(row) / Double(rowCount),
+                width: 1 / Double(columnCount),
+                height: 1 / Double(rowCount)
+            )
+            return PaneGridItem(
+                paneID: paneID,
+                retainedFrame: frame,
+                visualFrame: frame,
+                isVisible: true,
+                isFocused: paneID == focusedPaneID
             )
         }
     }
@@ -348,32 +416,42 @@ struct PaneGridItem: Equatable {
     let isFocused: Bool
 }
 
-private struct PaneLayoutCanvas: View {
-    let layout: CorePaneLayoutSnapshot
-    @ObservedObject var bridge: CoreBridge
+/// The single pane placement surface used by local and remote terminals.
+///
+/// Both local and remote panes supply authoritative Herdr split frames.
+/// Spacing, clipping, focus stacking, and viewport filling stay identical;
+/// only the transport that feeds each terminal differs between devices.
+struct HideTerminalGrid<Content: View>: View {
+    let items: [PaneGridItem]
+    private let content: (PaneGridItem) -> Content
+
+    init(
+        items: [PaneGridItem],
+        @ViewBuilder content: @escaping (PaneGridItem) -> Content
+    ) {
+        self.items = items
+        self.content = content
+    }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                ForEach(PaneGridPresentation.items(layout: layout), id: \.paneID) { item in
+                ForEach(items, id: \.paneID) { item in
                     let frame = item.visualFrame
-                    PaneTerminalCell(
-                        paneID: item.paneID,
-                        focusedPaneID: layout.focusedPaneID,
-                        bridge: bridge
-                    )
-                    .frame(
-                        width: geometry.size.width * CGFloat(frame.width),
-                        height: geometry.size.height * CGFloat(frame.height)
-                    )
-                    .position(
-                        x: geometry.size.width * CGFloat(frame.x + frame.width / 2),
-                        y: geometry.size.height * CGFloat(frame.y + frame.height / 2)
-                    )
-                    .opacity(item.isVisible ? 1 : 0)
-                    .allowsHitTesting(item.isVisible)
-                    .accessibilityHidden(!item.isVisible)
-                    .zIndex(item.isFocused ? 1 : 0)
+                    content(item)
+                        .padding(4)
+                        .frame(
+                            width: geometry.size.width * CGFloat(frame.width),
+                            height: geometry.size.height * CGFloat(frame.height)
+                        )
+                        .position(
+                            x: geometry.size.width * CGFloat(frame.x + frame.width / 2),
+                            y: geometry.size.height * CGFloat(frame.y + frame.height / 2)
+                        )
+                        .opacity(item.isVisible ? 1 : 0)
+                        .allowsHitTesting(item.isVisible)
+                        .accessibilityHidden(!item.isVisible)
+                        .zIndex(item.isFocused ? 1 : 0)
                 }
             }
             .clipped()
@@ -381,52 +459,143 @@ private struct PaneLayoutCanvas: View {
                 transaction.animation = nil
             }
         }
+        .padding(8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-private struct PaneTerminalCell: View {
+struct PaneLayoutCanvas<Content: View>: View {
+    let items: [PaneGridItem]
+    private let content: (PaneGridItem) -> Content
+
+    init(
+        items: [PaneGridItem],
+        @ViewBuilder content: @escaping (PaneGridItem) -> Content
+    ) {
+        self.items = items
+        self.content = content
+    }
+
+    var body: some View {
+        HideTerminalGrid(items: items, content: content)
+    }
+}
+
+struct PaneTerminalCell<Content: View>: View {
+    let pane: CorePaneSnapshot
+    let status: String
+    let isFocused: Bool
+    let onFocus: () -> Void
+    private let content: () -> Content
+
+    init(
+        pane: CorePaneSnapshot,
+        status: String,
+        isFocused: Bool,
+        onFocus: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.pane = pane
+        self.status = status
+        self.isFocused = isFocused
+        self.onFocus = onFocus
+        self.content = content
+    }
+
+    var body: some View {
+        HideTerminalPaneCard(
+            paneID: pane.id,
+            title: pane.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? pane.id
+                : pane.label,
+            cwd: pane.cwd,
+            status: status,
+            isFocused: isFocused,
+            onFocus: onFocus,
+            content: content
+        )
+    }
+}
+
+/// Shared chrome for local and remote panes.
+///
+/// The terminal implementation is supplied by the caller, but the pane
+/// identity, cwd, focus affordance, border, and sizing stay identical across
+/// devices. This keeps a remote pane from becoming a separate visual mode.
+struct HideTerminalPaneCard<Content: View>: View {
     let paneID: String
-    let focusedPaneID: String?
-    @ObservedObject var bridge: CoreBridge
+    let title: String
+    let cwd: String
+    let status: String
+    let isFocused: Bool
+    let onFocus: () -> Void
+    private let content: () -> Content
 
-    private var isFocused: Bool { paneID == focusedPaneID }
-
-    private var paneState: CoreTerminalPaneSnapshot? {
-        bridge.snapshot?.terminal.panes.first { $0.paneID == paneID }
+    init(
+        paneID: String,
+        title: String,
+        cwd: String,
+        status: String,
+        isFocused: Bool,
+        onFocus: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.paneID = paneID
+        self.title = title
+        self.cwd = cwd
+        self.status = status
+        self.isFocused = isFocused
+        self.onFocus = onFocus
+        self.content = content
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Button {
-                bridge.focusPane(paneID)
-            } label: {
-                HStack(spacing: 6) {
+            Button(action: onFocus) {
+                HStack(spacing: 8) {
                     Image(systemName: isFocused ? "circle.inset.filled" : "circle")
-                        .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
-                    Text(paneID)
-                        .font(.caption.monospaced().weight(.semibold))
+                        .foregroundStyle(isFocused ? HideTheme.accent : HideTheme.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .hideFont(size: 10, weight: .semibold)
+                            .foregroundStyle(HideTheme.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if !cwd.isEmpty {
+                            Text(cwd)
+                                .hideFont(size: 9, design: .monospaced)
+                                .foregroundStyle(HideTheme.muted)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
                     Spacer(minLength: 4)
-                    Text(paneState?.closed == true ? "closed" : "attached")
-                        .font(.caption2)
-                        .foregroundStyle(paneState?.closed == true ? .red : .secondary)
+                    Text(status)
+                        .hideFont(size: 9)
+                        .foregroundStyle(status == "closed" ? HideTheme.danger : HideTheme.secondary)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 26)
+                .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Focus terminal pane \(paneID)")
+            .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
 
-            Divider()
+            Rectangle()
+                .fill(HideTheme.divider)
+                .frame(height: 1)
 
-            TerminalHost(bridge: bridge, paneID: paneID)
-                .accessibilityLabel("SwiftTerm terminal for \(paneID)")
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+                .clipped()
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity)
+        .background(HideTheme.panel)
         .overlay {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(
-                    isFocused ? Color.accentColor : Color(nsColor: .separatorColor),
+                    isFocused ? HideTheme.accent : HideTheme.divider,
                     lineWidth: isFocused ? 2 : 1
                 )
         }

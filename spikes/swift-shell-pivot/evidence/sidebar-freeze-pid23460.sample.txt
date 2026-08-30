@@ -1,6 +1,6 @@
 Analysis of sampling HerdrMacOS (pid 23460) every 1 millisecond
 Process:         HerdrMacOS [23460]
-Path:            /Users/USER/*/HerdrIDE.app/Contents/MacOS/HerdrMacOS
+Path:            ~/*/HerdrIDE.app/Contents/MacOS/HerdrMacOS
 Load Address:    0x102680000
 Identifier:      com.hoyeon.herdr-ide.swift-shell
 Version:         0.1.0 (1)
@@ -188,7 +188,7 @@ Sort by top of stack, same collapsed (when >= 5):
         nanov2_calloc_type  (in libsystem_malloc.dylib)        6
 
 Binary Images:
-       0x102680000 -        0x102c93fff +com.hoyeon.herdr-ide.swift-shell (0.1.0 - 1) <631DC21B-1A98-31D8-89BE-25B7C043D07F> /Users/*/HerdrIDE.app/Contents/MacOS/HerdrMacOS
+       0x102680000 -        0x102c93fff +com.hoyeon.herdr-ide.swift-shell (0.1.0 - 1) <631DC21B-1A98-31D8-89BE-25B7C043D07F> ~/*/HerdrIDE.app/Contents/MacOS/HerdrMacOS
        0x10f468000 -        0x10f470057  libobjc-trampolines.dylib (928.3) <F1242604-DCB7-30A9-A19A-182991E6E645> /usr/lib/libobjc-trampolines.dylib
        0x111790000 -        0x111ef1fff  com.apple.AGXMetalG16X (322.10 - 322.10) <4E6E7300-C593-3C23-82C5-72F43D57CADC> /System/Library/Extensions/AGXMetalG16X.bundle/Contents/MacOS/AGXMetalG16X
        0x1918a4000 -        0x1918f5ca3  libobjc.A.dylib (928.3) <219C0324-7A4F-338E-A395-3D023B289A7F> /usr/lib/libobjc.A.dylib

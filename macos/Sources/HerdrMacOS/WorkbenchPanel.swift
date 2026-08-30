@@ -2,7 +2,7 @@ import AppKit
 import MarkdownUI
 import SwiftUI
 
-struct WorkspaceFileNode: Identifiable, Hashable {
+struct WorkspaceFileNode: Identifiable, Hashable, Sendable {
     let url: URL
     let isDirectory: Bool
     let children: [WorkspaceFileNode]?
@@ -16,8 +16,9 @@ enum WorkspaceTree {
         ".git", ".build", "build", "target", "DerivedData",
     ]
 
-    static func load(root: URL) -> [WorkspaceFileNode] {
-        [node(at: root, depth: 0)].compactMap { $0 }
+    static func load(root: URL?) -> [WorkspaceFileNode] {
+        guard let root else { return [] }
+        return [node(at: root, depth: 0)].compactMap { $0 }
     }
 
     private static func node(at url: URL, depth: Int) -> WorkspaceFileNode? {
@@ -53,9 +54,15 @@ struct WorkbenchPanel: View {
     @State private var markdownMode = "Preview"
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
-    private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
+    private var selectedURL: URL? {
+        guard !model.isRemoteContext else { return nil }
+        return editor?.path.map(URL.init(fileURLWithPath:))
+    }
+    private var activeRoot: URL? {
+        model.focusedPath
+    }
     private var effectiveReadonlyReason: String? {
-        if model.core.isRemoteWorkspace {
+        if model.isRemoteContext {
             return "Remote inline editing is disabled in v1. Use the attached remote terminal so SSH remains the single write owner."
         }
         return editor?.readonlyReason
@@ -66,7 +73,7 @@ struct WorkbenchPanel: View {
             PanelHeader(
                 title: "Workbench",
                 systemImage: "doc.text.magnifyingglass",
-                trailing: selectedURL?.lastPathComponent ?? "No file selected"
+                trailing: selectedURL?.lastPathComponent ?? (model.isRemoteContext ? "Remote" : "No file selected")
             )
             Divider()
             VStack(spacing: 0) {
@@ -78,9 +85,24 @@ struct WorkbenchPanel: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .task(id: "\(model.isRemoteContext)-\(activeRoot?.path ?? "")") {
+            if model.isRemoteContext {
+                roots = []
+                if let activeRoot {
+                    model.remote.loadFiles(path: activeRoot.path)
+                }
+                return
+            }
+            let root = activeRoot
+            let loaded = await Task.detached(priority: .userInitiated) {
+                WorkspaceTree.load(root: root)
+            }.value
+            guard !Task.isCancelled else { return }
+            roots = loaded
+        }
         .onAppear {
-            roots = WorkspaceTree.load(root: model.core.workspaceRoot)
-            if let restored = model.core.snapshot?.uiState.selectedPath {
+            if !model.isRemoteContext,
+               let restored = model.core.snapshot?.uiState.selectedPath {
                 model.core.openFile(URL(fileURLWithPath: restored))
             }
         }
@@ -93,45 +115,123 @@ struct WorkbenchPanel: View {
         }
     }
 
+    @ViewBuilder
     private var fileTree: some View {
-        ScrollView {
-            OutlineGroup(roots, children: \.children) { node in
-                Button {
-                    if node.isDirectory {
-                        let current = Set(model.core.snapshot?.uiState.expandedPaths ?? [])
-                        var updated = current
-                        if !updated.insert(node.url.path).inserted { updated.remove(node.url.path) }
-                        model.core.persistUIState(expandedPaths: updated.sorted())
-                    } else {
-                        model.core.openFile(node.url)
+        Group {
+            if model.isRemoteContext {
+                if let fileError = model.remote.fileError {
+                    ContentUnavailableView {
+                        Label("Remote files unavailable", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(fileError)
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: node.isDirectory ? "folder" : icon(for: node.url))
-                            .foregroundStyle(node.isDirectory ? .blue : .secondary)
-                        Text(node.name)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(ShellMetrics.panelPadding)
+                } else if activeRoot == nil {
+                    ContentUnavailableView {
+                        Label("Remote checkout has no path", systemImage: "externaldrive")
+                    } description: {
+                        Text(model.remote.message)
                     }
-                    .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(ShellMetrics.panelPadding)
+                } else if model.remote.files.isEmpty {
+                    ContentUnavailableView {
+                        Label("No remote files", systemImage: "folder")
+                    } description: {
+                        Text("The selected remote checkout has no visible top-level files.")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(ShellMetrics.panelPadding)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.remote.files) { node in
+                                HStack(spacing: 6) {
+                                    Image(systemName: node.isDirectory ? "folder" : "doc")
+                                        .foregroundStyle(node.isDirectory ? .blue : .secondary)
+                                    Text(node.name)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .contentShape(Rectangle())
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        Text("Remote, read-only tree")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("workspace-file-\(node.name)")
+            } else if activeRoot == nil {
+                ContentUnavailableView {
+                    Label("No workspace", systemImage: "folder")
+                } description: {
+                    Text("Choose New Workspace to browse local files.")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(ShellMetrics.panelPadding)
+            } else {
+                ScrollView {
+                    OutlineGroup(roots, children: \.children) { node in
+                        Button {
+                            if node.isDirectory {
+                                let current = Set(model.core.snapshot?.uiState.expandedPaths ?? [])
+                                var updated = current
+                                if !updated.insert(node.url.path).inserted { updated.remove(node.url.path) }
+                                model.core.persistUIState(expandedPaths: updated.sorted())
+                            } else {
+                                model.core.openFile(node.url)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: node.isDirectory ? "folder" : icon(for: node.url))
+                                    .foregroundStyle(node.isDirectory ? .blue : .secondary)
+                                Text(node.name)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("workspace-file-\(node.name)")
+                    }
+                    .padding(10)
+                }
+                .overlay(alignment: .topTrailing) {
+                    Text("Local, existing files only")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(8)
+                }
             }
-            .padding(10)
-        }
-        .overlay(alignment: .topTrailing) {
-            Text("Local, existing files only")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(8)
         }
         .accessibilityIdentifier("workbench-file-tree")
     }
 
     @ViewBuilder
     private var viewer: some View {
-        if let selectedURL {
+        if model.isRemoteContext {
+            VStack(spacing: 10) {
+                Image(systemName: "terminal")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("Remote terminal owns edits")
+                    .font(.headline)
+                Text("Hide keeps remote file writes in the attached Herdr terminal. Credentials and file contents stay outside Hide.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 300)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(24)
+        } else if let selectedURL {
             VStack(spacing: 0) {
                 editorToolbar(for: selectedURL)
                 Divider()

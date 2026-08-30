@@ -20,7 +20,7 @@
     "window_id": 2345,
     "live_sidebar_agent_count": 16,
     "attached_pane": "w37:p1 (herdr-ide-verify-attach fixture)",
-    "attach_child": "/Users/hoyeonlee/.local/bin/herdr pane attach w37:p1",
+    "attach_child": "~/.local/bin/herdr pane attach w37:p1",
     "input_probe": "herdr-attach-proof-42 typed via peekaboo landed in `herdr pane read w37:p1 --source visible` and echoed back into the app terminal",
     "screenshots": [
       "evidence/live-initial.png",

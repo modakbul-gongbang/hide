@@ -82,10 +82,10 @@ Both facts were established by probing a live machine, and both caused the same 
 
 2. **Select the tab, not just the app.**
    A user watching a local and a remote session keeps them as two tabs of one terminal window, so `set frontmost` restores whichever tab was last active and can never switch between them.
-   Terminal emulators title each tab with the command running in it, which is what makes the match possible: Ghostty exposes tabs as `AXRadioButton` under `tab group 1 of window 1`, named `herdr` and `herdr --remote grab@grabs-mac-mini`.
+   Terminal emulators title each tab with the command running in it, which is what makes the match possible: Ghostty exposes tabs as `AXRadioButton` under `tab group 1 of window 1`, named `herdr` and `herdr --remote remote-user@remote-mini`.
    The AppleScript clicks the radio button whose name equals the resolved process command.
 
-The ssh alias in `~/.config/herdr-pet/config.toml` and the `--remote` argument routinely disagree - `mini` versus `grab@grabs-mac-mini`.
+The ssh alias in `~/.config/herdr-pet/config.toml` and the `--remote` argument routinely disagree - `mini` versus `remote-user@remote-mini`.
 `remote_argument_matches_host` compares the host parts with `user@` stripped and accepts either containing the other.
 That heuristic only ever chooses which tab to raise; it never routes a command.
 

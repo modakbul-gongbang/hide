@@ -1,5 +1,5 @@
 {
-  "executable": "/Users/hoyeonlee/Library/pnpm/chromux",
+  "executable": "~/Library/pnpm/chromux",
   "profile": "default",
   "baseline": {
     "default_running": false,

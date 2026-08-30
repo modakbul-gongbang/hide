@@ -12,7 +12,7 @@
     "event_synthesizing": true
   },
   "launch": {
-    "path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/HerdrIDE.app",
+    "path": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/HerdrIDE.app",
     "bundle_id": "com.hoyeon.herdr-ide.swift-shell",
     "instance_count": 1,
     "pid": 38859,

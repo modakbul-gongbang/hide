@@ -4,7 +4,7 @@
 
 Status: T1-T4 Stage 0 spike gate PASS; T5 deletion, V21 dependency-removal verification, R11/R6 cleanup, and native pane commands are committed and PASS at their recorded boundaries.
 Role marker: `mode=implementor`, `paneId=w2X:p8`, `agentKind=codex`.
-Working root: `/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot`.
+Working root: `~/projects/herdr-ide.worktrees/swift-shell-pivot`.
 Verification window: 2026-08-28 19:39 through 2026-08-29 11:51 KST.
 Additive production work began only after the explicit user-directed dependency deviation recorded under T3.
 The approved T5 source files and obsolete manifest dependencies were deleted only after the annotated `rust-native-final` tag was verified against the exact pre-deletion checkpoint.
@@ -111,7 +111,7 @@ Required in-process core tests for unknown kind, schema mismatch, malformed payl
 
 ## Sasu record state
 
-The interrupted run remains `sasu.implement.state.v5`, status `active`, with its clean baseline at commit `65974708eca4db64f459302937cafc763db2dafc` and working root `/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot`.
+The interrupted run remains `sasu.implement.state.v5`, status `active`, with its clean baseline at commit `65974708eca4db64f459302937cafc763db2dafc` and working root `~/projects/herdr-ide.worktrees/swift-shell-pivot`.
 Its machine record still reports 19 tasks pending, 15 acceptance criteria pending, 35 verification rows `NOT_RUN`, zero artifacts, zero verification attempts, and no completion receipt.
 The current Sasu 0.8.0 CLI accepts only v6 for mutations, so it rejected task updates and also rejected retirement of the v5 run.
 Starting a replacement v6 run was attempted without changing the sealed PRD, but current Sasu rejected the approved PRD because its acceptance criteria predate the required canonical Judgment and Evidence Declaration table.
@@ -271,7 +271,7 @@ Those gates were not overridden or rerun.
 The one authorized `sasu implement start` attempt under the original `swift-shell-pivot` slug refused with `qa-log-backed PRD requires live PASS for gap-audit and spec; got gap-audit=BLOCKED, spec=BLOCKED`.
 No v6 implement state exists, so evidence was retained as files and was not hand-registered into Sasu state.
 
-The Spec Owner moved the legacy v5 record tree from `/Users/hoyeonlee/projects/herdr-ide/agents/runs/swift-shell-pivot` to `/Users/hoyeonlee/projects/herdr-ide/agents/runs/swift-shell-pivot-v5-archive` without deleting it.
+The Spec Owner moved the legacy v5 record tree from `~/projects/herdr-ide/agents/runs/swift-shell-pivot` to `~/projects/herdr-ide/agents/runs/swift-shell-pivot-v5-archive` without deleting it.
 The archived tree contains 13 files and 279437 bytes, and its per-file SHA-256 set was identical before and after the move.
 The archive path is reversible and the canonical PRD remains only `agents/prd/swift-shell-pivot/prd.md`.
 The qa-log was not edited.
@@ -290,7 +290,7 @@ The owned app PID 38870 was terminated after verification.
 
 ### T12: ADDITIVE IMPLEMENTATION AND APPROVED DEFAULT-RUNTIME VERIFICATION PASS
 
-The production executor uses only the literal `/Users/hoyeonlee/Library/pnpm/chromux` executable.
+The production executor uses only the literal `~/Library/pnpm/chromux` executable.
 It accepts only `default` and the read-only missing-profile sentinel `herdr-ide-verify-absent`.
 It reads `chromux ps --json`, launches only a stopped or absent `default`, reuses an already running default, observes its loopback CDP status, and publishes structured ready, stale, unavailable, or failed receipts.
 The focus action records whether activation was requested, accepted, and observed as the frontmost PID.
@@ -615,7 +615,7 @@ Before the fixture-retarget regression was added, stale/global focus redirected 
 The evidence does not establish the exact number of created panes, so no count beyond one or more is claimed.
 App input was stopped and the diagnostic app was terminated immediately; because w2Y was outside fixture ownership, this run did not close or otherwise clean up the created pane or panes.
 After the retarget regression landed, no further focus, split, zoom, cleanup, automatic input, or other mutation targeted w2Y.
-The later user-provided w2Y screenshot at `/Users/hoyeonlee/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png` was used read-only to diagnose the zoom-buffer defect.
+The later user-provided w2Y screenshot at `~/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png` was used read-only to diagnose the zoom-buffer defect.
 The defect was reproduced at the presentation seam: zoom selected only the focused subtree, SwiftUI dismantled hidden SwiftTerm views while their core attach workers continued draining bytes, and recreated views therefore showed only future output fragments.
 The pre-fix regression in `evidence/zoom-buffer-retention-regression-before.log` failed on that exact behavior.
 

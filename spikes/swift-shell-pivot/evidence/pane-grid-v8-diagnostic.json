@@ -5,7 +5,7 @@
   "app": {
     "pid": 23605,
     "window_id": 3767,
-    "bundle_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
+    "bundle_path": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
     "binary_sha256": "b2c88ddeef5a96f0df835c6b90d605c0ad7b631f776b9945d322b7769e136388",
     "strict_deep_codesign": "pass",
     "architecture": "arm64"

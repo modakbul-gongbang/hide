@@ -1,0 +1,1 @@
+./dist/hide.app/Contents/MacOS/HerdrMacOS

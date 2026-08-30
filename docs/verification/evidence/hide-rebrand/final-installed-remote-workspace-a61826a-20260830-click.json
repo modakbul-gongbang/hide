@@ -1,0 +1,51 @@
+{
+  "outcome" : {
+    "retry_safe" : false,
+    "requires_fresh_observation" : true,
+    "route" : "local",
+    "state" : "dispatched_unverified",
+    "delivery_mechanism" : "global_events",
+    "dispatch_state" : "dispatched",
+    "escalation" : "observe_before_retry",
+    "retry_safety" : "unsafe",
+    "delivery_mode" : "foreground",
+    "effect" : "unverifiable",
+    "evidence" : "delivery_accepted",
+    "mutation_dispatched" : true
+  },
+  "data" : {
+    "clickType" : "single",
+    "clickLocation" : {
+      "x" : 290,
+      "y" : 508
+    },
+    "targetApp" : "hide",
+    "clickedElement" : "Button: hide-remote-verification, hide-remote-verification",
+    "executionTime" : 0.30038392543792725,
+    "targetWindowId" : 9500,
+    "targetWindowTitle" : "hide",
+    "targetPoint" : {
+      "resolved" : {
+        "y" : 508,
+        "x" : 290
+      },
+      "source" : "element",
+      "snapshotId" : "1788083499595-7441",
+      "elementId" : "elem_29",
+      "original" : {
+        "x" : 290,
+        "y" : 508
+      },
+      "windowAdjustment" : {
+        "status" : "unchanged"
+      }
+    },
+    "waitTime" : 0.0010399818420410156,
+    "deliveryMode" : "foreground"
+  },
+  "effect" : "unverifiable",
+  "debug_logs" : [
+    "[2026-08-30T09:52:24.350Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "success" : true
+}

@@ -1,0 +1,11 @@
+[1/1] Compiling plugin GenerateDoccReference
+[2/2] Compiling plugin GenerateManual
+[3/3] Compiling plugin SwiftTermBuildInfoPlugin
+Building for debugging...
+[3/7] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.23s)
+◇ Test run started.
+↳ Testing Library Version: 102 (arm64e-apple-macos13.0)
+◇ Test loginShellPathIsTheChildToolPATH() started.
+✔ Test loginShellPathIsTheChildToolPATH() passed after 3.839 seconds.
+✔ Test run with 1 test passed after 3.839 seconds.

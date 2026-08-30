@@ -417,10 +417,7 @@ mod tests {
             agent("working", "working"),
             agent("earlier", "error"),
         ];
-        let observed = BTreeMap::from([
-            ("later".to_owned(), 2_000),
-            ("earlier".to_owned(), 1_000),
-        ]);
+        let observed = BTreeMap::from([("later".to_owned(), 2_000), ("earlier".to_owned(), 1_000)]);
         assert_eq!(attention_order(&agents, &observed), ["earlier", "later"]);
     }
 

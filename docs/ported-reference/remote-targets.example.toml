@@ -1,7 +1,7 @@
 [[targets]]
 id = "local"
 label = "MacBook Pro"
-socket_path = "/Users/you/.config/herdr/herdr.sock"
+socket_path = "~/.config/herdr/herdr.sock"
 
 [[targets]]
 id = "mini"
@@ -10,5 +10,5 @@ socket_path = "/tmp/herdr-pet/mini.sock"
 
 [targets.ssh]
 host = "mini"
-remote_socket = "/Users/grab/.config/herdr/herdr.sock"
+remote_socket = "~/.config/herdr/herdr.sock"
 options = ["-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes"]

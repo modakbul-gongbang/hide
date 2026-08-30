@@ -1,0 +1,356 @@
+Timestamp               Ty Process[PID:TID]
+2026-08-30 13:16:55.847 A  zsh[12312:2dbedb0] (libsystem_info.dylib) Retrieve User by ID
+2026-08-30 13:16:55.863 A  zsh[12312:2dbee42] (libsystem_info.dylib) Retrieve User by ID
+2026-08-30 13:16:56.085 A  xpcproxy[12349:2dbee8f] (libsystem_info.dylib) Retrieve User by ID
+2026-08-30 13:16:56.086 A  xpcproxy[12349:2dbee8f] (libsystem_info.dylib) Resolve user group list
+2026-08-30 13:16:56.086 A  xpcproxy[12349:2dbee8f] (libsystem_info.dylib) Membership API: translate identifier
+2026-08-30 13:16:56.488 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=delegate.init.begin detail= duration_ms=-
+2026-08-30 13:16:56.488 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core_bridge.init.begin detail= duration_ms=-
+2026-08-30 13:16:56.489 A  HerdrMacOS[12349:2dbee9a] (libsystem_info.dylib) Retrieve User by ID
+2026-08-30 13:16:56.491 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:coreservicesdaemon] SCSession():SCSession( id=100, this=0x0x14f004280 option=65538) created, forUID=501 mach_port_t=0xf03.
+2026-08-30 13:16:56.491 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:coreservicesdaemon] SCSession():SCSession( id=101, this=0x0x14f0043d0 option=65538) created, forUID=501 mach_port_t=0x1503.
+2026-08-30 13:16:56.491 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:coreservicesdaemon] connectToCoreServicesD():Instantiating server (coreservicesd based) SCSession, port=0xf03 serverOptions=0x10002.
+2026-08-30 13:16:56.494 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=2 rest=true editor=true terminal_sequence=0 duration_ms=-
+2026-08-30 13:16:56.494 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=herdr.status detail=not_connected duration_ms=-
+2026-08-30 13:16:56.494 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.projection detail=focused_workspace_id=nil focused_checkout_id=workspace:487095a4dbe5f2af:checkout:416e5fef85a69707 checkout_workspace_id=nil layout_workspace_id=nil layout_tab_id=nil layout_pane_ids=nil terminal_pane_id=nil layout_belongs=false duration_ms=-
+2026-08-30 13:16:56.495 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core_bridge.init.ready detail=initial_core_without_runtime duration_ms=6
+2026-08-30 13:16:56.495 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=delegate.init.ready detail= duration_ms=10
+2026-08-30 13:16:56.496 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x600003378000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-30 13:16:56.496 Df HerdrMacOS[12349:2dbef0e] [com.apple.xpc:connection] [0x6000033700f0] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
+2026-08-30 13:16:56.500 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033701e0] activating connection: mach=true listener=false peer=false name=com.apple.coreservices.launchservicesd
+2026-08-30 13:16:56.500 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] Registering for notification <private> on default queue, to re-boostrap client connection.
+2026-08-30 13:16:56.500 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033702d0] activating connection: mach=true listener=false peer=false name=com.apple.pasteboard.1
+2026-08-30 13:16:56.500 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x60000337c000] activating connection: mach=true listener=false peer=false name=com.apple.distributed_notifications@Uv3
+2026-08-30 13:16:56.502 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:AutomaticTermination] void _NSDisableAutomaticTerminationAndLog(NSString *) No windows open yet
+2026-08-30 13:16:56.502 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x600003368000] activating connection: mach=true listener=false peer=false name=com.apple.analyticsd
+2026-08-30 13:16:56.502 I  HerdrMacOS[12349:2dbee9a] [com.apple.CoreAnalytics:client] Daemon status changed from 0 to 1
+2026-08-30 13:16:56.502 A  HerdrMacOS[12349:2dbee9a] (TCC) TCCAccessRequest() IPC
+2026-08-30 13:16:56.502 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033680f0] activating connection: mach=true listener=false peer=false name=com.apple.tccd.system
+2026-08-30 13:16:56.502 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] SEND: 0/7 synchronous to com.apple.tccd.system: request: msgID=12349.1, function=TCCAccessRequest, service=kTCCServiceListenEvent,
+2026-08-30 13:16:56.504 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] RECV: synchronous reply <dictionary: 0x60000336c000> { count = 5, transaction: 0, voucher = 0x0, contents =
+	"prompt_type" => <uint64: 0xab479d60a28661af>: 1
+	"auth_value" => <uint64: 0xab479d60a28661af>: 1
+	"preflight_unknown" => <bool: 0x1f7c612c0>: true
+	"auth_version" => <uint64: 0xab479d60a28661af>: 1
+	"auth_reason" => <uint64: 0xab479d60a286618f>: 5
+}
+2026-08-30 13:16:56.504 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033680f0] invalidated after the last release of the connection object
+2026-08-30 13:16:56.504 Df HerdrMacOS[12349:2dbee9a] [com.apple.SkyLight:default] server port 0x00003207, session port 0x00003207
+2026-08-30 13:16:56.511 I  HerdrMacOS[12349:2dbef0e] [com.apple.SkyLight:processes] 0[outside of RPC]: First connection id 1563439 mapped to ctx = 0x60000226c500
+2026-08-30 13:16:56.511 Df HerdrMacOS[12349:2dbee9a] [com.apple.SkyLight:default] New connection 0x17db2f main
+2026-08-30 13:16:56.511 I  HerdrMacOS[12349:2dbee9a] [com.apple.hiservices:processmgr] Checking in with CAS, pid=12349
+2026-08-30 13:16:56.511 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] LSApplicationCheckIn(), app being registered is:"./dist/hide.app/Contents/MacOS/HerdrMacOS"
+2026-08-30 13:16:56.511 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas]  { "ApplicationType"="Foreground", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "Flavor"=3, , "LSArchitecture"="arm64", , "LSBundlePath"="./dist/hide.app", , "LSBundlePathSandboxExtensionKey"="7378ffc7921d60f9656a9c543c618ae5b3772678e0ac50229ed37754d7f888c7;00;00000000;00000000;00000000;000000000000001a;com.apple.app-sa<…>
+2026-08-30 13:16:56.511 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] CHECKIN: pid=12349
+2026-08-30 13:16:56.512 Df HerdrMacOS[12349:2dbef1b] [com.apple.CoreAnalytics:client] Received configuration update from daemon (initial)
+2026-08-30 13:16:56.513 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] CHECKEDIN: pid=12349 asn=0x0-0x35c85c5 foreground=1
+2026-08-30 13:16:56.513 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] Setting processControlState to default PROC_SETPC_SUSPEND because application does not have LSProcessControlValue key
+2026-08-30 13:16:56.514 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f504680] activating connection: mach=false listener=true peer=false name=(anonymous)
+2026-08-30 13:16:56.514 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f504680] Channel could not return listener port.
+2026-08-30 13:16:56.514 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:connection] [0x14f5048c0] activating connection: mach=false listener=false peer=true name=com.apple.xpc.anonymous.0x14f504680.peer[345].0x14f5048c0
+2026-08-30 13:16:56.514 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] FRONTLOGGING: version 1
+2026-08-30 13:16:56.514 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] Registered, pid=12349 ASN=0x0,0x35c85c5
+2026-08-30 13:16:56.514 I  HerdrMacOS[12349:2dbee9a] [com.apple.CoreAnalytics:client] Dropping "com.apple.security.LegacyAPICounts" as it isn't used in any transform (not in the config or budgeted?)
+2026-08-30 13:16:56.514 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:connection] [0x14f5047a0] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
+2026-08-30 13:16:56.515 I  HerdrMacOS[12349:2dbee9a] [com.apple.hiservices:processmgr] _RegisterApplication( pid 12349 => 0x0,0x35c85c5) type=foreground
+2026-08-30 13:16:56.515 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f504680] Channel could not return listener port.
+2026-08-30 13:16:56.515 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] CFArrayRef _LSCopyLaunchModifiers(LSSessionID, LSASNRef _Nonnull), result for psn [ kLSCurrentApp ASN, 0x0,0x2]  is 1 items.
+2026-08-30 13:16:56.515 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] BringForward: pid=12349 asn=0x0-0x35c85c5 bringForward=1 foreground=1 uiElement=0 launchedByLS=1 modifiersCount=1 allDisabled=0
+2026-08-30 13:16:56.515 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] BringFrontModifier: pid=12349 asn=0x0-0x35c85c5 Modifier 0 hideAfter=0 hideOthers=0 dontMakeFrontmost=0 mouseDown=0/0 seed=0/0
+2026-08-30 13:16:56.515 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] BringForward: pid=12349 asn=0x0-0x35c85c5
+2026-08-30 13:16:56.515 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] SetFrontProcess: asn=0x0-0x35c85c5 options=0
+2026-08-30 13:16:56.516 I  HerdrMacOS[12349:2dbef1b] [com.apple.launchservices:default] Unable to load Info.plist exceptions (eGPUOverrides)
+2026-08-30 13:16:56.516 I  HerdrMacOS[12349:2dbef1b] [com.apple.launchservices:default] Unable to load Info.plist exceptions (gameModeOverrides)
+2026-08-30 13:16:56.516 I  HerdrMacOS[12349:2dbef1b] [com.apple.launchservices:default] Unable to load Info.plist exceptions (identifiedGameOverrides)
+2026-08-30 13:16:56.516 I  HerdrMacOS[12349:2dbef1b] [com.apple.launchservices:default] Unable to load Info.plist exceptions (SystemHiddenPreferred)
+2026-08-30 13:16:56.519 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Appearance] Current system appearance, (HLTB: 2), (SLS: 1)
+2026-08-30 13:16:56.519 I  HerdrMacOS[12349:2dbef14] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 530 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=530, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.520 Df HerdrMacOS[12349:2dbee9a] (libMobileGestalt.dylib) No persisted cache on this platform.
+2026-08-30 13:16:56.520 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Appearance] Current system appearance, (HLTB: 2), (SLS: 1)
+2026-08-30 13:16:56.521 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Appearance] Post-registration system appearance: (HLTB: 2)
+2026-08-30 13:16:56.523 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f504680] Channel could not return listener port.
+2026-08-30 13:16:56.523 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 530 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=530, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.524 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f504680] Channel could not return listener port.
+2026-08-30 13:16:56.525 A  HerdrMacOS[12349:2dbef14] (CoreFoundation) Loading Preferences From User CFPrefsD
+2026-08-30 13:16:56.525 Df HerdrMacOS[12349:2dbee9a] [com.apple.dt.xctest:Default] Registering for test daemon availability notify post.
+2026-08-30 13:16:56.525 Df HerdrMacOS[12349:2dbee9a] [com.apple.dt.xctest:Default] notify_get_state check indicated test daemon not ready.
+2026-08-30 13:16:56.526 Df HerdrMacOS[12349:2dbee9a] [com.apple.dt.xctest:Default] notify_get_state check indicated test daemon not ready.
+2026-08-30 13:16:56.526 Df HerdrMacOS[12349:2dbee9a] [com.apple.dt.xctest:Default] notify_get_state check indicated test daemon not ready.
+2026-08-30 13:16:56.545 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From System CFPrefsD
+2026-08-30 13:16:56.545 Df HerdrMacOS[12349:2dbee9a] [com.apple.GenerativeModels:osEligibility] OSEligibilityState.current(): output: OSEligibilityState(answer: GenerativeModelsFoundation.OSEligibilityState.Answer.eligible(GenerativeModelsFoundation.OSEligibilityState.Answer.EligibleInfo()), source: computed)
+2026-08-30 13:16:56.545 Df HerdrMacOS[12349:2dbee9a] [com.apple.GenerativeModels:availability] answer_source: computed
+2026-08-30 13:16:56.545 I  HerdrMacOS[12349:2dbee9a] [com.apple.GenerativeModels:availability] Current availability state: unavailable
+2026-08-30 13:16:56.546 Df HerdrMacOS[12349:2dbee9a] [com.apple.WritingTools:Default] isAvailable: unavailable, info = <private>
+2026-08-30 13:16:56.546 Df HerdrMacOS[12349:2dbee9a] [com.apple.WritingTools:Default] isAvailable: featureEnabled = true, isMDMAllowed = true, gmAvailable (current) = false
+2026-08-30 13:16:56.547 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From User CFPrefsD
+2026-08-30 13:16:56.557 I  HerdrMacOS[12349:2dbee9a] [com.apple.CoreAnalytics:client] Dropping "com.apple.appkit.app_config" as it isn't used in any transform (not in the config or budgeted?)
+2026-08-30 13:16:56.557 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 530 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=530, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.558 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From System CFPrefsD
+2026-08-30 13:16:56.558 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 530 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=530, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.558 Db HerdrMacOS[12349:2dbee9a] [com.apple.appleevents:connection] Creating an xpc connection, serviceName=com.apple.coreservices.appleevents
+2026-08-30 13:16:56.558 Db HerdrMacOS[12349:2dbee9a] [com.apple.appleevents:connection] Saving connection as the default connection, connectionID=0x0x600003354000
+2026-08-30 13:16:56.558 Db HerdrMacOS[12349:2dbee9a] [com.apple.appleevents:connection] Resuming xpc connection.
+2026-08-30 13:16:56.558 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x600003354000] activating connection: mach=true listener=false peer=false name=com.apple.coreservices.appleevents
+2026-08-30 13:16:56.558 I  HerdrMacOS[12349:2dbee9a] [com.apple.appleevents:main] _AEGetRegisteredMachPort() created default port (port:29699/0x7403 rcv:1 send:1 limit:5) and registered it with server
+2026-08-30 13:16:56.558 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f504680] Channel could not return listener port.
+2026-08-30 13:16:56.559 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 530 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=530, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.559 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] SignalReady: pid=12349 asn=0x0-0x35c85c5
+2026-08-30 13:16:56.559 Df HerdrMacOS[12349:2dbee9a] [com.apple.processmanager:front-35286506] SIGNAL: pid=12349 asn=0x0x-0x35c85c5
+2026-08-30 13:16:56.559 I  HerdrMacOS[12349:2dbee9a] [com.apple.appleevents:main] aeGenerateFakeFirstOAPPEventIfNecessary()
+2026-08-30 13:16:56.559 I  HerdrMacOS[12349:2dbee9a] [com.apple.appleevents:main] aeGenerateFakeFirstOAPPEventIfNecessary(), needToCreateFakeOAPPEventIfFirstEvent == true
+2026-08-30 13:16:56.559 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] Removing cached information for app [ 0x0-0x35c85c5]  "hide", as its seed is different from that in shared memory ( 530 vs 532)
+2026-08-30 13:16:56.560 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('DefaultAsciiKeyboardLayoutPasteboard' (<CFUUID 0x600000c38b60> 3B854FEB-BB9F-4FB6-9001-A0518D0870C4) gen: -1 item: 1264739405 flavor: 'DefaultAsciiKeyboardLayoutFlavor')
+2026-08-30 13:16:56.560 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:cache] Rebuilding cache for 'DefaultAsciiKeyboardLayoutPasteboard' (<CFUUID 0x600000c38b60> 3B854FEB-BB9F-4FB6-9001-A0518D0870C4)
+2026-08-30 13:16:56.560 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: -8 generation: 0 null data flags: 0
+2026-08-30 13:16:56.560 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From System CFPrefsD
+2026-08-30 13:16:56.561 A  HerdrMacOS[12349:2dbee9a] (libsystem_info.dylib) Membership API: translate identifier
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063) gen: -1 item: 1 flavor: '-32766 1768845414')
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:cache] Rebuilding cache for 'AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063)
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 6 data (310 bytes) flags: 0
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063) gen: -1 item: 1 flavor: '-32765 1802264953')
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 6 data (306 bytes) flags: 0
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063) gen: -1 item: 1 flavor: '-32764 1802264953')
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 6 data (281 bytes) flags: 0
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063) gen: -1 item: 1 flavor: '-32763 1802264953')
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.562 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 6 data (322 bytes) flags: 0
+2026-08-30 13:16:56.563 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063) gen: -1 item: 1 flavor: '-32765 1768845414')
+2026-08-30 13:16:56.563 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.563 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 6 data (303 bytes) flags: 0
+2026-08-30 13:16:56.563 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleIntlFileCacheModificationDatePasteboard' (<CFUUID 0x600000c38c40> E6EBBE26-59D8-47CC-9D8A-F46CD8681063) gen: -1 item: 1 flavor: '-32763 1768845414')
+2026-08-30 13:16:56.563 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.563 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 6 data (319 bytes) flags: 0
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: -1 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor')
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:cache] Rebuilding cache for 'AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869)
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 8227 data (255 bytes) flags: 0
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('DefaultAsciiKeyboardLayoutPasteboard' (<CFUUID 0x600000c38b60> 3B854FEB-BB9F-4FB6-9001-A0518D0870C4) gen: -1 item: 1264739405 flavor: 'DefaultAsciiKeyboardLayoutFlavor')
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: -8 generation: 0 null data flags: 0
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.showhide:pr-59900543] SHOWHIDE: SHOW id=1256 0x0-0x35C85C5, err=0 eventTime=101203189601916 windowID=0
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:coreservicesdaemon] findOrCreateCacheable():findOrCreateCacheable(), factoryName=3 cacheableName=<private> fCacheables.size()=0
+2026-08-30 13:16:56.567 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:coreservicesdaemon] findOrCreateCacheable():findOrCreateCacheable(), result = 0x600001934400 (should be non-NULL)
+2026-08-30 13:16:56.567 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:AutomaticTermination] void _NSDisableAutomaticTerminationAndLog(NSString *) Restoring windows
+2026-08-30 13:16:56.568 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x600003358c30] activating connection: mach=true listener=false peer=false name=com.apple.window_proxies
+2026-08-30 13:16:56.568 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x600003358c30] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-08-30 13:16:56.569 I  HerdrMacOS[12349:2dbee9a] [com.apple.CoreAnalytics:client] Dropping "com.apple.appkit.app_config" as it isn't used in any transform (not in the config or budgeted?)
+2026-08-30 13:16:56.569 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:AutomaticTermination] void _NSEnableAutomaticTerminationAndLog(NSString *) Restoring windows
+2026-08-30 13:16:56.569 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=application.did_finish.begin detail= duration_ms=-
+2026-08-30 13:16:56.569 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 532 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=532, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.569 I  HerdrMacOS[12349:2dbee9a] [com.apple.hiservices:processmgr] TransformProcessType(0x0,0x2 => 1 wasFront=1 pickNew=0)
+2026-08-30 13:16:56.573 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x600003059f00] activating connection: mach=true listener=false peer=false name=com.apple.fonts
+2026-08-30 13:16:56.575 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Appearance] NSApp cache appearance:
+-NSRequiresAquaSystemAppearance: 0
+-appearance: (null)
+-effectiveAppearance: <NSCompositeAppearance: 0x600002264280
+ (
+    "<NSDarkAquaAppearance: 0x600002264200>",
+    "<NSSystemAppearance: 0x600002261e00>"
+)>
+2026-08-30 13:16:56.580 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f2189f0] activating connection: mach=true listener=false peer=false name=com.apple.windowmanager.server
+2026-08-30 13:16:56.583 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From User CFPrefsD
+2026-08-30 13:16:56.583 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From User CFPrefsD
+2026-08-30 13:16:56.588 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> ed8b9dac) for window 1f4f
+2026-08-30 13:16:56.590 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:connection] [0x600003358c30] activating connection: mach=true listener=false peer=false name=com.apple.dock.fullscreen
+2026-08-30 13:16:56.590 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From User CFPrefsD
+2026-08-30 13:16:56.614 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Loading Preferences From User CFPrefsD
+2026-08-30 13:16:56.621 I  HerdrMacOS[12349:2dbee9a] [com.apple.CoreAnalytics:client] Dropping "com.apple.appkit.app_config" as it isn't used in any transform (not in the config or budgeted?)
+2026-08-30 13:16:56.633 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 532 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=532, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.633 I  HerdrMacOS[12349:2dbee9a] [com.apple.hiservices:processmgr] TransformProcessType(0x0,0x2 => 1 wasFront=1 pickNew=0)
+2026-08-30 13:16:56.636 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] order window: 1f4f op: 1 relative: 0 related: 0
+2026-08-30 13:16:56.637 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:AutomaticTermination] void _NSEnableAutomaticTerminationAndLog(NSString *) No windows open yet
+2026-08-30 13:16:56.637 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Intelligence] starting collection observation
+2026-08-30 13:16:56.637 Df HerdrMacOS[12349:2dbef1b] [com.apple.UIIntelligenceSupport:xpc] establishing connection to agent
+2026-08-30 13:16:56.637 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:session] [0x600002f6e490] Session created.
+2026-08-30 13:16:56.637 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:session] [0x600002f6e490] Session created from connection [0x60000336c1e0]
+2026-08-30 13:16:56.637 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:connection] [0x60000336c1e0] activating connection: mach=true listener=false peer=false name=com.apple.uiintelligencesupport.agent
+2026-08-30 13:16:56.637 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:session] [0x600002f6e490] Session activated
+2026-08-30 13:16:56.637 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=main_window.visible detail=source_launch_visible_true_windows_1 duration_ms=-
+2026-08-30 13:16:56.639 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> 9f0ed451) for window 1f50
+2026-08-30 13:16:56.641 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] order window: 1f50 op: 1 relative: 0 related: 0
+2026-08-30 13:16:56.641 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] order window: 1f50 op: 1 relative: 0 related: 0
+2026-08-30 13:16:56.641 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> 453c9bd3) for window 1f51
+2026-08-30 13:16:56.644 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=application.did_finish.ready detail= duration_ms=74
+2026-08-30 13:16:56.644 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 532 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=532, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.645 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 532 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=532, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.686 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] order window: 1f50 op: 1 relative: 0 related: 0
+2026-08-30 13:16:56.686 A  HerdrMacOS[12349:2dbee9a] (TCC) TCCAccessRequest() IPC
+2026-08-30 13:16:56.686 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x60000336c3c0] activating connection: mach=true listener=false peer=false name=com.apple.tccd.system
+2026-08-30 13:16:56.686 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] SEND: 0/7 synchronous to com.apple.tccd.system: request: msgID=12349.2, function=TCCAccessRequest, service=kTCCServiceAccessibility, target_token={pid:10724, auid:501, euid:501},
+2026-08-30 13:16:56.691 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] RECV: synchronous reply <dictionary: 0x6000033680f0> { count = 5, transaction: 0, voucher = 0x0, contents =
+	"prompt_type" => <uint64: 0xab479d60a28661af>: 1
+	"auth_value" => <uint64: 0xab479d60a28661b7>: 2
+	"result" => <bool: 0x1f7c612c0>: true
+	"auth_version" => <uint64: 0xab479d60a28661af>: 1
+	"auth_reason" => <uint64: 0xab479d60a2866187>: 4
+}
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x60000336c3c0] invalidated after the last release of the connection object
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:AutomaticTermination] void _NSDisableAutomaticTerminationAndLog(NSString *) NSAccessibility Request Received
+2026-08-30 13:16:56.691 I  HerdrMacOS[12349:2dbee9a] [com.apple.showhide:pr-59900543] SHOWHIDE: CONFIRM, id=1256, err=0
+2026-08-30 13:16:56.691 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=3 rest=true editor=false terminal_sequence=2 duration_ms=-
+2026-08-30 13:16:56.691 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.error detail=pane.attach_failed duration_ms=-
+2026-08-30 13:16:56.691 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.projection detail=focused_workspace_id=nil focused_checkout_id=workspace:487095a4dbe5f2af:checkout:416e5fef85a69707 checkout_workspace_id=nil layout_workspace_id=w3Z layout_tab_id=w3Z:t1 layout_pane_ids=w3Z:p1 terminal_pane_id=w3Z:p1 layout_belongs=false duration_ms=-
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbee9a] [com.apple.runningboard:connection] Initializing connection
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbee9a] [com.apple.runningboard:process] Removing all cached process handles
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbef54] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbef54] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
+2026-08-30 13:16:56.691 Df HerdrMacOS[12349:2dbef54] [com.apple.xpc:connection] [0x60000336c3c0] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-30 13:16:56.691 I  HerdrMacOS[12349:2dbee9a] [com.apple.runningboard:assertion] Acquiring assertion: <RBSAssertionDescriptor| "AppNap adapter assertion" ID:(null) target:12349>
+2026-08-30 13:16:56.692 A  HerdrMacOS[12349:2dbef14] (RunningBoardServices) didChangeInheritances
+2026-08-30 13:16:56.692 Df HerdrMacOS[12349:2dbef54] [com.apple.runningboard:connection] Handshake succeeded
+2026-08-30 13:16:56.692 Df HerdrMacOS[12349:2dbef54] [com.apple.runningboard:connection] Identity resolved as app<application.me.grab.hide.267091070.267091423(501)>
+2026-08-30 13:16:56.693 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 532 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=532, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.693 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x60000336c780] activating connection: mach=false listener=false peer=false name=com.apple.ViewBridgeAuxiliary
+2026-08-30 13:16:56.695 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x13d646260] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-30 13:16:56.695 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x13d6506f0] activating connection: mach=false listener=true peer=false name=(anonymous)
+2026-08-30 13:16:56.695 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x13d6506f0] Channel could not return listener port.
+2026-08-30 13:16:56.695 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x60000336c780] invalidated after the last release of the connection object
+2026-08-30 13:16:56.696 A  HerdrMacOS[12349:2dbee9a] (CoreFoundation) Updating Key-Value Observers Of Preferences
+2026-08-30 13:16:56.696 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=main_window.observed detail=source_launch_visible_true_windows_3 duration_ms=-
+2026-08-30 13:16:56.696 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] information in shared memory for 0x0-0x35c85c5 with seed 532 was still valid, so using cached info { "ApplicationType"="Foreground", , "BundleIdentifierLowerCase"="me.grab.hide", , "CFBundleDevelopmentRegion"="en", , "CFBundleDisplayName"="hide", , "CFBundleExecutable"="HerdrMacOS", , "CFBundleExecutablePath"="./dist/hide.app/Contents/MacOS/HerdrMacOS", , "CFBundleExecutablePathDeviceID"=16777233, , "CFBundleExecutablePathINode"=267091423, , "CFBundleIconFile"="hide.icns", , "CFBundleIdentifier"="me.grab.hide", , "CFBundleInfoDictionaryVersion"="6.0", , "CFBundleName"="hide", , "CFBundleNameLowerCase"="hide", , "CFBundleNumericVersion"=16809984, , "CFBundlePackageType"="APPL", , "CFBundleShortVersionString"="0.1.0", , "CFBundleSignature"="????", , "CFBundleURLTypes"=( { "CFBundleTypeRole"="Viewer", , "CFBundleURLName"="com.hoyeon.herdr-ide.pet", , "CFBundleURLSchemes"=( "herdr-ide") }), , "CFBundleVersion"="1", , "CanBecomeFrontmost"=true, , "ChangeCount"=532, , "Flavor"=3, , "Hidden"=false, , "LSASN"=ASN:0x0-0x35c85c5:, , <…>
+2026-08-30 13:16:56.696 I  HerdrMacOS[12349:2dbee9a] [com.apple.hiservices:processmgr] TransformProcessType(0x0,0x2 => 1 wasFront=1 pickNew=0)
+2026-08-30 13:16:56.701 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] order window: 1f4f op: 1 relative: 0 related: 0
+2026-08-30 13:16:56.701 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=main_window.pre_runtime detail=visible_true_windows_3 duration_ms=-
+2026-08-30 13:16:56.701 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=runtime_initialization.begin detail= duration_ms=-
+2026-08-30 13:16:56.707 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> 79233675) for window 1f55
+2026-08-30 13:16:56.707 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> 8c7a8f27) for window 1f54
+2026-08-30 13:16:56.707 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> 4e1a4f9e) for window 1f53
+2026-08-30 13:16:56.707 I  HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:Window] context (0 -> a8311349) for window 1f52
+2026-08-30 13:16:56.725 A  HerdrMacOS[12349:2dbef14] (RunningBoardServices) didChangeInheritances
+2026-08-30 13:16:56.753 I  HerdrMacOS[12349:2dbef54] [me.grab.hide:launch] event=login_shell_path.ready detail=available duration_ms=-
+2026-08-30 13:16:56.827 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=runtime_initialization.resolved detail=selected_live-socket_v0.8.2 duration_ms=126
+2026-08-30 13:16:56.828 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=2 rest=true editor=true terminal_sequence=0 duration_ms=-
+2026-08-30 13:16:56.828 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.projection detail=focused_workspace_id=nil focused_checkout_id=workspace:487095a4dbe5f2af:checkout:416e5fef85a69707 checkout_workspace_id=nil layout_workspace_id=nil layout_tab_id=nil layout_pane_ids=nil terminal_pane_id=nil layout_belongs=false duration_ms=-
+2026-08-30 13:16:56.828 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core_bridge.replace.ready detail=runtime_live-socket duration_ms=-
+2026-08-30 13:16:56.828 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=runtime_initialization.server_not_needed detail= duration_ms=-
+2026-08-30 13:16:56.833 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=3 rest=true editor=false terminal_sequence=0 duration_ms=-
+2026-08-30 13:16:56.834 I  HerdrMacOS[12349:2dbee9a] [com.apple.HIToolbox:MBDisplays] <private>
+2026-08-30 13:16:56.834 I  HerdrMacOS[12349:2dbee9a] [com.apple.HIToolbox:MBDisplays] <private>
+2026-08-30 13:16:56.857 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=4 rest=true editor=false terminal_sequence=1 duration_ms=-
+2026-08-30 13:16:56.857 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.projection detail=focused_workspace_id=nil focused_checkout_id=workspace:487095a4dbe5f2af:checkout:416e5fef85a69707 checkout_workspace_id=nil layout_workspace_id=w3Z layout_tab_id=w3Z:t1 layout_pane_ids=w3Z:p1 terminal_pane_id=w3Z:p1 layout_belongs=false duration_ms=-
+2026-08-30 13:16:56.863 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=5 rest=true editor=false terminal_sequence=1 duration_ms=-
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValuesBulk SetGestaltValuesBulk( count=22 tuples=0x1954863f0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(alis 1C9) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(os   FE) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(addr 7) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(fs   3D332) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(fold 11) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(lram 7FFFF000) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(mmap 1) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(cfrg 1) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(thds 7) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(tmgr E) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(vers 7) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(cbon 160) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(cltn 1108000) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(cpnt 8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(rsrc 3) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(rmbg 11F) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(vm   11) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(srad 4170706C) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(sysa 14) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(copl 9) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(xlat 0) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(stdf 0) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(ram  0x1954140d8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(ramm 0x1954140d8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(cput 0x1954141c8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(cpuf 0x1954141f8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(bclk 0x195414228) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(bclm 0x195414228) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(pclk 0x1954142c8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(mclk 0x1954142c8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(a/ux 0x1954143e0) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(pgsz 0x1954143e8) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(csiz 0x195414428) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(sysv 0x1953ac098) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(sys1 0x1953ac098) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(sys2 0x1953ac098) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(sys3 0x1953ac098) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(cdfl 0x195414468) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(cdrm 0x1954146c4) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] _NewGestalt _NewGestalt(cpus 0x19541470c) => 0
+2026-08-30 13:16:56.932 I  HerdrMacOS[12349:2dbee9a] [com.apple.CarbonCore:gestalt] SetGestaltValue SetGestaltValue(swex 1) => 0
+2026-08-30 13:16:56.932 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033644b0] activating connection: mach=false listener=false peer=false name=com.apple.hiservices-xpcservice
+2026-08-30 13:16:56.933 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('ApplePerContextInputPasteboard' (<CFUUID 0x600000c38ce0> BBE0D876-14C5-459C-AD01-00DFC923269C) gen: -1 item: 1264739405 flavor: 'ApplePerContextInputFlavor')
+2026-08-30 13:16:56.933 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:cache] Rebuilding cache for 'ApplePerContextInputPasteboard' (<CFUUID 0x600000c38ce0> BBE0D876-14C5-459C-AD01-00DFC923269C)
+2026-08-30 13:16:56.933 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.933 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 1 data (182 bytes) flags: 0
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('DefaultAsciiKeyboardLayoutPasteboard' (<CFUUID 0x600000c38b60> 3B854FEB-BB9F-4FB6-9001-A0518D0870C4) gen: -1 item: 1264739405 flavor: 'DefaultAsciiKeyboardLayoutFlavor')
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: -8 generation: 0 null data flags: 0
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] BeginGeneration('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869))
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] result: 0 generation: 8228
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] SetData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: 8228 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor') local-gen: 8228
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] _SetData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: 8228 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor' data: 181 bytes flags: 0) local-gen: 8228
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] Successfully set data (new-entry)
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Flushing 1 pending entries for pboard 'AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) generation: 8228.
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] result: 0
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: -1 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor')
+2026-08-30 13:16:56.934 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (cache) - result: 0 generation: 8228 data (181 bytes) flags: 0
+2026-08-30 13:16:56.935 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleInputSourcesInUIOrderPasteboard' (<CFUUID 0x600000c3a360> CD8DD7E7-80F5-46B3-8E95-F6419452B84F) gen: -1 item: 1264739405 flavor: 'AppleInputSourcesInUIOrderFlavor')
+2026-08-30 13:16:56.935 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:cache] Rebuilding cache for 'AppleInputSourcesInUIOrderPasteboard' (<CFUUID 0x600000c3a360> CD8DD7E7-80F5-46B3-8E95-F6419452B84F)
+2026-08-30 13:16:56.935 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.935 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 1 data (613 bytes) flags: 0
+2026-08-30 13:16:56.935 Df HerdrMacOS[12349:2dbee9a] (HIToolbox) +[IMKClient subclass]: chose IMKClient_Modern
+2026-08-30 13:16:56.935 Df HerdrMacOS[12349:2dbee9a] (HIToolbox) +[IMKInputSession subclass]: chose IMKInputSession_Modern
+2026-08-30 13:16:56.939 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f2105e0] activating connection: mach=true listener=false peer=false name=com.apple.inputmethodkit.getxpcendpoint
+2026-08-30 13:16:56.940 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleKeyboardInputMethodsPasteboard' (<CFUUID 0x600000cc53c0> A469752A-32B7-489E-8256-842BDADC122E) gen: -1 item: 1264739405 flavor: 'AppleKeyboardInputMethodsFlavor')
+2026-08-30 13:16:56.940 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:cache] Rebuilding cache for 'AppleKeyboardInputMethodsPasteboard' (<CFUUID 0x600000cc53c0> A469752A-32B7-489E-8256-842BDADC122E)
+2026-08-30 13:16:56.940 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Will request data from daemon
+2026-08-30 13:16:56.940 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: 0 generation: 2917 data (420 bytes) flags: 0
+2026-08-30 13:16:56.944 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f377900] activating connection: mach=true listener=false peer=false name=com.apple.inputmethodkit.getxpcendpoint
+2026-08-30 13:16:56.944 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f26d550] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-30 13:16:56.946 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f640470] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-30 13:16:56.947 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('DefaultAsciiKeyboardLayoutPasteboard' (<CFUUID 0x600000c38b60> 3B854FEB-BB9F-4FB6-9001-A0518D0870C4) gen: -1 item: 1264739405 flavor: 'DefaultAsciiKeyboardLayoutFlavor')
+2026-08-30 13:16:56.947 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: -8 generation: 0 null data flags: 0
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('DefaultAsciiKeyboardLayoutPasteboard' (<CFUUID 0x600000c38b60> 3B854FEB-BB9F-4FB6-9001-A0518D0870C4) gen: -1 item: 1264739405 flavor: 'DefaultAsciiKeyboardLayoutFlavor')
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (not-in-cache) - result: -8 generation: 0 null data flags: 0
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] BeginGeneration('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869))
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] result: 0 generation: 8229
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] SetData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: 8229 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor') local-gen: 8229
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] _SetData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: 8229 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor' data: 255 bytes flags: 0) local-gen: 8229
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] Successfully set data (new-entry)
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:general] Flushing 1 pending entries for pboard 'AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) generation: 8229.
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] result: 0
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:entry] CopyData('AppleKeyboardLayoutOverridePasteboard' (<CFUUID 0x600000c45640> 0813E7FC-382F-455D-A2DD-5F4E1E725869) gen: -1 item: 1264739405 flavor: 'AppleKeyboardLayoutOverrideFlavor')
+2026-08-30 13:16:56.948 I  HerdrMacOS[12349:2dbee9a] [com.apple.CFPasteboard:exit] (cache) - result: 0 generation: 8229 data (255 bytes) flags: 0
+2026-08-30 13:16:57.500 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=6 rest=true editor=false terminal_sequence=7 duration_ms=-
+2026-08-30 13:16:57.500 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=herdr.status detail=connected duration_ms=-
+2026-08-30 13:16:57.500 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.error detail=pane.projection_unavailable duration_ms=-
+2026-08-30 13:16:57.500 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.projection detail=focused_workspace_id=workspace:487095a4dbe5f2af focused_checkout_id=workspace:487095a4dbe5f2af:checkout:416e5fef85a69707 checkout_workspace_id=workspace:487095a4dbe5f2af layout_workspace_id=nil layout_tab_id=nil layout_pane_ids=nil terminal_pane_id=w3Z:p1 layout_belongs=false duration_ms=-
+2026-08-30 13:16:57.597 Df HerdrMacOS[12349:2dbef14] (libobjc.A.dylib) Large Autorelease Pool
+2026-08-30 13:17:01.590 Df HerdrMacOS[12349:2dbee9a] [com.apple.AppKit:AutomaticTermination] void _updateToReflectAutomaticTerminationState(void) Setting _kLSApplicationWouldBeTerminatedByTALKey=0
+2026-08-30 13:17:06.609 Df HerdrMacOS[12349:2dbef1b] [com.apple.launchservices:default] LSExceptions shared instance invalidated for timeout.
+2026-08-30 13:17:06.764 Df HerdrMacOS[12349:2dbef0e] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
+2026-08-30 13:17:18.328 I  HerdrMacOS[12349:2dbee9a] [com.apple.launchservices:cas] Removing cached information for app [ 0x0-0x35c85c5]  "hide", as its seed is different from that in shared memory ( 532 vs 535)
+2026-08-30 13:17:24.080 A  HerdrMacOS[12349:2dbee9a] (TCC) TCCAccessRequest() IPC
+2026-08-30 13:17:24.080 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033780f0] activating connection: mach=true listener=false peer=false name=com.apple.tccd.system
+2026-08-30 13:17:24.080 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] SEND: 0/7 synchronous to com.apple.tccd.system: request: msgID=12349.3, function=TCCAccessRequest, service=kTCCServiceAccessibility, target_token={pid:21587, auid:501, euid:501},
+2026-08-30 13:17:24.095 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] RECV: synchronous reply <dictionary: 0x60000337c0f0> { count = 5, transaction: 0, voucher = 0x0, contents =
+	"prompt_type" => <uint64: 0xab479d60a28661af>: 1
+	"auth_value" => <uint64: 0xab479d60a28661b7>: 2
+	"result" => <bool: 0x1f7c612c0>: true
+	"auth_version" => <uint64: 0xab479d60a28661af>: 1
+	"auth_reason" => <uint64: 0xab479d60a2866187>: 4
+}
+2026-08-30 13:17:24.095 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033780f0] invalidated after the last release of the connection object
+2026-08-30 13:17:25.123 Df HerdrMacOS[12349:2dbef0e] [com.apple.xpc:connection] [0x600003360780] activating connection: mach=false listener=false peer=false name=com.apple.appkit.xpc.ThemeWidgetControlViewService
+2026-08-30 13:17:25.179 Df HerdrMacOS[12349:2dbef1b] [com.apple.xpc:connection] [0x600003360780] invalidated after the last release of the connection object
+2026-08-30 13:17:25.179 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x14f37d460] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-30 13:17:25.179 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033645a0] activating connection: mach=false listener=false peer=false name=com.apple.ViewBridgeAuxiliary
+2026-08-30 13:17:25.179 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x13d640a30] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-30 13:17:25.179 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033645a0] invalidated after the last release of the connection object
+2026-08-30 13:17:25.416 A  HerdrMacOS[12349:2dbee9a] (TCC) TCCAccessRequest() IPC
+2026-08-30 13:17:25.416 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033703c0] activating connection: mach=true listener=false peer=false name=com.apple.tccd.system
+2026-08-30 13:17:25.416 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] SEND: 0/7 synchronous to com.apple.tccd.system: request: msgID=12349.4, function=TCCAccessRequest, service=kTCCServiceAccessibility, target_token={pid:21848, auid:501, euid:501},
+2026-08-30 13:17:25.429 I  HerdrMacOS[12349:2dbee9a] [com.apple.TCC:access] RECV: synchronous reply <dictionary: 0x60000335b840> { count = 5, transaction: 0, voucher = 0x0, contents =
+	"prompt_type" => <uint64: 0xab479d60a28661af>: 1
+	"auth_value" => <uint64: 0xab479d60a28661b7>: 2
+	"result" => <bool: 0x1f7c612c0>: true
+	"auth_version" => <uint64: 0xab479d60a28661af>: 1
+	"auth_reason" => <uint64: 0xab479d60a2866187>: 4
+}
+2026-08-30 13:17:25.429 Df HerdrMacOS[12349:2dbee9a] [com.apple.xpc:connection] [0x6000033703c0] invalidated after the last release of the connection object
+2026-08-30 13:17:56.122 I  HerdrMacOS[12349:2dbee9a] [me.grab.hide:launch] event=core.snapshot.refresh detail=revision=7 rest=true editor=false terminal_sequence=7 duration_ms=-

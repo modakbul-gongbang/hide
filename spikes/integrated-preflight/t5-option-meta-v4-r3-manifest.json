@@ -35,7 +35,7 @@
       "--t1-browser-url",
       "http://127.0.0.1:45773/",
       "--t1-browser-profile",
-      "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/evidence/t5-option-meta-v4-r3-physical/browser-profile",
+      "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/evidence/t5-option-meta-v4-r3-physical/browser-profile",
       "--t1-remote-debugging-port",
       "45774",
       "--t1-preflight-events",

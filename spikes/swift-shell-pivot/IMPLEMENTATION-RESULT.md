@@ -337,7 +337,7 @@ Under that explicit scope resolution, T3 and AC1-AC3 are satisfied, V9 passes fo
 - The exact fixture-owned `/usr/bin/tail -f /dev/null` PID 58850 was terminated externally after foreground and cwd validation, without sending Ctrl-C or bytes to the pane, leaving zsh PID 58253 in the foreground.
 - The zsh-ready pane starts with 172 visible bytes, SHA-256 `d42f5c54b19b152db3dd457e4e11644121a77811cb5bc0d77883e7abaa54c396`; prelaunch and post-capture values are identical and contain no probe or sentinel.
 - The human-accepted V9 app was PID `62007`, with one key, on-screen, frontmost window `2582` titled `Herdr IDE`; after the verdict was durably recorded, that exact app and attach child were terminated.
-- Exactly one child, PID `62025`, runs `/Users/hoyeonlee/.local/bin/herdr pane attach w3B:p1`.
+- Exactly one child, PID `62025`, runs `~/.local/bin/herdr pane attach w3B:p1`.
 - The terminal header and accessibility snapshot identify `w3B:p1` through `terminal-panel`.
 - `automated_input_count` is zero and this Implementor sent no probe, sentinel, synthetic key, input-source switch, click, or typed byte.
 - The core field `input_generation` is not exposed through the committed Swift model, AX tree, persisted state, or a read-only runtime endpoint, so this run records it as unobservable rather than inventing zero.

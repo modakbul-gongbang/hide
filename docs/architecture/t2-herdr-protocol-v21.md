@@ -3,7 +3,7 @@
 ## Result
 
 T2 changes the authoritative Herdr protocol from revision 20 to revision 21 without a compatibility shim.
-The implementation lives in `/Users/hoyeonlee/projects/herdr`, and the exact uncommitted source delta is preserved in `docs/verification/t2-herdr-protocol-v21.patch` for the implementation record.
+The implementation lives in `~/projects/herdr`, and the exact uncommitted source delta is preserved in `docs/verification/t2-herdr-protocol-v21.patch` for the implementation record.
 The Herdr source checkout remains uncommitted because this approved run is local-only.
 
 ## Contract
@@ -54,10 +54,10 @@ That integration pass covered protocol revision 21, typed pane payloads, snapsho
 The focused commands used the existing shared target with Zig 0.15.2:
 
 ```text
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::schema::tests
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::event_hub::tests
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::server::tests::subscriptions_
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --test api_ping
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::schema::tests
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::event_hub::tests
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::server::tests::subscriptions_
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --test api_ping
 ```
 
 ## Assumptions and deviations
