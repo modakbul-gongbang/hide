@@ -139,6 +139,10 @@ The previous exact dist artifacts and installed bundle were moved to unique `/tm
 
 The T8 and Spotlight details are in [t8-spotlight-install-20260830.md](evidence/hide-rebrand/t8-spotlight-install-20260830.md).
 
+The T9 source and fallback-glyph decision is in [t9-brand-guidelines-and-assets-20260830.md](evidence/hide-rebrand/t9-brand-guidelines-and-assets-20260830.md).
+
+The T10 automated regression matrix and fresh test results are in [t10-regression-matrix-20260830.md](evidence/hide-rebrand/t10-regression-matrix-20260830.md).
+
 ## Spotlight verification
 
 The installed bundle is `/Applications/hide.app`.
@@ -162,5 +166,9 @@ No draft release was published.
 The final dark-design taste approval remains a human gate.
 
 The public push requires the user's explicit approval after the secret and personal-data scan result is attached.
+
+The scan-only result is in [pre-push-secret-pii-scan-20260830.md](evidence/hide-rebrand/pre-push-secret-pii-scan-20260830.md).
+
+It found no credential-shaped token or private-key value in the checked current tree or reachable history, but it did find tracked developer-local absolute paths that require review before public release.
 
 The draft release publish action remains a user-only step.
