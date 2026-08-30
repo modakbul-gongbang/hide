@@ -50,7 +50,7 @@ The current tree has 2 absolute home-path lines in the one synthetic Swift fixtu
 
 The current tree has 0 local account-name occurrences, 0 personal email occurrences, 0 credential-shaped values, and 0 high-confidence personal phone values.
 
-The 119 reachable commits contain 24,642 repeated absolute home-path lines across 129 historical paths and 29,630 repeated occurrences of the old local account name.
+The 122 reachable commits contain 24,648 repeated absolute home-path lines across 129 historical paths and 29,630 repeated occurrences of the old local account name.
 
 The historical counts are repeated snapshot matches, not additional current-tree files.
 

@@ -60,9 +60,9 @@ The current-tree result is therefore 0 exposed personal identity values and 0 ex
 
 ## Reachable-history boundary
 
-The reachable local history contains 117 commits.
+The final reachable local history contains 122 commits.
 
-The history rescan across the 119 reachable commits finds 24,642 repeated absolute home-path lines across 129 historical paths and 29,630 occurrences of the old local account name.
+The final history rescan across the 122 reachable commits finds 24,648 repeated absolute home-path lines across 129 historical paths and 29,630 occurrences of the old local account name.
 
 No personal email address or credential-shaped token was found in reachable history.
 
