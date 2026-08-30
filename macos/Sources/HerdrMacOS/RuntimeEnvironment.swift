@@ -38,7 +38,7 @@ enum HideStartupDiagnostic {
 /// No key, password, token, or passphrase is read, stored, or displayed.
 enum HideRuntimeEnvironment {
     static let bundledVersion = "0.8.2"
-    static let bundledSHA256 = "bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328"
+    static let bundledSHA256 = "a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
     private static let loginShellTimeout: TimeInterval = 2
     private static let resolvedLoginShellPath: String? = resolveLoginShellPath()
 
