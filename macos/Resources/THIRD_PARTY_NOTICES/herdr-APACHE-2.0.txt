@@ -12,4 +12,4 @@ https://www.apache.org/licenses/LICENSE-2.0
 
 The bundled macOS arm64 binary is verified at build time:
 Version: 0.8.2
-SHA-256: bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328
+SHA-256: a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574
