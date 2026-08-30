@@ -1,6 +1,6 @@
 Analysis of sampling HerdrMacOS (pid 69815) every 1 millisecond
 Process:         HerdrMacOS [69815]
-Path:            /Users/USER/*/hide.app/Contents/MacOS/HerdrMacOS
+Path:            ~/*/hide.app/Contents/MacOS/HerdrMacOS
 Load Address:    0x1043dc000
 Identifier:      me.grab.hide
 Version:         0.1.0 (1)
@@ -202,7 +202,7 @@ Sort by top of stack, same collapsed (when >= 5):
         __posix_spawn  (in libsystem_kernel.dylib)        45
 
 Binary Images:
-       0x1043dc000 -        0x10482bfff +me.grab.hide (0.1.0 - 1) <CCA4F73C-5154-39E0-A0AF-076E212CCD8E> /Users/*/hide.app/Contents/MacOS/HerdrMacOS
+       0x1043dc000 -        0x10482bfff +me.grab.hide (0.1.0 - 1) <CCA4F73C-5154-39E0-A0AF-076E212CCD8E> ~/*/hide.app/Contents/MacOS/HerdrMacOS
        0x110ebc000 -        0x110ec4057  libobjc-trampolines.dylib (928.3) <F1242604-DCB7-30A9-A19A-182991E6E645> /usr/lib/libobjc-trampolines.dylib
        0x1131e4000 -        0x113945fff  com.apple.AGXMetalG16X (322.10 - 322.10) <4E6E7300-C593-3C23-82C5-72F43D57CADC> /System/Library/Extensions/AGXMetalG16X.bundle/Contents/MacOS/AGXMetalG16X
        0x1918a4000 -        0x1918f5ca3  libobjc.A.dylib (928.3) <219C0324-7A4F-338E-A395-3D023B289A7F> /usr/lib/libobjc.A.dylib

@@ -1,6 +1,6 @@
 {
   "debug_logs" : [
-    "[2026-08-30T01:50:10.189Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T01:50:10.189Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T01:50:10.190Z] VERBOSE [Operation]: Starting operation {menubar=false, operation=see_command, mode=auto, hasAnalyzePrompt=false, app=none, annotate=false}",
     "[2026-08-30T01:50:10.190Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T01:50:10.201Z] VERBOSE [Capture]: Starting capture and detection phase",
@@ -1643,8 +1643,8 @@
         "role" : "other",
         "is_actionable" : false,
         "id" : "elem_91",
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand"
+        "value" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand"
       },
       {
         "label" : "Preparing terminal",
@@ -1861,7 +1861,7 @@
         "is_actionable" : false
       }
     ],
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788054610198-4499\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788054610198-4499\/snapshot.json",
     "application_name" : "hide",
     "snapshot_id" : "1788054610198-4499",
     "screenshot_raw" : "",

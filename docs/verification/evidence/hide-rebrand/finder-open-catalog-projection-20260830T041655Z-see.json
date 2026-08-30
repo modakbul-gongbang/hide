@@ -2085,8 +2085,8 @@
         "label" : "split group"
       },
       {
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "bounds" : {
           "width" : 323,
           "x" : 550,
@@ -2317,10 +2317,10 @@
       }
     ],
     "is_dialog" : false,
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788063444718-7411\/snapshot.json"
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788063444718-7411\/snapshot.json"
   },
   "debug_logs" : [
-    "[2026-08-30T04:17:24.710Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T04:17:24.710Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T04:17:24.710Z] VERBOSE [Operation]: Starting operation {annotate=false, menubar=false, mode=auto, operation=see_command, hasAnalyzePrompt=false, app=hide}",
     "[2026-08-30T04:17:24.710Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T04:17:24.721Z] VERBOSE [Capture]: Starting capture and detection phase",

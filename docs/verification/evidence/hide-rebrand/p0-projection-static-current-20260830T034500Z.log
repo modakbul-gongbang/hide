@@ -1,4 +1,4 @@
-Diff in /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core/src/runtime.rs:564:
+Diff in ./herdr-core/src/runtime.rs:564:
                  continue;
              };
              let checkout_index = context_path.as_deref().and_then(|path| {
@@ -12,7 +12,7 @@ Diff in /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core/sr
 (B[m             });
              let Some(checkout) = workspace_snapshot
                  .checkouts
-Diff in /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core/src/runtime.rs:2984:
+Diff in ./herdr-core/src/runtime.rs:2984:
          }))
          .expect("temporary catalog anchor event");
          assert!(runtime.dispatch_json(&ui_state_anchor));
@@ -33,7 +33,7 @@ Diff in /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core/sr
 (B[m         assert_eq!(
              runtime.snapshot().navigator.focused_checkout_id.as_deref(),
              Some(checkout_id.as_str())
-Diff in /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core/src/runtime.rs:3042:
+Diff in ./herdr-core/src/runtime.rs:3042:
              })
              .expect("selected temporary checkout after the next poll");
          assert!(selected_checkout.tabs.iter().any(|tab| {

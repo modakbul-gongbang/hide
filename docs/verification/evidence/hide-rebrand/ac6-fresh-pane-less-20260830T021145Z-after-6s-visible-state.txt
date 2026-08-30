@@ -44,7 +44,7 @@ elem_7	other	prd/hide-rebrand  ·  prd/hide-rebrand	prd/hide-rebrand  ·  prd/hi
 elem_39	other	herdr-ide	herdr-ide	
 elem_48	other	herdr-ide-shell-ux	herdr-ide-shell-ux	
 elem_57	other	hide-rebrand	hide-rebrand	
-elem_109	other	/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand	/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand	hide-terminal-surface
+elem_109	other	.	.	hide-terminal-surface
 elem_111	other	Terminal is starting	Terminal is starting	hide-terminal-surface
 elem_112	other	Waiting for Herdr to attach the new pane to this checkout.	Waiting for Herdr to attach the new pane to this checkout.	hide-terminal-surface
 elem_122	other	Waiting for Herdr	Waiting for Herdr	hide-shell

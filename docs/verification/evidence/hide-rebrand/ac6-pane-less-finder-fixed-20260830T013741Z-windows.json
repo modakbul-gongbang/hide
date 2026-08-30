@@ -29,7 +29,7 @@
     }
   },
   "debug_logs" : [
-    "[2026-08-30T01:37:42.911Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon.sock (build 4.2.2 (4.2.2))"
+    "[2026-08-30T01:37:42.911Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon.sock (build 4.2.2 (4.2.2))"
   ],
   "success" : true
 }

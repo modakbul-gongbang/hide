@@ -1,6 +1,6 @@
 {
   "debug_logs" : [
-    "[2026-08-30T03:07:31.515Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T03:07:31.515Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T03:07:31.516Z] VERBOSE [Operation]: Starting operation {hasAnalyzePrompt=false, mode=auto, annotate=false, operation=see_command, app=hide, menubar=false}",
     "[2026-08-30T03:07:31.516Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T03:07:31.525Z] VERBOSE [Capture]: Starting capture and detection phase",
@@ -22,7 +22,7 @@
   "success" : true,
   "data" : {
     "screenshot_raw" : "",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788059251523-7063\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788059251523-7063\/snapshot.json",
     "capture_mode" : "window",
     "ui_elements" : [
       {
@@ -1900,9 +1900,9 @@
       },
       {
         "role" : "other",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "role_description" : "text",
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "ax_role" : "AXStaticText",
         "identifier" : "hide-terminal-surface",
         "bounds" : {

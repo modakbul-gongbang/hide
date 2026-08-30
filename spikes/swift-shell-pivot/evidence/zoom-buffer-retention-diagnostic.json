@@ -4,7 +4,7 @@
   "source_head": "b2670107dc152eaa67d448dce4d4681151170448",
   "assembled_binary_sha256": "f432c86b13f31a65f0bf700e7acc8dce75d55e051108ac7e2ebb51de1ef3ef48",
   "user_owned_w2y": {
-    "reference_screenshot": "/Users/hoyeonlee/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png",
+    "reference_screenshot": "~/.claude/image-cache/e98ecf21-4a48-4ae2-8f9c-85ba8963eb80/4.png",
     "scope": "Read-only zoom diagnosis after the fixture-retarget regression was in place",
     "post_retarget_mutation_count": 0,
     "observation": "After unzoom, the upper pane retained its buffer while both lower panes showed only recent fragments."

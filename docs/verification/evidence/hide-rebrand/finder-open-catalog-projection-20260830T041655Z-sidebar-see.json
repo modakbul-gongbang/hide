@@ -65,7 +65,7 @@
     "screenshot_annotated" : "",
     "screenshot_raw" : "",
     "capture_mode" : "window",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788063543149-1644\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788063543149-1644\/snapshot.json",
     "ui_elements" : [
       {
         "description" : "New Agent",
@@ -2042,8 +2042,8 @@
       },
       {
         "identifier" : "hide-terminal-surface",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "bounds" : {
           "width" : 323,
           "y" : 128,

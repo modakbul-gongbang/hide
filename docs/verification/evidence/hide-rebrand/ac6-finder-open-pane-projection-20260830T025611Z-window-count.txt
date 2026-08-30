@@ -1,5 +1,5 @@
 captured_utc=20260830T025611Z
 pid=49138
-bundle=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app
+bundle=./dist/hide.app
 main_window_count=2
 pet_window_count=separate_if_present

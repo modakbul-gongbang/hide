@@ -6,7 +6,7 @@
     "screenshot_raw" : "",
     "screenshot_annotated" : "",
     "window_title" : "hide",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788051301782-7145\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788051301782-7145\/snapshot.json",
     "observation" : {
       "target" : {
         "source" : "window-id",
@@ -1840,8 +1840,8 @@
       },
       {
         "is_enabled" : true,
-        "label" : "\/Users\/hoyeonlee\/projects\/modakbul",
-        "value" : "\/Users\/hoyeonlee\/projects\/modakbul",
+        "label" : "\/Users\/local-user\/projects\/modakbul",
+        "value" : "\/Users\/local-user\/projects\/modakbul",
         "role_description" : "text",
         "identifier" : "hide-terminal-surface",
         "id" : "elem_95",
@@ -2166,7 +2166,7 @@
     "pid" : 19258
   },
   "debug_logs" : [
-    "[2026-08-30T00:55:01.775Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T00:55:01.775Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T00:55:01.775Z] VERBOSE [Operation]: Starting operation {mode=auto, annotate=false, menubar=false, app=none, hasAnalyzePrompt=false, operation=see_command}",
     "[2026-08-30T00:55:01.775Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T00:55:01.784Z] VERBOSE [Capture]: Starting capture and detection phase",

@@ -1,4 +1,4 @@
-   Compiling herdr-core v0.1.0 (/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core)
+   Compiling herdr-core v0.1.0 (./herdr-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.92s
      Running unittests src/lib.rs (target/debug/deps/herdr_core-ff74fa361901db68)
 

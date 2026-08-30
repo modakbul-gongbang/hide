@@ -2,13 +2,13 @@
   "schema": "herdr.t1-preflight.v8-manual.v1",
   "run_id": "herdr-v8-packaged-manual-v1",
   "bundle": {
-    "app": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app",
-    "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+    "app": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app",
+    "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
     "identifier": "dev.herdr.integrated-preflight",
     "tree_sha256": "2ba524da76fe7eddeac2621587e3ec48cc1eb28f805407584d737f25aff5aa7b"
   },
   "manifest": {
-    "path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/runtime-manifest-v8-packaged-manual-v1.json",
+    "path": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/runtime-manifest-v8-packaged-manual-v1.json",
     "sha256": "6fc19c7edb755ad759df5e2b366259ad9afd787b6cfe350f1f9020e702b76624"
   },
   "budgets": {
@@ -31,7 +31,7 @@
       "mode": "browser-closed",
       "pid": 32964,
       "command": [
-        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+        "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
         "--t1-preflight-phase",
         "warm_closed",
         "--t1-browser-mode",
@@ -39,16 +39,16 @@
         "--t1-browser-url",
         "http://127.0.0.1:45831/",
         "--t1-browser-profile",
-        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/browser-profile",
+        "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/browser-profile",
         "--t1-remote-debugging-port",
         "45832",
         "--t1-preflight-events",
-        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/warm_closed.events.jsonl",
+        "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/warm_closed.events.jsonl",
         "--t1-preflight-run-id",
         "herdr-v8-packaged-manual-v1"
       ],
-      "events_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/warm_closed.events.jsonl",
-      "log_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/warm_closed.log",
+      "events_path": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/warm_closed.events.jsonl",
+      "log_path": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/warm_closed.log",
       "status": "MEASURED",
       "usable": {
         "adapter": "Apple M4 Pro (Metal)",
@@ -75,7 +75,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 29.0,
               "rss_kb": 66864
             },
@@ -96,7 +96,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 9.5,
               "rss_kb": 66880
             },
@@ -117,7 +117,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 2.5,
               "rss_kb": 66880
             },
@@ -138,7 +138,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 0.6,
               "rss_kb": 66880
             },
@@ -159,7 +159,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 0.3,
               "rss_kb": 66880
             },
@@ -180,7 +180,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 0.3,
               "rss_kb": 66928
             },
@@ -201,7 +201,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 1.3,
               "rss_kb": 66944
             },
@@ -222,7 +222,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 0.4,
               "rss_kb": 66960
             },
@@ -243,7 +243,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 0.9,
               "rss_kb": 66960
             },
@@ -264,7 +264,7 @@
             {
               "pid": 32964,
               "ppid": 32950,
-              "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+              "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
               "cpu_percent": 0.5,
               "rss_kb": 66960
             },
@@ -285,7 +285,7 @@
         "avg_cpu_percent": 4.709999999999999,
         "browser_helper_observed": false,
         "observed_executables": [
-          "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+          "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
           "/bin/zsh"
         ]
       },
@@ -460,7 +460,7 @@
           {
             "pid": 32964,
             "signal": "SIGTERM",
-            "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+            "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
           }
         ],
         "exit_code": -15,
@@ -472,7 +472,7 @@
       "mode": "browser-included",
       "pid": 33044,
       "command": [
-        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
+        "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight",
         "--t1-preflight-phase",
         "browser_included",
         "--t1-browser-mode",
@@ -480,16 +480,16 @@
         "--t1-browser-url",
         "http://127.0.0.1:45831/",
         "--t1-browser-profile",
-        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/browser-profile",
+        "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/browser-profile",
         "--t1-remote-debugging-port",
         "45832",
         "--t1-preflight-events",
-        "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/browser_included.events.jsonl",
+        "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/browser_included.events.jsonl",
         "--t1-preflight-run-id",
         "herdr-v8-packaged-manual-v1"
       ],
-      "events_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/browser_included.events.jsonl",
-      "log_path": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/browser_included.log",
+      "events_path": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/browser_included.events.jsonl",
+      "log_path": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/evidence/v8-packaged-manual-v1/runtime/browser_included.log",
       "status": "BLOCKED",
       "error": {
         "event": "t1_preflight.failed",
@@ -27633,7 +27633,7 @@
           {
             "pid": 33044,
             "signal": "SIGTERM",
-            "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
+            "executable": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb-integrated-preflight-target-cache/bundle/herdr-integrated-preflight.app/Contents/MacOS/herdr-integrated-preflight"
           }
         ],
         "exit_code": 0,
@@ -27644,7 +27644,7 @@
   "fixture_server": {
     "pid": 32963,
     "port": 45831,
-    "root": "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/fixture"
+    "root": "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/fixture"
   },
   "fixture_server_cleanup": {
     "pid": 32963,

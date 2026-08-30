@@ -1,4 +1,4 @@
-   Compiling herdr-core v0.1.0 (/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core)
+   Compiling herdr-core v0.1.0 (./herdr-core)
     Finished `release` profile [optimized] target(s) in 23.57s
 Building for production...
 [0/2] Write swift-version--1AB21518FC5DEDBE.txt
@@ -40,8 +40,8 @@ Build complete! (15.07s)
 /var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app: replacing existing signature
 /var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app: valid on disk
 /var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T//hide-bundle.EHGe8h/hide.app: satisfies its Designated Requirement
-bundle=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app
-archive=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide-v0.1.0-macos-arm64.zip
+bundle=./dist/hide.app
+archive=./dist/hide-v0.1.0-macos-arm64.zip
 herdr_version=0.8.2
 herdr_sha256=bba6c79874689d5c8ec45811518ecf5cef9b521e61b081a9f56ddd406a482328
 archive_sha256=cc62fd41bf75e4fc86fd1b9fb42dfa4d109f5094ffa19c752aa04daaab763ca4

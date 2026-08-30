@@ -1,7 +1,7 @@
 {
   "success" : true,
   "debug_logs" : [
-    "[2026-08-30T01:43:08.251Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T01:43:08.251Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T01:43:08.251Z] VERBOSE [Operation]: Starting operation {app=none, operation=see_command, mode=auto, annotate=false, hasAnalyzePrompt=false, menubar=false}",
     "[2026-08-30T01:43:08.251Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T01:43:08.261Z] VERBOSE [Capture]: Starting capture and detection phase",
@@ -1973,10 +1973,10 @@
         "is_enabled" : true,
         "id" : "elem_93",
         "is_actionable" : false,
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide",
         "role_description" : "text",
         "identifier" : "hide-terminal-surface",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide"
+        "label" : "\/Users\/local-user\/projects\/herdr-ide"
       },
       {
         "is_enabled" : true,
@@ -2297,6 +2297,6 @@
     "application_name" : "hide",
     "snapshot_id" : "1788054188259-5382",
     "interactable_count" : 76,
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788054188259-5382\/snapshot.json"
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788054188259-5382\/snapshot.json"
   }
 }

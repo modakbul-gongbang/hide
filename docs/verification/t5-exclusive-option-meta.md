@@ -31,12 +31,12 @@ The Rust app also emits `app.lifecycle.activate`, `app.lifecycle.resign`, `windo
 The exact command is:
 
 ```sh
-cd /Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/tools/t1-preflight
+cd ~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/tools/t1-preflight
 HERDR_T5_EXCLUSIVE_HANDS_OFF=1 \
 LC_ALL=en_US.UTF-8 LC_CTYPE=en_US.UTF-8 LANG=en_US.UTF-8 \
 ./t1-preflight --mode run \
-  --app "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app" \
-  --manifest "/Users/hoyeonlee/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/t5-option-meta-v4-manifest.json"
+  --app "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/target/bundle/herdr-integrated-preflight.app" \
+  --manifest "~/projects/herdr-ide.worktrees/herdr-ide-rust-native-800mb/spikes/integrated-preflight/t5-option-meta-v4-manifest.json"
 ```
 
 The declared output is `spikes/integrated-preflight/target/evidence/t5-option-meta-v4-physical`.

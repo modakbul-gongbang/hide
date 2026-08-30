@@ -2067,7 +2067,7 @@
       {
         "is_actionable" : false,
         "ax_role" : "AXStaticText",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide",
         "bounds" : {
           "height" : 11,
           "x" : 454,
@@ -2078,7 +2078,7 @@
         "id" : "elem_110",
         "identifier" : "hide-terminal-surface",
         "role_description" : "text",
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide",
         "role" : "other"
       },
       {
@@ -2437,7 +2437,7 @@
     },
     "capture_mode" : "window",
     "execution_time" : 0.5114669799804688,
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788055910124-7911\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788055910124-7911\/snapshot.json",
     "window_title" : "hide",
     "screenshot_annotated" : ""
   },
@@ -2448,7 +2448,7 @@
     "process_start_identity" : 1788055859206192
   },
   "debug_logs" : [
-    "[2026-08-30T02:11:50.116Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T02:11:50.116Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T02:11:50.116Z] VERBOSE [Operation]: Starting operation {mode=auto, annotate=false, menubar=false, hasAnalyzePrompt=false, app=hide, operation=see_command}",
     "[2026-08-30T02:11:50.116Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T02:11:50.127Z] VERBOSE [Capture]: Starting capture and detection phase",

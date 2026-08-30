@@ -32,7 +32,7 @@ tar: Failed to set default locale
       "baselineDigest": "35dfdbbb8343d7be484ffb1d1518f29d23ed28535e3e75976143976b6f8c7f94",
       "head": "ff19b4daf99a12f1ce9903cb1edc987d995a8f24"
     },
-    "workingRoot": "/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand",
+    "workingRoot": ".",
     "worktree": null,
     "reviewProfile": "high-risk",
     "counts": {

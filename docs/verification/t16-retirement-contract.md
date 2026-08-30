@@ -16,7 +16,7 @@ No broad process, cache, worktree, app, Pet, or user resource cleanup is perform
 
 ```sh
 ./tools/t16-retirement/t16-retirement \
-  --project-root /Users/hoyeonlee/projects/herdr-ide \
-  --pet-root /Users/hoyeonlee/projects/herdr-pet
+  --project-root ~/projects/herdr-ide \
+  --pet-root ~/projects/herdr-pet
 PYTHONPATH=tools/t16-retirement python3 -m unittest discover -s tools/t16-retirement/tests -v
 ```

@@ -1,4 +1,4 @@
 timestamp_utc=20260830T033403Z
-bundle=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app
+bundle=./dist/hide.app
 preflight_exact_dist_instances=0
 preflight_verdict=zero

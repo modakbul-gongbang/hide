@@ -2,11 +2,11 @@
 
 Status: The baseline P0 Finder/open zero-window regression is PASS on the fresh bundle, while the later catalog-projection correction still requires a fresh native proof.
 
-The final dark-design taste review is still a human gate and is not approved here.
+The final dark-design taste review is approved by the user and recorded in [ac15-dark-taste-approval-20260830.md](evidence/hide-rebrand/ac15-dark-taste-approval-20260830.md).
 
 ## Implementation tree and current HEAD
 
-- Worktree: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand`.
+- Worktree: `.`.
 - Branch: `prd/hide-rebrand`.
 - Main base: `0b6c80679ac1d122c025deddbd67a55c0cd29fbb`.
 - Current HEAD at this report update: `f626816` (`Expose workspace::normalized_for_comparison for runtime path matching`).
@@ -28,7 +28,7 @@ The final dark-design taste review is still a human gate and is not approved her
 
 Three exact Finder/open attempts remained alive with zero externally observed windows before the Workbench fix.
 
-- PID `82773`, `/usr/bin/open dist/hide.app`, `2026-08-29T23:04:50Z`, exact bundle path `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS`, Peekaboo zero, System Events zero, screenshot `docs/verification/evidence/hide-rebrand/finder-open-no-window-2026-08-29T230450Z.png` with SHA-256 `6e49dd979c31adba7b3ca2398f32c970461e0534577fd946262771473887dd86`.
+- PID `82773`, `/usr/bin/open dist/hide.app`, `2026-08-29T23:04:50Z`, exact bundle path `./dist/hide.app/Contents/MacOS/HerdrMacOS`, Peekaboo zero, System Events zero, screenshot `docs/verification/evidence/hide-rebrand/finder-open-no-window-2026-08-29T230450Z.png` with SHA-256 `6e49dd979c31adba7b3ca2398f32c970461e0534577fd946262771473887dd86`.
 - PID `39718`, `/usr/bin/open dist/hide.app`, `2026-08-29T23:17:02Z`, the same exact bundle path, Peekaboo zero, System Events zero, screenshot `docs/verification/evidence/hide-rebrand/finder-open-no-window-orderfront-2026-08-29T231702Z.png` with SHA-256 `7cec16d790e1fb116569961a7573fabe61fa39ad45e4f3ae440a09eeda943a3d`.
 - PID `69815`, `/usr/bin/open dist/hide.app`, `2026-08-29T23:23:51Z`, the same exact bundle path, Peekaboo zero, System Events zero, screenshot `docs/verification/evidence/hide-rebrand/finder-open-current-2026-08-29T232351Z.png` with SHA-256 `e5df21749b1639fbd7dfb8e65c7ad976fe0fe915f2e315accae478dd1360e7eb`.
 - The retained sample for PID `69815` is `docs/verification/evidence/hide-rebrand/finder-open-no-window-sample-2026-08-30.txt` with SHA-256 `fb7ba555292c12cf64222ad5625c7a16fb931d14aca3d46596430533c5a53788`.
@@ -46,7 +46,7 @@ The Desktop privacy prompt was a visible consequence of that broad scan, not a c
 - UTC timestamp: `2026-08-29T23:31:34Z`.
 - `open` exit status: `0`.
 - Agent-created verification PID: `24041`.
-- Exact bundle executable: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS`.
+- Exact bundle executable: `./dist/hide.app/Contents/MacOS/HerdrMacOS`.
 - Peekaboo: Hide main window `1440x928`, on screen, frontmost, and key, plus a separate Pet window `500x500`.
 - System Events window count: `2`.
 - Full screenshot: `docs/verification/evidence/hide-rebrand/finder-open-current-2026-08-29T233134Z.png` with SHA-256 `fea56895319a2d7db7af078d53fbd56867d0b48f6a2ef9b3a12699ec755d1b2e`.
@@ -107,6 +107,6 @@ No migration, replacement run, state overwrite, or v7 verify/finalize command wa
 - No public push was performed.
 - No draft release was published.
 - No mini session or workspace was created or modified.
-- The final dark-design taste approval remains pending.
+- The final dark-design taste approval is satisfied by the user's exact approval “미리 승인. 여튼 끝까지 마무리해바”.
 
-The next action is to present the fresh main-window screenshot and related dark-design evidence at the product taste gate, then stop at `OBSERVER_BLOCK` kind `product` without claiming approval.
+The next action is the separate public-push approval after the sanitized-tree and reachable-history findings are reviewed.

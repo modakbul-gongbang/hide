@@ -1,6 +1,6 @@
 {
   "debug_logs" : [
-    "[2026-08-30T02:57:54.769Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T02:57:54.769Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T02:57:54.769Z] VERBOSE [Operation]: Starting operation {app=hide, mode=auto, annotate=false, menubar=false, hasAnalyzePrompt=false, operation=see_command}",
     "[2026-08-30T02:57:54.769Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T02:57:54.779Z] VERBOSE [Capture]: Starting capture and detection phase",
@@ -1906,8 +1906,8 @@
         },
         "is_actionable" : false,
         "ax_role" : "AXStaticText",
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "identifier" : "hide-terminal-surface",
         "role_description" : "text",
         "is_enabled" : true,
@@ -2236,7 +2236,7 @@
     "execution_time" : 0.4551980495452881,
     "application_name" : "hide",
     "interactable_count" : 74,
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788058674777-4419\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788058674777-4419\/snapshot.json",
     "coordinate_context" : {
       "logical_space" : "global_display_points",
       "requested_scale" : {

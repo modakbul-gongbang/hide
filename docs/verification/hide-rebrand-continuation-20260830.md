@@ -2,7 +2,7 @@
 
 Date: 2026-08-30.
 
-Worktree: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand`.
+Worktree: `.`.
 
 Branch: `prd/hide-rebrand`.
 
@@ -163,12 +163,14 @@ No public push was performed.
 
 No draft release was published.
 
-The final dark-design taste approval remains a human gate.
+The final dark-design taste approval is satisfied by the user's exact approval “미리 승인. 여튼 끝까지 마무리해바”.
+
+The approval evidence is [ac15-dark-taste-approval-20260830.md](evidence/hide-rebrand/ac15-dark-taste-approval-20260830.md).
 
 The public push requires the user's explicit approval after the secret and personal-data scan result is attached.
 
 The scan-only result is in [pre-push-secret-pii-scan-20260830.md](evidence/hide-rebrand/pre-push-secret-pii-scan-20260830.md).
 
-It found no credential-shaped token or private-key value in the checked current tree or reachable history, but it did find tracked developer-local absolute paths that require review before public release.
+The post-cleanup result is recorded in [path-scrub-20260830.md](evidence/hide-rebrand/path-scrub-20260830.md): current owned documentation and evidence have no local absolute paths, while old reachable history still needs a separately approved sanitized-history decision.
 
 The draft release publish action remains a user-only step.

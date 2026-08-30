@@ -1,19 +1,19 @@
 captured_utc=20260830T025537Z
-expected_bundle=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app
+expected_bundle=./dist/hide.app
 pid=49138
 process_identity:
-49138 S    Sun Aug 30 11:54:28 2026     /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS
+49138 S    Sun Aug 30 11:54:28 2026     ./dist/hide.app/Contents/MacOS/HerdrMacOS
 
 launch_services_environment_safe_subset:
-PWD=/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand
-USER=hoyeonlee
+PWD=.
+USER=local-user
 __CFBundleIdentifier=me.grab.hide
 HERDR_PANE_ID=w2X:pD
-PATH=/Users/hoyeonlee/Library/pnpm/global/5/.pnpm/@openai+codex@0.151.0-darwin-arm64/node_modules/@openai/codex/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/opt/grep/libexec/gnubin:/Users/hoyeonlee/.local/bin:/Users/hoyeonlee/.bun/bin:/Users/hoyeonlee/.antigravity/antigravity/bin:/Users/hoyeonlee/go/bin:/Users/hoyeonlee/.moon/bin:/Applications/Android
-SSH_AUTH_SOCK=/Users/hoyeonlee/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
-HOME=/Users/hoyeonlee
+PATH=~/Library/pnpm/global/5/.pnpm/@openai+codex@0.151.0-darwin-arm64/node_modules/@openai/codex/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/opt/grep/libexec/gnubin:~/.local/bin:~/.bun/bin:~/.antigravity/antigravity/bin:~/go/bin:~/.moon/bin:/Applications/Android
+SSH_AUTH_SOCK=~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
+HOME=~
 HERDR_WORKSPACE_ID=w2X
 SHELL=/bin/zsh
-HERDR_SOCKET_PATH=/Users/hoyeonlee/.config/herdr/herdr.sock
+HERDR_SOCKET_PATH=~/.config/herdr/herdr.sock
 HERDR_TAB_ID=w2X:t1
 credential_values_retained=no

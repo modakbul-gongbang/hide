@@ -2,13 +2,15 @@
 
 Status: The Finder/open P0 regression is fixed and has fresh caller-observable evidence on the rebuilt bundle.
 
-The final dark-design taste review remains pending and is not approved by this record.
+The final dark-design taste review was subsequently approved by the user with “미리 승인. 여튼 끝까지 마무리해바”.
+
+The approval evidence is [ac15-dark-taste-approval-20260830.md](evidence/hide-rebrand/ac15-dark-taste-approval-20260830.md).
 
 This note records the implementation tree, the failed native attempts, the root cause, the fix, and the successful native proof.
 
 ## Scope and tree
 
-- The implementation worktree is `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand`.
+- The implementation worktree is `.`.
 - The branch is `prd/hide-rebrand`.
 - The branch is a descendant of main commit `0b6c80679ac1d122c025deddbd67a55c0cd29fbb`.
 - The prior committed implementation and icon unit is `70006b5747c01ee2d17a02c97c82983e4435d38e` (`Fix Finder launch startup ordering`).
@@ -41,7 +43,7 @@ No unrelated process or user instance was terminated.
 - Command: `/usr/bin/open dist/hide.app`.
 - UTC timestamp: `2026-08-29T23:04:50Z`.
 - Process: PID `82773`.
-- Bundle executable: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS`.
+- Bundle executable: `./dist/hide.app/Contents/MacOS/HerdrMacOS`.
 - Bundle identifier: `me.grab.hide`.
 - The process remained alive after `open` returned.
 - Peekaboo window inventory returned zero windows.
@@ -59,7 +61,7 @@ No unrelated process or user instance was terminated.
 - Command: `/usr/bin/open dist/hide.app`.
 - UTC timestamp: `2026-08-29T23:17:02Z`.
 - Process: PID `39718`.
-- Bundle executable: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS`.
+- Bundle executable: `./dist/hide.app/Contents/MacOS/HerdrMacOS`.
 - The process remained alive after `open` returned.
 - Peekaboo window inventory returned zero externally observable windows.
 - System Events reported zero windows.
@@ -75,7 +77,7 @@ No unrelated process or user instance was terminated.
 - Command: `/usr/bin/open dist/hide.app`.
 - UTC timestamp: `2026-08-29T23:23:51Z`.
 - Process: PID `69815`.
-- Bundle executable: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS`.
+- Bundle executable: `./dist/hide.app/Contents/MacOS/HerdrMacOS`.
 - The process remained alive after `open` returned.
 - Peekaboo window inventory returned zero externally observable windows.
 - System Events reported zero windows.
@@ -138,10 +140,10 @@ The following proof was run after the workspace-tree fix and after a fresh relea
 - UTC launch timestamp: `2026-08-29T23:31:34Z`.
 - `open` exit status: `0`.
 - Process PID: `24041`.
-- Exact process path: `/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS`.
+- Exact process path: `./dist/hide.app/Contents/MacOS/HerdrMacOS`.
 - Process and bundle identity: `me.grab.hide` from the fresh `dist/hide.app` bundle.
 - The preflight instance count was zero, and the launch produced exactly one HerdrMacOS instance.
-- The allowlisted launch-environment inspection recorded `USER=hoyeonlee`, `LOGNAME=hoyeonlee`, `HOME=/Users/hoyeonlee`, `SHELL=zsh`, and inherited PATH values without printing credentials.
+- The allowlisted launch-environment inspection recorded `USER=local-user`, `LOGNAME=local-user`, `HOME=~`, `SHELL=zsh`, and inherited PATH values without printing credentials.
 - Peekaboo reported the main Hide window as window `6710`, bounds `x=144 y=72 width=1440 height=928`, on screen, frontmost, and key.
 - Peekaboo separately reported the Pet window as window `6717`, bounds `x=0 y=617 width=500 height=500`.
 - System Events reported two windows for the app, consisting of the main Hide window and the separate Pet window.
@@ -244,7 +246,7 @@ The credential non-handling contract is PASS.
 
 The icon choice is authorized by the recorded human decision.
 
-Final dark-design taste approval is still pending.
+Final dark-design taste approval is satisfied by the later human gate.
 
 ## Automated and package verification
 
@@ -270,7 +272,7 @@ Final dark-design taste approval is still pending.
 
 AC1, SC7, and the native P0 portion of V5 are PASS for the fresh bundle.
 
-AC15 and the final dark-design taste decision remain pending.
+AC15 and the final dark-design taste decision are satisfied; public-push approval remains pending.
 
 ## Sasu state and completion boundary
 
@@ -278,6 +280,6 @@ The Sasu run remains active with open implementation tasks and verification rows
 
 No `sasu implement verify` or `sasu implement finalize` was run after this P0 change.
 
-This record is not a Done receipt and does not claim final dark taste approval, public-push approval, or release publication.
+This record is not a Done receipt and does not claim public-push approval or release publication.
 
-The next authorized boundary is preparation of the final dark-design taste review evidence followed by an `OBSERVER_BLOCK` product gate.
+The next authorized boundary is the separate public-push approval after review of the sanitized-tree and reachable-history findings.

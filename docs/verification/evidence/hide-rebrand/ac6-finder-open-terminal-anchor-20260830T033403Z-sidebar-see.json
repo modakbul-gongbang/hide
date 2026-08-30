@@ -1,6 +1,6 @@
 {
   "data" : {
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788060967729-6767\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788060967729-6767\/snapshot.json",
     "window_title" : "hide",
     "screenshot_raw" : "",
     "snapshot_id" : "1788060967729-6767",
@@ -1986,14 +1986,14 @@
           "width" : 323,
           "height" : 11
         },
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "role" : "other",
         "is_enabled" : true,
         "is_actionable" : false,
         "identifier" : "hide-terminal-surface",
         "ax_role" : "AXStaticText",
         "id" : "elem_106",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "role_description" : "text"
       },
       {

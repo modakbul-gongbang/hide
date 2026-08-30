@@ -1,4 +1,4 @@
-   Compiling herdr-core v0.1.0 (/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/herdr-core)
+   Compiling herdr-core v0.1.0 (./herdr-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.67s
      Running tests/ffi_contract.rs (target/debug/deps/ffi_contract-5a634d444e054340)
 

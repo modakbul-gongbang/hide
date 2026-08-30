@@ -16,7 +16,7 @@
   },
   "effect" : "unverifiable",
   "debug_logs" : [
-    "[2026-08-30T01:50:41.940Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))"
+    "[2026-08-30T01:50:41.940Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))"
   ],
   "target_identity" : {
     "kind" : "process",

@@ -174,7 +174,7 @@ Building for debugging...
 [236/238] Linking HerdrMacOS
 [237/238] Applying HerdrMacOS
 Build complete! (12.19s)
-/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app: replacing existing signature
-/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app: valid on disk
-/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app: satisfies its Designated Requirement
-/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app
+~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app: replacing existing signature
+~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app: valid on disk
+~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app: satisfies its Designated Requirement
+~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app

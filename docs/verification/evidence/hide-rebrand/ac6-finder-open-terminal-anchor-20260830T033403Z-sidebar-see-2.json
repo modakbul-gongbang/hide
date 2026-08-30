@@ -2043,7 +2043,7 @@
         "label" : "split group"
       },
       {
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "identifier" : "hide-terminal-surface",
         "bounds" : {
           "height" : 11,
@@ -2054,7 +2054,7 @@
         "is_enabled" : true,
         "role_description" : "text",
         "ax_role" : "AXStaticText",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "is_actionable" : false,
         "id" : "elem_113",
         "role" : "other"
@@ -2419,7 +2419,7 @@
       "native_scale" : 2,
       "origin" : "top_left"
     },
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788061089621-8689\/snapshot.json"
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788061089621-8689\/snapshot.json"
   },
   "success" : true
 }

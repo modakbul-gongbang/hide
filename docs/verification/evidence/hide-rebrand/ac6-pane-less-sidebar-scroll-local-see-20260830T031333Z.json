@@ -6,7 +6,7 @@
     "pid" : 49138
   },
   "data" : {
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788059614568-3778\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788059614568-3778\/snapshot.json",
     "application_name" : "hide",
     "coordinate_context" : {
       "requested_scale" : {
@@ -1938,9 +1938,9 @@
       },
       {
         "ax_role" : "AXStaticText",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "is_enabled" : true,
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "id" : "elem_106",
         "identifier" : "hide-terminal-surface",
         "role" : "other",

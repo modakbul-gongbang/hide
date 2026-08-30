@@ -1,1 +1,1 @@
-77660 hoyeonlee /Users/hoyeonlee /Users/hoyeonlee/projects/herdr-ide.worktrees/hide-rebrand/dist/hide.app/Contents/MacOS/HerdrMacOS
+77660 local-user ~ ./dist/hide.app/Contents/MacOS/HerdrMacOS

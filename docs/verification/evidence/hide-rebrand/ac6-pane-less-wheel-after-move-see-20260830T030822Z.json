@@ -6,7 +6,7 @@
     "process_start_identity" : 1788058468951247
   },
   "data" : {
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788059302801-3019\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788059302801-3019\/snapshot.json",
     "screenshot_raw" : "",
     "snapshot_id" : "1788059302801-3019",
     "coordinate_context" : {
@@ -2011,7 +2011,7 @@
       },
       {
         "ax_role" : "AXStaticText",
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "identifier" : "hide-terminal-surface",
         "is_enabled" : true,
         "bounds" : {
@@ -2020,7 +2020,7 @@
           "y" : 562,
           "width" : 150.5
         },
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "role_description" : "text",
         "is_actionable" : false,
         "id" : "elem_105",
@@ -2263,7 +2263,7 @@
   },
   "success" : true,
   "debug_logs" : [
-    "[2026-08-30T03:08:22.794Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T03:08:22.794Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T03:08:22.794Z] VERBOSE [Operation]: Starting operation {app=hide, annotate=false, hasAnalyzePrompt=false, menubar=false, operation=see_command, mode=auto}",
     "[2026-08-30T03:08:22.794Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T03:08:22.803Z] VERBOSE [Capture]: Starting capture and detection phase",

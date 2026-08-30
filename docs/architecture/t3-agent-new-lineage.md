@@ -4,7 +4,7 @@
 
 T3 adds one authoritative `agent.new` mutation to Herdr protocol revision 21 and exposes it as `herdr agent new`.
 The operation creates the split pane, starts the requested agent process, records stable lineage, and publishes events as one commit boundary.
-The implementation lives in `/Users/hoyeonlee/projects/herdr`, while this worktree preserves its architecture record and focused source patch.
+The implementation lives in `~/projects/herdr`, while this worktree preserves its architecture record and focused source patch.
 
 ## Atomic operation contract
 
@@ -47,9 +47,9 @@ The workspace persistence round trip and schema request round trip passed.
 The focused commands were:
 
 ```text
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::schema::tests
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --test api_ping
-ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=/Users/hoyeonlee/projects/herdr/target CARGO_INCREMENTAL=0 cargo check --all-targets
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --bin herdr api::schema::tests
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo test --locked --test api_ping
+ZIG=/opt/homebrew/opt/zig@0.15/bin/zig CARGO_TARGET_DIR=~/projects/herdr/target CARGO_INCREMENTAL=0 cargo check --all-targets
 ```
 
 ## Acceptance boundary

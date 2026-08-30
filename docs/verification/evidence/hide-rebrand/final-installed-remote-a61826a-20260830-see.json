@@ -575,7 +575,7 @@
       },
       {
         "role" : "button",
-        "description" : "Focus terminal pane grab@Grabs-Mac-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p1)",
+        "description" : "Focus terminal pane remote-user@remote-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p1)",
         "id" : "elem_66",
         "role_description" : "button",
         "is_actionable" : true,
@@ -587,11 +587,11 @@
           "width" : 363.5,
           "x" : 448
         },
-        "label" : "Focus terminal pane grab@Grabs-Mac-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p1)",
+        "label" : "Focus terminal pane remote-user@remote-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p1)",
         "identifier" : "hide-terminal-surface"
       },
       {
-        "label" : "Focus terminal pane grab@Grabs-Mac-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p2)",
+        "label" : "Focus terminal pane remote-user@remote-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p2)",
         "identifier" : "hide-terminal-surface",
         "is_actionable" : true,
         "bounds" : {
@@ -601,7 +601,7 @@
           "x" : 819.5
         },
         "role" : "button",
-        "description" : "Focus terminal pane grab@Grabs-Mac-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p2)",
+        "description" : "Focus terminal pane remote-user@remote-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4Q:p2)",
         "ax_role" : "AXButton",
         "is_enabled" : true,
         "id" : "elem_67",
@@ -1496,7 +1496,7 @@
       }
     ],
     "application_name" : "hide",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788083561022-7427\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788083561022-7427\/snapshot.json",
     "observation" : {
       "warnings" : [
 

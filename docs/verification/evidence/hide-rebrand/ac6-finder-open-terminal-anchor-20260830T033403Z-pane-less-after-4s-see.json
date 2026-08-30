@@ -28,7 +28,7 @@
   "success" : true,
   "data" : {
     "element_count" : 139,
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788061149018-5544\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788061149018-5544\/snapshot.json",
     "is_dialog" : false,
     "screenshot_annotated" : "",
     "screenshot_raw" : "",
@@ -2040,9 +2040,9 @@
       },
       {
         "ax_role" : "AXStaticText",
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "id" : "elem_113",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "identifier" : "hide-terminal-surface",
         "bounds" : {
           "y" : 562,

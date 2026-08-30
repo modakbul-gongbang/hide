@@ -2,13 +2,15 @@
 
 Date: 2026-08-30.
 
-Source under test: current `prd/hide-rebrand` HEAD `bde470e`.
+Source under test: implementation tree at `a20d325` plus core portability fix `4ad6542`; the later record-only commit contains documentation and path cleanup only.
 
 ## Fresh command results
 
 `CARGO_TARGET_DIR=/tmp/hide-finisher-cargo cargo test --manifest-path herdr-core/Cargo.toml --locked` passed with 91 library tests, 25 FFI integration tests, and 0 doc tests.
 
-`swift test --package-path macos --scratch-path /tmp/hide-finisher-swift` passed with 69 tests after the shared-worktree Swift commit `17ce8ce`.
+`swift test --package-path macos --scratch-path /tmp/hide-finisher-swift` passed with 69 tests after the shared-worktree Swift commit `a20d325`.
+
+`PYTHONPATH=tools/t16-retirement python3 -m unittest discover -s tools/t16-retirement/tests -v` passed with 1 test.
 
 No build or test output directory in the worktree was deleted during this verification.
 

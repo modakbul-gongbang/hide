@@ -1,6 +1,6 @@
 {
   "debug_logs" : [
-    "[2026-08-30T01:49:35.168Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T01:49:35.168Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T01:49:35.168Z] VERBOSE [Operation]: Starting operation {annotate=false, app=none, operation=see_command, menubar=false, hasAnalyzePrompt=false, mode=auto}",
     "[2026-08-30T01:49:35.168Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T01:49:35.180Z] VERBOSE [Capture]: Starting capture and detection phase",
@@ -953,7 +953,7 @@
       }
     ],
     "capture_mode" : "window",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788054575177-3832\/snapshot.json"
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788054575177-3832\/snapshot.json"
   },
   "target_receipt" : {
     "process_start_identity_decimal" : "1788054573371956",

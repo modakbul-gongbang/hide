@@ -44,7 +44,7 @@
         928
       ]
     },
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788063559600-6888\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788063559600-6888\/snapshot.json",
     "screenshot_raw" : "",
     "screenshot_annotated" : "",
     "element_count" : 136,
@@ -2026,13 +2026,13 @@
       },
       {
         "role_description" : "text",
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "identifier" : "hide-terminal-surface",
         "is_actionable" : false,
         "role" : "other",
         "is_enabled" : true,
         "ax_role" : "AXStaticText",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "bounds" : {
           "width" : 323,
           "x" : 550,

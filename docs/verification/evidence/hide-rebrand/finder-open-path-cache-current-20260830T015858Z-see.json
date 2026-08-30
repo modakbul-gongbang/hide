@@ -39,7 +39,7 @@
       ]
     },
     "snapshot_id" : "1788055143527-2429",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788055143527-2429\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788055143527-2429\/snapshot.json",
     "execution_time" : 0.894645094871521,
     "ui_elements" : [
       {
@@ -1879,7 +1879,7 @@
         "ax_role" : "AXStaticText",
         "identifier" : "hide-terminal-surface",
         "is_enabled" : true,
-        "value" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "value" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "bounds" : {
           "width" : 323,
           "height" : 11,
@@ -1887,7 +1887,7 @@
           "x" : 454
         },
         "role" : "other",
-        "label" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/hide-rebrand",
+        "label" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/hide-rebrand",
         "is_actionable" : false
       },
       {
@@ -2207,7 +2207,7 @@
   },
   "success" : true,
   "debug_logs" : [
-    "[2026-08-30T01:59:03.518Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T01:59:03.518Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T01:59:03.518Z] VERBOSE [Operation]: Starting operation {menubar=false, operation=see_command, hasAnalyzePrompt=false, app=hide, mode=auto, annotate=false}",
     "[2026-08-30T01:59:03.518Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T01:59:03.530Z] VERBOSE [Capture]: Starting capture and detection phase",

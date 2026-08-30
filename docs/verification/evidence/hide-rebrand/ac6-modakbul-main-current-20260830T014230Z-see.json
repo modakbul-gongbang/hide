@@ -1,7 +1,7 @@
 {
   "success" : true,
   "debug_logs" : [
-    "[2026-08-30T01:42:32.456Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-30T01:42:32.456Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-30T01:42:32.457Z] VERBOSE [Operation]: Starting operation {mode=auto, app=none, annotate=false, hasAnalyzePrompt=false, operation=see_command, menubar=false}",
     "[2026-08-30T01:42:32.457Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-30T01:42:32.466Z] VERBOSE [Capture]: Starting capture and detection phase",
@@ -68,7 +68,7 @@
         928
       ]
     },
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788054152464-4957\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788054152464-4957\/snapshot.json",
     "interactable_count" : 65,
     "execution_time" : 0.3529670238494873,
     "observation" : {
@@ -1836,9 +1836,9 @@
           "y" : 565.5,
           "height" : 11
         },
-        "value" : "\/Users\/hoyeonlee\/projects\/modakbul",
+        "value" : "\/Users\/local-user\/projects\/modakbul",
         "identifier" : "hide-terminal-surface",
-        "label" : "\/Users\/hoyeonlee\/projects\/modakbul",
+        "label" : "\/Users\/local-user\/projects\/modakbul",
         "role_description" : "text",
         "ax_role" : "AXStaticText",
         "id" : "elem_91",

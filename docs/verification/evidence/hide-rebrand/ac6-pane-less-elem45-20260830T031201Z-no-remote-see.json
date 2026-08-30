@@ -1921,9 +1921,9 @@
         "is_enabled" : true,
         "id" : "elem_105",
         "is_actionable" : false,
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "role_description" : "text",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "ax_role" : "AXStaticText"
       },
       {
@@ -2191,7 +2191,7 @@
       }
     },
     "window_title" : "hide",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788059521622-1449\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788059521622-1449\/snapshot.json",
     "observation" : {
       "warnings" : [
 

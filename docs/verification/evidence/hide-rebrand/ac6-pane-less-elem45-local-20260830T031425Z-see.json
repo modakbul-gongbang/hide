@@ -1904,9 +1904,9 @@
         },
         "is_enabled" : true,
         "identifier" : "hide-terminal-surface",
-        "label" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "label" : "\/Users\/local-user\/ct\/backpac",
         "role" : "other",
-        "value" : "\/Users\/hoyeonlee\/ct\/backpac",
+        "value" : "\/Users\/local-user\/ct\/backpac",
         "ax_role" : "AXStaticText",
         "is_actionable" : false
       },
@@ -2141,7 +2141,7 @@
     ],
     "element_count" : 132,
     "window_title" : "hide",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788059665991-8501\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788059665991-8501\/snapshot.json",
     "observation" : {
       "state_snapshot" : {
         "running_application_count" : 119,

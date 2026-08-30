@@ -13,8 +13,8 @@
   "source": {
     "head": "b2582ade493bc6569af0e9719aa672751962df96",
     "commit_subject": "Hide the block caret while an IME composition is active",
-    "app_bundle": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
-    "executable": "/Users/hoyeonlee/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS",
+    "app_bundle": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app",
+    "executable": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS",
     "executable_sha256": "5d0027358d112b0294c758137e2f296b5421a5c8b5f84945ef94074a82c57964",
     "info_plist_sha256": "ad91f1cc110ad7f5f7646d518182474bda5aec78a5bc9516b75b3b147e314bc4",
     "bundle_file_manifest_sha256": "6919680c545371d9651c8318a60c60180949a1817df52161fcf97f4e73befa64"
@@ -76,7 +76,7 @@
     "app_instance_count": 1,
     "attach_pid": 62025,
     "attach_process_count": 1,
-    "attach_command": "/Users/hoyeonlee/.local/bin/herdr pane attach w3B:p1",
+    "attach_command": "~/.local/bin/herdr pane attach w3B:p1",
     "window_id": 2582,
     "window_title": "Herdr IDE",
     "window_on_screen": true,

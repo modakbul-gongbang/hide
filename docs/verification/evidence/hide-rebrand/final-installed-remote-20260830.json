@@ -531,9 +531,9 @@
           "height" : 38,
           "x" : 448
         },
-        "label" : "Focus terminal pane grab@Grabs-Mac-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4M:p1)",
+        "label" : "Focus terminal pane remote-user@remote-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4M:p1)",
         "ax_role" : "AXButton",
-        "description" : "Focus terminal pane grab@Grabs-Mac-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4M:p1)",
+        "description" : "Focus terminal pane remote-user@remote-mini:\/private\/tmp\/hide-rebrand-remote-verify-20260830 (w4M:p1)",
         "is_actionable" : true,
         "is_enabled" : true,
         "role_description" : "button"
@@ -1451,7 +1451,7 @@
     "capture_mode" : "window",
     "is_dialog" : false,
     "screenshot_annotated" : "",
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1788079042695-3800\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1788079042695-3800\/snapshot.json",
     "screenshot_raw" : "",
     "observation" : {
       "warnings" : [

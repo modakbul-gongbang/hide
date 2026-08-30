@@ -1,7 +1,7 @@
 {
   "data" : {
     "execution_time" : 0.6458470821380615,
-    "screenshot_raw" : "\/Users\/hoyeonlee\/projects\/herdr-ide.worktrees\/swift-shell-pivot\/spikes\/swift-shell-pivot\/evidence\/v9-b2582ad-human-retest-ready.png",
+    "screenshot_raw" : "\/Users\/local-user\/projects\/herdr-ide.worktrees\/swift-shell-pivot\/spikes\/swift-shell-pivot\/evidence\/v9-b2582ad-human-retest-ready.png",
     "ui_elements" : [
       {
         "identifier" : "agent-w2X:p3",
@@ -1008,7 +1008,7 @@
     "capture_mode" : "window",
     "is_dialog" : false,
     "element_count" : 61,
-    "ui_map" : "\/Users\/hoyeonlee\/.peekaboo\/snapshots\/1787988160342-9383\/snapshot.json",
+    "ui_map" : "\/Users\/local-user\/.peekaboo\/snapshots\/1787988160342-9383\/snapshot.json",
     "interactable_count" : 25,
     "snapshot_id" : "1787988160342-9383",
     "application_name" : "Herdr IDE",
@@ -1145,7 +1145,7 @@
     "process_start_identity_decimal" : "1787988157355484"
   },
   "debug_logs" : [
-    "[2026-08-29T07:22:40.335Z] DEBUG: Runtime host: remote onDemand via \/Users\/hoyeonlee\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
+    "[2026-08-29T07:22:40.335Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))",
     "[2026-08-29T07:22:40.335Z] VERBOSE [Operation]: Starting operation {app=none, mode=auto, menubar=false, hasAnalyzePrompt=false, operation=see_command, annotate=false}",
     "[2026-08-29T07:22:40.335Z] VERBOSE [Performance]: Starting timer 'see_command'",
     "[2026-08-29T07:22:40.344Z] VERBOSE [Capture]: Starting capture and detection phase",
