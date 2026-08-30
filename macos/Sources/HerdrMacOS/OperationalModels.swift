@@ -921,6 +921,13 @@ enum RemoteTerminalCommand: Sendable {
         case .focusAgent: "agent_focus"
         }
     }
+
+    var requiresSnapshotRefresh: Bool {
+        switch self {
+        case .split, .toggleZoom, .close, .createTab: true
+        case .focusWorkspace, .focusTab, .focusAgent: false
+        }
+    }
 }
 
 private struct RemoteProbeResult: Sendable {
@@ -1218,8 +1225,8 @@ final class RemoteRuntimeModel: ObservableObject {
                     arguments: [alias, RemoteShellCommand.loginShell(shellCommand)]
                 )
             }.value
-            guard refreshGeneration == requestID else { return }
             if let pendingTerminalPath { pendingTerminalPaths.remove(pendingTerminalPath) }
+            guard refreshGeneration == requestID else { return }
             guard result.status == 0 else {
                 reportActionFailure(
                     remoteFailure(result, label: label),
@@ -1228,9 +1235,13 @@ final class RemoteRuntimeModel: ObservableObject {
                 return
             }
             actionError = nil
-            message = "\(command.successMessage) Refreshing \(label)."
             log(kind: "remote.command_\(command.logKind)_ready")
-            refresh(targetID: targetID, label: label, sshAlias: alias)
+            if command.requiresSnapshotRefresh {
+                message = "\(command.successMessage) Refreshing \(label)."
+                refresh(targetID: targetID, label: label, sshAlias: alias)
+            } else {
+                message = command.successMessage
+            }
         }
     }
 
