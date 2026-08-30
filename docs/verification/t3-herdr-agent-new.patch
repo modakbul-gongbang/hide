@@ -3428,7 +3428,7 @@ index 39f790ddda1884ac49ec7106d3f382cb6cd880db..2588b2bede43c69da7e8b9f38e9a32cd
              .iter()
 @@ -668,6 +672,7 @@ mod tests {
                  custom_name: Some("pi-mono".to_string()),
-                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
+                 identity_cwd: PathBuf::from("/private/tmp/hide-herdr"),
                  worktree_space: None,
 +                agent_lineage: HashMap::new(),
                  public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
