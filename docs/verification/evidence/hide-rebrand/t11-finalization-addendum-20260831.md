@@ -10,9 +10,9 @@ The user's later exact approval `a` is recorded in [t11-public-push-approval-202
 
 The public branch was created from a separate orphan history and pushed without rewriting the local `main` or `prd/hide-rebrand` branches.
 
-The local merged `main` contains this feature and currently ends at `81ca373`.
+The local merged `main` contains this feature and currently ends at `b6f7d1b`.
 
-The feature branch commits through `076ee92` are included in that merge.
+The feature branch commits through `b149db7` are included in that merge.
 
 The navigator-focus cleanup is `f979cfc`, and the later evidence addendum is `076ee92`.
 
