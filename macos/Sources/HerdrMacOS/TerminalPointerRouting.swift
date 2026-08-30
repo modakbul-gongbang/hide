@@ -131,6 +131,7 @@ extension TerminalView {
 final class HideRemoteTerminalView: LocalProcessTerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
+    var onOpenLink: (@MainActor @Sendable (String) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
         routeMouseDown(event)
@@ -170,6 +171,6 @@ final class HideRemoteTerminalView: LocalProcessTerminalView, HideTerminalPointe
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         noteTerminalLinkActivation()
-        super.requestOpenLink(source: source, link: link, params: params)
+        onOpenLink?(link)
     }
 }

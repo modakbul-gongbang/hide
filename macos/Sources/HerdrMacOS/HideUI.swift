@@ -668,11 +668,16 @@ private struct HideTerminalSurface: View {
                                 RemoteTerminalHost(
                                     remote: model.remote,
                                     sshAlias: model.remote.sshAlias,
-                                    paneID: pane.id
+                                    paneID: pane.id,
+                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                                 )
                                 .accessibilityLabel("Remote SwiftTerm terminal for \(pane.id)")
                             } else {
-                                TerminalHost(bridge: model.core, paneID: pane.id)
+                                TerminalHost(
+                                    bridge: model.core,
+                                    paneID: pane.id,
+                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                                )
                                     .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
                             }
                         }

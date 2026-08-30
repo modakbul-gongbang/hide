@@ -240,7 +240,11 @@ private struct TerminalPanel: View {
                             isFocused: item.isFocused,
                             onFocus: { model.focusPane(pane.id) }
                         ) {
-                            TerminalHost(bridge: model.core, paneID: pane.id)
+                            TerminalHost(
+                                bridge: model.core,
+                                paneID: pane.id,
+                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                            )
                                 .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
                         }
                     }

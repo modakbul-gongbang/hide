@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -324,6 +325,46 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("pane.selection", detail: "local_\(paneID)")
         }
         focus(.terminal)
+    }
+
+    func openTerminalLink(_ rawValue: String, paneID: String) {
+        switch TerminalLinkResolver.parse(rawValue) {
+        case .web(let url):
+            guard NSWorkspace.shared.open(url) else {
+                interactionNotice = "The default browser could not open this terminal URL."
+                HideLaunchTrace.mark("terminal.link.failed", detail: "browser_open")
+                return
+            }
+            HideLaunchTrace.mark("terminal.link.opened", detail: "web")
+        case .file(let path, _, _):
+            if isRemoteContext {
+                interactionNotice = "\(path) belongs to the remote device. Remote Workbench preview is not available in the current read-only snapshot contract."
+                focus(.workbench)
+                HideLaunchTrace.mark("terminal.link.failed", detail: "remote_file_contract")
+                return
+            }
+            let paneCWD = paneMetadata(for: paneID)?.cwd ?? ""
+            let checkoutRoot = focusedCheckout.map {
+                URL(fileURLWithPath: $0.path, isDirectory: true)
+            }
+            switch TerminalLinkResolver.resolveLocalFile(
+                path: path,
+                paneCWD: paneCWD,
+                checkoutRoot: checkoutRoot
+            ) {
+            case .file(let url):
+                core.openFile(url)
+                focus(.workbench)
+                interactionNotice = nil
+                HideLaunchTrace.mark("terminal.link.opened", detail: "workbench_file")
+            case .failure(let message):
+                interactionNotice = message
+                HideLaunchTrace.mark("terminal.link.failed", detail: "local_file_resolution")
+            }
+        case .invalid(let message):
+            interactionNotice = message
+            HideLaunchTrace.mark("terminal.link.failed", detail: "invalid_target")
+        }
     }
 
     var herdrIsConnected: Bool {

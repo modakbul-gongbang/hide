@@ -5,9 +5,10 @@ import SwiftUI
 struct TerminalHost: NSViewRepresentable {
     @ObservedObject var bridge: CoreBridge
     let paneID: String
+    let onOpenLink: @MainActor @Sendable (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(bridge: bridge, paneID: paneID)
+        Coordinator(bridge: bridge, paneID: paneID, onOpenLink: onOpenLink)
     }
 
     func makeNSView(context: Context) -> TerminalView {
@@ -18,6 +19,8 @@ struct TerminalHost: NSViewRepresentable {
         terminal.terminalDelegate = context.coordinator
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
+        terminal.linkReporting = .implicit
+        terminal.linkHighlightMode = .hover
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
         terminal.onPointerFocus = { [weak bridge] in
             bridge?.focusPane(paneID)
@@ -44,6 +47,7 @@ struct TerminalHost: NSViewRepresentable {
 
     func updateNSView(_ terminal: TerminalView, context: Context) {
         context.coordinator.bridge = bridge
+        context.coordinator.onOpenLink = onOpenLink
     }
 
     static func dismantleNSView(_ terminal: TerminalView, coordinator: Coordinator) {
@@ -59,12 +63,18 @@ struct TerminalHost: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate {
         var bridge: CoreBridge
         let paneID: String
+        var onOpenLink: @MainActor @Sendable (String) -> Void
         var registrationID: UUID?
         weak var terminal: TerminalView?
 
-        init(bridge: CoreBridge, paneID: String) {
+        init(
+            bridge: CoreBridge,
+            paneID: String,
+            onOpenLink: @escaping @MainActor @Sendable (String) -> Void
+        ) {
             self.bridge = bridge
             self.paneID = paneID
+            self.onOpenLink = onOpenLink
         }
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
@@ -103,9 +113,10 @@ struct TerminalHost: NSViewRepresentable {
             // SwiftTerm invokes link delegates synchronously from AppKit mouse
             // handling. Keep the activation marker synchronous so the router
             // can suppress the TUI click replay in this same mouse-up event.
+            let handler = onOpenLink
             MainActor.assumeIsolated {
                 (source as? ImeTerminalView)?.noteTerminalLinkActivation()
-                TerminalView.openDefaultLink(link)
+                handler(link)
             }
         }
     }

@@ -9,6 +9,7 @@ struct RemoteTerminalHost: NSViewRepresentable {
     let remote: RemoteRuntimeModel
     let sshAlias: String
     let paneID: String
+    let onOpenLink: @MainActor @Sendable (String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(remote: remote, paneID: paneID)
@@ -22,6 +23,9 @@ struct RemoteTerminalHost: NSViewRepresentable {
         )
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
+        terminal.linkReporting = .implicit
+        terminal.linkHighlightMode = .hover
+        terminal.onOpenLink = onOpenLink
         terminal.processDelegate = context.coordinator
         terminal.setAccessibilityIdentifier("remote-terminal-\(paneID)")
         terminal.onPointerFocus = { [weak remote] in
@@ -40,10 +44,13 @@ struct RemoteTerminalHost: NSViewRepresentable {
         return terminal
     }
 
-    func updateNSView(_ terminal: LocalProcessTerminalView, context: Context) {}
+    func updateNSView(_ terminal: LocalProcessTerminalView, context: Context) {
+        (terminal as? HideRemoteTerminalView)?.onOpenLink = onOpenLink
+    }
 
     static func dismantleNSView(_ terminal: LocalProcessTerminalView, coordinator: Coordinator) {
         terminal.processDelegate = nil
+        (terminal as? HideRemoteTerminalView)?.onOpenLink = nil
         terminal.terminate()
     }
 
