@@ -2,13 +2,13 @@
 
 Date: 2026-08-30.
 
-Source under test: current `prd/hide-rebrand` HEAD `d021e73`.
+Source under test: current `prd/hide-rebrand` HEAD `bde470e`.
 
 ## Fresh command results
 
 `CARGO_TARGET_DIR=/tmp/hide-finisher-cargo cargo test --manifest-path herdr-core/Cargo.toml --locked` passed with 91 library tests, 25 FFI integration tests, and 0 doc tests.
 
-`swift test --package-path macos --scratch-path /tmp/hide-finisher-swift` passed with 69 tests.
+`swift test --package-path macos --scratch-path /tmp/hide-finisher-swift` passed with 69 tests after the shared-worktree Swift commit `17ce8ce`.
 
 No build or test output directory in the worktree was deleted during this verification.
 
