@@ -10,12 +10,11 @@ The user's later exact approval `a` is recorded in [t11-public-push-approval-202
 
 The public branch was created from a separate orphan history and pushed without rewriting the local `main` or `prd/hide-rebrand` branches.
 
-The local merged `main` contains this feature; its final merge SHA is recorded by
-the repository state and in the final handoff.
+The local merged `main` contains this feature and currently ends at `81ca373`.
 
-The feature commit included in that merge is `214b262b6e3c578134d9807e1f4bb593beb44d61`.
+The feature branch commits through `076ee92` are included in that merge.
 
-The subsequent navigator-focus cleanup is `f979cfc` and is merged into local `main` at `dc8e0c6`.
+The navigator-focus cleanup is `f979cfc`, and the later evidence addendum is `076ee92`.
 
 After that merge, the release bundle was rebuilt with the Rust cache at `/tmp/hide-finisher-cargo` and the Swift scratch path `/tmp/hide-finisher-swift`, both outside the repository so verification rounds do not create and remove bulk build files in the judged tree.
 
@@ -37,4 +36,14 @@ The implemented result is that an existing checkout row remains visible regardle
 
 This deviation is intentional, preserves immediate workability, and is covered by the passing Swift regression `paneLessCheckoutSelectionRequestsAnAutomaticTerminal`.
 
-The current local verification state is pending a fresh Sasu verify after this addendum, the approval artifact, and the runtime cleanup change are registered.
+The fresh Sasu verify attempt `5176c34c-4620-4579-b643-60c1c68868fe` ran after these changes.
+
+Its mechanical build and test lanes passed, its risk lane passed with zero blocking findings and three advisory findings, and its acceptance lane passed AC16, AC17, AC19, and AC20.
+
+The unified result was `ERROR` because the judge returned an invalid AC5 `deltaBasis` contract value, while the remaining acceptance failures are previously recorded execution-evidence gaps rather than build failures.
+
+The fidelity lane still reports F5 because this v6 run has no supported command for appending the approved pane-less checkout deviation to harness-owned implement state, and the state was not hand-edited.
+
+The design comment raised by that attempt concerns `macos/Sources/HerdrMacOS/HerdrApp.swift` and was accepted as a follow-up UI-owned refactor without editing the Swift source.
+
+No further verify retry or finalize was run after the second consecutive judge-invalid-output error.
