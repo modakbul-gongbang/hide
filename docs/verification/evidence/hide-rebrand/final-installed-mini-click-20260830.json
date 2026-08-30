@@ -1,0 +1,51 @@
+{
+  "data" : {
+    "executionTime" : 0.4380120038986206,
+    "clickedElement" : "Button: Mac mini",
+    "clickType" : "single",
+    "targetWindowId" : 9185,
+    "targetPoint" : {
+      "snapshotId" : "1788078969634-5151",
+      "source" : "element",
+      "original" : {
+        "y" : 941,
+        "x" : 290
+      },
+      "resolved" : {
+        "x" : 290,
+        "y" : 941
+      },
+      "windowAdjustment" : {
+        "status" : "unchanged"
+      },
+      "elementId" : "elem_108"
+    },
+    "deliveryMode" : "foreground",
+    "waitTime" : 0.0014159679412841797,
+    "clickLocation" : {
+      "x" : 290,
+      "y" : 941
+    },
+    "targetWindowTitle" : "hide",
+    "targetApp" : "hide"
+  },
+  "success" : true,
+  "debug_logs" : [
+    "[2026-08-30T08:36:34.674Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "outcome" : {
+    "delivery_mechanism" : "global_events",
+    "mutation_dispatched" : true,
+    "escalation" : "observe_before_retry",
+    "dispatch_state" : "dispatched",
+    "requires_fresh_observation" : true,
+    "effect" : "unverifiable",
+    "route" : "local",
+    "delivery_mode" : "foreground",
+    "evidence" : "delivery_accepted",
+    "retry_safe" : false,
+    "retry_safety" : "unsafe",
+    "state" : "dispatched_unverified"
+  },
+  "effect" : "unverifiable"
+}

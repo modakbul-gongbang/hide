@@ -1,0 +1,51 @@
+{
+  "debug_logs" : [
+    "[2026-08-30T08:37:14.247Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "data" : {
+    "clickLocation" : {
+      "y" : 508,
+      "x" : 290
+    },
+    "clickType" : "single",
+    "targetWindowTitle" : "hide",
+    "executionTime" : 0.35769498348236084,
+    "targetWindowId" : 9185,
+    "targetApp" : "hide",
+    "targetPoint" : {
+      "elementId" : "elem_29",
+      "resolved" : {
+        "x" : 290,
+        "y" : 508
+      },
+      "source" : "element",
+      "original" : {
+        "x" : 290,
+        "y" : 508
+      },
+      "snapshotId" : "1788079003210-9376",
+      "windowAdjustment" : {
+        "status" : "unchanged"
+      }
+    },
+    "waitTime" : 0.0019739866256713867,
+    "clickedElement" : "Button: hide-remote-verification, Folder · 1 tabs",
+    "deliveryMode" : "foreground"
+  },
+  "effect" : "unverifiable",
+  "success" : true,
+  "outcome" : {
+    "retry_safe" : false,
+    "delivery_mechanism" : "global_events",
+    "evidence" : "delivery_accepted",
+    "state" : "dispatched_unverified",
+    "route" : "local",
+    "dispatch_state" : "dispatched",
+    "retry_safety" : "unsafe",
+    "requires_fresh_observation" : true,
+    "effect" : "unverifiable",
+    "delivery_mode" : "foreground",
+    "mutation_dispatched" : true,
+    "escalation" : "observe_before_retry"
+  }
+}
