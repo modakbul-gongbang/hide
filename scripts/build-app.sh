@@ -86,9 +86,11 @@ install -m 755 "$herdr_source" "$temporary_bundle/Contents/Resources/herdr-runti
 install -m 644 \
   "$macos_root/Resources/herdr-bundle.json" \
   "$temporary_bundle/Contents/Resources/herdr-bundle.json"
-install -m 644 \
-  "$macos_root/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt" \
-  "$temporary_bundle/Contents/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt"
+# Ship every notice, not a named one: a mark added to the app without a
+# matching line here would ship unattributed.
+/usr/bin/ditto \
+  "$macos_root/Resources/THIRD_PARTY_NOTICES" \
+  "$temporary_bundle/Contents/Resources/THIRD_PARTY_NOTICES"
 install -m 644 \
   "$project_root/docs/INSTALL.md" \
   "$temporary_bundle/Contents/Resources/INSTALL.md"
