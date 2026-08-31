@@ -604,9 +604,11 @@ struct PaneTerminalCell<Content: View>: View {
     var body: some View {
         HideTerminalPaneCard(
             paneID: pane.id,
-            title: pane.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? pane.id
-                : pane.label,
+            title: PaneHeaderPresentation.title(
+                label: pane.label,
+                cwd: pane.cwd,
+                paneID: pane.id
+            ),
             cwd: pane.cwd,
             status: status,
             statusMessage: statusMessage,
@@ -615,6 +617,21 @@ struct PaneTerminalCell<Content: View>: View {
             onReconnect: onReconnect,
             content: content
         )
+    }
+}
+
+enum PaneHeaderPresentation {
+    static func title(label: String, cwd: String, paneID: String) -> String {
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedLabel.isEmpty {
+            return normalizedLabel
+        }
+        let normalizedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCWD.isEmpty else { return paneID }
+        let folder = URL(fileURLWithPath: normalizedCWD, isDirectory: true)
+            .lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return folder.isEmpty ? paneID : folder
     }
 }
 
@@ -735,7 +752,7 @@ struct HideTerminalPaneCard<Content: View>: View {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(
                     isFocused ? HideTheme.accent : HideTheme.divider,
-                    lineWidth: isFocused ? 2 : 1
+                    lineWidth: HideTheme.Layout.hairlineWidth
                 )
         }
         .accessibilityIdentifier("terminal-pane-\(paneID)")
@@ -764,6 +781,25 @@ struct PanelHeader: View {
     let title: String
     let systemImage: String
     let trailing: String
+    let collapseAction: (() -> Void)?
+    let collapseAccessibilityLabel: String?
+    let collapseAccessibilityIdentifier: String?
+
+    init(
+        title: String,
+        systemImage: String,
+        trailing: String,
+        collapseAction: (() -> Void)? = nil,
+        collapseAccessibilityLabel: String? = nil,
+        collapseAccessibilityIdentifier: String? = nil
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.trailing = trailing
+        self.collapseAction = collapseAction
+        self.collapseAccessibilityLabel = collapseAccessibilityLabel
+        self.collapseAccessibilityIdentifier = collapseAccessibilityIdentifier
+    }
 
     var body: some View {
         HStack(spacing: ShellMetrics.compactSpacing) {
@@ -774,6 +810,20 @@ struct PanelHeader: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if let collapseAction {
+                Button(action: collapseAction) {
+                    Image(systemName: "sidebar.right")
+                        .frame(
+                            width: HideTheme.Layout.panelCollapseControlSize,
+                            height: HideTheme.Layout.panelCollapseControlSize
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(HideTheme.secondary)
+                .help(collapseAccessibilityLabel ?? "Collapse panel")
+                .accessibilityLabel(collapseAccessibilityLabel ?? "Collapse panel")
+                .accessibilityIdentifier(collapseAccessibilityIdentifier ?? "collapse-panel")
+            }
         }
         .padding(.horizontal, ShellMetrics.panelPadding)
         .frame(height: 44)

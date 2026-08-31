@@ -7,6 +7,24 @@ import Testing
 @MainActor
 @Suite("Pane grid presentation")
 struct PaneGridPresentationTests {
+    @Test func paneHeaderPrefersLabelThenFolderThenPaneIdentifier() {
+        #expect(PaneHeaderPresentation.title(
+            label: "  review agent  ",
+            cwd: "/Users/example/projects/hide",
+            paneID: "w1:p1"
+        ) == "review agent")
+        #expect(PaneHeaderPresentation.title(
+            label: "   ",
+            cwd: "/Users/example/projects/oh-my-principle",
+            paneID: "w1:p1"
+        ) == "oh-my-principle")
+        #expect(PaneHeaderPresentation.title(
+            label: "",
+            cwd: "",
+            paneID: "w1:p1"
+        ) == "w1:p1")
+    }
+
     @Test func authoritativeNestedLayoutDecodesWithoutChangingPaneOrder() throws {
         let data = Data(
             #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p3","zoomed":false,"root":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"split","direction":"down","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p2"},"second":{"type":"pane","pane_id":"w1:p3"}}}}"#.utf8

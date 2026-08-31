@@ -1623,6 +1623,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     #if DEBUG
     private func seedVerificationFixture() {
+        let paneID = "fixture-working"
+        let workspaceID = "fixture-workspace"
+        let tabID = "fixture-tab"
         let agents: [[String: Any]] = [
             Self.fixtureAgent("error", "×", "00", "1755000007000", "Build failed", "12s", "Core", "codex", "status_error_new"),
             Self.fixtureAgent("question", "?", "01", "1755000006000", "Choose persistence scope", "4m", "UI", "claude", "status_question_new"),
@@ -1632,15 +1635,33 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             Self.fixtureAgent("idle", "○", "10", "1755000002000", "Reviewed fixture", "3d", "Verify", "claude", "status_idle"),
             Self.fixtureAgent("unknown", "~", "10", "1755000001000", "Awaiting lifecycle token", "9m", "Other", "unknown", "status_unknown"),
         ]
-        dispatch(kind: "session_snapshot", payload: ["agents": agents])
         dispatch(kind: "create_workspace", payload: [
             "path": workspaceRoot.path,
             "label": "hide rebrand",
             "initialize_git": false,
         ])
+        dispatch(kind: "session_snapshot", payload: [
+            "focused_pane_id": paneID,
+            "agents": agents,
+            "workspaces": [["workspace_id": workspaceID, "label": "hide rebrand"]],
+            "tabs": [["tab_id": tabID, "workspace_id": workspaceID, "label": "Round 3"]],
+            "panes": [["pane_id": paneID, "cwd": workspaceRoot.path]],
+            "layouts": [[
+                "workspace_id": workspaceID,
+                "tab_id": tabID,
+                "zoomed": false,
+                "area": ["x": 0, "y": 0, "width": 120, "height": 60],
+                "focused_pane_id": paneID,
+                "panes": [[
+                    "pane_id": paneID,
+                    "rect": ["x": 0, "y": 0, "width": 120, "height": 60],
+                ]],
+                "splits": [],
+            ]],
+        ])
         let banner = "\u{001B}[1;36mherdr-core ↔ SwiftTerm\u{001B}[0m\r\nLocal byte bridge ready. IME V9 remains blocked.\r\n\r\n"
         dispatch(kind: "terminal_output", payload: [
-            "pane_id": "local-loopback",
+            "pane_id": paneID,
             "bytes_base64": Data(banner.utf8).base64EncodedString(),
         ])
     }

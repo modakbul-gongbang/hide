@@ -32,6 +32,21 @@ enum HideTheme {
     static let compactControlSize: CGFloat = 36
     static let searchSheetSize = CGSize(width: 570, height: 430)
 
+    /// Sizes that describe the window's three-column frame rather than the
+    /// spacing and radius scale above, which any view may reach for.
+    enum Layout {
+        static let hairlineWidth: CGFloat = 1
+        static let panelCollapseControlSize: CGFloat = 18
+        static let sidebarMinWidth: CGFloat = 220
+        static let sidebarIdealWidth: CGFloat = 292
+        static let sidebarMaxWidth: CGFloat = 440
+        static let terminalMinWidth: CGFloat = 540
+        static let terminalIdealWidth: CGFloat = 760
+        static let workbenchMinWidth: CGFloat = 260
+        static let workbenchIdealWidth: CGFloat = 355
+        static let workbenchMaxWidth: CGFloat = 560
+    }
+
     static func color(for hex: String) -> Color {
         let value = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         guard value.count == 6, let number = UInt64(value, radix: 16) else { return accent }
@@ -89,14 +104,34 @@ struct ShellView: View {
 
     var body: some View {
         ZStack {
-            HStack(spacing: 0) {
+            HSplitView {
                 if model.leftSidebarVisible {
                     HideSidebar()
-                        .frame(width: 292)
+                        .frame(
+                            minWidth: HideTheme.Layout.sidebarMinWidth,
+                            idealWidth: HideTheme.Layout.sidebarIdealWidth,
+                            maxWidth: HideTheme.Layout.sidebarMaxWidth
+                        )
                         .frame(maxHeight: .infinity, alignment: .topLeading)
                 }
                 HideMainView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(
+                        minWidth: HideTheme.Layout.terminalMinWidth,
+                        idealWidth: HideTheme.Layout.terminalIdealWidth,
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+                if model.rightWorkbenchVisible {
+                    WorkbenchPanel()
+                        .frame(
+                            minWidth: HideTheme.Layout.workbenchMinWidth,
+                            idealWidth: HideTheme.Layout.workbenchIdealWidth,
+                            maxWidth: HideTheme.Layout.workbenchMaxWidth,
+                            maxHeight: .infinity
+                        )
+                        .accessibilityIdentifier("workbench-panel")
+                }
             }
             if let cycle = model.agentSwitcherCycle {
                 AgentSwitcherOverlay(cycle: cycle, agents: model.agents)
@@ -500,6 +535,20 @@ private struct HideBrandHeader: View {
             Text(model.isRemoteContext ? model.remote.targetLabel : (model.core.runtimeSelection?.version ?? "offline"))
                 .hideFont(size: 10, weight: .medium, design: .monospaced)
                 .foregroundStyle(HideTheme.muted)
+            Button {
+                model.toggleLeftSidebar()
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .frame(
+                        width: HideTheme.Layout.panelCollapseControlSize,
+                        height: HideTheme.Layout.panelCollapseControlSize
+                    )
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(HideTheme.secondary)
+            .help("Hide left sidebar (⌘B)")
+            .accessibilityLabel("Hide left sidebar")
+            .accessibilityIdentifier("hide-toggle-left-sidebar")
         }
         .padding(.horizontal, 18)
         .padding(.top, 19)
@@ -831,22 +880,15 @@ private struct HideMainView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HideToolbar()
+            HideTerminalHeader()
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
-            HSplitView {
-                ZStack {
-                    HideTerminalSurface()
-                    if !model.isRemoteContext,
-                       model.core.snapshot?.editor.viewerVisible == true {
-                        WorkbenchViewerOverlay()
-                    }
-                }
-                .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
-                if model.rightWorkbenchVisible {
-                    WorkbenchPanel()
-                        .frame(minWidth: 285, idealWidth: 355, maxWidth: 430, maxHeight: .infinity)
+            ZStack {
+                HideTerminalSurface()
+                if !model.isRemoteContext,
+                   model.core.snapshot?.editor.viewerVisible == true {
+                    WorkbenchViewerOverlay()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -860,13 +902,24 @@ private struct HideMainView: View {
     }
 }
 
-private struct HideToolbar: View {
+private struct HideTerminalHeader: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
+                if !model.leftSidebarVisible {
+                    Button {
+                        model.toggleLeftSidebar()
+                    } label: {
+                        Image(systemName: "rectangle.leftthird.inset.filled")
+                    }
+                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .help("Show left sidebar (⌘B)")
+                    .accessibilityLabel("Show left sidebar")
+                    .accessibilityIdentifier("hide-restore-left-sidebar")
+                }
                 Image(systemName: "rectangle.3.group")
                     .foregroundStyle(accent)
                 VStack(alignment: .leading, spacing: 1) {
@@ -883,24 +936,6 @@ private struct HideToolbar: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Button {
-                    model.toggleLeftSidebar()
-                } label: {
-                    Image(systemName: model.leftSidebarVisible ? "sidebar.left" : "rectangle.leftthird.inset.filled")
-                }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                .help("Toggle left sidebar (⌘B)")
-                .accessibilityLabel(model.leftSidebarVisible ? "Hide left sidebar" : "Show left sidebar")
-                .accessibilityIdentifier("hide-toggle-left-sidebar")
-                Button {
-                    model.toggleRightWorkbench()
-                } label: {
-                    Image(systemName: model.rightWorkbenchVisible ? "sidebar.right" : "rectangle.rightthird.inset.filled")
-                }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                .help("Toggle Workbench (⌘⌥B)")
-                .accessibilityLabel(model.rightWorkbenchVisible ? "Hide Workbench" : "Show Workbench")
-                .accessibilityIdentifier("hide-toggle-right-workbench")
                 if model.isRemoteContext {
                     Label("mini \(model.remote.phase.rawValue)", systemImage: "externaldrive.connected.to.line.below")
                         .hideFont(size: 10, weight: .medium)
@@ -914,20 +949,17 @@ private struct HideToolbar: View {
                         .hideFont(size: 10, weight: .medium)
                         .foregroundStyle(HideTheme.warning)
                 }
-                Button {
-                    model.openNewAgent()
-                } label: {
-                    Label("New Agent", systemImage: "sparkles")
+                if !model.rightWorkbenchVisible {
+                    Button {
+                        model.toggleRightWorkbench()
+                    } label: {
+                        Image(systemName: "rectangle.rightthird.inset.filled")
+                    }
+                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .help("Show Workbench (⌘⌥B)")
+                    .accessibilityLabel("Show Workbench")
+                    .accessibilityIdentifier("hide-restore-right-workbench")
                 }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: true))
-                .disabled(model.focusedCheckout == nil)
-                Button {
-                    model.addTab()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                .help("New tab")
             }
             .padding(.horizontal, 18)
             .frame(height: 54)

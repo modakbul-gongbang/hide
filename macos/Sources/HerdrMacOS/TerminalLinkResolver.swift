@@ -1,7 +1,7 @@
 import Foundation
 
 enum TerminalLinkReference: Equatable {
-    case web(URL)
+    case external(URL)
     case file(path: String, line: Int?, column: Int?)
     case invalid(String)
 }
@@ -25,14 +25,6 @@ enum TerminalLinkResolver {
             return .invalid("The terminal link is empty.")
         }
 
-        let lowercaseValue = value.lowercased()
-        if lowercaseValue.hasPrefix("http://") || lowercaseValue.hasPrefix("https://"),
-           let url = URL(string: value) {
-            guard url.host != nil else {
-                return .invalid("The terminal URL has no host and cannot be opened.")
-            }
-            return .web(url)
-        }
         if let url = URL(string: value),
            url.scheme?.lowercased() == "file" {
             guard url.isFileURL, !url.path.isEmpty else {
@@ -42,8 +34,13 @@ enum TerminalLinkResolver {
             return .file(path: location.path, line: location.line, column: location.column)
         }
 
-        if let scheme = explicitUnsupportedScheme(in: value) {
-            return .invalid("Hide does not open terminal links with the \(scheme) scheme.")
+        if let url = explicitExternalURL(in: value) {
+            if let scheme = url.scheme?.lowercased(),
+               ["http", "https"].contains(scheme),
+               url.host == nil {
+                return .invalid("The terminal URL has no host and cannot be opened.")
+            }
+            return .external(url)
         }
 
         let location = splitSourceLocation(value)
@@ -53,16 +50,16 @@ enum TerminalLinkResolver {
         return .file(path: location.path, line: location.line, column: location.column)
     }
 
-    private static func explicitUnsupportedScheme(in value: String) -> String? {
+    private static func explicitExternalURL(in value: String) -> URL? {
         guard let url = URL(string: value),
               let scheme = url.scheme?.lowercased()
         else { return nil }
-        let knownSchemes: Set<String> = [
+        let schemesWithoutSlashes: Set<String> = [
             "ftp", "gemini", "git", "gopher", "ipfs", "ipns", "mailto",
             "magnet", "news", "ssh", "tel",
         ]
-        if value.contains("://") || knownSchemes.contains(scheme) {
-            return scheme
+        if value.contains("://") || schemesWithoutSlashes.contains(scheme) {
+            return url
         }
         return nil
     }
@@ -117,6 +114,9 @@ enum TerminalLinkResolver {
             }
             guard FileManager.default.isReadableFile(atPath: resolved.path) else {
                 return .failure("Hide found \(resolved.lastPathComponent), but it is not readable.")
+            }
+            guard (try? resolved.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                return .failure("Hide found \(resolved.lastPathComponent), but it is not a regular file.")
             }
             return .file(resolved)
         }
