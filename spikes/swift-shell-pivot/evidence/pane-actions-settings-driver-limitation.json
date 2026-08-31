@@ -1,0 +1,24 @@
+{
+  "status": "partial",
+  "scope": "Settings shortcut rebind native driver",
+  "actual_native_render": "pane-actions-settings-diagnostic-r2-settings-latest.png",
+  "verified": [
+    "The standard Settings scene and Keyboard section rendered in the signed native app.",
+    "Default, missing, corrupt, validation, persistence, and dynamic command routing boundaries pass focused tests.",
+    "The Pane menu reads the current persisted shortcut policy dynamically."
+  ],
+  "not_verified_by_automation": [
+    "Typing a replacement binding into the native TextField",
+    "Immediate menu-equivalent refresh after native TextField submission",
+    "Native app relaunch restoration after a user-edited binding"
+  ],
+  "driver_result": "The exact-window driver receipts were indeterminate and the screenshot showed the field value unchanged. The attempts are not recorded as success.",
+  "follow_up_owner": "human",
+  "human_checklist": [
+    "Edit one Keyboard shortcut in Settings.",
+    "Confirm the Pane menu updates immediately.",
+    "Confirm the rebound action routes to the intended pane command.",
+    "Quit and relaunch, then confirm the binding persists."
+  ],
+  "further_global_input_automation_performed": false
+}

@@ -1,0 +1,18 @@
+2026-08-29 21:02:57.278 A  HerdrMacOS[23605:d1360b] (AppKit) sendAction:
+2026-08-29 21:02:58.643 A  HerdrMacOS[23605:d1360b] (AppKit) performKeyEquivalent:
+2026-08-29 21:02:58.644 A  HerdrMacOS[23605:d1360b] (AppKit) sendAction:
+2026-08-29 21:03:01.008 A  HerdrMacOS[23605:d1360b] (AppKit) performKeyEquivalent:
+2026-08-29 21:03:01.008 A  HerdrMacOS[23605:d1360b] (AppKit) sendAction:
+2026-08-29 21:03:02.656 A  HerdrMacOS[23605:d1360b] (AppKit) performKeyEquivalent:
+2026-08-29 21:03:02.656 A  HerdrMacOS[23605:d1360b] (AppKit) sendAction:
+2026-08-29 21:03:02.656 A  HerdrMacOS[23605:d1360b] (AppKit) performClick:
+2026-08-29 21:03:02.656 A  HerdrMacOS[23605:d1360b] (AppKit) sendActionFrom:
+2026-08-29 21:03:02.656 A  HerdrMacOS[23605:d1360b] (AppKit) sendAction:
+2026-08-29 21:03:02.656 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Window] window NSWindow eb7 finishing close
+2026-08-29 21:03:02.682 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Application] terminate:
+2026-08-29 21:03:02.682 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:AutomaticTermination] void _NSDisableAutomaticTerminationAndLog(NSString *) Terminating
+2026-08-29 21:03:02.683 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Application] Asking app delegate whether applicationShouldTerminate:
+2026-08-29 21:03:02.683 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Application] replyToApplicationShouldTerminate:YES
+2026-08-29 21:03:02.683 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Application] Termination commencing
+2026-08-29 21:03:02.688 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Window] window NSPanel eb8 finishing close
+2026-08-29 21:03:02.688 Df HerdrMacOS[23605:d1360b] [com.apple.AppKit:Application] Termination complete. Exiting without sudden termination.

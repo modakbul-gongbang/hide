@@ -1,0 +1,78 @@
+{
+  "app": {
+    "bundle_identifier": "com.hoyeon.herdr-ide.swift-shell",
+    "executable": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS",
+    "launch_count": 1,
+    "pid": 55772,
+    "process_count_after_cleanup": 0,
+    "terminated_after_verification": true
+  },
+  "build": {
+    "assembled": true,
+    "codesign_deep_strict": true,
+    "signature": "adhoc"
+  },
+  "constraints": {
+    "event_monitor": false,
+    "event_posting_or_requeue": false,
+    "input_automation": false,
+    "service_mutation": false
+  },
+  "geometry_regression": {
+    "after": {
+      "failed": 0,
+      "passed": 4
+    },
+    "before": {
+      "failed": 2,
+      "failure_names": [
+        "petHitRegionMakesTransparentCornerClickThrough",
+        "petHitRegionDecisionIsStableWhenRepeated"
+      ],
+      "passed": 2
+    },
+    "full_swift_suite_passed": 11
+  },
+  "peekaboo": {
+    "accessibility_permission": true,
+    "main_window_id": 1978,
+    "screen_recording_permission": true,
+    "screenshot": {
+      "global_bounds": {
+        "height": 92,
+        "width": 92,
+        "x": 1636,
+        "y": 32
+      },
+      "path": "evidence/v24-selective-hit-region-pet-visible.png",
+      "pixel_height": 184,
+      "pixel_width": 184,
+      "sha256": "e65afb39759978ae05366a3e7bfb45e33aeb3507badb0a746e10bb88a3561eb8",
+      "visually_inspected": true
+    }
+  },
+  "role": {
+    "mode": "implementor",
+    "pane_id": "w2X:p8"
+  },
+  "runtime_receipt": {
+    "center_ignores_mouse_events": false,
+    "corner_ignores_mouse_events": true,
+    "edge_ignores_mouse_events": false,
+    "path": "evidence/t18-selective-hit-region-runtime.json",
+    "polling_instances": 1,
+    "probe_used_input_automation": false,
+    "restored_to_cursor_state": true,
+    "sha256": "92d38cb18d3431717162a2af0ae9423ccdded98c5f51837e6f486df5c0a6254d",
+    "window_frame": {
+      "height": 92,
+      "width": 92,
+      "x": 1636,
+      "y": 993
+    }
+  },
+  "static_checks": {
+    "forbidden_input_api_scan": true,
+    "git_diff_check": true
+  }
+}

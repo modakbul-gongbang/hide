@@ -1,0 +1,35 @@
+{
+  "success" : true,
+  "data" : {
+    "windows" : [
+      {
+        "window_title" : "hide",
+        "subrole" : "AXStandardWindow",
+        "layer" : 0,
+        "window_index" : 11,
+        "window_id" : 7789,
+        "is_frontmost" : true,
+        "is_on_screen" : true,
+        "bounds" : {
+          "height" : 928,
+          "x" : 144,
+          "width" : 1440,
+          "y" : 72
+        },
+        "is_key" : true
+      }
+    ],
+    "inventory_warnings" : [
+      "Window list omitted 11 non-renderable or duplicate inventory rows."
+    ],
+    "target_application_info" : {
+      "pid" : 77660,
+      "app_name" : "hide",
+      "bundle_id" : "me.grab.hide"
+    },
+    "inventory_completeness" : "partial"
+  },
+  "debug_logs" : [
+    "[2026-08-30T03:34:39.540Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon.sock (build 4.2.2 (4.2.2))"
+  ]
+}

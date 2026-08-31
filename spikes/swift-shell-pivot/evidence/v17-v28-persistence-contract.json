@@ -1,0 +1,24 @@
+{
+  "state_schema_version": 1,
+  "missing_state": {
+    "fallback": "safe defaults",
+    "structured_status": "ui_state.missing",
+    "verified_by": "herdr-core FFI smoke and in-process tests"
+  },
+  "corrupt_or_unknown_state": {
+    "fallback": "safe defaults",
+    "structured_status": "ui_state.corrupt",
+    "verified_by": "herdr-core persistence and FFI tests"
+  },
+  "valid_state": {
+    "expanded_paths_round_trip": true,
+    "selected_path_round_trip": true,
+    "selected_pane_id_round_trip": true,
+    "atomic_same_directory_replace": true
+  },
+  "legacy_navigator": {
+    "production_source_reference_count": 0,
+    "sentinel_can_drive_ui": false
+  },
+  "scope_note": "The core contract passed. Full relaunch visual restoration remains pending because no destructive or user-workspace mutation was used."
+}

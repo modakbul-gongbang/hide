@@ -1,0 +1,1 @@
+73661     1 S    00:00 ./dist/hide.app/Contents/MacOS/HerdrMacOS

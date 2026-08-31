@@ -1,0 +1,36 @@
+   Compiling herdr-core v0.1.0 (./herdr-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.39s
+     Running unittests src/lib.rs (target/debug/deps/herdr_core-ff74fa361901db68)
+
+running 10 tests
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+test runtime::tests::checkout_path_matching_uses_component_boundaries ... ok
+test runtime::tests::a_wholly_broken_poll_keeps_the_last_valid_agents_and_says_it_is_disconnected ... ok
+test runtime::tests::ingesting_the_same_poll_twice_reports_no_further_change ... ok
+test runtime::tests::a_session_workspace_with_the_selected_checkout_cwd_does_not_steal_projection ... ok
+test runtime::tests::a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane ... ok
+
+thread 'runtime::tests::an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing' (47755791) panicked at herdr-core/src/runtime.rs:3374:9:
+assertion failed: runtime.snapshot().pane_layout.is_none()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test runtime::tests::an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing ... FAILED
+test runtime::tests::a_plain_terminal_pane_cwd_is_reconciled_into_its_registered_checkout ... ok
+test runtime::tests::a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd ... ok
+test runtime::tests::focusing_checkout_selects_only_the_target_checkout_pane ... ok
+test runtime::tests::an_unregistered_worktree_layout_projects_into_the_selected_checkout ... ok
+
+failures:
+
+failures:
+    runtime::tests::an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.25s
+
+error: test failed, to rerun pass `-p herdr-core --lib`

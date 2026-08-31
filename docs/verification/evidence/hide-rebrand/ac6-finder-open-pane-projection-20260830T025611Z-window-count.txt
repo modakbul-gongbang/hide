@@ -1,0 +1,5 @@
+captured_utc=20260830T025611Z
+pid=49138
+bundle=./dist/hide.app
+main_window_count=2
+pet_window_count=separate_if_present

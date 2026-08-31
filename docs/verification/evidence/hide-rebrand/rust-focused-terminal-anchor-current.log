@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running unittests src/lib.rs (target/debug/deps/herdr_core-ff74fa361901db68)
+
+running 1 test
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+test runtime::tests::a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 87 filtered out; finished in 0.04s
+
+test_exit=0

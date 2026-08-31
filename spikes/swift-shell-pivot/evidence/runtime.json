@@ -1,0 +1,33 @@
+{
+  "callback_gate_applied_on_main" : 100,
+  "callback_gate_observed" : 100,
+  "callback_gate_received_off_main" : 100,
+  "callback_passed" : true,
+  "callbacks_applied_on_main" : 122,
+  "callbacks_observed" : 122,
+  "callbacks_received_off_main" : 104,
+  "last_error" : "None",
+  "remote_tui_ready" : true,
+  "required_snapshot_keys" : [
+    "schema_version",
+    "navigator",
+    "overlay",
+    "tab",
+    "connection",
+    "zoomed",
+    "focused",
+    "terminal",
+    "editor",
+    "ime",
+    "input_generation",
+    "status",
+    "spike"
+  ],
+  "schema_version" : 1,
+  "snapshot_available" : true,
+  "snapshot_schema_passed" : true,
+  "swiftterm_delegate_bytes_sent" : 28,
+  "transcript_contains_ascii_probe" : true,
+  "transcript_contains_hangul" : false,
+  "transcript_contains_remote_ready" : true
+}

@@ -1,0 +1,33 @@
+{
+  "upstream_behavioral_reference": {
+    "repository": "https://github.com/missuo/herdrm",
+    "source_path": "Sources/HerdrM/TerminalView.swift",
+    "commit": "49c2af68711601f3d09ad114975b47586c4cc215",
+    "retrieved_at_utc": "2026-08-29T01:03:23Z",
+    "license_assumption": "no usable repository license; behavioral review only",
+    "copying": "none"
+  },
+  "swiftterm_dependency": {
+    "version": "1.20.0",
+    "commit": "5d14406844143538cd8f8851d2d8a67c1fe443e5"
+  },
+  "human_source_of_truth": {
+    "english_immediate_echo": "pass",
+    "candidate_window_follows_cursor": "pass",
+    "backspace_during_composition": "fail before this change; fresh human retest required",
+    "multiple_korean_characters_preserve_following_character": "pass",
+    "editor_surface": "deferred by agreement"
+  },
+  "diagnosis": {
+    "cause": "SwiftTerm composition command fallback emitted DEL through the spike delegate while marked text remained unchanged",
+    "before_proxy": "v9-backspace-marked-proxy-before-trace.json",
+    "after_proxy": "v9-backspace-regression-script.json",
+    "before_values": "marked text unchanged; delegate [127]; Rust delta 1",
+    "after_values": "marked text cleared; marked delegate and Rust deltas 0; ordinary Backspace delegate [127] and Rust delta 1",
+    "proxy_limit": "AppKit marked state is injected because synthesized key events do not open a Korean IME conversion session; physical Korean input remains mandatory"
+  },
+  "ctrl_c_fixture_lifetime": {
+    "evidence": "v9-ctrlc-safe-after-backspace.json",
+    "result": "Ctrl-C reached Rust as one byte; fixture stayed alive; subsequent V9_ECHO_PROBE echoed"
+  }
+}

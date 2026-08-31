@@ -1,0 +1,6 @@
+stamp=20260830T021145Z
+app_pids=46115
+46115     1 R    00:50 Sun Aug 30 11:10:59 2026     ./dist/hide.app/Contents/MacOS/HerdrMacOS
+snapshot_id=1788055910124-7911
+target_id=elem_38
+window_id=7652

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "ownership_prefix": "herdr-ide-verify-",
+  "target": "mini",
+  "cwd": "/tmp/herdr-ide-verify-mini",
+  "workspaces": [
+    {
+      "workspace_name": "herdr-ide-verify-mini-w01",
+      "workspace_id": "w4J",
+      "pane_ids": [
+        "w4J:p1",
+        "w4J:p2"
+      ]
+    }
+  ]
+}

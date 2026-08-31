@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-29T11:51:23+09:00",
+  "role_marker": {
+    "mode": "implementor",
+    "pane_id": "w2X:p8",
+    "agent_kind": "codex"
+  },
+  "peekaboo_permissions": {
+    "screen_recording": true,
+    "accessibility": true,
+    "event_synthesizing": true
+  },
+  "launch": {
+    "path": "~/projects/herdr-ide.worktrees/swift-shell-pivot/macos/build/HerdrIDE.app",
+    "bundle_id": "com.hoyeon.herdr-ide.swift-shell",
+    "instance_count": 1,
+    "pid": 38859,
+    "active": true
+  },
+  "window": {
+    "id": 1124,
+    "title": "Herdr IDE",
+    "is_key": true,
+    "is_frontmost": true,
+    "is_on_screen": true,
+    "bounds": {
+      "x": 144,
+      "y": 125,
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "layout": {
+    "accessibility_role": "AXSplitGroup",
+    "columns": [
+      {
+        "name": "Agents",
+        "identifier": "agents-panel",
+        "x": 144,
+        "width": 351.5
+      },
+      {
+        "name": "Terminal",
+        "identifier": "terminal-panel",
+        "x": 496.5,
+        "width": 671
+      },
+      {
+        "name": "Workbench",
+        "identifier": "workbench-panel",
+        "x": 1168.5,
+        "width": 415.5
+      }
+    ],
+    "status_bar_visible": true,
+    "pet_status_visible": true
+  },
+  "menu_bar": {
+    "native_menus": [
+      "Herdr IDE",
+      "File",
+      "Edit",
+      "View",
+      "Navigate",
+      "Window",
+      "Help"
+    ],
+    "navigate_items": [
+      "Focus Agents (Command-1)",
+      "Focus Terminal (Command-2)",
+      "Focus Workbench (Command-3)"
+    ]
+  },
+  "screenshots": [
+    "evidence/t8-swiftui-shell-window.png",
+    "evidence/t8-swiftui-shell-screen-menu.png"
+  ],
+  "cleanup": {
+    "terminated_owned_pid": 38859,
+    "t8_app_count_after": 0,
+    "spike_app_count_after": 0,
+    "owned_spike_fixture_count_after": 0
+  },
+  "automation": {
+    "keyboard_or_mouse_input": false,
+    "input_source_change": false,
+    "external_failure_injection": false
+  }
+}

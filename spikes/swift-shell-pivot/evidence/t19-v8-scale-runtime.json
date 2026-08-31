@@ -1,0 +1,22 @@
+{
+  "target": "local",
+  "ownership_prefix": "herdr-ide-verify-",
+  "fixture_name": "herdr-ide-verify-v8",
+  "manifest": "t19-local-v8-manifest.json",
+  "ownership_verified_before_mutation": true,
+  "workspace_count": 7,
+  "pane_count": 11,
+  "owned_app_pid": 38870,
+  "owned_app_rss_kb": 138880,
+  "owned_app_rss_mb": 135.625,
+  "rss_limit_mb": 400,
+  "under_limit": true,
+  "non_prefixed_workspace_identity_unchanged": true,
+  "cleanup": {
+    "ownership_revalidated": true,
+    "closed_workspace_ids": ["w2Z", "w20", "w31", "w32", "w33", "w34", "w35"],
+    "remaining_prefixed_workspace_count": 0,
+    "fixture_path_absent": true,
+    "manifest_retained": true
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema": "herdr.ide.runtime.v1",
+  "build": "herdr-ide@0.1.0",
+  "architecture": "aarch64",
+  "process_id": 97564,
+  "pty_child_process_id": 97581,
+  "herdr_pane_id": "w2:p1",
+  "window_id": 20952,
+  "adapter": "Apple M4 Pro (Metal)",
+  "physical_width": 2360,
+  "physical_height": 1440,
+  "scale_factor": 2.0,
+  "first_usable_ms": 617.0520419999999,
+  "input_samples": 24,
+  "input_to_present_p95_ms": 136.72579100000002,
+  "input_to_present_max_ms": 137.569208,
+  "zoom_state": "Split layout",
+  "ax_children": [
+    "Workspaces navigator",
+    "Workspace tabs",
+    "Terminal pane A",
+    "Editor pane B"
+  ],
+  "ime_contract": "NSTextInputClient marked-text and commit selectors route UTF-8 to WGPU text or the PTY",
+  "pty_contract": "portable-pty attaches the focused Herdr pane; the exact-pinned alacritty_terminal Term owns ANSI, OSC, grid, cursor, selection, scrollback, alternate-screen, and terminal modes",
+  "native_menu_contract": "AppKit menus and Cmd+T, Cmd+D, Cmd+Shift+D dispatch through the same Herdr topology controller; Cmd+Shift+Enter remains window-local visual zoom"
+}

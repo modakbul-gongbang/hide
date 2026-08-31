@@ -1,0 +1,154 @@
+{
+  "focused_workspace_id": "w2X",
+  "focused_tab_id": "w2X:t1",
+  "focused_pane_id": "w2X:p4",
+  "workspaces": [
+    {
+      "active_tab_id": "w3R:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "hide prd/hide-rebrand",
+      "number": 12,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "w3R"
+    },
+    {
+      "active_tab_id": "w3T:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "hide prd/hide-rebrand",
+      "number": 13,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "w3T"
+    }
+  ],
+  "layouts": [
+    {
+      "area": {
+        "height": 59,
+        "width": 179,
+        "x": 36,
+        "y": 1
+      },
+      "focused_pane_id": "w36:p1",
+      "panes": [
+        {
+          "focused": true,
+          "pane_id": "w36:p1",
+          "rect": {
+            "height": 59,
+            "width": 179,
+            "x": 36,
+            "y": 1
+          }
+        }
+      ],
+      "splits": [],
+      "tab_id": "w36:t1",
+      "workspace_id": "w36",
+      "zoomed": false
+    },
+    {
+      "area": {
+        "height": 59,
+        "width": 179,
+        "x": 36,
+        "y": 1
+      },
+      "focused_pane_id": "w3P:p1",
+      "panes": [
+        {
+          "focused": true,
+          "pane_id": "w3P:p1",
+          "rect": {
+            "height": 59,
+            "width": 179,
+            "x": 36,
+            "y": 1
+          }
+        }
+      ],
+      "splits": [],
+      "tab_id": "w3P:t1",
+      "workspace_id": "w3P",
+      "zoomed": false
+    },
+    {
+      "area": {
+        "height": 59,
+        "width": 179,
+        "x": 36,
+        "y": 1
+      },
+      "focused_pane_id": "w3Q:p1",
+      "panes": [
+        {
+          "focused": true,
+          "pane_id": "w3Q:p1",
+          "rect": {
+            "height": 59,
+            "width": 179,
+            "x": 36,
+            "y": 1
+          }
+        }
+      ],
+      "splits": [],
+      "tab_id": "w3Q:t1",
+      "workspace_id": "w3Q",
+      "zoomed": false
+    },
+    {
+      "area": {
+        "height": 59,
+        "width": 179,
+        "x": 36,
+        "y": 1
+      },
+      "focused_pane_id": "w3R:p1",
+      "panes": [
+        {
+          "focused": true,
+          "pane_id": "w3R:p1",
+          "rect": {
+            "height": 59,
+            "width": 179,
+            "x": 36,
+            "y": 1
+          }
+        }
+      ],
+      "splits": [],
+      "tab_id": "w3R:t1",
+      "workspace_id": "w3R",
+      "zoomed": false
+    },
+    {
+      "area": {
+        "height": 59,
+        "width": 179,
+        "x": 36,
+        "y": 1
+      },
+      "focused_pane_id": "w3T:p1",
+      "panes": [
+        {
+          "focused": true,
+          "pane_id": "w3T:p1",
+          "rect": {
+            "height": 59,
+            "width": 179,
+            "x": 36,
+            "y": 1
+          }
+        }
+      ],
+      "splits": [],
+      "tab_id": "w3T:t1",
+      "workspace_id": "w3T",
+      "zoomed": false
+    }
+  ]
+}

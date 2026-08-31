@@ -1,0 +1,37 @@
+{
+  "success" : false,
+  "data" : null,
+  "effect" : "unverifiable",
+  "debug_logs" : [
+    "[2026-08-29T12:37:54.981Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon-8441423917440fcd.sock (build 4.2.2 (4.2.2))"
+  ],
+  "outcome" : {
+    "delivery_mechanism" : "composite",
+    "delivery_mode" : "foreground",
+    "dispatched_unit_count" : 2,
+    "effect" : "unverifiable",
+    "route" : "bridge",
+    "escalation" : "observe_before_retry",
+    "retry_safety" : "unsafe",
+    "mutation_dispatched" : true,
+    "dispatch_state" : "may_have_dispatched",
+    "state" : "indeterminate",
+    "retry_safe" : false,
+    "evidence" : "completion_unknown",
+    "requires_fresh_observation" : true
+  },
+  "error" : {
+    "hint" : "Observe the window before retrying.",
+    "details" : "Bridge operation receipt does not match post-mutation window postcondition",
+    "message" : "The confirmed window mutation could not prove its requested postcondition.",
+    "code" : "INTERACTION_FAILED",
+    "retry_safe" : false,
+    "mutation_dispatched" : true
+  },
+  "target_receipt" : {
+    "window_id" : 4122,
+    "process_start_identity" : 1788007062565047,
+    "process_start_identity_decimal" : "1788007062565047",
+    "pid" : 91308
+  }
+}

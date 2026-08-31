@@ -1,0 +1,31 @@
+{
+  "data" : {
+    "keys" : [
+      "cmd+alt+return"
+    ],
+    "executionTime" : 0.13878309726715088,
+    "count" : 1,
+    "deliveryMode" : "foreground",
+    "totalPresses" : 1
+  },
+  "success" : true,
+  "effect" : "unverifiable",
+  "debug_logs" : [
+    "[2026-08-29T12:38:48.402Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "outcome" : {
+    "mutation_dispatched" : true,
+    "effect" : "unverifiable",
+    "retry_safety" : "unsafe",
+    "evidence" : "delivery_accepted",
+    "route" : "local",
+    "delivery_mechanism" : "composite",
+    "state" : "dispatched_unverified",
+    "escalation" : "observe_before_retry",
+    "retry_safe" : false,
+    "dispatch_state" : "dispatched",
+    "dispatched_unit_count" : 3,
+    "delivery_mode" : "foreground",
+    "requires_fresh_observation" : true
+  }
+}

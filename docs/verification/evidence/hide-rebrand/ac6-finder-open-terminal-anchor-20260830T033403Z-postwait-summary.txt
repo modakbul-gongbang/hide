@@ -1,0 +1,5 @@
+permissions_exit=0
+app_list_exit=0
+window_list_exit=0
+system_events_exit=1
+system_events_result=147:153: syntax error: A “else” can’t go after this “)”. (-2740)

@@ -1,0 +1,38 @@
+   Compiling herdr-core v0.1.0 (./herdr-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.92s
+     Running unittests src/lib.rs (target/debug/deps/herdr_core-ff74fa361901db68)
+
+running 10 tests
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+test runtime::tests::checkout_path_matching_uses_component_boundaries ... ok
+test runtime::tests::ingesting_the_same_poll_twice_reports_no_further_change ... ok
+test runtime::tests::a_wholly_broken_poll_keeps_the_last_valid_agents_and_says_it_is_disconnected ... ok
+test runtime::tests::a_session_workspace_with_the_selected_checkout_cwd_does_not_steal_projection ... ok
+test runtime::tests::a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane ... ok
+test runtime::tests::an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing ... ok
+test runtime::tests::a_plain_terminal_pane_cwd_is_reconciled_into_its_registered_checkout ... ok
+test runtime::tests::focusing_checkout_selects_only_the_target_checkout_pane ... ok
+test runtime::tests::a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd ... ok
+test runtime::tests::an_unregistered_worktree_layout_projects_into_the_selected_checkout ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.30s
+
+     Running unittests src/bin/herdr-ide-fixture.rs (target/debug/deps/herdr_ide_fixture-331cf142805c05e3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ffi_contract.rs (target/debug/deps/ffi_contract-5a634d444e054340)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+

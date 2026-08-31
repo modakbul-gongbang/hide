@@ -1,0 +1,10 @@
+   Compiling herdr-core v0.1.0 (./herdr-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.67s
+     Running tests/ffi_contract.rs (target/debug/deps/ffi_contract-5a634d444e054340)
+
+running 1 test
+{"component":"ui_state","fallback":"defaults","kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+test session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.00s
+

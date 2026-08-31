@@ -1,0 +1,206 @@
+{
+  "debug_logs" : [
+    "[2026-08-30T01:59:00.733Z] DEBUG: Runtime host: remote onDemand via \/Users\/local-user\/Library\/Application Support\/Peekaboo\/daemon.sock (build 4.2.2 (4.2.2))"
+  ],
+  "success" : true,
+  "data" : {
+    "apps" : [
+      {
+        "bundle_id" : "com.apple.iCal",
+        "process_start_identity_decimal" : "1787944605725802",
+        "name" : "Calendar",
+        "process_start_identity" : 1787944605725802,
+        "is_hidden" : false,
+        "pid" : 713,
+        "is_active" : false
+      },
+      {
+        "is_hidden" : false,
+        "pid" : 701,
+        "name" : "ChatGPT",
+        "process_start_identity" : 1787944605398531,
+        "process_start_identity_decimal" : "1787944605398531",
+        "bundle_id" : "com.openai.codex",
+        "is_active" : false
+      },
+      {
+        "is_hidden" : false,
+        "pid" : 30327,
+        "name" : "Claude",
+        "process_start_identity_decimal" : "1787962996864453",
+        "bundle_id" : "com.anthropic.claudefordesktop",
+        "is_active" : false,
+        "process_start_identity" : 1787962996864453
+      },
+      {
+        "bundle_id" : "com.microsoft.VSCode",
+        "process_start_identity" : 1787944605590903,
+        "process_start_identity_decimal" : "1787944605590903",
+        "pid" : 708,
+        "is_active" : false,
+        "name" : "Code",
+        "is_hidden" : false
+      },
+      {
+        "process_start_identity" : 1787944600181902,
+        "process_start_identity_decimal" : "1787944600181902",
+        "name" : "Dia",
+        "pid" : 624,
+        "is_hidden" : false,
+        "is_active" : false,
+        "bundle_id" : "company.thebrowser.dia"
+      },
+      {
+        "process_start_identity" : 1787944605951886,
+        "bundle_id" : "com.apple.finder",
+        "is_hidden" : false,
+        "pid" : 728,
+        "name" : "Finder",
+        "is_active" : false,
+        "process_start_identity_decimal" : "1787944605951886"
+      },
+      {
+        "bundle_id" : "com.mitchellh.ghostty",
+        "process_start_identity_decimal" : "1787968893420973",
+        "process_start_identity" : 1787968893420973,
+        "pid" : 89615,
+        "name" : "Ghostty",
+        "is_active" : false,
+        "is_hidden" : false
+      },
+      {
+        "is_active" : false,
+        "process_start_identity_decimal" : "1787944605633105",
+        "pid" : 710,
+        "process_start_identity" : 1787944605633105,
+        "name" : "Google Chrome",
+        "bundle_id" : "com.google.Chrome",
+        "is_hidden" : false
+      },
+      {
+        "bundle_id" : "com.google.Chrome",
+        "pid" : 11478,
+        "process_start_identity" : 1787962368648848,
+        "process_start_identity_decimal" : "1787962368648848",
+        "is_hidden" : false,
+        "name" : "Google Chrome",
+        "is_active" : false
+      },
+      {
+        "bundle_id" : "com.kakao.KakaoTalkMac",
+        "process_start_identity" : 1787944600256298,
+        "is_hidden" : false,
+        "pid" : 626,
+        "is_active" : false,
+        "process_start_identity_decimal" : "1787944600256298",
+        "name" : "KakaoTalk"
+      },
+      {
+        "is_hidden" : false,
+        "name" : "Mail",
+        "is_active" : false,
+        "pid" : 19029,
+        "bundle_id" : "com.apple.mail",
+        "process_start_identity" : 1787969534073045,
+        "process_start_identity_decimal" : "1787969534073045"
+      },
+      {
+        "pid" : 22839,
+        "is_active" : false,
+        "bundle_id" : "notion.id",
+        "process_start_identity_decimal" : "1787979923759366",
+        "name" : "Notion",
+        "process_start_identity" : 1787979923759366,
+        "is_hidden" : false
+      },
+      {
+        "process_start_identity_decimal" : "1787944605699667",
+        "name" : "Preview",
+        "is_hidden" : false,
+        "process_start_identity" : 1787944605699667,
+        "bundle_id" : "com.apple.Preview",
+        "is_active" : false,
+        "pid" : 712
+      },
+      {
+        "pid" : 714,
+        "process_start_identity_decimal" : "1787944605750229",
+        "is_active" : false,
+        "bundle_id" : "com.apple.ScreenSharing",
+        "name" : "Screen Sharing",
+        "is_hidden" : false,
+        "process_start_identity" : 1787944605750229
+      },
+      {
+        "pid" : 88380,
+        "name" : "Slack",
+        "is_hidden" : false,
+        "is_active" : false,
+        "bundle_id" : "com.tinyspeck.slackmacgap",
+        "process_start_identity_decimal" : "1787981892629792",
+        "process_start_identity" : 1787981892629792
+      },
+      {
+        "name" : "Tailscale",
+        "is_hidden" : false,
+        "process_start_identity" : 1787944605819638,
+        "is_active" : false,
+        "process_start_identity_decimal" : "1787944605819638",
+        "pid" : 719,
+        "bundle_id" : "io.tailscale.ipn.macsys"
+      },
+      {
+        "process_start_identity_decimal" : "1787944605792006",
+        "is_active" : false,
+        "pid" : 717,
+        "name" : "Terminal",
+        "is_hidden" : false,
+        "process_start_identity" : 1787944605792006,
+        "bundle_id" : "com.apple.Terminal"
+      },
+      {
+        "process_start_identity_decimal" : "1787944605864159",
+        "is_active" : false,
+        "process_start_identity" : 1787944605864159,
+        "name" : "Voice Memos",
+        "bundle_id" : "com.apple.VoiceMemos",
+        "is_hidden" : false,
+        "pid" : 721
+      },
+      {
+        "pid" : 716,
+        "bundle_id" : "com.teamattention.chromux",
+        "is_active" : false,
+        "process_start_identity" : 1787944605770003,
+        "name" : "chromux",
+        "process_start_identity_decimal" : "1787944605770003",
+        "is_hidden" : false
+      },
+      {
+        "is_active" : false,
+        "name" : "cx(default)",
+        "pid" : 27268,
+        "bundle_id" : "com.chromux.profile.default",
+        "process_start_identity_decimal" : "1788053915979156",
+        "is_hidden" : false,
+        "process_start_identity" : 1788053915979156
+      },
+      {
+        "bundle_id" : "me.grab.hide",
+        "pid" : 17683,
+        "process_start_identity_decimal" : "1788055099196508",
+        "is_hidden" : false,
+        "name" : "hide",
+        "process_start_identity" : 1788055099196508,
+        "is_active" : true
+      }
+    ],
+    "schema_capabilities" : [
+      "processStartIdentityDecimal"
+    ],
+    "count" : 21,
+    "warnings" : [
+
+    ]
+  }
+}

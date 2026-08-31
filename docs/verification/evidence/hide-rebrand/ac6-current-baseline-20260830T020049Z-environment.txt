@@ -1,0 +1,7 @@
+HOME=~
+LOGNAME=local-user
+PATH=/opt/homebrew/opt/grep/libexec/gnubin:~/.local/bin:~/.bun/bin:~/.antigravity/antigravity/bin:~/go/bin:~/.moon/bin:/Applications/Android
+SHELL=/bin/zsh
+TMPDIR=/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/
+USER=local-user
+__CFBundleIdentifier=me.grab.hide

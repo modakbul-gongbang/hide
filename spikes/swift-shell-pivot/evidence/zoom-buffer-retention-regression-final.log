@@ -1,0 +1,196 @@
+Building for debugging...
+[0/4] Write swift-version--1AB21518FC5DEDBE.txt
+[2/6] Emitting module SwiftTermBuildInfoGenerator
+[3/6] Compiling SwiftTermBuildInfoGenerator BuildInfoGenerator.swift
+[3/5] Linking SwiftTermBuildInfoGenerator-tool
+[4/5] Applying SwiftTermBuildInfoGenerator-tool
+Build of product 'SwiftTermBuildInfoGenerator' complete! (0.87s)
+[0/1] Planning build
+[1/1] Compiling plugin GenerateDoccReference
+[2/2] Compiling plugin GenerateManual
+[3/3] Compiling plugin SwiftTermBuildInfoPlugin
+Building for debugging...
+[3/10] Write sources
+[5/12] Write swift-version--1AB21518FC5DEDBE.txt
+[6/30] Generate SwiftTerm build information
+[8/29] Compiling NetworkImage TaskModifier.swift
+[9/29] Compiling NetworkImage URLSession+NetworkImage.swift
+[10/29] Compiling NetworkImage View+NetworkImageLoader.swift
+[11/29] Compiling NetworkImage NetworkImageState.swift
+[12/29] Compiling NetworkImage NetworkImageModel.swift
+[13/29] Compiling NetworkImage ImageSource.swift
+[14/29] Compiling NetworkImage Deprecations.swift
+[15/29] Compiling NetworkImage NetworkImageLoader.swift
+[16/29] Compiling NetworkImage NetworkImageCache.swift
+[17/29] Emitting module NetworkImage
+[18/29] Compiling NetworkImage NetworkImage.swift
+[19/98] Compiling Highlightr resource_bundle_accessor.swift
+[20/98] Compiling Highlightr Shims.swift
+[21/98] Compiling Highlightr HTMLUtils.swift
+[22/98] Emitting module Highlightr
+[23/98] Compiling Highlightr CodeAttributedString.swift
+[24/98] Compiling Highlightr Highlightr.swift
+[25/98] Compiling Highlightr Theme.swift
+[26/216] Compiling MarkdownUI TableCell.swift
+[27/216] Compiling MarkdownUI TableView.swift
+[28/216] Compiling MarkdownUI TaskListItemView.swift
+[29/216] Compiling MarkdownUI TaskListView.swift
+[30/216] Compiling MarkdownUI TextStyleAttributesReader.swift
+[31/221] Compiling MarkdownUI TableCellConfiguration.swift
+[32/221] Compiling MarkdownUI TaskListMarkerConfiguration.swift
+[33/221] Compiling MarkdownUI BackgroundColor.swift
+[34/221] Compiling MarkdownUI EmptyTextStyle.swift
+[35/221] Compiling MarkdownUI Font+FontProperties.swift
+[36/221] Compiling MarkdownUI FontCapsVariant.swift
+[37/221] Compiling MarkdownUI FontDigitVariant.swift
+[38/221] Compiling MarkdownUI FontFamily.swift
+[39/221] Compiling MarkdownUI FontFamilyVariant.swift
+[40/230] Compiling MarkdownUI Blockquote.swift
+[41/230] Compiling MarkdownUI BulletedList.swift
+[42/230] Compiling MarkdownUI CodeBlock.swift
+[43/230] Compiling MarkdownUI Heading.swift
+[44/230] Compiling MarkdownUI ListContentBuilder.swift
+[45/230] Compiling MarkdownUI ListItem.swift
+[46/230] Compiling MarkdownUI MarkdownContent.swift
+[47/230] Compiling MarkdownUI MarkdownContentBuilder.swift
+[48/230] Compiling MarkdownUI NumberedList.swift
+[49/230] Compiling MarkdownUI Paragraph.swift
+[50/230] Compiling MarkdownUI TaskList.swift
+[51/230] Compiling MarkdownUI TaskListContentBuilder.swift
+[52/230] Compiling MarkdownUI TaskListItem.swift
+[53/230] Compiling MarkdownUI TextTable.swift
+[54/230] Compiling MarkdownUI TextTableColumn.swift
+[55/230] Compiling MarkdownUI TextTableColumnAlignment.swift
+[56/230] Compiling MarkdownUI TextTableColumnBuilder.swift
+[57/230] Compiling MarkdownUI TextTableRow.swift
+[63/230] Compiling SwiftTerm iOSTerminalView.swift
+[64/230] Compiling SwiftTerm iOSTextInput.swift
+[65/230] Compiling SwiftTerm iOSTextStorage.swift
+[66/230] Compiling SwiftTerm resource_bundle_accessor.swift
+[71/230] Compiling SwiftTerm SwiftTermBuildInfo.swift
+[72/230] Compiling MarkdownUI TextKerning.swift
+[73/230] Compiling MarkdownUI InlineImageProvider.swift
+[74/230] Compiling MarkdownUI BlockNode+Rewrite.swift
+[75/230] Compiling MarkdownUI BlockNode.swift
+[76/230] Compiling MarkdownUI HTMLTag.swift
+[82/230] Compiling MarkdownUI String+KebabCase.swift
+[83/230] Compiling MarkdownUI BlockMargin.swift
+[84/230] Compiling MarkdownUI BlockNode+View.swift
+[85/230] Compiling MarkdownUI BlockSequence.swift
+[86/230] Compiling MarkdownUI BlockquoteView.swift
+[87/230] Compiling MarkdownUI BulletedListView.swift
+[88/230] Compiling MarkdownUI CodeBlockView.swift
+[89/230] Compiling MarkdownUI ColumnWidthPreference.swift
+[90/230] Compiling MarkdownUI HeadingView.swift
+[91/230] Compiling MarkdownUI InlineTextStyles.swift
+[92/230] Compiling MarkdownUI TextInlineRenderer.swift
+[93/230] Compiling MarkdownUI BlockConfiguration.swift
+[94/230] Compiling MarkdownUI BlockStyle.swift
+[95/230] Compiling MarkdownUI CodeBlockConfiguration.swift
+[96/230] Compiling MarkdownUI ListBullet.swift
+[97/230] Compiling MarkdownUI ListMarkerConfiguration.swift
+[98/230] Compiling MarkdownUI TableBackgroundStyle.swift
+[99/230] Compiling MarkdownUI TableBorderStyle.swift
+[100/230] Compiling MarkdownUI SoftBreak.swift
+[101/230] Compiling MarkdownUI Strikethrough.swift
+[102/230] Compiling MarkdownUI Strong.swift
+[103/230] Compiling MarkdownUI AssetImageProvider.swift
+[104/230] Compiling MarkdownUI AssetInlineImageProvider.swift
+[105/230] Compiling MarkdownUI CodeSyntaxHighlighter.swift
+[106/230] Compiling MarkdownUI DefaultImageProvider.swift
+[107/230] Compiling MarkdownUI DefaultInlineImageProvider.swift
+[108/230] Compiling MarkdownUI ImageProvider.swift
+[109/230] Compiling MarkdownUI Theme+Basic.swift
+[110/230] Compiling MarkdownUI Theme+DocC.swift
+[111/230] Compiling MarkdownUI Theme+GitHub.swift
+[112/230] Compiling MarkdownUI Theme.swift
+[113/230] Compiling MarkdownUI BlockNode+ColorSchemeImage.swift
+[114/230] Emitting module MarkdownUI
+[115/230] Compiling MarkdownUI TextTableRowBuilder.swift
+[116/230] Compiling MarkdownUI ThematicBreak.swift
+[117/230] Compiling MarkdownUI Code.swift
+[118/230] Compiling MarkdownUI Emphasis.swift
+[119/230] Compiling MarkdownUI InlineContent.swift
+[120/230] Compiling MarkdownUI InlineContentBuilder.swift
+[121/230] Compiling MarkdownUI InlineImage.swift
+[122/230] Compiling MarkdownUI InlineLink.swift
+[123/230] Compiling MarkdownUI LineBreak.swift
+[125/230] Compiling MarkdownUI ListItemSequence.swift
+[126/230] Compiling MarkdownUI ListItemView.swift
+[127/230] Compiling MarkdownUI NumberedListView.swift
+[128/230] Compiling MarkdownUI ParagraphView.swift
+[129/230] Compiling MarkdownUI TableBackgroundView.swift
+[130/230] Compiling MarkdownUI TableBorderSelector.swift
+[131/230] Compiling MarkdownUI TableBorderView.swift
+[132/230] Compiling MarkdownUI TableBounds.swift
+[138/230] Compiling MarkdownUI TextTracking.swift
+[139/230] Compiling MarkdownUI UnderlineStyle.swift
+[140/230] Compiling MarkdownUI TextStyle.swift
+[141/230] Compiling MarkdownUI TextStyleBuilder.swift
+[147/230] Compiling MarkdownUI FontProperties.swift
+[148/230] Compiling MarkdownUI FontPropertiesAttribute.swift
+[149/230] Compiling MarkdownUI FontSize.swift
+[150/230] Compiling MarkdownUI FontStyle.swift
+[151/230] Compiling MarkdownUI FontWeight.swift
+[152/230] Compiling MarkdownUI FontWidth.swift
+[153/230] Compiling MarkdownUI ForegroundColor.swift
+[154/230] Compiling MarkdownUI StrikethroughStyle.swift
+[160/230] Compiling MarkdownUI InlineNode+Collect.swift
+[161/230] Compiling MarkdownUI InlineNode+Rewrite.swift
+[162/230] Compiling MarkdownUI InlineNode.swift
+[163/230] Compiling MarkdownUI MarkdownParser.swift
+[164/230] Compiling MarkdownUI AttributedStringInlineRenderer.swift
+[171/230] Compiling MarkdownUI Color+RGBA.swift
+[172/230] Compiling MarkdownUI Deprecations.swift
+[173/230] Compiling MarkdownUI FlowLayout.swift
+[174/230] Compiling MarkdownUI Indexed.swift
+[175/230] Compiling MarkdownUI InlineNode+PlainText.swift
+[176/230] Compiling MarkdownUI InlineNode+RawImageData.swift
+[177/230] Compiling MarkdownUI Int+Roman.swift
+[178/230] Compiling MarkdownUI RelativeSize.swift
+[179/230] Compiling MarkdownUI ResizeToFit.swift
+[180/230] Compiling MarkdownUI Environment+InlineImageProvider.swift
+[181/230] Compiling MarkdownUI Environment+List.swift
+[182/230] Compiling MarkdownUI Environment+SoftBreakMode.swift
+[183/230] Compiling MarkdownUI Environment+Table.swift
+[184/230] Compiling MarkdownUI Environment+TextStyle.swift
+[185/230] Compiling MarkdownUI Environment+Theme.swift
+[186/230] Compiling MarkdownUI ImageView.swift
+[187/230] Compiling MarkdownUI InlineText.swift
+[188/230] Compiling MarkdownUI Markdown.swift
+[199/230] Emitting module SwiftTerm
+[227/242] Compiling HerdrMacOS PaneShortcutSettings.swift
+[228/242] Compiling HerdrMacOS ImeTerminalView.swift
+[229/242] Compiling HerdrMacOS ShellModel.swift
+[230/242] Compiling HerdrMacOS PetWindow.swift
+[231/242] Compiling HerdrMacOS TerminalHost.swift
+[232/242] Compiling HerdrMacOS OperationalModels.swift
+[233/242] Emitting module HerdrMacOS
+[234/242] Compiling HerdrMacOS HighlightedCodeEditor.swift
+[235/242] Compiling HerdrMacOS WorkbenchPanel.swift
+[236/242] Compiling HerdrMacOS HerdrApp.swift
+[237/242] Compiling HerdrMacOS CoreBridge.swift
+[238/242] Compiling HerdrMacOS ShellView.swift
+[238/243] Write Objects.LinkFileList
+[239/243] Linking HerdrMacOS
+[240/243] Applying HerdrMacOS
+[242/245] Compiling HerdrMacOSTests PaneGridPresentationTests.swift
+[243/245] Emitting module HerdrMacOSTests
+[243/245] Write Objects.LinkFileList
+[244/245] Linking HerdrMacOSPackageTests
+Build complete! (12.06s)
+◇ Test run started.
+↳ Testing Library Version: 102 (arm64e-apple-macos13.0)
+◇ Suite "Pane grid presentation" started.
+◇ Test authoritativeNestedLayoutDecodesWithoutChangingPaneOrder() started.
+◇ Test terminalViewLeavesPaneCommandEquivalentsToTheMenuSystem() started.
+◇ Test zoomRetainsEveryPaneViewInsteadOfRecreatingHiddenTerminals() started.
+◇ Test unzoomRestoresAuthoritativeFramesWithoutCollapsingHiddenPanes() started.
+◇ Test focusAccentFollowsOnlyTheAuthoritativePaneAndIsRepeatable() started.
+✔ Test terminalViewLeavesPaneCommandEquivalentsToTheMenuSystem() passed after 0.060 seconds.
+✔ Test unzoomRestoresAuthoritativeFramesWithoutCollapsingHiddenPanes() passed after 0.060 seconds.
+✔ Test focusAccentFollowsOnlyTheAuthoritativePaneAndIsRepeatable() passed after 0.060 seconds.
+✔ Test authoritativeNestedLayoutDecodesWithoutChangingPaneOrder() passed after 0.060 seconds.
+✔ Test zoomRetainsEveryPaneViewInsteadOfRecreatingHiddenTerminals() passed after 0.060 seconds.
+✔ Suite "Pane grid presentation" passed after 0.061 seconds.
+✔ Test run with 5 tests passed after 0.061 seconds.

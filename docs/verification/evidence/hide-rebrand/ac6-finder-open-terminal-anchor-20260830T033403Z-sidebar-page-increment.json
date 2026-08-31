@@ -1,0 +1,51 @@
+{
+  "outcome" : {
+    "delivery_mechanism" : "global_events",
+    "state" : "dispatched_unverified",
+    "dispatch_state" : "dispatched",
+    "escalation" : "observe_before_retry",
+    "evidence" : "delivery_accepted",
+    "mutation_dispatched" : true,
+    "effect" : "unverifiable",
+    "requires_fresh_observation" : true,
+    "route" : "local",
+    "delivery_mode" : "foreground",
+    "retry_safety" : "unsafe",
+    "retry_safe" : false
+  },
+  "data" : {
+    "targetApp" : "hide",
+    "targetPoint" : {
+      "source" : "element",
+      "original" : {
+        "x" : 430,
+        "y" : 627.75
+      },
+      "snapshotId" : "1788060908076-5579",
+      "windowAdjustment" : {
+        "status" : "unchanged"
+      },
+      "elementId" : "elem_100",
+      "resolved" : {
+        "y" : 627.75,
+        "x" : 430
+      }
+    },
+    "clickLocation" : {
+      "y" : 627.75,
+      "x" : 430
+    },
+    "clickedElement" : "Button: increment page button",
+    "waitTime" : 0.0010939836502075195,
+    "executionTime" : 0.34268295764923096,
+    "targetWindowId" : 7789,
+    "targetWindowTitle" : "hide",
+    "deliveryMode" : "foreground",
+    "clickType" : "single"
+  },
+  "debug_logs" : [
+    "[2026-08-30T03:36:37.231Z] DEBUG: Runtime host: local (in-process)"
+  ],
+  "success" : true,
+  "effect" : "unverifiable"
+}

@@ -1,0 +1,4 @@
+captured_utc=20260830T025739Z
+phase=immediate
+pid=49138
+window_count=2

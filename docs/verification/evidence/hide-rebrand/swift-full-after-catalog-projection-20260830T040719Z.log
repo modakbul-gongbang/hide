@@ -1,0 +1,233 @@
+Building for debugging...
+[0/3] Write swift-version--1AB21518FC5DEDBE.txt
+Build of product 'SwiftTermBuildInfoGenerator' complete! (0.21s)
+[0/1] Planning build
+[1/1] Compiling plugin GenerateDoccReference
+[2/2] Compiling plugin GenerateManual
+[3/3] Compiling plugin SwiftTermBuildInfoPlugin
+Building for debugging...
+[3/9] Write sources
+[4/9] Write swift-version--1AB21518FC5DEDBE.txt
+[5/9] Generate SwiftTerm build information
+[7/13] Compiling HerdrMacOS ShellModel.swift
+[8/13] Compiling HerdrMacOS CoreBridge.swift
+[9/13] Compiling HerdrMacOS HideUI.swift
+[10/13] Emitting module HerdrMacOS
+[11/21] Compiling HerdrMacOS TerminalHost.swift
+[12/21] Compiling HerdrMacOS PetSettings.swift
+[13/21] Compiling HerdrMacOS PetWindow.swift
+[14/21] Compiling HerdrMacOS HerdrApp.swift
+[15/21] Compiling HerdrMacOS ShellView.swift
+[16/21] Compiling HerdrMacOS WorkbenchPanel.swift
+[17/21] Compiling HerdrMacOS PetMenuBar.swift
+[18/21] Compiling HerdrMacOS PaneShortcutSettings.swift
+[18/23] Write Objects.LinkFileList
+ld: warning: object file (../target/release/libherdr_core.a[41](25ac62e5b3c53843-curve25519.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[42](0bbbd18bda93c05b-aes_nohw.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[43](00c879ee3285a50d-montgomery.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[44](00c879ee3285a50d-montgomery_inv.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[45](a0330e891e733f4e-ecp_nistz.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[47](a0330e891e733f4e-gfp_p384.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[49](aaa1ba3e455ee2e1-limbs.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[50](a4019cc0736b0423-mem.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[51](d5a9841f3dc6e253-poly1305.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[52](a0330e891e733f4e-p256-nistz.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[53](c322a0bcc369f531-chacha-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[54](c322a0bcc369f531-chacha20_poly1305_armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[55](c322a0bcc369f531-aesv8-armx-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[56](c322a0bcc369f531-aesv8-gcm-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[57](c322a0bcc369f531-ghash-neon-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[58](c322a0bcc369f531-ghashv8-armx-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[59](c322a0bcc369f531-vpaes-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[60](c322a0bcc369f531-armv8-mont-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[61](c322a0bcc369f531-p256-armv8-asm-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[62](c322a0bcc369f531-sha512-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[63](c322a0bcc369f531-sha256-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+[19/23] Linking HerdrMacOS
+[20/23] Applying HerdrMacOS
+[22/25] Emitting module HerdrMacOSTests
+[23/25] Compiling HerdrMacOSTests OperationalPolicyTests.swift
+[23/25] Write Objects.LinkFileList
+ld: warning: object file (../target/release/libherdr_core.a[41](25ac62e5b3c53843-curve25519.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[42](0bbbd18bda93c05b-aes_nohw.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[43](00c879ee3285a50d-montgomery.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[44](00c879ee3285a50d-montgomery_inv.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[45](a0330e891e733f4e-ecp_nistz.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[47](a0330e891e733f4e-gfp_p384.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[49](aaa1ba3e455ee2e1-limbs.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[50](a4019cc0736b0423-mem.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[51](d5a9841f3dc6e253-poly1305.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[52](a0330e891e733f4e-p256-nistz.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[53](c322a0bcc369f531-chacha-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[54](c322a0bcc369f531-chacha20_poly1305_armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[55](c322a0bcc369f531-aesv8-armx-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[56](c322a0bcc369f531-aesv8-gcm-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[57](c322a0bcc369f531-ghash-neon-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[58](c322a0bcc369f531-ghashv8-armx-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[59](c322a0bcc369f531-vpaes-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[60](c322a0bcc369f531-armv8-mont-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[61](c322a0bcc369f531-p256-armv8-asm-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[62](c322a0bcc369f531-sha512-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+ld: warning: object file (../target/release/libherdr_core.a[63](c322a0bcc369f531-sha256-armv8-ios64.o)) was built for newer 'macOS' version (15.2) than being linked (14.0)
+[24/25] Linking HerdrMacOSPackageTests
+Build complete! (12.65s)
+◇ Test run started.
+↳ Testing Library Version: 102 (arm64e-apple-macos13.0)
+◇ Suite "Pet theme loading" started.
+◇ Suite PaneActivityPresentationTests started.
+◇ Suite "Pet animation" started.
+◇ Suite "Pane shortcut settings" started.
+◇ Suite "Pet URL scheme" started.
+◇ Suite CompositionInputPolicyTests started.
+◇ Suite "Pet placement and gestures" started.
+◇ Suite "Pet global shortcut" started.
+◇ Test loginShellPathIsTheChildToolPATH() started.
+◇ Test workingPaneNoticeNamesTheTerminationConsequence() started.
+◇ Test childToolEnvironmentHasOnlyNonSecretRoutingValues() started.
+◇ Test coreBridgeHasAnImmediateSnapshotBeforeRuntimeResolution() started.
+◇ Test remoteShellCommandQuotesPathsWithoutHandlingCredentials() started.
+◇ Test paneLessCheckoutSelectionRequestsAnAutomaticTerminal() started.
+◇ Test workspaceAndTabWarningsAggregateOnlyActiveOrAttentionPanes() started.
+◇ Test chromuxPathAbsenceStopsBeforeAnyProcessLaunch() started.
+◇ Suite "Pane grid presentation" started.
+◇ Test chunkOnlyDeltaDecodesWithoutSections() started.
+◇ Test finderLikeEnvironmentUsesAVisibleSafePATHFallback() started.
+◇ Test cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing() started.
+◇ Test petHitRegionKeepsCenterInteractive() started.
+◇ Test laggingCursorDeltaSurfacesTheDropMarker() started.
+◇ Test terminalLayoutMustBelongToTheFocusedCheckoutBeforeRendering() started.
+◇ Test offscreenPetOriginClampsIntoPrimaryVisibleFrame() started.
+◇ Test remoteSnapshotProjectionCarriesContextAndPaneCwd() started.
+◇ Test everyAttentionPaneStateRequiresCloseConfirmation() started.
+◇ Test petHitRegionMakesTransparentCornerClickThrough() started.
+◇ Test hideSearchFiltersAgentsAndCheckoutsWithoutTerminalEntries() started.
+◇ Test missingRuntimeReturnsAVisibleServerStartFailure() started.
+◇ Test mainWindowPresentationIsVisibleBeforeRuntimeWorkStarts() started.
+◇ Test petPlacementIsStableWhenRepeated() started.
+◇ Test idlePaneCloseDoesNotAddAnUnnecessaryConfirmation() started.
+◇ Test petHitRegionKeepsCircularEdgeInteractive() started.
+◇ Test petHitRegionDecisionIsStableWhenRepeated() started.
+◇ Test finderLaunchWithoutAnActiveWorkspaceDoesNotScanTheProcessDirectory() started.
+◇ Test unlaunchableRuntimeReturnsItsLaunchFailureToTheCaller() started.
+◇ Test worktreeNoticeStatesTheCheckoutLossBoundary() started.
+◇ Test checkoutWithAExistingPaneOnlyChangesFocus() started.
+◇ Test aThemeNamingArtThatIsNotThereFailsWithThatPath() started.
+◇ Test bundledDefaultThemeCoversEveryPoseTheCoreCanReport() started.
+◇ Test anUnknownSchemaVersionIsRefusedInsteadOfGuessed() started.
+◇ Test theLocatorPrefersTheBundleAndFallsBackToTheCheckout() started.
+◇ Test aThemeMissingAPoseIsRejectedRatherThanLeavingThePetBlank() started.
+◇ Test theNewestPaneTransitionWins() started.
+◇ Test pendingAndReadyPaneOperationsStayVisible() started.
+◇ Test unrelatedDiagnosticsDoNotInventPaneActivity() started.
+◇ Test rebindRejectsDuplicateAndUpdatesOnlyTheRequestedAction() started.
+◇ Test nativeWindowRoutingMatchesAllFourPaneCommandsAndNothingReserved() started.
+◇ Test corruptReservedOrConflictingStoredBindingsFallBackAsOneSafeSet() started.
+◇ Test missingStateUsesTheFourDocumentedDefaults() started.
+◇ Test validPersistedBindingsRestoreWithNativeMenuEquivalents() started.
+◇ Test plainBackspaceExcludesShortcutChords() started.
+◇ Test composingStillDeliversTextAndArrowSequences() started.
+◇ Test giveUpCommitIsDroppedOnlyForComposedBackspace() started.
+◇ Test notComposingDeliversEverything() started.
+◇ Test animatedWebpArtPlaysItsOwnFramesWithoutConversion() started.
+◇ Test clampingIsStableWhenRepeated() started.
+◇ Test aStaticPoseYieldsExactlyOneFrame() started.
+◇ Test aReleaseWithinTheThresholdIsAClickAndFurtherIsADrag() started.
+◇ Test aSheetThatDoesNotDivideIsRefusedRatherThanRenderedSkewed() started.
+◇ Test theRetiredPetSchemeAndUnknownCommandsAreNotAccepted() started.
+◇ Test anOriginOnAScreenThatIsNoLongerConnectedMovesToOneThatIs() started.
+◇ Test backspaceDuringCompositionSwallowsEverything() started.
+◇ Test storedAcceleratorsRoundTripAndInvalidOnesAreNamed() started.
+◇ Test anUnparsableStoredAcceleratorSurfacesInsteadOfSilentlyNotFiring() started.
+◇ Test draggingKeepsTheCursorAtTheSamePointOnThePet() started.
+◇ Test spriteSheetArtIsSlicedIntoEqualDistinctFrames() started.
+◇ Test anAcceleratorIsBuiltFromThePhysicalKeyNotTheTypedCharacter() started.
+◇ Test modifierOnlyAndBareKeyPressesAreNotCompleteBindings() started.
+◇ Test anEmptyAcceleratorRegistersNothingAndReportsNoError() started.
+◇ Test everyCommandParsesWithOrWithoutATrailingSlash() started.
+◇ Test theRecordedOffscreenIncidentCoordinateComesBackOnScreen() started.
+◇ Test composingSuppressesControlByteFallbacks() started.
+◇ Test focusAccentFollowsOnlyTheAuthoritativePaneAndIsRepeatable() started.
+◇ Test terminalViewLeavesPaneCommandEquivalentsToTheMenuSystem() started.
+◇ Test unzoomRestoresAuthoritativeFramesWithoutCollapsingHiddenPanes() started.
+◇ Test zoomRetainsEveryPaneViewInsteadOfRecreatingHiddenTerminals() started.
+✔ Test workspaceAndTabWarningsAggregateOnlyActiveOrAttentionPanes() passed after 0.003 seconds.
+◇ Test authoritativeNestedLayoutDecodesWithoutChangingPaneOrder() started.
+✔ Test workingPaneNoticeNamesTheTerminationConsequence() passed after 0.003 seconds.
+✔ Test remoteShellCommandQuotesPathsWithoutHandlingCredentials() passed after 0.003 seconds.
+✔ Test paneLessCheckoutSelectionRequestsAnAutomaticTerminal() passed after 0.004 seconds.
+✔ Test petHitRegionKeepsCenterInteractive() passed after 0.004 seconds.
+✔ Test finderLikeEnvironmentUsesAVisibleSafePATHFallback() passed after 0.004 seconds.
+✔ Test cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing() passed after 0.004 seconds.
+✔ Test offscreenPetOriginClampsIntoPrimaryVisibleFrame() passed after 0.004 seconds.
+✔ Test everyAttentionPaneStateRequiresCloseConfirmation() passed after 0.004 seconds.
+✔ Test chunkOnlyDeltaDecodesWithoutSections() passed after 0.004 seconds.
+✔ Test laggingCursorDeltaSurfacesTheDropMarker() passed after 0.004 seconds.
+✔ Test terminalLayoutMustBelongToTheFocusedCheckoutBeforeRendering() passed after 0.004 seconds.
+✔ Test petHitRegionMakesTransparentCornerClickThrough() passed after 0.004 seconds.
+✔ Test petPlacementIsStableWhenRepeated() passed after 0.006 seconds.
+✔ Test petHitRegionKeepsCircularEdgeInteractive() passed after 0.006 seconds.
+{"component":"ui_state","fallback":"defaults","✔ Test idlePaneCloseDoesNotAddAnUnnecessaryConfirmation() passed after 0.006 seconds.
+kind":"ui_state.missing","message":"UI state was not found; safe defaults were loaded"}
+✔ Test worktreeNoticeStatesTheCheckoutLossBoundary() passed after 0.007 seconds.
+✔ Test petHitRegionDecisionIsStableWhenRepeated() passed after 0.007 seconds.
+✔ Test missingRuntimeReturnsAVisibleServerStartFailure() passed after 0.007 seconds.
+✔ Test checkoutWithAExistingPaneOnlyChangesFocus() passed after 0.007 seconds.
+✔ Test chromuxPathAbsenceStopsBeforeAnyProcessLaunch() passed after 0.007 seconds.
+✔ Test finderLaunchWithoutAnActiveWorkspaceDoesNotScanTheProcessDirectory() passed after 0.007 seconds.
+✔ Test pendingAndReadyPaneOperationsStayVisible() passed after 0.006 seconds.
+✔ Test unrelatedDiagnosticsDoNotInventPaneActivity() passed after 0.006 seconds.
+✔ Test theNewestPaneTransitionWins() passed after 0.006 seconds.
+✔ Test remoteSnapshotProjectionCarriesContextAndPaneCwd() passed after 0.007 seconds.
+✔ Test rebindRejectsDuplicateAndUpdatesOnlyTheRequestedAction() passed after 0.006 seconds.
+✔ Test plainBackspaceExcludesShortcutChords() passed after 0.005 seconds.
+✔ Test validPersistedBindingsRestoreWithNativeMenuEquivalents() passed after 0.006 seconds.
+✔ Test giveUpCommitIsDroppedOnlyForComposedBackspace() passed after 0.005 seconds.
+✔ Test notComposingDeliversEverything() passed after 0.004 seconds.
+✔ Test composingStillDeliversTextAndArrowSequences() passed after 0.005 seconds.
+✔ Test missingStateUsesTheFourDocumentedDefaults() passed after 0.006 seconds.
+✔ Test corruptReservedOrConflictingStoredBindingsFallBackAsOneSafeSet() passed after 0.006 seconds.
+✔ Test clampingIsStableWhenRepeated() passed after 0.004 seconds.
+✔ Test aReleaseWithinTheThresholdIsAClickAndFurtherIsADrag() passed after 0.004 seconds.
+✔ Test hideSearchFiltersAgentsAndCheckoutsWithoutTerminalEntries() passed after 0.007 seconds.
+✔ Test backspaceDuringCompositionSwallowsEverything() passed after 0.005 seconds.
+✔ Test theRetiredPetSchemeAndUnknownCommandsAreNotAccepted() passed after 0.004 seconds.
+✔ Test draggingKeepsTheCursorAtTheSamePointOnThePet() passed after 0.004 seconds.
+✔ Test anOriginOnAScreenThatIsNoLongerConnectedMovesToOneThatIs() passed after 0.004 seconds.
+✔ Test storedAcceleratorsRoundTripAndInvalidOnesAreNamed() passed after 0.004 seconds.
+✔ Test theRecordedOffscreenIncidentCoordinateComesBackOnScreen() passed after 0.004 seconds.
+✔ Test theLocatorPrefersTheBundleAndFallsBackToTheCheckout() passed after 0.006 seconds.
+✔ Test everyCommandParsesWithOrWithoutATrailingSlash() passed after 0.005 seconds.
+✔ Test composingSuppressesControlByteFallbacks() passed after 0.005 seconds.
+✔ Test nativeWindowRoutingMatchesAllFourPaneCommandsAndNothingReserved() passed after 0.006 seconds.
+✔ Test anAcceleratorIsBuiltFromThePhysicalKeyNotTheTypedCharacter() passed after 0.004 seconds.
+✔ Test modifierOnlyAndBareKeyPressesAreNotCompleteBindings() passed after 0.005 seconds.
+✔ Suite PaneActivityPresentationTests passed after 0.008 seconds.
+✔ Suite CompositionInputPolicyTests passed after 0.008 seconds.
+✔ Suite "Pane shortcut settings" passed after 0.008 seconds.
+✔ Test coreBridgeHasAnImmediateSnapshotBeforeRuntimeResolution() passed after 0.008 seconds.
+✔ Suite "Pet placement and gestures" passed after 0.008 seconds.
+✔ Suite "Pet URL scheme" passed after 0.008 seconds.
+✔ Test bundledDefaultThemeCoversEveryPoseTheCoreCanReport() passed after 0.006 seconds.
+✔ Test unlaunchableRuntimeReturnsItsLaunchFailureToTheCaller() passed after 0.008 seconds.
+✔ Test animatedWebpArtPlaysItsOwnFramesWithoutConversion() passed after 0.007 seconds.
+✔ Test aStaticPoseYieldsExactlyOneFrame() passed after 0.007 seconds.
+✔ Test aSheetThatDoesNotDivideIsRefusedRatherThanRenderedSkewed() passed after 0.007 seconds.
+✔ Test anUnknownSchemaVersionIsRefusedInsteadOfGuessed() passed after 0.010 seconds.
+✔ Test aThemeNamingArtThatIsNotThereFailsWithThatPath() passed after 0.010 seconds.
+✔ Test aThemeMissingAPoseIsRejectedRatherThanLeavingThePetBlank() passed after 0.011 seconds.
+✔ Suite "Pet theme loading" passed after 0.013 seconds.
+✔ Test spriteSheetArtIsSlicedIntoEqualDistinctFrames() passed after 0.021 seconds.
+✔ Suite "Pet animation" passed after 0.025 seconds.
+✔ Test childToolEnvironmentHasOnlyNonSecretRoutingValues() passed after 0.047 seconds.
+✔ Test loginShellPathIsTheChildToolPATH() passed after 0.047 seconds.
+✔ Test mainWindowPresentationIsVisibleBeforeRuntimeWorkStarts() passed after 0.075 seconds.
+✔ Test anUnparsableStoredAcceleratorSurfacesInsteadOfSilentlyNotFiring() passed after 0.073 seconds.
+✔ Test anEmptyAcceleratorRegistersNothingAndReportsNoError() passed after 0.081 seconds.
+✔ Suite "Pet global shortcut" passed after 0.084 seconds.
+✔ Test focusAccentFollowsOnlyTheAuthoritativePaneAndIsRepeatable() passed after 0.082 seconds.
+✔ Test authoritativeNestedLayoutDecodesWithoutChangingPaneOrder() passed after 0.082 seconds.
+✔ Test zoomRetainsEveryPaneViewInsteadOfRecreatingHiddenTerminals() passed after 0.082 seconds.
+✔ Test terminalViewLeavesPaneCommandEquivalentsToTheMenuSystem() passed after 0.082 seconds.
+✔ Test unzoomRestoresAuthoritativeFramesWithoutCollapsingHiddenPanes() passed after 0.082 seconds.
+✔ Suite "Pane grid presentation" passed after 0.086 seconds.
+✔ Test run with 69 tests passed after 0.086 seconds.

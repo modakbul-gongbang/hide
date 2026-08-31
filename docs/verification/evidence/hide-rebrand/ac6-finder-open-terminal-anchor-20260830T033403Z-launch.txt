@@ -1,0 +1,5 @@
+timestamp_utc=20260830T033403Z
+command=/usr/bin/open dist/hide.app
+open_exit=0
+post_launch_exact_dist_instances=0
+sole_instance_verdict=not_one
