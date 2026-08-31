@@ -301,6 +301,13 @@ pub struct Runtime {
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
+    /// True until the first live session snapshot has been ingested. The pane
+    /// and checkout ids loaded from disk describe a session that ended, so
+    /// they are a restore hint rather than a user selection: the first
+    /// snapshot that disagrees with them retargets silently. A selection the
+    /// user makes against a live session is authoritative, and its
+    /// disappearance stays a reported error.
+    restore_hint_pending: bool,
     delta: DeltaState,
 }
 
@@ -385,6 +392,7 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             pet_unseen_observed: std::collections::BTreeMap::new(),
+            restore_hint_pending: true,
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -749,6 +757,57 @@ impl Runtime {
         self.ingest_session_with_catalog(fetched, None)
     }
 
+    /// Reconciles the pane and checkout ids loaded from disk against the first
+    /// live session, then retires the hint.
+    ///
+    /// Persisted ids name a session that has already ended, so a pane Herdr no
+    /// longer has is the expected case on launch rather than a fault. Dropping
+    /// the unusable parts here lets the ordinary resolution below pick the
+    /// session's own focus, and keeps `pane.projection_unavailable` meaning
+    /// what it says: a pane the user chose against a live session went away.
+    fn consume_restore_hint(&mut self, payload: &SessionSnapshotPayload) {
+        if !self.restore_hint_pending {
+            return;
+        }
+        self.restore_hint_pending = false;
+
+        let restored_pane_exists = self
+            .snapshot
+            .ui_state
+            .selected_pane_id
+            .as_deref()
+            .is_some_and(|pane_id| {
+                payload
+                    .layouts
+                    .iter()
+                    .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
+            });
+        if !restored_pane_exists {
+            self.snapshot.ui_state.selected_pane_id = None;
+            self.snapshot.terminal.pane_id = None;
+            self.snapshot.focused.pane_id = None;
+        }
+
+        let restored_checkout_exists = self
+            .snapshot
+            .ui_state
+            .focused_checkout_id
+            .as_deref()
+            .is_some_and(|checkout_id| {
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .any(|checkout| checkout.id == checkout_id)
+            });
+        if !restored_checkout_exists {
+            self.snapshot.ui_state.focused_checkout_id = None;
+            self.snapshot.navigator.focused_checkout_id = None;
+            self.resync_navigator_focus();
+        }
+    }
+
     /// Like [`Self::ingest_session`], with a workspace catalog the caller
     /// built outside the runtime lock.
     pub fn ingest_session_with_catalog(
@@ -763,6 +822,7 @@ impl Runtime {
             .unwrap_or(false);
         let (state, message, agents, layout) = match fetched {
             Ok(payload) => {
+                self.consume_restore_hint(&payload);
                 let focused_checkout = self
                     .snapshot
                     .navigator
@@ -3240,6 +3300,9 @@ mod tests {
         runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
         runtime.snapshot.ui_state.selected_pane_id = Some("missing:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("missing:p1".to_owned());
+        // The user chose this pane against a running session, so it is an
+        // authoritative selection rather than a restore hint.
+        runtime.restore_hint_pending = false;
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
             "panes": [{"pane_id": "old:p1", "cwd": checkout_path}],
@@ -3277,6 +3340,47 @@ mod tests {
     }
 
     #[test]
+    fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
+        let mut runtime = runtime();
+        // What launch produces: ids read from disk that name the session that
+        // ended, against a Herdr session that has since been restarted.
+        runtime.snapshot.ui_state.selected_pane_id = Some("wW:p3".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("wW:p3".to_owned());
+        runtime.snapshot.ui_state.focused_checkout_id = Some("checkout:gone".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some("checkout:gone".to_owned());
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "w19:p1", "cwd": "/tmp/hide-restored"}],
+            "focused_pane_id": "w19:p1",
+            "layouts": [{
+                "workspace_id": "w19",
+                "tab_id": "w19:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w19:p1",
+                "panes": [{"pane_id": "w19:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("restored pane payload");
+
+        assert!(runtime.ingest_session_with_catalog(
+            Ok(payload),
+            Some(live::PrecomputedCatalog {
+                registrations: Vec::new(),
+                workspaces: Vec::new(),
+            }),
+        ));
+        assert_eq!(runtime.snapshot().status.last_error, None);
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w19:p1")
+        );
+        assert!(runtime.snapshot().pane_layout.is_some());
+    }
+
+    #[test]
     fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is_missing() {
         let mut runtime = runtime();
         let stale_checkout_id = "checkout:selected";
@@ -3305,6 +3409,9 @@ mod tests {
             empty: false,
             panes: vec![pane("w3P:p1", "/tmp/old-context")],
         };
+        // The user chose this checkout against a running session, so it is an
+        // authoritative selection rather than a restore hint.
+        runtime.restore_hint_pending = false;
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
