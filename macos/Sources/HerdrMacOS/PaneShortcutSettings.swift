@@ -301,10 +301,42 @@ final class PaneCommandWindow: NSWindow {
         // NSEvent.locationInWindow is already expressed in the window content
         // coordinate system. Converting it from nil applies another window-base
         // transform and can make a visible terminal miss hit testing.
-        var candidate: NSView? = contentView.hitTest(windowPoint)
+        var candidate = contentView.hitTest(windowPoint)
         while let view = candidate {
             if let terminal = view as? TerminalView { return terminal }
+            // A view that scrolls on its own keeps the wheel before any
+            // terminal beneath it does. The workbench tree and the file viewer
+            // are both NSScrollView-backed and cover the pane canvas.
+            if view is NSScrollView { return nil }
             candidate = view.superview
+        }
+        // `hitTest` landed on something that neither scrolls nor belongs to a
+        // terminal: a resize strip, a status chip, any decoration that takes
+        // clicks. Walking up from one can never reach the terminal, because a
+        // decoration is the terminal's sibling and not its child, so the wheel
+        // died wherever one was layered. Ask which terminal actually covers the
+        // point instead, which keeps every future decoration transparent to
+        // scrolling without each one having to opt in.
+        return Self.frontmostTerminalView(in: contentView, containing: windowPoint)
+    }
+
+    /// Frames are compared in window coordinates because that is what
+    /// `NSEvent.locationInWindow` already is; converting the point downward
+    /// instead would reintroduce the transform noted above.
+    static func frontmostTerminalView(
+        in root: NSView,
+        containing windowPoint: NSPoint
+    ) -> TerminalView? {
+        // Later siblings draw on top of earlier ones, so look front to back.
+        for subview in root.subviews.reversed() {
+            guard !subview.isHidden, subview.alphaValue > 0 else { continue }
+            if let nested = frontmostTerminalView(in: subview, containing: windowPoint) {
+                return nested
+            }
+            guard let terminal = subview as? TerminalView else { continue }
+            if terminal.convert(terminal.bounds, to: nil).contains(windowPoint) {
+                return terminal
+            }
         }
         return nil
     }

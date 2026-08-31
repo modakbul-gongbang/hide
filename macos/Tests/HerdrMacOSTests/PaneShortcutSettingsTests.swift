@@ -203,7 +203,11 @@ struct PaneShortcutSettingsTests {
             frame: NSRect(x: 80, y: 60, width: 420, height: 300),
             font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         )
-        let viewerOverlay = NSView(frame: terminal.frame)
+        // The real viewer is NSScrollView-backed - a SwiftUI ScrollView for
+        // markdown, an NSTextView in a scroll view for code - and that is what
+        // makes it keep the wheel. A bare NSView would model a decoration
+        // instead, which is deliberately scroll-transparent.
+        let viewerOverlay = NSScrollView(frame: terminal.frame)
         content.addSubview(terminal)
         content.addSubview(viewerOverlay)
         window.contentView = content
@@ -214,6 +218,31 @@ struct PaneShortcutSettingsTests {
         viewerOverlay.removeFromSuperview()
 
         #expect(window.terminalView(at: pointInsideTerminal) === terminal)
+    }
+
+    /// The regression this whole lookup exists for: a decoration layered over a
+    /// terminal takes clicks, so `hitTest` returns it, and walking up from it
+    /// never reaches the terminal it covers. Scrolling died wherever one sat.
+    @MainActor
+    @Test func aDecorationLayeredOverATerminalDoesNotSwallowTheWheel() {
+        let window = PaneCommandWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+        let terminal = ImeTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        )
+        // The pane resize strip: a sibling of the terminal, drawn above it.
+        let resizeStrip = NSView(frame: NSRect(x: 314, y: 0, width: 12, height: 480))
+        content.addSubview(terminal)
+        content.addSubview(resizeStrip)
+        window.contentView = content
+
+        #expect(window.terminalView(at: NSPoint(x: 320, y: 240)) === terminal)
     }
 
     private func keyEvent(
@@ -254,5 +283,97 @@ private extension CGEvent {
     func withFlags(_ modifiers: NSEvent.ModifierFlags) -> CGEvent? {
         flags = CGEventFlags(rawValue: UInt64(modifiers.rawValue))
         return self
+    }
+}
+
+/// Scrolling died whenever a decoration was layered over a terminal, because
+/// the window resolved the target by walking up from `hitTest` and an overlay
+/// is the terminal's sibling rather than its child. These cover the lookup that
+/// replaced that walk, so the next overlay cannot take the wheel with it.
+@Suite("Terminal lookup under overlays")
+@MainActor
+struct TerminalViewLookupTests {
+    private func terminal(frame: CGRect) -> TerminalView {
+        ImeTerminalView(
+            frame: frame,
+            font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        )
+    }
+
+    private func root(_ subviews: [NSView]) -> NSView {
+        let root = NSView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        for subview in subviews {
+            root.addSubview(subview)
+        }
+        return root
+    }
+
+    @Test func aTerminalIsFoundThroughTheDecorationLayeredOverIt() {
+        let pane = terminal(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        // The resize strip sits above the terminal and takes clicks, which is
+        // exactly what used to swallow the wheel.
+        let strip = NSView(frame: CGRect(x: 196, y: 0, width: 12, height: 300))
+        let container = root([pane, strip])
+
+        let found = PaneCommandWindow.frontmostTerminalView(
+            in: container,
+            containing: NSPoint(x: 200, y: 150)
+        )
+
+        #expect(found === pane)
+    }
+
+    @Test func aPointOutsideEveryTerminalFindsNothing() {
+        let pane = terminal(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let container = root([pane])
+
+        #expect(
+            PaneCommandWindow.frontmostTerminalView(
+                in: container,
+                containing: NSPoint(x: 300, y: 200)
+            ) == nil
+        )
+    }
+
+    @Test func overlappingTerminalsResolveToTheOneDrawnOnTop() {
+        let behind = terminal(frame: CGRect(x: 0, y: 0, width: 200, height: 300))
+        let inFront = terminal(frame: CGRect(x: 0, y: 0, width: 200, height: 300))
+        let container = root([behind, inFront])
+
+        let found = PaneCommandWindow.frontmostTerminalView(
+            in: container,
+            containing: NSPoint(x: 100, y: 150)
+        )
+
+        #expect(found === inFront)
+    }
+
+    @Test func aHiddenOrTransparentTerminalIsNotATarget() {
+        let hidden = terminal(frame: CGRect(x: 0, y: 0, width: 200, height: 300))
+        hidden.isHidden = true
+        let transparent = terminal(frame: CGRect(x: 0, y: 0, width: 200, height: 300))
+        transparent.alphaValue = 0
+        let container = root([hidden, transparent])
+
+        #expect(
+            PaneCommandWindow.frontmostTerminalView(
+                in: container,
+                containing: NSPoint(x: 100, y: 150)
+            ) == nil
+        )
+    }
+
+    @Test func aTerminalNestedInsideAContainerIsStillFound() {
+        let pane = terminal(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        let wrapper = NSView(frame: CGRect(x: 50, y: 50, width: 200, height: 200))
+        wrapper.addSubview(pane)
+        let container = root([wrapper])
+
+        let found = PaneCommandWindow.frontmostTerminalView(
+            in: container,
+            containing: NSPoint(x: 100, y: 100)
+        )
+
+        #expect(found === pane)
     }
 }
