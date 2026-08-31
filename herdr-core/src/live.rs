@@ -147,6 +147,26 @@ impl PaneSplitDirection {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneResizeDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl PaneResizeDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum PaneControlAction {
     /// Fetches the authoritative layout containing a pane without changing
@@ -162,6 +182,11 @@ pub enum PaneControlAction {
         pane_id: String,
         direction: PaneSplitDirection,
         cwd: Option<String>,
+    },
+    Resize {
+        pane_id: String,
+        direction: PaneResizeDirection,
+        amount: f32,
     },
     ToggleZoom {
         pane_id: String,
@@ -202,6 +227,24 @@ fn execute_pane_control(
             layout_refresh_error: None,
         });
     }
+    if let PaneControlAction::Resize {
+        pane_id,
+        direction,
+        amount,
+    } = action
+    {
+        request(
+            &context.socket_path,
+            "pane.resize",
+            json!({"pane_id": pane_id, "direction": direction.as_str(), "amount": amount}),
+        )?;
+        let layout = fetch_pane_layout(&context.socket_path, pane_id)?;
+        return Ok(PaneControlOutcome {
+            created_pane_id: None,
+            layout: Some(layout),
+            layout_refresh_error: None,
+        });
+    }
 
     let Some(herdr_bin) = context.herdr_bin.as_ref() else {
         return Err("herdr binary was not found; pane control is unavailable".to_owned());
@@ -230,6 +273,7 @@ fn execute_pane_control(
             }
             PaneControlAction::Project { .. }
             | PaneControlAction::Focus { .. }
+            | PaneControlAction::Resize { .. }
             | PaneControlAction::ToggleZoom { .. }
             | PaneControlAction::Close { .. } => None,
         };
@@ -237,6 +281,7 @@ fn execute_pane_control(
             PaneControlAction::Project { pane_id }
             | PaneControlAction::Focus { pane_id }
             | PaneControlAction::Split { pane_id, .. }
+            | PaneControlAction::Resize { pane_id, .. }
             | PaneControlAction::ToggleZoom { pane_id }
             | PaneControlAction::Close { pane_id } => pane_id,
         });
@@ -297,6 +342,9 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
         PaneControlAction::Split { direction, .. } => {
             format!("herdr-core-pane-split-{}", direction.as_str())
         }
+        PaneControlAction::Resize { direction, .. } => {
+            format!("herdr-core-pane-resize-{}", direction.as_str())
+        }
         PaneControlAction::ToggleZoom { .. } => "herdr-core-pane-zoom".to_owned(),
         PaneControlAction::Close { .. } => "herdr-core-pane-close".to_owned(),
     };
@@ -324,7 +372,9 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
 
 fn pane_control_arguments(action: &PaneControlAction) -> Vec<String> {
     match action {
-        PaneControlAction::Project { .. } | PaneControlAction::Focus { .. } => {
+        PaneControlAction::Project { .. }
+        | PaneControlAction::Focus { .. }
+        | PaneControlAction::Resize { .. } => {
             unreachable!("pane projection and focus use the socket API instead of the CLI")
         }
         PaneControlAction::Split {

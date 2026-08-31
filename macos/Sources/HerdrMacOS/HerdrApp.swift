@@ -20,8 +20,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     private var petMenuBarController: PetMenuBarController?
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
     private var petVisibilityObservation: AnyCancellable?
-    private var agentSwitcherKeyMonitor: Any?
-    private var agentSwitcherFlagsMonitor: Any?
+    private var paneKeyMonitor: Any?
 
     override init() {
         let startedAt = Date()
@@ -67,10 +66,49 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: content)
         window.center()
         mainWindow = window
+        paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+            if PaneKeyEventPolicy.isAgentSwitcherAdvance(event) {
+                MainActor.assumeIsolated {
+                    self.model.beginOrAdvanceAgentSwitcher()
+                }
+                return nil
+            }
+            let switcherIsActive = MainActor.assumeIsolated {
+                self.model.agentSwitcherCycle != nil
+            }
+            if event.type == .keyDown,
+               event.keyCode == 53,
+               switcherIsActive
+            {
+                MainActor.assumeIsolated {
+                    self.model.cancelAgentSwitcher()
+                }
+                return nil
+            }
+            if event.type == .flagsChanged,
+               switcherIsActive,
+               !event.modifierFlags.contains(.option)
+            {
+                MainActor.assumeIsolated {
+                    self.model.commitAgentSwitcher()
+                }
+                return nil
+            }
+            let bindings = MainActor.assumeIsolated { self.model.paneShortcuts }
+            let isCloseShortcut = PaneShortcutPolicy.command(
+                for: event,
+                bindings: bindings
+            ) == .closePane
+            guard isCloseShortcut else { return event }
+            MainActor.assumeIsolated {
+                self.model.performCloseShortcut()
+            }
+            return nil
+        }
         presentMainWindow(window, source: "launch")
         petWindowController = PetWindowController(mainWindow: window, model: model)
         petWindowController?.refreshVisibility()
-        installAgentSwitcherMonitors()
 
         // All four toggle surfaces write the same core visibility state, so
         // the menu bar only has to follow the snapshot to stay in step with
@@ -128,48 +166,22 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 HideLaunchTrace.mark("runtime_initialization.failed", detail: "main_window_missing")
                 return
             }
+            if let menu = NSApplication.shared.mainMenu,
+               PaneMenuPolicy.reserveCloseShortcut(in: menu)
+            {
+                HideLaunchTrace.mark("pane.close_shortcut.reserved")
+            } else {
+                HideLaunchTrace.mark(
+                    "pane.close_shortcut.failed",
+                    detail: "command_w_menu_item_missing"
+                )
+            }
             MainWindowPresentation.present(mainWindow)
             HideLaunchTrace.mark(
                 "main_window.pre_runtime",
                 detail: "visible_\(mainWindow.isVisible)_windows_\(NSApplication.shared.windows.count)"
             )
             self.model.core.startRuntimeInitialization()
-        }
-    }
-
-    private func installAgentSwitcherMonitors() {
-        agentSwitcherKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-            [weak self] event in
-            guard let self else { return event }
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if event.keyCode == 48, modifiers == .option {
-                self.model.beginOrAdvanceAgentSwitcher()
-                return nil
-            }
-            if event.keyCode == 53, self.model.agentSwitcherCycle != nil {
-                self.model.cancelAgentSwitcher()
-                return nil
-            }
-            return event
-        }
-        agentSwitcherFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
-            [weak self] event in
-            guard let self else { return event }
-            if self.model.agentSwitcherCycle != nil,
-               !event.modifierFlags.contains(.option)
-            {
-                self.model.commitAgentSwitcher()
-            }
-            return event
-        }
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        if let agentSwitcherKeyMonitor {
-            NSEvent.removeMonitor(agentSwitcherKeyMonitor)
-        }
-        if let agentSwitcherFlagsMonitor {
-            NSEvent.removeMonitor(agentSwitcherFlagsMonitor)
         }
     }
 
@@ -264,7 +276,14 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let paneKeyMonitor {
+            NSEvent.removeMonitor(paneKeyMonitor)
+            self.paneKeyMonitor = nil
+        }
     }
 }
 
@@ -301,6 +320,11 @@ struct ShellCommands: Commands {
                 model.openSearch()
             }
             .keyboardShortcut("k", modifiers: .command)
+
+            Button("Open File") {
+                model.openFileSearch()
+            }
+            .keyboardShortcut("p", modifiers: .command)
         }
 
         CommandMenu("Navigate") {
@@ -343,10 +367,8 @@ struct ShellCommands: Commands {
     }
 
     private func paneButton(_ command: PaneCommand) -> some View {
-        let shortcut = model.shortcut(for: command)
         return Button(command.title) {
             model.performPaneCommand(command)
         }
-        .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.eventModifiers)
     }
 }

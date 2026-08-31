@@ -8,11 +8,11 @@ struct AgentMRUTests {
         var mru = AgentMRU()
 
         mru.observe(focusedPaneID: nil, availablePaneIDs: ["p1", "p2"])
-        #expect(mru.paneIDs.isEmpty)
+        #expect(mru.paneIDs == ["p1", "p2"])
 
         mru.observe(focusedPaneID: "p1", availablePaneIDs: ["p1", "p2"])
         mru.observe(focusedPaneID: "p1", availablePaneIDs: ["p1", "p2"])
-        #expect(mru.paneIDs == ["p1"])
+        #expect(mru.paneIDs == ["p1", "p2"])
 
         mru.observe(focusedPaneID: "p2", availablePaneIDs: ["p1", "p2"])
         #expect(mru.paneIDs == ["p2", "p1"])

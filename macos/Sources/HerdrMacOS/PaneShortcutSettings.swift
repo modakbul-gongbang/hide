@@ -1,4 +1,5 @@
 import AppKit
+import SwiftTerm
 import SwiftUI
 
 enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
@@ -228,17 +229,88 @@ enum PaneShortcutPolicy {
     }
 }
 
+enum PaneKeyEventPolicy {
+    private static let chordModifiers: NSEvent.ModifierFlags = [
+        .command, .control, .option, .shift,
+    ]
+
+    static func isAgentSwitcherAdvance(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 48
+            && event.modifierFlags.intersection(chordModifiers) == .option
+    }
+}
+
+enum PaneMenuPolicy {
+    static func reserveCloseShortcut(in menu: NSMenu) -> Bool {
+        for item in menu.items {
+            let modifiers = item.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask)
+            if item.keyEquivalent.lowercased() == "w", modifiers == .command {
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
+                return true
+            }
+            if let submenu = item.submenu, reserveCloseShortcut(in: submenu) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+enum PaneScrollPolicy {
+    static func routesToLocalScroll(_ event: NSEvent) -> Bool {
+        event.type == .scrollWheel
+            && !event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .contains(.option)
+    }
+}
+
 @MainActor
 final class PaneCommandWindow: NSWindow {
     weak var paneCommandModel: ShellModel?
+
+    override func sendEvent(_ event: NSEvent) {
+        guard paneCommandModel != nil else {
+            super.sendEvent(event)
+            return
+        }
+        if PaneScrollPolicy.routesToLocalScroll(event),
+           let terminal = terminalView(at: event.locationInWindow)
+        {
+            terminal.withMouseReportingDisabled {
+                terminal.scrollWheel(with: event)
+            }
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    func terminalView(at windowPoint: NSPoint) -> TerminalView? {
+        guard let contentView else { return nil }
+        // NSEvent.locationInWindow is already expressed in the window content
+        // coordinate system. Converting it from nil applies another window-base
+        // transform and can make a visible terminal miss hit testing.
+        var candidate: NSView? = contentView.hitTest(windowPoint)
+        while let view = candidate {
+            if let terminal = view as? TerminalView { return terminal }
+            candidate = view.superview
+        }
+        return nil
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let model = paneCommandModel,
            let command = PaneShortcutPolicy.command(
                for: event,
                bindings: model.paneShortcuts
-           ) {
-            model.performPaneCommand(command)
+            ) {
+            if command == .closePane {
+                model.performCloseShortcut()
+            } else {
+                model.performPaneCommand(command)
+            }
             return true
         }
         return super.performKeyEquivalent(with: event)

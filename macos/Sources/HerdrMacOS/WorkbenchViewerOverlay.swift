@@ -37,7 +37,7 @@ struct WorkbenchViewerOverlay: View {
         .background(HideTheme.background)
         .background {
             WorkbenchViewerEscapeMonitor {
-                model.core.setFileViewerVisible(false)
+                model.closeFileViewer()
             }
         }
         .accessibilityIdentifier("workbench-viewer-overlay")
@@ -50,6 +50,7 @@ struct WorkbenchViewerOverlay: View {
         .onChange(of: draft) { _, value in
             guard editor?.path != nil, editor?.contentsUTF8 != value else { return }
             model.core.updateDraft(value)
+            model.core.scheduleFileSave(value)
         }
     }
 
@@ -107,19 +108,15 @@ struct WorkbenchViewerOverlay: View {
                     .foregroundStyle(HideTheme.secondary)
             }
             Spacer(minLength: 12)
-            Button("Save") { model.core.saveFile(draft) }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(readonlyReason != nil || editor?.dirty != true)
-                .accessibilityIdentifier("workbench-save")
             Button {
-                model.core.setFileViewerVisible(false)
+                model.closeFileViewer()
             } label: {
                 Image(systemName: "xmark")
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
             .foregroundStyle(HideTheme.secondary)
-            .help("Close viewer (Esc)")
+            .help("Close viewer (Esc or Cmd-W)")
             .accessibilityLabel("Close file viewer")
             .accessibilityIdentifier("workbench-viewer-close")
         }

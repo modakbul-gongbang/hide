@@ -24,6 +24,13 @@ enum PaneSplitDirection: String, Decodable, Equatable, Sendable {
     case down
 }
 
+enum PaneResizeDirection: String, Sendable {
+    case left
+    case right
+    case up
+    case down
+}
+
 enum CheckoutSelectionAction: Equatable {
     case focusExisting
     case startTerminal
@@ -80,10 +87,12 @@ final class ShellModel: ObservableObject {
     @Published private(set) var pendingWorkspaceURL: URL?
     @Published var showNewAgent = false
     @Published var showSearch = false
+    @Published var showFileSearch = false
     @Published var showSettings = false
     @Published var showPetDashboard = false
     @Published private(set) var agentSwitcherCycle: AgentSwitcherCycle?
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
+    @Published var worktreeToDelete: CoreCheckoutSnapshot?
     @Published var interactionNotice: String?
     @Published var selectedAgentKind = "claude"
     @Published var selectedAgentCheckoutID: String?
@@ -241,6 +250,19 @@ final class ShellModel: ObservableObject {
             paneIDs: focusedPanes.map(\.id),
             focusedPaneID: focusedPaneID
         )
+    }
+
+    var focusedPaneGridDividers: [PaneGridDivider] {
+        guard !isRemoteContext, let layout = focusedPaneLayout, !layout.zoomed else { return [] }
+        return PaneGridPresentation.dividers(layout: layout)
+    }
+
+    func resizePane(_ paneID: String, direction: PaneResizeDirection, amount: Double) {
+        guard !isRemoteContext else {
+            interactionNotice = "Remote pane resizing is not available from this Mac."
+            return
+        }
+        core.resizePane(paneID, direction: direction, amount: amount)
     }
 
     var focusedPaneLayout: CorePaneLayoutSnapshot? {
@@ -454,6 +476,19 @@ final class ShellModel: ObservableObject {
         interactionNotice = nil
     }
 
+    func openFileSearch() {
+        guard !isRemoteContext else {
+            interactionNotice = "Workspace file search is available for local checkouts only."
+            return
+        }
+        guard let checkout = focusedCheckout, checkout.exists else {
+            interactionNotice = "Select an available local checkout before searching files."
+            return
+        }
+        showFileSearch = true
+        interactionNotice = nil
+    }
+
     func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
         let action = CheckoutSelectionPolicy.action(for: checkout)
         HideLaunchTrace.mark(
@@ -560,7 +595,7 @@ final class ShellModel: ObservableObject {
         let currentAgents = snapshot?.navigator.agents ?? []
         agentMRU.observe(
             focusedPaneID: snapshot?.paneLayout?.focusedPaneID ?? snapshot?.terminal.paneID,
-            availablePaneIDs: Set(currentAgents.map(\.paneID))
+            availablePaneIDs: currentAgents.map(\.paneID)
         )
     }
 
@@ -599,6 +634,31 @@ final class ShellModel: ObservableObject {
         core.removeWorkspace(workspace.id)
         workspaceToRemove = nil
         interactionNotice = "Workspace removed from Hide. Its folder, repository, and worktrees were not changed."
+    }
+
+    func requestDeleteWorktree(_ checkout: CoreCheckoutSnapshot) {
+        guard checkout.isWorktree else {
+            interactionNotice = "Only linked worktree checkouts can be deleted from this menu."
+            return
+        }
+        worktreeToDelete = checkout
+    }
+
+    func confirmDeleteWorktree() {
+        guard let checkout = worktreeToDelete else { return }
+        worktreeToDelete = nil
+        let path = checkout.path
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                GitWorktreeRemover.remove(path: path)
+            }.value
+            guard let self else { return }
+            if result.succeeded {
+                interactionNotice = "Deleted linked worktree at \(path)."
+            } else {
+                interactionNotice = result.message
+            }
+        }
     }
 
     func addTab() {
@@ -818,8 +878,30 @@ final class ShellModel: ObservableObject {
     }
 
     private func splitCurrentPane(_ direction: PaneSplitDirection) {
-        core.splitCurrentPane(direction: direction)
+        guard let checkout = focusedCheckout,
+              checkout.exists,
+              !checkout.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            interactionNotice = "The selected checkout has no usable local path. No pane was created."
+            return
+        }
+        core.splitCurrentPane(direction: direction, cwd: checkout.path)
         focus(.terminal)
+    }
+
+    func closeFileViewer() {
+        core.flushPendingFileSave()
+        core.setFileViewerVisible(false)
+    }
+
+    func performCloseShortcut() {
+        if core.snapshot?.editor.viewerVisible == true {
+            HideLaunchTrace.mark("pane.close_shortcut.viewer")
+            closeFileViewer()
+        } else {
+            HideLaunchTrace.mark("pane.close_shortcut.pane")
+            performPaneCommand(.closePane)
+        }
     }
 
     private func toggleCurrentPaneZoom() {

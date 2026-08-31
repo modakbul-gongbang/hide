@@ -231,7 +231,11 @@ private struct TerminalPanel: View {
             Divider()
 
             if !model.focusedPaneGridItems.isEmpty {
-                PaneLayoutCanvas(items: model.focusedPaneGridItems) { item in
+                PaneLayoutCanvas(
+                    items: model.focusedPaneGridItems,
+                    dividers: model.focusedPaneGridDividers,
+                    onResize: model.resizePane
+                ) { item in
                     if let pane = model.paneMetadata(for: item.paneID) {
                         PaneTerminalCell(
                             pane: pane,
@@ -352,6 +356,42 @@ enum PaneGridPresentation {
         }
     }
 
+    static func dividers(layout: CorePaneLayoutSnapshot) -> [PaneGridDivider] {
+        collectDividers(node: visibleRoot(layout: layout), frame: .unit)
+    }
+
+    private static func collectDividers(
+        node: CorePaneLayoutNode,
+        frame: PaneGridFrame
+    ) -> [PaneGridDivider] {
+        guard case let .split(direction, ratio, first, second) = node,
+              let paneID = first.paneIDs.last
+        else { return [] }
+        let firstFrame: PaneGridFrame
+        let secondFrame: PaneGridFrame
+        let divider: PaneGridDivider
+        if direction == .right {
+            firstFrame = PaneGridFrame(x: frame.x, y: frame.y, width: frame.width * ratio, height: frame.height)
+            secondFrame = PaneGridFrame(x: frame.x + firstFrame.width, y: frame.y, width: frame.width - firstFrame.width, height: frame.height)
+            divider = PaneGridDivider(
+                paneID: paneID,
+                axis: .vertical,
+                frame: PaneGridFrame(x: firstFrame.x + firstFrame.width, y: frame.y, width: 0, height: frame.height)
+            )
+        } else {
+            firstFrame = PaneGridFrame(x: frame.x, y: frame.y, width: frame.width, height: frame.height * ratio)
+            secondFrame = PaneGridFrame(x: frame.x, y: frame.y + firstFrame.height, width: frame.width, height: frame.height - firstFrame.height)
+            divider = PaneGridDivider(
+                paneID: paneID,
+                axis: .horizontal,
+                frame: PaneGridFrame(x: frame.x, y: firstFrame.y + firstFrame.height, width: frame.width, height: 0)
+            )
+        }
+        return [divider]
+            + collectDividers(node: first, frame: firstFrame)
+            + collectDividers(node: second, frame: secondFrame)
+    }
+
     private static func flatten(
         node: CorePaneLayoutNode,
         frame: PaneGridFrame
@@ -418,6 +458,19 @@ struct PaneGridItem: Equatable {
     let isFocused: Bool
 }
 
+struct PaneGridDivider: Equatable, Identifiable {
+    enum Axis: Equatable {
+        case vertical
+        case horizontal
+    }
+
+    let paneID: String
+    let axis: Axis
+    let frame: PaneGridFrame
+
+    var id: String { "\(paneID)-\(axis == .vertical ? "v" : "h")-\(frame.x)-\(frame.y)" }
+}
+
 /// The single pane placement surface used by local and remote terminals.
 ///
 /// Both local and remote panes supply authoritative Herdr split frames.
@@ -468,18 +521,56 @@ struct HideTerminalGrid<Content: View>: View {
 
 struct PaneLayoutCanvas<Content: View>: View {
     let items: [PaneGridItem]
+    let dividers: [PaneGridDivider]
+    let onResize: (String, PaneResizeDirection, Double) -> Void
     private let content: (PaneGridItem) -> Content
 
     init(
         items: [PaneGridItem],
+        dividers: [PaneGridDivider] = [],
+        onResize: @escaping (String, PaneResizeDirection, Double) -> Void = { _, _, _ in },
         @ViewBuilder content: @escaping (PaneGridItem) -> Content
     ) {
         self.items = items
+        self.dividers = dividers
+        self.onResize = onResize
         self.content = content
     }
 
     var body: some View {
-        HideTerminalGrid(items: items, content: content)
+        GeometryReader { geometry in
+            ZStack {
+                HideTerminalGrid(items: items, content: content)
+                ForEach(dividers) { divider in
+                    let isVertical = divider.axis == .vertical
+                    Rectangle()
+                        .fill(Color.clear)
+                        .contentShape(Rectangle())
+                        .frame(
+                            width: isVertical ? HideTheme.spacingMD : geometry.size.width * CGFloat(divider.frame.width),
+                            height: isVertical ? geometry.size.height * CGFloat(divider.frame.height) : HideTheme.spacingMD
+                        )
+                        .position(
+                            x: geometry.size.width * CGFloat(divider.frame.x + divider.frame.width / 2),
+                            y: geometry.size.height * CGFloat(divider.frame.y + divider.frame.height / 2)
+                        )
+                        .gesture(
+                            DragGesture(minimumDistance: HideTheme.spacingXXS).onEnded { value in
+                                let delta = isVertical
+                                    ? Double(value.translation.width / max(geometry.size.width, 1))
+                                    : Double(value.translation.height / max(geometry.size.height, 1))
+                                guard abs(delta) >= 0.001 else { return }
+                                let direction: PaneResizeDirection = isVertical
+                                    ? (delta > 0 ? .right : .left)
+                                    : (delta > 0 ? .down : .up)
+                                onResize(divider.paneID, direction, min(abs(delta), 0.5))
+                            }
+                        )
+                        .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
+                        .accessibilityLabel(isVertical ? "Resize pane width" : "Resize pane height")
+                }
+            }
+        }
     }
 }
 

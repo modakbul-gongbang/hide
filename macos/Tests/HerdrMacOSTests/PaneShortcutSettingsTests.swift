@@ -1,4 +1,5 @@
 import AppKit
+import SwiftTerm
 import Testing
 @testable import HerdrMacOS
 
@@ -81,6 +82,104 @@ struct PaneShortcutSettingsTests {
         }
         let settings = keyEvent(characters: ",", keyCode: 43, modifiers: [.command])
         #expect(PaneShortcutPolicy.command(for: settings, bindings: bindings) == nil)
+
+        let capsLockClose = keyEvent(
+            characters: "W",
+            keyCode: 13,
+            modifiers: [.command, .capsLock]
+        )
+        #expect(PaneShortcutPolicy.command(for: capsLockClose, bindings: bindings) == .closePane)
+    }
+
+    @Test func nativeCloseWindowMenuReleasesCommandWForPaneRouting() {
+        let mainMenu = NSMenu()
+        let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        let fileMenu = NSMenu(title: "File")
+        let closeItem = NSMenuItem(title: "Close Window", action: nil, keyEquivalent: "w")
+        closeItem.keyEquivalentModifierMask = .command
+        fileMenu.addItem(closeItem)
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
+
+        #expect(PaneMenuPolicy.reserveCloseShortcut(in: mainMenu))
+        #expect(closeItem.keyEquivalent.isEmpty)
+        #expect(closeItem.keyEquivalentModifierMask.isEmpty)
+        #expect(!PaneMenuPolicy.reserveCloseShortcut(in: mainMenu))
+    }
+
+    @Test func optionTabIgnoresCapsLockButRejectsExtraChordModifiers() {
+        let capsLockOptionTab = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.option, .capsLock]
+        )
+        #expect(PaneKeyEventPolicy.isAgentSwitcherAdvance(capsLockOptionTab))
+
+        let commandOptionTab = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.command, .option]
+        )
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(commandOptionTab))
+    }
+
+    @Test func ordinaryScrollRoutesLocallyWhileOptionScrollKeepsTerminalMouseReporting() {
+        let ordinary = scrollEvent(deltaY: 3, modifiers: [.capsLock])
+        let option = scrollEvent(deltaY: 3, modifiers: [.option, .capsLock])
+
+        #expect(PaneScrollPolicy.routesToLocalScroll(ordinary))
+        #expect(!PaneScrollPolicy.routesToLocalScroll(option))
+    }
+
+    @MainActor
+    @Test func localTerminalScrollSuspendsAndResumesFollowTail() {
+        let terminal = ImeTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 720, height: 360),
+            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        )
+        terminal.feed(text: (1...160).map { "line-\($0)\r\n" }.joined())
+
+        #expect(terminal.canScroll)
+        #expect(terminal.scrollPosition == 1)
+
+        terminal.scrollUp(lines: 12)
+        let heldPosition = terminal.scrollPosition
+        #expect(heldPosition < 1)
+
+        terminal.feed(text: "output-while-reading-history\r\n")
+        #expect(terminal.scrollPosition < 1)
+
+        terminal.scroll(toPosition: 1)
+        #expect(terminal.scrollPosition == 1)
+
+        terminal.feed(text: "output-after-returning-to-tail\r\n")
+        #expect(terminal.scrollPosition == 1)
+    }
+
+    @MainActor
+    @Test func terminalHitTestingRecoversAfterViewerOverlayIsRemoved() {
+        let window = PaneCommandWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+        let terminal = ImeTerminalView(
+            frame: NSRect(x: 80, y: 60, width: 420, height: 300),
+            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        )
+        let viewerOverlay = NSView(frame: terminal.frame)
+        content.addSubview(terminal)
+        content.addSubview(viewerOverlay)
+        window.contentView = content
+        let pointInsideTerminal = NSPoint(x: terminal.frame.midX, y: terminal.frame.midY)
+
+        #expect(window.terminalView(at: pointInsideTerminal) == nil)
+
+        viewerOverlay.removeFromSuperview()
+
+        #expect(window.terminalView(at: pointInsideTerminal) === terminal)
     }
 
     private func keyEvent(
@@ -100,5 +199,26 @@ struct PaneShortcutSettingsTests {
             isARepeat: false,
             keyCode: keyCode
         )!
+    }
+
+    private func scrollEvent(
+        deltaY: CGFloat,
+        modifiers: NSEvent.ModifierFlags
+    ) -> NSEvent {
+        CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .line,
+            wheelCount: 1,
+            wheel1: Int32(deltaY),
+            wheel2: 0,
+            wheel3: 0
+        )!.withFlags(modifiers).flatMap(NSEvent.init(cgEvent:))!
+    }
+}
+
+private extension CGEvent {
+    func withFlags(_ modifiers: NSEvent.ModifierFlags) -> CGEvent? {
+        flags = CGEventFlags(rawValue: UInt64(modifiers.rawValue))
+        return self
     }
 }

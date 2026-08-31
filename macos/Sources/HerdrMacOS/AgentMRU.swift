@@ -3,9 +3,13 @@ import Foundation
 struct AgentMRU: Equatable {
     private(set) var paneIDs: [String] = []
 
-    mutating func observe(focusedPaneID: String?, availablePaneIDs: Set<String>) {
-        paneIDs.removeAll { !availablePaneIDs.contains($0) }
-        guard let focusedPaneID, availablePaneIDs.contains(focusedPaneID) else { return }
+    mutating func observe(focusedPaneID: String?, availablePaneIDs: [String]) {
+        let availableSet = Set(availablePaneIDs)
+        paneIDs.removeAll { !availableSet.contains($0) }
+        for paneID in availablePaneIDs where !paneIDs.contains(paneID) {
+            paneIDs.append(paneID)
+        }
+        guard let focusedPaneID, availableSet.contains(focusedPaneID) else { return }
         paneIDs.removeAll { $0 == focusedPaneID }
         paneIDs.insert(focusedPaneID, at: 0)
     }

@@ -804,6 +804,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
+    private var pendingFileSave: Task<Void, Never>?
     private var commandDevice = CommandDevice.local
     private var routingError: String?
 
@@ -1221,14 +1222,18 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         terminalRegistrations.removeValue(forKey: paneID)
     }
 
-    func splitCurrentPane(direction: PaneSplitDirection) {
+    func splitCurrentPane(direction: PaneSplitDirection, cwd: String) {
         guard let paneID = snapshot?.terminal.paneID else {
             bridgeError = "pane.no_current_pane: Select a terminal pane before splitting"
             return
         }
+        guard !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            bridgeError = "pane.no_checkout_path: The selected checkout path is empty"
+            return
+        }
         dispatch(kind: "create_pane", payload: [
             "tab_id": paneID,
-            "cwd": workspaceRoot.path,
+            "cwd": cwd,
             "command": NSNull(),
             "direction": direction.rawValue,
         ])
@@ -1240,6 +1245,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             return
         }
         dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
+    }
+
+    func resizePane(_ paneID: String, direction: PaneResizeDirection, amount: Double) {
+        guard amount.isFinite, amount >= 0.001 else { return }
+        dispatch(kind: "resize_pane", payload: [
+            "pane_id": paneID,
+            "direction": direction.rawValue,
+            "amount": min(amount, 0.5),
+        ])
     }
 
     func closePane(_ paneID: String, confirmed: Bool) {
@@ -1279,6 +1293,30 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "contents_utf8": contents,
             "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
         ])
+    }
+
+    func scheduleFileSave(_ contents: String) {
+        pendingFileSave?.cancel()
+        pendingFileSave = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(450))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.saveFile(contents)
+            self?.pendingFileSave = nil
+        }
+    }
+
+    func flushPendingFileSave() {
+        guard pendingFileSave != nil,
+              let contents = snapshot?.editor.contentsUTF8,
+              snapshot?.editor.dirty == true
+        else { return }
+        pendingFileSave?.cancel()
+        pendingFileSave = nil
+        saveFile(contents)
     }
 
     func resolveConflict(_ action: String) {

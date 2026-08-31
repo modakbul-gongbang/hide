@@ -19,6 +19,23 @@ struct PaneGridPresentationTests {
         ])
     }
 
+    @Test func nestedLayoutProjectsOneTypedDragDividerPerSplit() throws {
+        let data = Data(
+            #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p1","zoomed":false,"root":{"type":"split","direction":"right","ratio":0.4,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"split","direction":"down","ratio":0.6,"first":{"type":"pane","pane_id":"w1:p2"},"second":{"type":"pane","pane_id":"w1:p3"}}}}"#.utf8
+        )
+        let layout = try JSONDecoder().decode(CorePaneLayoutSnapshot.self, from: data)
+
+        let dividers = PaneGridPresentation.dividers(layout: layout)
+
+        #expect(dividers.count == 2)
+        #expect(dividers[0].paneID == "w1:p1")
+        #expect(dividers[0].axis == .vertical)
+        #expect(dividers[0].frame.x == 0.4)
+        #expect(dividers[1].paneID == "w1:p2")
+        #expect(dividers[1].axis == .horizontal)
+        #expect(dividers[1].frame.y == 0.6)
+    }
+
     @Test func zoomRetainsEveryPaneViewInsteadOfRecreatingHiddenTerminals() throws {
         let data = Data(
             #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p2","zoomed":true,"root":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"pane","pane_id":"w1:p2"}}}"#.utf8

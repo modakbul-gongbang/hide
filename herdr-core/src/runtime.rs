@@ -1,13 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, Weak};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::ffi::ChangeNotifier;
 use crate::live::{
-    LiveContext, PaneControlAction, PaneControlOutcome, PaneSplitDirection, SessionFetchError,
-    TerminalSession, TerminalSessionMode,
+    LiveContext, PaneControlAction, PaneControlOutcome, PaneResizeDirection, PaneSplitDirection,
+    SessionFetchError, TerminalSession, TerminalSessionMode,
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
@@ -136,6 +139,13 @@ struct CreatePanePayload {
     cwd: String,
     command: Option<String>,
     direction: PaneSplitDirection,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResizePanePayload {
+    pane_id: String,
+    direction: PaneResizeDirection,
+    amount: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -272,6 +282,7 @@ enum ValidatedEvent {
     RemoveDevice(RemoveDevicePayload),
     TestDevice(TestDevicePayload),
     CreatePane(CreatePanePayload),
+    ResizePane(ResizePanePayload),
     ToggleZoom(ToggleZoomPayload),
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
@@ -339,6 +350,7 @@ pub struct Runtime {
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
+    worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
     /// measures idleness from here, so roam and sleep are driven by real
     /// session activity rather than wall-clock uptime.
@@ -360,6 +372,12 @@ pub struct Runtime {
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
     delta: DeltaState,
+}
+
+#[derive(Clone)]
+struct RuntimeWorkerContext {
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
 }
 
 /// Revision bookkeeping for the delta snapshot wire. Revisions are stamped
@@ -443,6 +461,7 @@ impl Runtime {
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
+            worker_context: None,
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
@@ -457,8 +476,42 @@ impl Runtime {
         runtime
     }
 
+    pub fn install_worker_context(
+        &mut self,
+        runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
+    ) {
+        self.worker_context = Some(RuntimeWorkerContext { runtime, notifier });
+    }
+
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    fn ingest_file_save_result(
+        &mut self,
+        path: String,
+        contents: String,
+        editor: crate::model::EditorSnapshot,
+        result: Result<(), String>,
+    ) -> bool {
+        if self.snapshot.editor.path.as_deref() != Some(path.as_str())
+            || self.snapshot.editor.contents_utf8.as_deref() != Some(contents.as_str())
+        {
+            self.push_diagnostic(
+                "file.save_stale",
+                format!("Ignored a completed save for stale draft {path}"),
+            );
+            return true;
+        }
+        self.snapshot.editor = editor;
+        match result {
+            Ok(()) => {
+                self.push_diagnostic("file.save_ready", format!("Saved {path}"));
+            }
+            Err(message) => self.set_error("file.save_failed", message, true),
+        }
+        true
     }
 
     /// Serializes one delta response for the snapshot wire: sections whose
@@ -1483,6 +1536,32 @@ impl Runtime {
                 self.apply_pane_layout(layout);
                 true
             }
+            (
+                PaneControlAction::Resize {
+                    pane_id,
+                    direction,
+                    amount,
+                },
+                Ok(outcome),
+            ) => {
+                let Some(layout) = outcome.layout else {
+                    self.set_error(
+                        "pane.resize_missing_layout",
+                        format!("Pane {pane_id} resized without an authoritative layout"),
+                        true,
+                    );
+                    return true;
+                };
+                self.push_diagnostic(
+                    "pane.resize",
+                    format!(
+                        "Pane {pane_id} resized {} by {amount:.3} in {elapsed_ms} ms",
+                        direction.as_str()
+                    ),
+                );
+                self.apply_pane_layout(layout);
+                true
+            }
             (PaneControlAction::ToggleZoom { pane_id }, Ok(outcome)) => {
                 let layout_zoomed = outcome.layout.as_ref().map(|layout| layout.zoomed);
                 self.push_diagnostic(
@@ -1571,6 +1650,10 @@ impl Runtime {
             }
             (PaneControlAction::Split { .. }, Err(message)) => {
                 self.set_error("pane.split_failed", message, true);
+                true
+            }
+            (PaneControlAction::Resize { .. }, Err(message)) => {
+                self.set_error("pane.resize_failed", message, true);
                 true
             }
             (PaneControlAction::ToggleZoom { .. }, Err(message)) => {
@@ -2577,6 +2660,41 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::ResizePane(payload) => {
+                if !payload.amount.is_finite() || !(0.001..=0.5).contains(&payload.amount) {
+                    self.set_error(
+                        "pane.resize_invalid_amount",
+                        "Pane resize amount must be between 0.001 and 0.5",
+                        false,
+                    );
+                    return true;
+                }
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.set_error(
+                        "pane.control_unavailable",
+                        "Pane resize requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                let pane_id = payload.pane_id;
+                let direction = payload.direction;
+                self.push_diagnostic(
+                    "pane.resize.requested",
+                    format!("Resizing pane {pane_id} {}", direction.as_str()),
+                );
+                if let Err(message) = live::spawn_pane_control(
+                    context,
+                    PaneControlAction::Resize {
+                        pane_id,
+                        direction,
+                        amount: payload.amount,
+                    },
+                ) {
+                    self.set_error("pane.resize_worker_failed", message, true);
+                }
+                true
+            }
             ValidatedEvent::ToggleZoom(payload) => {
                 let context = self.live.as_ref().cloned();
                 let Some(context) = context else {
@@ -2675,15 +2793,48 @@ impl Runtime {
                     self.snapshot.editor.contents_utf8 = Some(payload.contents_utf8.clone());
                     self.snapshot.editor.dirty = true;
                 }
-                match files::save(
-                    &mut self.snapshot.editor,
-                    Path::new(&payload.path),
-                    payload.contents_utf8,
-                    payload.expected_modified_at_unix_ms,
-                ) {
-                    Ok(()) => true,
-                    Err(message) => {
-                        self.set_error("file.save_failed", message, true);
+                let Some(context) = self.worker_context.clone() else {
+                    self.set_error(
+                        "file.save_worker_unavailable",
+                        "The file save worker is unavailable; the draft was preserved",
+                        true,
+                    );
+                    return true;
+                };
+                let path = payload.path;
+                let contents = payload.contents_utf8;
+                let expected_modified_at = payload.expected_modified_at_unix_ms;
+                let mut editor = self.snapshot.editor.clone();
+                match thread::Builder::new()
+                    .name("herdr-core-file-save".to_owned())
+                    .spawn(move || {
+                        let result = files::save(
+                            &mut editor,
+                            Path::new(&path),
+                            contents.clone(),
+                            expected_modified_at,
+                        );
+                        let Some(runtime) = context.runtime.upgrade() else {
+                            return;
+                        };
+                        let changed = match runtime.lock() {
+                            Ok(mut guard) => {
+                                guard.ingest_file_save_result(path, contents, editor, result)
+                            }
+                            Err(_) => return,
+                        };
+                        drop(runtime);
+                        if changed {
+                            context.notifier.notify();
+                        }
+                    }) {
+                    Ok(_) => true,
+                    Err(error) => {
+                        self.set_error(
+                            "file.save_worker_failed",
+                            format!("The file save worker could not start: {error}"),
+                            true,
+                        );
                         true
                     }
                 }
@@ -3233,6 +3384,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
         "test_device" => decode!(TestDevicePayload, TestDevice),
         "create_pane" => decode!(CreatePanePayload, CreatePane),
+        "resize_pane" => decode!(ResizePanePayload, ResizePane),
         "toggle_zoom" => decode!(ToggleZoomPayload, ToggleZoom),
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),

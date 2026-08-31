@@ -137,6 +137,12 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         }
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let callback = Arc::new(Mutex::new(None));
+        lock_recover(&runtime).install_worker_context(
+            Arc::downgrade(&runtime),
+            ChangeNotifier {
+                registration: Arc::clone(&callback),
+            },
+        );
         if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,

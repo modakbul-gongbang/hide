@@ -1177,7 +1177,9 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
             }
         }),
     );
-    let saved = snapshot(core);
+    let saved = wait_for_snapshot(core, Duration::from_secs(2), |current| {
+        current["editor"]["dirty"] == false
+    });
     assert_eq!(saved["editor"]["dirty"], false);
     assert!(saved["status"]["last_error"].is_null());
     assert_eq!(std::fs::read(&path).expect("reread fixture"), before);

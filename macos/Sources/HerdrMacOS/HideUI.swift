@@ -16,6 +16,22 @@ enum HideTheme {
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
     static let success = Color(red: 0.37, green: 0.90, blue: 0.62)
 
+    static let spacingNone: CGFloat = 0
+    static let spacingXXS: CGFloat = 2
+    static let spacingXS: CGFloat = 4
+    static let spacingSM: CGFloat = 8
+    static let spacingMD: CGFloat = 12
+    static let spacingLG: CGFloat = 16
+    static let spacingXL: CGFloat = 24
+
+    static let radiusSmall: CGFloat = 6
+    static let radiusMedium: CGFloat = 8
+    static let radiusLarge: CGFloat = 10
+    static let radiusExtraLarge: CGFloat = 16
+
+    static let compactControlSize: CGFloat = 36
+    static let searchSheetSize = CGSize(width: 570, height: 430)
+
     static func color(for hex: String) -> Color {
         let value = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         guard value.count == 6, let number = UInt64(value, radix: 16) else { return accent }
@@ -105,6 +121,10 @@ struct ShellView: View {
             HideSearchSheet()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $model.showFileSearch) {
+            WorkspaceFileSearchSheet()
+                .environmentObject(model)
+        }
         .sheet(isPresented: $model.showSettings) {
             HideSettingsView(model: model)
         }
@@ -117,6 +137,14 @@ struct ShellView: View {
                 title: Text("Remove \(workspace.label) from Hide?"),
                 message: Text("Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched."),
                 primaryButton: .destructive(Text("Remove registration"), action: model.confirmRemoveWorkspace),
+                secondaryButton: .cancel()
+            )
+        }
+        .alert(item: $model.worktreeToDelete) { checkout in
+            Alert(
+                title: Text("Delete worktree \(checkout.label)?"),
+                message: Text("This runs git worktree remove for \(checkout.path). The checkout files will be deleted from disk. Dirty worktrees are refused, but running panes are not stopped automatically."),
+                primaryButton: .destructive(Text("Delete worktree"), action: model.confirmDeleteWorktree),
                 secondaryButton: .cancel()
             )
         }
@@ -439,6 +467,7 @@ private struct HideSidebar: View {
                         .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
+                .frame(width: HideTheme.compactControlSize, height: HideTheme.compactControlSize)
             }
             .padding(.horizontal, 10)
             .padding(.top, 9)
@@ -573,6 +602,7 @@ private struct WorkspaceNavigatorRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(width: HideTheme.compactControlSize, height: HideTheme.compactControlSize)
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Image(systemName: workspace.isGit ? "folder.badge.gearshape" : "folder")
@@ -600,6 +630,9 @@ private struct WorkspaceNavigatorRow: View {
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .frame(width: HideTheme.compactControlSize, height: HideTheme.compactControlSize)
             }
             .padding(.horizontal, 15)
             .padding(.top, 7)
@@ -680,6 +713,12 @@ private struct CheckoutNavigatorRow: View {
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
         .contextMenu {
             Button("Start agent here") { model.openNewAgent(checkoutID: checkout.id) }
+            if checkout.isWorktree {
+                Divider()
+                Button("Delete worktree…", role: .destructive) {
+                    model.requestDeleteWorktree(checkout)
+                }
+            }
         }
     }
 }
@@ -953,7 +992,11 @@ private struct HideTerminalSurface: View {
             } else if panes.isEmpty {
                 HideEmptyCheckoutState()
             } else {
-                PaneLayoutCanvas(items: model.focusedPaneGridItems) { item in
+                PaneLayoutCanvas(
+                    items: model.focusedPaneGridItems,
+                    dividers: model.focusedPaneGridDividers,
+                    onResize: model.resizePane
+                ) { item in
                     if let pane = model.paneMetadata(for: item.paneID) {
                         PaneTerminalCell(
                             pane: pane,
@@ -1450,7 +1493,7 @@ private struct HideSearchSheet: View {
                 .padding(.horizontal, 14)
             }
         }
-        .frame(width: 570, height: 430)
+        .frame(width: HideTheme.searchSheetSize.width, height: HideTheme.searchSheetSize.height)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
     }
