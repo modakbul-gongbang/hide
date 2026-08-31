@@ -1,0 +1,712 @@
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+pub const SCHEMA_VERSION: u32 = 2;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CoreOptions {
+    pub schema_version: u32,
+    pub herdr_socket_path: Option<String>,
+    #[serde(default)]
+    pub herdr_bin_path: Option<String>,
+    pub remote_targets: Vec<RemoteTarget>,
+    pub app_state_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RemoteTarget {
+    pub id: String,
+    pub label: String,
+    pub ssh_alias: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Snapshot {
+    pub schema_version: u32,
+    pub navigator: NavigatorSnapshot,
+    pub overlay: OverlaySnapshot,
+    pub tab: TabSnapshot,
+    pub connection: ConnectionSnapshot,
+    pub zoomed: Option<String>,
+    pub focused: FocusedSnapshot,
+    pub pane_layout: Option<PaneLayoutSnapshot>,
+    pub terminal: TerminalSnapshot,
+    pub editor: EditorSnapshot,
+    pub ui_state: UiStateSnapshot,
+    pub ime: ImeSnapshot,
+    pub input_generation: u64,
+    pub status: StatusSnapshot,
+    pub pet: PetSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PetSnapshot {
+    pub visible: bool,
+    /// `connected` while the herdr session poll is answering; otherwise the
+    /// poll's own failure state, so a missing socket is never a silent idle.
+    pub connection: String,
+    pub connection_message: Option<String>,
+    pub pose: String,
+    pub sleep_phase: String,
+    pub roam_allowed: bool,
+    pub badges: PetBadgesSnapshot,
+    /// Unseen panes in click order: oldest observation first, snapshot order
+    /// as the tie-break.
+    pub attention_pane_ids: Vec<String>,
+    pub origin: Option<PetOriginSnapshot>,
+    pub shortcut: Option<String>,
+    pub shortcut_error: Option<String>,
+    pub theme_id: String,
+    pub last_click: Option<PetClickSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PetBadgesSnapshot {
+    pub working: usize,
+    pub done: usize,
+    pub attention: usize,
+    pub error: usize,
+    pub disconnected: usize,
+    pub subagents_active: u32,
+    pub background_running: u32,
+    pub background_failed: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PetOriginSnapshot {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PetClickSnapshot {
+    /// The pane the click jumped to, or `None` when nothing was unseen and
+    /// the click only raised the main window.
+    pub selected_pane_id: Option<String>,
+    pub at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NavigatorSnapshot {
+    pub root_path: Option<String>,
+    pub focused_device_id: Option<String>,
+    pub focused_workspace_id: Option<String>,
+    pub focused_checkout_id: Option<String>,
+    pub devices: Vec<DeviceSnapshot>,
+    pub workspaces: Vec<WorkspaceSnapshot>,
+    pub agents: Vec<SidebarAgentSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceSnapshot {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub state: String,
+    pub ssh_alias: Option<String>,
+    pub agent_count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SidebarAgentSnapshot {
+    pub id: String,
+    pub pane_id: String,
+    pub workspace_label: String,
+    pub agent_kind: String,
+    pub state: String,
+    pub symbol: String,
+    pub summary: String,
+    pub elapsed: String,
+    pub sort_rank: String,
+    pub activity: String,
+    pub ambient: Option<AmbientSignal>,
+}
+
+/// The only three values this client ever reads out of a pane's optional
+/// `ambient` object. Any other key, or a value of the wrong type, is dropped
+/// during parsing and never reaches app state, the UI, or logs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct AmbientSignal {
+    pub subagents_active: u32,
+    pub background_running: u32,
+    pub background_failed: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WorkspaceSnapshot {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+    pub remote_target_id: Option<String>,
+    pub expanded: bool,
+    pub device_id: String,
+    pub repo_name: String,
+    pub is_git: bool,
+    pub default_branch: Option<String>,
+    pub registered: bool,
+    pub temporary: bool,
+    pub checkouts: Vec<CheckoutSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CheckoutSnapshot {
+    pub id: String,
+    pub workspace_id: String,
+    pub label: String,
+    pub path: String,
+    pub branch: Option<String>,
+    pub is_worktree: bool,
+    pub exists: bool,
+    pub temporary: bool,
+    pub tabs: Vec<TabSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OverlaySnapshot {
+    pub kind: Option<String>,
+    pub title: Option<String>,
+    pub message: Option<String>,
+    pub actions: Vec<OverlayActionSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OverlayActionSnapshot {
+    pub id: String,
+    pub label: String,
+    pub destructive: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TabSnapshot {
+    pub id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub checkout_id: Option<String>,
+    pub label: Option<String>,
+    pub empty: bool,
+    pub panes: Vec<PaneSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaneSnapshot {
+    pub id: String,
+    pub label: String,
+    pub cwd: String,
+    pub state: String,
+    pub summary: Option<String>,
+    pub activity_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ConnectionSnapshot {
+    pub kind: String,
+    pub state: String,
+    pub target_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Surface {
+    Sidebar,
+    Terminal,
+    Workbench,
+    Pet,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FocusedSnapshot {
+    pub surface: Surface,
+    pub pane_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneLayoutDirection {
+    Right,
+    Down,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaneLayoutSnapshot {
+    pub workspace_id: String,
+    pub tab_id: String,
+    pub focused_pane_id: String,
+    pub zoomed: bool,
+    pub root: PaneLayoutNodeSnapshot,
+}
+
+impl PaneLayoutSnapshot {
+    pub fn pane_ids(&self) -> Vec<&str> {
+        let mut pane_ids = Vec::new();
+        self.root.collect_pane_ids(&mut pane_ids);
+        pane_ids
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PaneLayoutNodeSnapshot {
+    Pane {
+        pane_id: String,
+    },
+    Split {
+        direction: PaneLayoutDirection,
+        ratio: f32,
+        first: Box<PaneLayoutNodeSnapshot>,
+        second: Box<PaneLayoutNodeSnapshot>,
+    },
+}
+
+impl PaneLayoutNodeSnapshot {
+    fn collect_pane_ids<'a>(&'a self, pane_ids: &mut Vec<&'a str>) {
+        match self {
+            Self::Pane { pane_id } => pane_ids.push(pane_id),
+            Self::Split { first, second, .. } => {
+                first.collect_pane_ids(pane_ids);
+                second.collect_pane_ids(pane_ids);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalSnapshot {
+    pub pane_id: Option<String>,
+    pub sequence: u64,
+    pub chunks: Vec<TerminalChunk>,
+    pub closed: bool,
+    pub exit_code: Option<i32>,
+    pub panes: Vec<TerminalPaneSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalChunk {
+    pub pane_id: String,
+    pub sequence: u64,
+    pub bytes_base64: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalPaneSnapshot {
+    pub pane_id: String,
+    pub closed: bool,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EditorSnapshot {
+    pub path: Option<String>,
+    pub language: Option<String>,
+    pub contents_utf8: Option<String>,
+    pub opened_modified_at_unix_ms: Option<u64>,
+    pub dirty: bool,
+    pub readonly_reason: Option<String>,
+    pub conflict: Option<EditorConflictSnapshot>,
+    pub diff: Option<DiffSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct UiStateSnapshot {
+    pub expanded_paths: Vec<String>,
+    pub selected_path: Option<String>,
+    pub selected_pane_id: Option<String>,
+    pub shortcut_bindings: BTreeMap<String, String>,
+    pub pet_visible: bool,
+    pub pet_origin: Option<PetOriginSnapshot>,
+    pub pet_shortcut: Option<String>,
+    #[serde(default)]
+    pub focused_device_id: Option<String>,
+    #[serde(default)]
+    pub focused_checkout_id: Option<String>,
+    #[serde(default)]
+    pub workspace_registrations: Vec<WorkspaceRegistration>,
+    #[serde(default)]
+    pub device_registrations: Vec<DeviceRegistration>,
+    #[serde(default = "default_accent_hex")]
+    pub accent_hex: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    #[serde(default)]
+    pub bypass_warnings: bool,
+}
+
+impl Default for UiStateSnapshot {
+    fn default() -> Self {
+        Self {
+            expanded_paths: Vec::new(),
+            selected_path: None,
+            selected_pane_id: None,
+            shortcut_bindings: BTreeMap::new(),
+            // The pet shows itself on a first run; hiding it is a choice the
+            // user makes and the store then remembers (D-09).
+            pet_visible: true,
+            pet_origin: None,
+            pet_shortcut: None,
+            focused_device_id: None,
+            focused_checkout_id: None,
+            workspace_registrations: Vec::new(),
+            device_registrations: Vec::new(),
+            accent_hex: default_accent_hex(),
+            font_size: default_font_size(),
+            bypass_warnings: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorkspaceRegistration {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+    #[serde(default = "default_local_device_id")]
+    pub device_id: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeviceRegistration {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub ssh_alias: Option<String>,
+}
+
+pub(crate) fn default_local_device_id() -> String {
+    "local".to_owned()
+}
+
+pub(crate) fn default_accent_hex() -> String {
+    "#B9FF66".to_owned()
+}
+
+pub(crate) fn default_font_size() -> f32 {
+    13.0
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EditorConflictSnapshot {
+    pub disk_modified_at_unix_ms: u64,
+    pub opened_modified_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DiffSnapshot {
+    pub added_lines: Vec<u32>,
+    pub removed_lines: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ImeSnapshot {
+    pub marked_text: String,
+    pub selected_range: TextRangeSnapshot,
+    pub replacement_range: Option<TextRangeSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TextRangeSnapshot {
+    pub location: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StatusSnapshot {
+    pub herdr: ProviderStatusSnapshot,
+    pub remote: Vec<RemoteStatusSnapshot>,
+    pub chromux: ChromuxStatusSnapshot,
+    pub environment: Vec<EnvironmentStatusSnapshot>,
+    pub diagnostics: Vec<DiagnosticSnapshot>,
+    pub last_error: Option<LastErrorSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EnvironmentStatusSnapshot {
+    pub key: String,
+    pub required: bool,
+    pub format: String,
+    pub state: String,
+    pub absent_behavior: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DiagnosticSnapshot {
+    pub kind: String,
+    pub message: String,
+    pub occurred_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderStatusSnapshot {
+    pub state: String,
+    pub socket_path: Option<String>,
+    pub message: Option<String>,
+    pub last_checked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteStatusSnapshot {
+    pub target_id: String,
+    pub state: String,
+    pub message: Option<String>,
+    pub last_checked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChromuxStatusSnapshot {
+    pub state: String,
+    pub profile: String,
+    pub current_url: Option<String>,
+    pub current_title: Option<String>,
+    pub message: Option<String>,
+    pub last_checked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LastErrorSnapshot {
+    pub kind: String,
+    pub message: String,
+    pub retryable: bool,
+    pub occurred_at: u64,
+}
+
+impl Snapshot {
+    pub fn initial(options: &CoreOptions) -> Self {
+        let herdr_state = if options.herdr_socket_path.is_some() {
+            "not_connected"
+        } else {
+            "unconfigured"
+        };
+        let herdr_message = if options.herdr_socket_path.is_some() {
+            Some("Waiting for the first herdr connection attempt".to_owned())
+        } else {
+            Some("No herdr socket path was configured".to_owned())
+        };
+
+        Self {
+            schema_version: SCHEMA_VERSION,
+            navigator: NavigatorSnapshot {
+                root_path: None,
+                focused_device_id: None,
+                focused_workspace_id: None,
+                focused_checkout_id: None,
+                devices: vec![DeviceSnapshot {
+                    id: "local".to_owned(),
+                    label: "This Mac".to_owned(),
+                    kind: "local".to_owned(),
+                    state: "ready".to_owned(),
+                    ssh_alias: None,
+                    agent_count: 0,
+                }],
+                workspaces: Vec::new(),
+                agents: Vec::new(),
+            },
+            overlay: OverlaySnapshot {
+                kind: None,
+                title: None,
+                message: None,
+                actions: Vec::new(),
+            },
+            tab: TabSnapshot {
+                id: None,
+                workspace_id: None,
+                checkout_id: None,
+                label: None,
+                empty: true,
+                panes: Vec::new(),
+            },
+            connection: ConnectionSnapshot {
+                kind: "local".to_owned(),
+                state: "not_connected".to_owned(),
+                target_id: None,
+            },
+            zoomed: None,
+            focused: FocusedSnapshot {
+                surface: Surface::Terminal,
+                pane_id: None,
+            },
+            pane_layout: None,
+            terminal: TerminalSnapshot {
+                pane_id: None,
+                sequence: 0,
+                chunks: Vec::new(),
+                closed: false,
+                exit_code: None,
+                panes: Vec::new(),
+            },
+            editor: EditorSnapshot {
+                path: None,
+                language: None,
+                contents_utf8: None,
+                opened_modified_at_unix_ms: None,
+                dirty: false,
+                readonly_reason: None,
+                conflict: None,
+                diff: None,
+            },
+            ui_state: UiStateSnapshot::default(),
+            ime: ImeSnapshot {
+                marked_text: String::new(),
+                selected_range: TextRangeSnapshot {
+                    location: 0,
+                    length: 0,
+                },
+                replacement_range: None,
+            },
+            input_generation: 0,
+            status: StatusSnapshot {
+                herdr: ProviderStatusSnapshot {
+                    state: herdr_state.to_owned(),
+                    socket_path: options.herdr_socket_path.clone(),
+                    message: herdr_message,
+                    last_checked_at_unix_ms: None,
+                },
+                remote: options
+                    .remote_targets
+                    .iter()
+                    .map(|target| RemoteStatusSnapshot {
+                        target_id: target.id.clone(),
+                        state: "not_connected".to_owned(),
+                        message: Some("Waiting for the first remote connection attempt".to_owned()),
+                        last_checked_at_unix_ms: None,
+                    })
+                    .collect(),
+                chromux: ChromuxStatusSnapshot {
+                    state: "not_checked".to_owned(),
+                    profile: "default".to_owned(),
+                    current_url: None,
+                    current_title: None,
+                    message: Some("Browser availability has not been checked".to_owned()),
+                    last_checked_at_unix_ms: None,
+                },
+                environment: Vec::new(),
+                diagnostics: Vec::new(),
+                last_error: None,
+            },
+            pet: PetSnapshot::initial(),
+        }
+    }
+}
+
+impl PetSnapshot {
+    pub fn initial() -> Self {
+        Self {
+            visible: true,
+            connection: "not_connected".to_owned(),
+            connection_message: Some("Waiting for the first herdr connection attempt".to_owned()),
+            pose: "disconnected".to_owned(),
+            sleep_phase: "awake".to_owned(),
+            roam_allowed: false,
+            badges: PetBadgesSnapshot::default(),
+            attention_pane_ids: Vec::new(),
+            origin: None,
+            shortcut: None,
+            shortcut_error: None,
+            theme_id: "default".to_owned(),
+            last_click: None,
+        }
+    }
+}
+
+/// The sections of [`Snapshot`] that ride the revisioned `rest` channel of
+/// the delta wire: everything except the editor (its own revision), the
+/// terminal chunk ring (sequence cursor), and the per-event scalars.
+/// Owned copy retained by the runtime to stamp revisions by comparison, so
+/// no mutation site needs dirty-tracking discipline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RestSections {
+    pub navigator: NavigatorSnapshot,
+    pub overlay: OverlaySnapshot,
+    pub tab: TabSnapshot,
+    pub connection: ConnectionSnapshot,
+    pub zoomed: Option<String>,
+    pub focused: FocusedSnapshot,
+    pub pane_layout: Option<PaneLayoutSnapshot>,
+    pub terminal_pane_id: Option<String>,
+    pub terminal_closed: bool,
+    pub terminal_exit_code: Option<i32>,
+    pub terminal_panes: Vec<TerminalPaneSnapshot>,
+    pub ui_state: UiStateSnapshot,
+    pub ime: ImeSnapshot,
+    pub status: StatusSnapshot,
+    pub pet: PetSnapshot,
+}
+
+impl RestSections {
+    pub fn capture(snapshot: &Snapshot) -> Self {
+        Self {
+            navigator: snapshot.navigator.clone(),
+            overlay: snapshot.overlay.clone(),
+            tab: snapshot.tab.clone(),
+            connection: snapshot.connection.clone(),
+            zoomed: snapshot.zoomed.clone(),
+            focused: snapshot.focused.clone(),
+            pane_layout: snapshot.pane_layout.clone(),
+            terminal_pane_id: snapshot.terminal.pane_id.clone(),
+            terminal_closed: snapshot.terminal.closed,
+            terminal_exit_code: snapshot.terminal.exit_code,
+            terminal_panes: snapshot.terminal.panes.clone(),
+            ui_state: snapshot.ui_state.clone(),
+            ime: snapshot.ime.clone(),
+            status: snapshot.status.clone(),
+            pet: snapshot.pet.clone(),
+        }
+    }
+
+    /// Field-by-field equality against the live snapshot, so the unchanged
+    /// case costs a comparison instead of a clone.
+    pub fn matches(&self, snapshot: &Snapshot) -> bool {
+        self.navigator == snapshot.navigator
+            && self.overlay == snapshot.overlay
+            && self.tab == snapshot.tab
+            && self.connection == snapshot.connection
+            && self.zoomed == snapshot.zoomed
+            && self.focused == snapshot.focused
+            && self.pane_layout == snapshot.pane_layout
+            && self.terminal_pane_id == snapshot.terminal.pane_id
+            && self.terminal_closed == snapshot.terminal.closed
+            && self.terminal_exit_code == snapshot.terminal.exit_code
+            && self.terminal_panes == snapshot.terminal.panes
+            && self.ui_state == snapshot.ui_state
+            && self.ime == snapshot.ime
+            && self.status == snapshot.status
+            && self.pet == snapshot.pet
+    }
+}
+
+/// One delta response on the snapshot wire. `rest` and `editor` are present
+/// only when the caller's `have_revision` predates their last change;
+/// `chunks` carries only sequences past the caller's cursor.
+#[derive(Serialize)]
+pub struct SnapshotDeltaWire<'a> {
+    pub schema_version: u32,
+    pub revision: u64,
+    pub rest: Option<RestWire<'a>>,
+    pub editor: Option<&'a EditorSnapshot>,
+    pub input_generation: u64,
+    pub terminal_sequence: u64,
+    pub chunks: Vec<&'a TerminalChunk>,
+    pub chunks_dropped: bool,
+}
+
+#[derive(Serialize)]
+pub struct RestWire<'a> {
+    pub navigator: &'a NavigatorSnapshot,
+    pub overlay: &'a OverlaySnapshot,
+    pub tab: &'a TabSnapshot,
+    pub connection: &'a ConnectionSnapshot,
+    pub zoomed: &'a Option<String>,
+    pub focused: &'a FocusedSnapshot,
+    pub pane_layout: &'a Option<PaneLayoutSnapshot>,
+    pub terminal: TerminalMetaWire<'a>,
+    pub ui_state: &'a UiStateSnapshot,
+    pub ime: &'a ImeSnapshot,
+    pub status: &'a StatusSnapshot,
+    pub pet: &'a PetSnapshot,
+}
+
+#[derive(Serialize)]
+pub struct TerminalMetaWire<'a> {
+    pub pane_id: &'a Option<String>,
+    pub closed: bool,
+    pub exit_code: Option<i32>,
+    pub panes: &'a [TerminalPaneSnapshot],
+}

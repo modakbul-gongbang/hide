@@ -1,0 +1,15 @@
+herdr
+=====
+
+Copyright 2025 herdr contributors.
+
+This application bundles the herdr binary from:
+https://github.com/herdrdev/herdr/releases/tag/v0.8.2
+
+herdr is distributed under the Apache License, Version 2.0.
+The complete license text is available at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+The bundled macOS arm64 binary is verified at build time:
+Version: 0.8.2
+SHA-256: a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574

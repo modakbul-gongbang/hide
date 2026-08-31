@@ -1,0 +1,11 @@
+{
+  "name": "herdr",
+  "release": "v0.8.2",
+  "version": "0.8.2",
+  "platform": "macos-aarch64",
+  "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-aarch64",
+  "sha256": "a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574",
+  "minimum_supported_version": "0.8.2",
+  "selection_order": ["live-socket", "installed", "bundled"],
+  "verification": "The release build rejects a binary whose --version or SHA-256 differs from this record."
+}

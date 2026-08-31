@@ -1,0 +1,23 @@
+{
+  "schema": "herdr.t1-preflight.scenario.v1",
+  "run_id": "t1-native-example",
+  "actions": [
+    {"action": "fixture.assert"},
+    {"action": "terminal.native_input", "target_point": "terminal", "count": 32, "prefix": "T1PROBE"},
+    {"action": "profile.browser_closed", "settle_ms": 2000},
+    {"action": "ax.snapshot", "name": "split"},
+    {"action": "screenshot.capture", "name": "split"},
+    {"action": "zoom.shortcut", "key_code": 36},
+    {"action": "focus.click", "target_point": "editor"},
+    {"action": "window.resize", "width": 960, "height": 640},
+    {
+      "action": "ime.physical_keys",
+      "target_point": "terminal",
+      "input_source_id": "com.apple.inputmethod.Korean.2SetKorean",
+      "key_codes": [5, 40, 1, 15, 46, 3],
+      "expected_text": "한글",
+      "interval_ms": 40
+    },
+    {"action": "state.persist"}
+  ]
+}

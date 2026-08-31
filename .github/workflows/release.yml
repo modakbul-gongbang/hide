@@ -1,0 +1,36 @@
+name: hide release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Swift 6 toolchain
+        uses: swift-actions/setup-swift@v2.4.0
+        with:
+          swift-version: "6.0.3"
+      - name: Show Swift toolchain
+        run: swift --version
+      - name: Build signed ad-hoc bundle and checksums
+        run: HIDE_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-app.sh
+      - name: Verify release archive
+        run: |
+          test -s dist/*.zip
+          test -s dist/*.zip.sha256
+          (cd dist && shasum -a 256 -c ./*.zip.sha256)
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: false
+          files: |
+            dist/*.zip
+            dist/*.zip.sha256

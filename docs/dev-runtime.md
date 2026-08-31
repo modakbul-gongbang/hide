@@ -1,0 +1,98 @@
+# Dev Runtime: Which App Is Actually Running
+
+The single biggest time sink so far is verifying a change against the wrong
+process. Read this before running or screenshotting the app.
+
+## One instance, always
+
+`Herdr IDE` (bundle display name) and `HerdrMacOS` (executable inside the
+bundle) are the same app, not two. Several instances can be alive at once:
+
+- an installed copy, if one has been placed in `/Applications`
+- the assembled dev bundle at
+  `macos/build/assembled/HerdrIDE.app`, from `macos/scripts/build_dev_app.sh`
+- a bare `swift run` from the checkout
+
+When more than one runs, the pet's show/hide state, its saved position, the
+menu bar item, and the `herdr-ide://` URL scheme all cross-talk between them.
+Observed symptoms while this was still herdr-pet: "the pet is not visible"
+(twice) and "a big window opens instead of the pet" (once). Neither was a
+code bug.
+
+Before any visual check:
+
+```sh
+pgrep -fl HerdrMacOS   # must list exactly one process
+```
+
+If more than one is listed, kill all of them and start exactly the instance
+you intend to verify.
+
+## Verify against the assembled bundle, not `swift run`
+
+A source fix is invisible to an already-running app. Repeatedly "fixing"
+something the user still sees broken usually means they are looking at an
+older copy.
+
+For any change the user will confirm visually:
+
+```sh
+macos/scripts/build_dev_app.sh   # prints the assembled .app path
+```
+
+That script builds herdr-core in release, builds the Swift shell, copies
+`assets/pet-theme` into `Contents/Resources/pet-theme`, writes
+`Resources/Info.plist` into the bundle, and ad-hoc signs the result. Launch
+that bundle, then confirm with a real screenshot. State explicitly which
+build the user is looking at when reporting a fix.
+
+A bare `swift run` has no bundle resources: the pet theme then loads from the
+repository checkout instead, and the URL scheme is not registered at all.
+
+## Pet state survives your edit
+
+The pet persists its position, visibility, and global shortcut through
+herdr-core's UI state file (`--state-path`, default
+`/tmp/herdr-ide-verify-ui-state.json`). The file is rewritten whenever the
+pet moves or is toggled, so editing it while the app runs is pointless.
+Kill the process first, then reset the file, then relaunch.
+
+See [pet-window-macos.md](pet-window-macos.md) for the off-screen guards; a
+saved position outside every connected screen is clamped back into view
+rather than succeeding invisibly.
+
+## Deep links reach the bundle, not `swift run`
+
+The app accepts `herdr-ide://hide`, `herdr-ide://show`, and
+`herdr-ide://toggle`. macOS resolves a URL scheme through the bundle's
+`Info.plist` (`CFBundleURLTypes`), which only the assembled bundle has.
+
+```sh
+plutil -p "macos/build/assembled/HerdrIDE.app/Contents/Info.plist" | grep herdr-ide
+open "herdr-ide://toggle"
+```
+
+The retired pet app's `herdr-pet://` scheme is deliberately **not**
+registered. `open herdr-pet://toggle` must not affect this app; if it does
+something, an old Herdr Pet bundle is still installed.
+
+The pet's own global shortcut does not go through the URL scheme at all, so a
+broken deep link and a broken shortcut are separate failures with separate
+checks.
+
+## Driving pet states without real agents
+
+The pet's pose and badge row come from whatever the herdr server reports, and
+an unseen error cannot be produced on demand from a real agent.
+`macos/scripts/pet_scenario_server.py` serves scripted `session.snapshot`
+responses over a Unix socket using the same protocol revision the real server
+speaks, so the app exercises its ordinary polling path:
+
+```sh
+macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
+HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS
+```
+
+The scenario file is re-read on every request, so editing it changes what the
+next poll sees. Stopping the server (or deleting the socket) is how the
+"herdr went away" case is produced; restarting it proves the recovery.

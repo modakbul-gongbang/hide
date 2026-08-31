@@ -1,0 +1,19 @@
+Agent product marks
+===================
+
+hide bundles two small product marks so the sidebar can say which tool is
+running in a pane:
+
+  Sources/HerdrMacOS/Resources/agent-claude.png  - Claude Code, Anthropic PBC
+  Sources/HerdrMacOS/Resources/agent-codex.png   - Codex, OpenAI, Inc.
+
+These marks are used only to identify the corresponding product in hide's
+interface. They are the property of their respective owners, hide claims no
+rights in them, and their presence does not imply that either company
+endorses, sponsors, or is affiliated with hide.
+
+Neither mark is used as hide's own branding, and neither appears in the
+application icon.
+
+To remove them, delete the two files above; the sidebar falls back to the
+agent's initial and nothing else changes.

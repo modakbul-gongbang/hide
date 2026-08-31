@@ -1,0 +1,12 @@
+{
+  "schema": "herdr.ide.t14-e2e.scenario.v1",
+  "scenario_id": "t14-e2e-v3",
+  "run_id": "t14-e2e-v3",
+  "verification_profile": "t14-native-e2e-v3",
+  "actions": [
+    {"id": "ax-before", "action": "ax.snapshot"},
+    {"id": "plain-key-control", "action": "native_input", "key_code": 28, "modifiers": []},
+    {"id": "native-window", "action": "screenshot.capture", "window_id": "owned-main"},
+    {"id": "herdr-after", "action": "herdr.snapshot"}
+  ]
+}

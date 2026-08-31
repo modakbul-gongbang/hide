@@ -1,0 +1,21 @@
+[package]
+name = "herdr-core-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+name = "herdr_core_spike"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+base64 = "=0.22.1"
+portable-pty = "=0.9.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.145"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

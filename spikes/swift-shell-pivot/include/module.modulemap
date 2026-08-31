@@ -1,0 +1,4 @@
+module CHerdrCore {
+  header "herdr_core.h"
+  export *
+}

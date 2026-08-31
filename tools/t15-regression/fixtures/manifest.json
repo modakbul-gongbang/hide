@@ -1,0 +1,104 @@
+{
+  "schema": "herdr.ide.t15-regression.manifest.v1",
+  "run_id": "t15-regression-v1",
+  "verification_profile": "t15-regression-v1",
+  "working_directory": ".",
+  "output_dir": "spikes/integrated-preflight/target/evidence/t15-regression-v1",
+  "checks": [
+    {
+      "id": "rust-lib",
+      "mode": "automated behavior",
+      "required": true,
+      "can_block": false,
+      "command": ["cargo", "test", "--locked", "--lib"],
+      "timeout_seconds": 240,
+      "environment": {"CARGO_TERM_COLOR": "never"},
+      "evidence_paths": ["target/debug"]
+    },
+    {
+      "id": "t1-contract",
+      "mode": "automated behavior",
+      "required": true,
+      "can_block": false,
+      "command": ["python3", "-m", "unittest", "discover", "-s", "tools/t1-preflight/tests", "-q"],
+      "timeout_seconds": 60,
+      "environment": {"PYTHONPATH": "tools/t1-preflight", "LC_ALL": "en_US.UTF-8", "LC_CTYPE": "en_US.UTF-8", "LANG": "en_US.UTF-8"},
+      "evidence_paths": ["tools/t1-preflight/tests"]
+    },
+    {
+      "id": "t14-contract",
+      "mode": "automated behavior",
+      "required": true,
+      "can_block": false,
+      "command": ["python3", "-m", "unittest", "discover", "-s", "tools/t14-e2e/tests", "-q"],
+      "timeout_seconds": 60,
+      "environment": {"PYTHONPATH": "tools/t14-e2e", "LC_ALL": "en_US.UTF-8", "LC_CTYPE": "en_US.UTF-8", "LANG": "en_US.UTF-8"},
+      "evidence_paths": ["tools/t14-e2e/tests"]
+    },
+    {
+      "id": "t14-bundle-contract",
+      "mode": "build/static",
+      "required": true,
+      "can_block": false,
+      "command": ["tools/t14-e2e/t14-e2e", "--root", ".", "--manifest", "tools/t14-e2e/fixtures/manifest.json", "--mode", "contract"],
+      "timeout_seconds": 30,
+      "environment": {"LC_ALL": "en_US.UTF-8", "LC_CTYPE": "en_US.UTF-8", "LANG": "en_US.UTF-8"},
+      "evidence_paths": []
+    },
+    {
+      "id": "protocol-local",
+      "mode": "protocol/integration",
+      "required": true,
+      "can_block": false,
+      "command": ["cargo", "test", "--locked", "herdr::tests", "--lib"],
+      "timeout_seconds": 120,
+      "environment": {"CARGO_TERM_COLOR": "never"},
+      "evidence_paths": ["src/herdr.rs"]
+    },
+    {
+      "id": "native-runtime",
+      "mode": "native runtime",
+      "required": true,
+      "can_block": true,
+      "status": "BLOCKED",
+      "reason": "T5 Option+F physical input is user-accepted with verification deferred; no physical native run is claimed by T15",
+      "evidence_paths": ["agents/runs/herdr-ide-rust-native-800mb/artifacts/t5-exclusive-run-block-v4-r3.json"]
+    },
+    {
+      "id": "browser-cdp",
+      "mode": "browser/CDP runtime",
+      "required": true,
+      "can_block": true,
+      "status": "BLOCKED",
+      "reason": "fresh packaged Browser/chromux runtime evidence requires an owned Browser pane and one installed app instance",
+      "evidence_paths": ["src/browser.rs"]
+    },
+    {
+      "id": "agent-nonce",
+      "mode": "agent runtime",
+      "required": true,
+      "can_block": true,
+      "status": "BLOCKED",
+      "reason": "live provider agent nonce is opt-in and no provider call is authorized for this local run",
+      "evidence_paths": ["src/herdr.rs"]
+    },
+    {
+      "id": "mini-remote",
+      "mode": "remote runtime",
+      "required": true,
+      "can_block": true,
+      "status": "BLOCKED",
+      "reason": "mini reports Herdr protocol v19 while the approved remote contract requires v21; no compatibility shim or remote mutation is allowed",
+      "evidence_paths": ["src/remote.rs"]
+    },
+    {
+      "id": "performance-bundle",
+      "mode": "performance/bundle",
+      "required": true,
+      "can_block": true,
+      "status": "BLOCKED",
+      "reason": "fresh post-T14 process-tree performance/bundle evidence is not rerun; T1 800MB proof remains historical evidence",
+      "evidence_paths": ["docs/research/t1-native-architecture-matrix.md"]
+    }
+  ]
+}

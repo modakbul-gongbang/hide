@@ -1,0 +1,39 @@
+node_modules/
+dist/
+out/
+.vite/
+.DS_Store
+
+# Local research and agent pipeline files
+.research/
+agents/
+
+# Run artifacts are never committed; see "Evidence Belongs Outside The
+# Repository" in AGENTS.md. They belong under agents/runs/<slug>/.
+docs/verification/
+docs/screenshots/
+spikes/*/evidence/
+
+# Rust build output
+target
+target/
+spikes/*/target
+*.app/
+
+# stray CLI artifact
+--output
+__pycache__/
+*.pyc
+.env
+# SwiftPM build output
+.build/
+.build-boundary/
+macos/build/
+# Stray SwiftPM compile output; these carry absolute paths
+*.d
+*.o
+*.swiftdeps
+*.swiftmodule
+*.swiftsourceinfo
+*.swiftdoc
+*.dia
