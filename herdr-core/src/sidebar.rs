@@ -16,6 +16,15 @@ pub struct SessionSnapshotPayload {
     pub agents: Vec<SessionAgentPayload>,
     #[serde(default)]
     pub panes: Vec<SessionPanePayload>,
+    #[serde(default)]
+    pub workspaces: Vec<SessionWorkspacePayload>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SessionWorkspacePayload {
+    pub workspace_id: String,
+    #[serde(default)]
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

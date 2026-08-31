@@ -137,34 +137,41 @@ pub fn inspect_temporary(path: &Path, device_id: &str) -> WorkspaceSnapshot {
     )
 }
 
+/// One Herdr workspace and the working directories its panes occupy.
+///
+/// Herdr owns the workspace axis, so the navigator mirrors it rather than
+/// inventing a second one. Herdr reports no path for a workspace, so the
+/// checkouts under it come from where its panes actually are.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SessionSpace {
+    pub id: String,
+    pub label: String,
+    pub cwds: Vec<String>,
+}
+
 pub fn build_catalog(
     registrations: &[WorkspaceRegistration],
-    temporary_paths: &[String],
+    spaces: &[SessionSpace],
 ) -> Vec<WorkspaceSnapshot> {
-    let mut result = registrations
+    let mut result = spaces.iter().map(inspect_space).collect::<Vec<_>>();
+    let occupied_roots = result
         .iter()
-        .map(inspect_registered)
-        .collect::<Vec<_>>();
-    let registered_roots = registrations
-        .iter()
-        .map(|registration| normalized_for_comparison(Path::new(&registration.path)))
-        .collect::<Vec<_>>();
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .map(|checkout| normalized_for_comparison(Path::new(&checkout.path)))
+        .collect::<HashSet<_>>();
 
-    let mut temporary_ids = HashSet::new();
-    for raw_path in temporary_paths {
-        let path = Path::new(raw_path);
-        let root = git_root(path)
-            .unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.to_path_buf()));
-        let comparison = normalized_for_comparison(&root);
-        if registered_roots.iter().any(|registered| {
-            comparison == *registered || comparison.starts_with(&format!("{registered}/"))
-        }) {
+    // A registration Herdr has no workspace for is somewhere the user can
+    // still start work, so it stays listed. One Herdr already occupies would
+    // otherwise appear twice under two different ids.
+    for registration in registrations {
+        let root = git_root(Path::new(&registration.path)).unwrap_or_else(|| {
+            normalized_path(Path::new(&registration.path))
+                .unwrap_or_else(|_| PathBuf::from(&registration.path))
+        });
+        if occupied_roots.contains(&normalized_for_comparison(&root)) {
             continue;
         }
-        let id = workspace_id_for_path(&root);
-        if temporary_ids.insert(id) {
-            result.push(inspect_temporary(&root, LOCAL_DEVICE_ID));
-        }
+        result.push(inspect_registered(registration));
     }
 
     result.sort_by(|left, right| {
@@ -174,6 +181,86 @@ pub fn build_catalog(
             .then_with(|| left.path.cmp(&right.path))
     });
     result
+}
+
+/// Projects one Herdr workspace, with a checkout per distinct repository its
+/// panes sit in.
+///
+/// Enumerating `git worktree list` here is what made the sidebar verbose: it
+/// listed every branch the repository has ever had a worktree for, each with
+/// no tabs. A checkout earns a row by having a pane in it.
+fn inspect_space(space: &SessionSpace) -> WorkspaceSnapshot {
+    let mut checkouts: Vec<CheckoutSnapshot> = Vec::new();
+    for cwd in &space.cwds {
+        let path = Path::new(cwd);
+        let root =
+            git_root(path).unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
+        let comparison = normalized_for_comparison(&root);
+        if checkouts
+            .iter()
+            .any(|existing| normalized_for_comparison(Path::new(&existing.path)) == comparison)
+        {
+            continue;
+        }
+        let branch = current_branch(&root);
+        let label = branch.clone().unwrap_or_else(|| {
+            root.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Checkout")
+                .to_owned()
+        });
+        let is_worktree = git_root(&root).is_some_and(|resolved| {
+            main_worktree_root(&resolved)
+                .is_some_and(|main| normalized_for_comparison(&main) != comparison)
+        });
+        checkouts.push(checkout(
+            &space.id, &root, &label, branch, is_worktree, false,
+        ));
+    }
+
+    let primary = checkouts
+        .first()
+        .map(|checkout| checkout.path.clone())
+        .unwrap_or_default();
+    let repo_name = checkouts
+        .first()
+        .and_then(|checkout| Path::new(&checkout.path).file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or(&space.label)
+        .to_owned();
+
+    WorkspaceSnapshot {
+        id: space.id.clone(),
+        label: space.label.clone(),
+        path: primary,
+        remote_target_id: None,
+        expanded: true,
+        device_id: LOCAL_DEVICE_ID.to_owned(),
+        repo_name,
+        is_git: checkouts.iter().any(|checkout| checkout.branch.is_some()),
+        default_branch: checkouts
+            .first()
+            .and_then(|checkout| checkout.branch.clone()),
+        registered: false,
+        temporary: false,
+        checkouts,
+    }
+}
+
+fn current_branch(root: &Path) -> Option<String> {
+    let output = git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!branch.is_empty() && branch != "HEAD").then_some(branch)
+}
+
+/// The repository's main working tree, which tells a linked worktree apart
+/// from the checkout that owns the git directory.
+fn main_worktree_root(root: &Path) -> Option<PathBuf> {
+    let output = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
+    let common = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!common.is_empty())
+        .then(|| PathBuf::from(common))
+        .and_then(|common| common.parent().map(Path::to_path_buf))
 }
 
 pub fn git_root(path: &Path) -> Option<PathBuf> {
@@ -210,14 +297,20 @@ fn inspect(
     let normalized = normalized_path(path).unwrap_or_else(|_| path.to_path_buf());
     let git_root_path = git_root(&normalized);
     let is_git = git_root_path.is_some();
-    let default_branch = git_root_path
-        .as_deref()
-        .and_then(default_branch)
-        .or_else(|| is_git.then(|| "HEAD".to_owned()));
-    let checkouts = if let Some(root) = git_root_path.as_deref() {
-        discover_checkouts(id, root)
-    } else {
-        vec![checkout(id, &normalized, "Folder", None, false, temporary)]
+    // One row for where this workspace actually is. Its other branches are
+    // not checkouts until Herdr has a pane in them, and a branch with no pane
+    // is reached through the branch picker rather than a permanent row.
+    let branch = git_root_path.as_deref().and_then(current_branch);
+    let checkouts = match git_root_path.as_deref() {
+        Some(root) => vec![checkout(
+            id,
+            root,
+            branch.as_deref().unwrap_or("Repository"),
+            branch.clone(),
+            false,
+            temporary,
+        )],
+        None => vec![checkout(id, &normalized, "Folder", None, false, temporary)],
     };
 
     WorkspaceSnapshot {
@@ -234,75 +327,11 @@ fn inspect(
             .unwrap_or(label)
             .to_owned(),
         is_git,
-        default_branch,
+        default_branch: branch,
         registered,
         temporary,
         checkouts,
     }
-}
-
-fn discover_checkouts(workspace_id: &str, root: &Path) -> Vec<CheckoutSnapshot> {
-    let mut checkouts = Vec::new();
-    if let Ok(output) = git(root, &["worktree", "list", "--porcelain"]) {
-        let mut current_path: Option<PathBuf> = None;
-        let mut current_branch: Option<String> = None;
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if line.is_empty() {
-                if let Some(path) = current_path.take() {
-                    let is_worktree =
-                        normalized_for_comparison(&path) != normalized_for_comparison(root);
-                    let label = current_branch
-                        .as_deref()
-                        .unwrap_or_else(|| {
-                            path.file_name()
-                                .and_then(|name| name.to_str())
-                                .unwrap_or("Detached checkout")
-                        })
-                        .to_owned();
-                    checkouts.push(checkout(
-                        workspace_id,
-                        &path,
-                        &label,
-                        current_branch.take(),
-                        is_worktree,
-                        false,
-                    ));
-                }
-                continue;
-            }
-            if let Some(path) = line.strip_prefix("worktree ") {
-                current_path = Some(PathBuf::from(path));
-            } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-                current_branch = Some(branch.to_owned());
-            }
-        }
-        if let Some(path) = current_path.take() {
-            let is_worktree = normalized_for_comparison(&path) != normalized_for_comparison(root);
-            let label = current_branch
-                .as_deref()
-                .unwrap_or("Detached checkout")
-                .to_owned();
-            checkouts.push(checkout(
-                workspace_id,
-                &path,
-                &label,
-                current_branch,
-                is_worktree,
-                false,
-            ));
-        }
-    }
-    if checkouts.is_empty() {
-        checkouts.push(checkout(
-            workspace_id,
-            root,
-            "Repository",
-            None,
-            false,
-            false,
-        ));
-    }
-    checkouts
 }
 
 fn checkout(
@@ -324,40 +353,6 @@ fn checkout(
         temporary,
         tabs: Vec::<TabSnapshot>::new(),
     }
-}
-
-fn default_branch(root: &Path) -> Option<String> {
-    if let Ok(output) = git(
-        root,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    ) {
-        let raw_branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        let branch = raw_branch
-            .strip_prefix("origin/")
-            .unwrap_or(&raw_branch)
-            .to_owned();
-        if !branch.is_empty() {
-            return Some(branch);
-        }
-    }
-    if let Ok(output) = git(root, &["branch", "--format=%(refname:short)"]) {
-        let branches = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|branch| !branch.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        if let Some(branch) = branches
-            .iter()
-            .find(|branch| branch.as_str() == "main" || branch.as_str() == "master")
-        {
-            return Some(branch.clone());
-        }
-        if let Some(branch) = branches.first() {
-            return Some(branch.clone());
-        }
-    }
-    None
 }
 
 fn git(path: &Path, arguments: &[&str]) -> Result<std::process::Output, String> {
@@ -486,11 +481,29 @@ mod tests {
         let registration =
             registration(root.to_str().unwrap(), "Demo", LOCAL_DEVICE_ID).expect("registration");
         let snapshot = inspect_registered(&registration);
+        // A registration is one row for where it is. The `feature` worktree
+        // exists on disk but has no pane, so it is not a checkout row.
         assert!(snapshot.is_git);
         assert_eq!(snapshot.default_branch.as_deref(), Some("main"));
-        assert_eq!(snapshot.checkouts.len(), 2);
+        assert_eq!(snapshot.checkouts.len(), 1);
+        assert_eq!(snapshot.checkouts[0].branch.as_deref(), Some("main"));
+
+        // It becomes one once a Herdr workspace has a pane in it.
+        let occupied = build_catalog(
+            &[],
+            &[SessionSpace {
+                id: "w1".to_owned(),
+                label: "Demo".to_owned(),
+                cwds: vec![
+                    root.to_string_lossy().into_owned(),
+                    checkout_path.to_string_lossy().into_owned(),
+                ],
+            }],
+        );
+        assert_eq!(occupied.len(), 1);
+        assert_eq!(occupied[0].checkouts.len(), 2);
         assert!(
-            snapshot
+            occupied[0]
                 .checkouts
                 .iter()
                 .any(|checkout| checkout.is_worktree
@@ -516,15 +529,34 @@ mod tests {
     }
 
     #[test]
-    fn temporary_discovery_does_not_duplicate_a_registered_repository() {
+    fn a_space_occupying_a_registered_directory_does_not_duplicate_it() {
         let root = temp_dir("temporary");
         let registration = registration(root.to_str().unwrap(), "Registered", LOCAL_DEVICE_ID)
             .expect("registration");
-        let catalog = build_catalog(
-            &[registration],
-            &[root.join("nested").to_string_lossy().into_owned()],
-        );
+        let spaces = [SessionSpace {
+            id: "w1".to_owned(),
+            label: "Registered".to_owned(),
+            cwds: vec![root.to_string_lossy().into_owned()],
+        }];
+
+        let catalog = build_catalog(&[registration], &spaces);
+
         assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].id, "w1");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_registration_no_space_occupies_stays_listed() {
+        let root = temp_dir("unopened");
+        let registration = registration(root.to_str().unwrap(), "Unopened", LOCAL_DEVICE_ID)
+            .expect("registration");
+        let registration_id = registration.id.clone();
+
+        let catalog = build_catalog(&[registration], &[]);
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].id, registration_id);
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -308,6 +308,10 @@ pub struct Runtime {
     /// user makes against a live session is authoritative, and its
     /// disappearance stays a reported error.
     restore_hint_pending: bool,
+    /// The Herdr workspaces the last session snapshot reported. A catalog
+    /// rebuild triggered by a registration change is not a session update, so
+    /// it reuses these rather than briefly emptying the navigator.
+    last_session_spaces: Vec<workspace::SessionSpace>,
     delta: DeltaState,
 }
 
@@ -393,6 +397,7 @@ impl Runtime {
             pet_dragging: false,
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
+            last_session_spaces: Vec::new(),
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -487,27 +492,84 @@ impl Runtime {
         self.live = Some(context);
     }
 
-    /// Collects the pane and agent working directories that seed temporary
-    /// workspaces. Shared with the live poller so a catalog precomputed
-    /// outside the runtime lock is built from the same inputs.
-    pub fn session_temporary_paths(payload: &SessionSnapshotPayload) -> Vec<String> {
+    /// Groups the session's working directories under the Herdr workspace that
+    /// owns them. Shared with the live poller so a catalog precomputed outside
+    /// the runtime lock is built from the same inputs.
+    ///
+    /// Layouts carry the workspace a pane belongs to and `panes` carries its
+    /// directory, so the two together give each workspace the set of
+    /// repositories it actually occupies without asking git anything.
+    pub fn session_spaces(payload: &SessionSnapshotPayload) -> Vec<workspace::SessionSpace> {
+        let labels: HashMap<&str, &str> = payload
+            .workspaces
+            .iter()
+            .map(|workspace| {
+                (
+                    workspace.workspace_id.as_str(),
+                    workspace.label.trim(),
+                )
+            })
+            .collect();
+        let mut spaces: Vec<workspace::SessionSpace> = Vec::new();
+        for layout in &payload.layouts {
+            let index = match spaces
+                .iter()
+                .position(|space| space.id == layout.workspace_id)
+            {
+                Some(index) => index,
+                None => {
+                    let label = labels
+                        .get(layout.workspace_id.as_str())
+                        .copied()
+                        .filter(|label| !label.is_empty())
+                        .unwrap_or(layout.workspace_id.as_str())
+                        .to_owned();
+                    spaces.push(workspace::SessionSpace {
+                        id: layout.workspace_id.clone(),
+                        label,
+                        cwds: Vec::new(),
+                    });
+                    spaces.len() - 1
+                }
+            };
+            for pane in &layout.panes {
+                let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) else {
+                    continue;
+                };
+                if !spaces[index].cwds.contains(&cwd) {
+                    spaces[index].cwds.push(cwd);
+                }
+            }
+        }
+        spaces
+    }
+
+    fn pane_cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
         payload
             .panes
             .iter()
-            .filter_map(|pane| pane.cwd.clone())
-            .chain(payload.agents.iter().filter_map(|agent| agent.cwd.clone()))
-            .collect()
+            .find(|pane| pane.pane_id == pane_id)
+            .and_then(|pane| pane.cwd.clone())
+            .or_else(|| {
+                payload
+                    .agents
+                    .iter()
+                    .find(|agent| agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id))
+                    .and_then(|agent| agent.cwd.clone())
+            })
+            .filter(|cwd| !cwd.trim().is_empty())
     }
 
-    /// Rebuilds the navigator from durable registrations and the current
-    /// session's pane working directories. Pane directories that are not
-    /// registered become clearly marked temporary workspaces for this
-    /// session; they are never persisted as registrations.
+    /// Rebuilds the navigator from the Herdr workspaces the session reports
+    /// and any registration Herdr has no workspace for. Registrations are
+    /// durable metadata only: removing one never removes a checkout or ends a
+    /// remote process.
     fn reconcile_session_catalog(
         &mut self,
         payload: &SessionSnapshotPayload,
         precomputed: Option<live::PrecomputedCatalog>,
     ) -> bool {
+        self.last_session_spaces = Self::session_spaces(payload);
         // The catalog shells out to git, so the poller builds it before
         // taking the runtime lock; a catalog whose registrations no longer
         // match current state is discarded and rebuilt inline.
@@ -519,7 +581,7 @@ impl Runtime {
             }
             _ => workspace::build_catalog(
                 &self.snapshot.ui_state.workspace_registrations,
-                &Self::session_temporary_paths(payload),
+                &self.last_session_spaces,
             ),
         };
         let projected_agents = project_agents(payload.clone()).agents;
@@ -1451,10 +1513,10 @@ impl Runtime {
         });
     }
 
-    fn rebuild_catalog(&mut self, temporary_paths: &[String]) {
+    fn rebuild_catalog(&mut self) {
         self.snapshot.navigator.workspaces = workspace::build_catalog(
             &self.snapshot.ui_state.workspace_registrations,
-            temporary_paths,
+            &self.last_session_spaces,
         );
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
@@ -1796,7 +1858,7 @@ impl Runtime {
                         .workspace_registrations
                         .push(registration.clone());
                 }
-                self.rebuild_catalog(&[]);
+                self.rebuild_catalog();
                 self.snapshot.navigator.focused_device_id =
                     Some(workspace::LOCAL_DEVICE_ID.to_owned());
                 if let Some(checkout_id) = self
@@ -1969,7 +2031,7 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.rebuild_catalog(&[]);
+                self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "workspace.unregistered",
@@ -2015,7 +2077,7 @@ impl Runtime {
                         ssh_alias: Some(ssh_alias.clone()),
                     },
                 );
-                self.rebuild_catalog(&[]);
+                self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.registered",
@@ -2045,7 +2107,7 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.rebuild_catalog(&[]);
+                self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.unregistered",
@@ -2470,20 +2532,25 @@ fn find_workspace_for_context<'a>(
             .position(|workspace| workspace.id == session_workspace_id)
             .and_then(|index| workspaces.get_mut(index));
     };
+    // Navigator workspaces carry Herdr's own workspace ids, so the layout
+    // names its owner exactly. The path comparisons below are the fallback for
+    // a registration Herdr has no workspace for, and for a catalog precomputed
+    // from a slightly older session.
+    if let Some(index) = workspaces
+        .iter()
+        .position(|workspace| workspace.id == session_workspace_id)
+    {
+        return workspaces.get_mut(index);
+    }
     let path = Path::new(raw_path);
     let root = workspace::git_root(path)
         .map(|root| workspace::normalized_for_comparison(&root))
         .unwrap_or_else(|| workspace::normalized_for_comparison(path));
     let normalized = root.clone();
-    // A linked worktree can appear both as a registered checkout and as a
-    // temporary workspace whose root is the same path. The checkout cwd is
-    // the authoritative identity for projecting a plain Herdr pane, so prefer
-    // a non-temporary exact checkout before considering the session workspace.
     if let Some(index) = workspaces.iter().position(|workspace| {
-        !workspace.temporary
-            && workspace.checkouts.iter().any(|checkout| {
-                workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
-            })
+        workspace.checkouts.iter().any(|checkout| {
+            workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
+        })
     }) {
         return workspaces.get_mut(index);
     }
@@ -2493,22 +2560,9 @@ fn find_workspace_for_context<'a>(
         return workspaces.get_mut(index);
     }
     if let Some(index) = workspaces.iter().position(|workspace| {
-        workspace.checkouts.iter().any(|checkout| {
-            workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
-        })
-    }) {
-        return workspaces.get_mut(index);
-    }
-    if let Some(index) = workspaces.iter().position(|workspace| {
         let workspace_path = workspace::normalized_for_comparison(Path::new(&workspace.path));
         normalized.starts_with(&format!("{workspace_path}/"))
     }) {
-        return workspaces.get_mut(index);
-    }
-    if let Some(index) = workspaces
-        .iter()
-        .position(|workspace| workspace.id == session_workspace_id)
-    {
         return workspaces.get_mut(index);
     }
     workspaces.push(workspace::inspect_temporary(
@@ -2857,20 +2911,19 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_terminal_pane_cwd_is_reconciled_into_its_registered_checkout() {
+    fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
         let mut runtime = runtime();
-        let checkout_path = "/tmp/hide-registered-checkout";
+        let checkout_path = "/private/tmp/hide-registered-checkout";
         runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
             id: "workspace:registered".to_owned(),
             label: "registered".to_owned(),
             path: checkout_path.to_owned(),
             device_id: "local".to_owned(),
         }];
-        runtime.rebuild_catalog(&[]);
-        let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]
-            .id
-            .clone();
-        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:registered".to_owned());
+        runtime.rebuild_catalog();
+        let checkout_id =
+            workspace::checkout_id_for_path("herdr-workspace", Path::new(checkout_path));
+        runtime.snapshot.navigator.focused_workspace_id = Some("herdr-workspace".to_owned());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
         runtime.reset_terminal_projection(None);
@@ -2895,22 +2948,26 @@ mod tests {
         }))
         .expect("plain pane payload");
 
+        // Before the session arrives the registration is the only row.
         assert_eq!(runtime.snapshot.navigator.workspaces.len(), 1);
         assert_eq!(runtime.snapshot.navigator.workspaces[0].checkouts.len(), 1);
         assert!(runtime.ingest_session(Ok(payload)));
+        // Once Herdr has a workspace in that directory the row is that
+        // workspace, not a second entry beside it.
+        assert_eq!(runtime.snapshot().navigator.workspaces.len(), 1);
         let checkout = runtime
             .snapshot()
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == "workspace:registered")
+            .find(|workspace| workspace.id == "herdr-workspace")
             .and_then(|workspace| {
                 workspace
                     .checkouts
                     .iter()
                     .find(|checkout| checkout.id == checkout_id)
             })
-            .expect("registered checkout");
+            .expect("the checkout Herdr occupies");
         assert_eq!(
             checkout.tabs.len(),
             1,
@@ -2934,23 +2991,28 @@ mod tests {
     }
 
     #[test]
-    fn an_unregistered_worktree_layout_projects_into_the_selected_checkout() {
+    fn a_worktree_pane_projects_into_its_own_checkout_row() {
         let mut runtime = runtime();
+        let repository_path = "/private/tmp/hide-rebrand/herdr-ide";
         let checkout_path = "/private/tmp/hide-rebrand/worktrees/hide-rebrand";
-        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
-        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-        let temporary_paths = vec![
-            "/private/tmp/hide-rebrand/herdr-ide".to_owned(),
-            checkout_path.to_owned(),
-        ];
-        runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &temporary_paths);
-        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        // Herdr owns the workspace axis, so the navigator workspace is the
+        // Herdr workspace and its checkouts are the directories its panes are
+        // actually in.
+        let spaces = vec![workspace::SessionSpace {
+            id: "w3M".to_owned(),
+            label: "herdr-ide".to_owned(),
+            cwds: vec![repository_path.to_owned(), checkout_path.to_owned()],
+        }];
+        let checkout_id = workspace::checkout_id_for_path("w3M", Path::new(checkout_path));
+        runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
+        runtime.snapshot.navigator.focused_workspace_id = Some("w3M".to_owned());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
         runtime.reset_terminal_projection(None);
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
+            "workspaces": [{"workspace_id": "w3M", "label": "herdr-ide"}],
             "panes": [{"pane_id": "w3M:p1", "cwd": checkout_path}],
             "layouts": [{
                 "workspace_id": "w3M",
@@ -2962,72 +3024,70 @@ mod tests {
                 "splits": []
             }]
         }))
-        .expect("unregistered worktree payload");
+        .expect("worktree pane payload");
         let catalog = live::PrecomputedCatalog {
             registrations: Vec::new(),
-            workspaces: workspace::build_catalog(&[], &temporary_paths),
+            workspaces: workspace::build_catalog(&[], &spaces),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
-        let checkout = runtime
+        let workspace_snapshot = runtime
             .snapshot()
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == workspace_id)
-            .and_then(|workspace| {
-                workspace
-                    .checkouts
-                    .iter()
-                    .find(|checkout| checkout.id == checkout_id)
-            })
-            .expect("selected temporary checkout");
+            .find(|workspace| workspace.id == "w3M")
+            .expect("the Herdr workspace")
+            .clone();
+        // Only the directories panes occupy, not every worktree the
+        // repository has.
+        assert_eq!(workspace_snapshot.checkouts.len(), 2);
+        let checkout = workspace_snapshot
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.id == checkout_id)
+            .expect("the worktree checkout");
         assert_eq!(checkout.tabs.len(), 1);
         assert_eq!(checkout.tabs[0].panes[0].id, "w3M:p1");
         assert_eq!(
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("w3M:p1")
         );
-        assert_eq!(
-            runtime
-                .snapshot()
-                .pane_layout
-                .as_ref()
-                .map(|layout| layout.focused_pane_id.as_str()),
-            Some("w3M:p1")
-        );
+    }
 
-        let ui_state_anchor = serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION,
-            "kind": "ui_state_update",
-            "payload": {
-                "expanded_paths": [],
-                "selected_path": null,
-                "selected_pane_id": "w3Z:p1",
-                "focused_checkout_id": checkout_id,
-                "shortcut_bindings": {},
-                "accent_hex": "#B9FF66",
-                "font_size": 13,
-                "bypass_warnings": false
-            }
-        }))
-        .expect("temporary catalog anchor event");
-        assert!(runtime.dispatch_json(&ui_state_anchor));
-        assert!(
-            runtime
-                .snapshot()
-                .navigator
-                .workspaces
-                .iter()
-                .any(|workspace| workspace.id == workspace_id)
-        );
-        assert_eq!(
-            runtime.snapshot().navigator.focused_checkout_id.as_deref(),
-            Some(checkout_id.as_str())
-        );
+    #[test]
+    fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
+        let mut runtime = runtime();
+        let checkout_path = "/private/tmp/hide-selected-checkout";
+        let spaces = vec![
+            workspace::SessionSpace {
+                id: "w3P".to_owned(),
+                label: "other".to_owned(),
+                cwds: vec![checkout_path.to_owned()],
+            },
+            workspace::SessionSpace {
+                id: "w3Z".to_owned(),
+                label: "selected".to_owned(),
+                cwds: vec![checkout_path.to_owned()],
+            },
+        ];
+        let checkout_id = workspace::checkout_id_for_path("w3Z", Path::new(checkout_path));
+        runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
+        runtime.snapshot.navigator.focused_workspace_id = Some("w3Z".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.selected_pane_id = Some("w3Z:p1".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("w3Z:p1".to_owned());
+        runtime.restore_hint_pending = false;
 
-        let next_payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+        // Two Herdr workspaces sit in the same directory, so only the
+        // workspace id tells them apart.
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
+            "workspaces": [
+                {"workspace_id": "w3P", "label": "other"},
+                {"workspace_id": "w3Z", "label": "selected"}
+            ],
             "panes": [
                 {"pane_id": "w3P:p1", "cwd": checkout_path},
                 {"pane_id": "w3Z:p1", "cwd": checkout_path}
@@ -3053,25 +3113,27 @@ mod tests {
                 }
             ]
         }))
-        .expect("selected temporary layout payload");
-        let next_catalog = live::PrecomputedCatalog {
+        .expect("two workspace layout payload");
+        let catalog = live::PrecomputedCatalog {
             registrations: Vec::new(),
-            workspaces: workspace::build_catalog(&[], &temporary_paths),
+            workspaces: workspace::build_catalog(&[], &spaces),
         };
-        assert!(runtime.ingest_session_with_catalog(Ok(next_payload), Some(next_catalog)));
+        assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+
         let selected_checkout = runtime
             .snapshot()
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == workspace_id)
+            .find(|workspace| workspace.id == "w3Z")
             .and_then(|workspace| {
                 workspace
                     .checkouts
                     .iter()
                     .find(|checkout| checkout.id == checkout_id)
             })
-            .expect("selected temporary checkout after the next poll");
+            .expect("the selected checkout")
+            .clone();
         assert!(selected_checkout.tabs.iter().any(|tab| {
             tab.id.as_deref() == Some("w3Z:t1") && tab.panes.iter().any(|pane| pane.id == "w3Z:p1")
         }));
@@ -3090,40 +3152,24 @@ mod tests {
     }
 
     #[test]
-    fn a_session_workspace_with_the_selected_checkout_cwd_does_not_steal_projection() {
-        let checkout_path = "/tmp/hide-selected-checkout";
-        let registered_checkout = checkout(
-            "registered-workspace",
-            "selected-checkout",
-            checkout_path,
-            None,
-        );
-        let temporary_checkout = checkout(
-            "session-workspace",
-            "temporary-checkout",
-            checkout_path,
-            None,
-        );
-        let mut workspaces = vec![
-            workspace(
-                "registered-workspace",
-                "Registered",
-                "/tmp/hide-registered-root",
-                vec![registered_checkout],
-            ),
-            workspace(
-                "session-workspace",
-                "Session",
-                checkout_path,
-                vec![temporary_checkout],
-            ),
-        ];
+    fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
+        let checkout_path = "/private/tmp/hide-duplicate-registration";
+        let spaces = vec![workspace::SessionSpace {
+            id: "w41".to_owned(),
+            label: "duplicate".to_owned(),
+            cwds: vec![checkout_path.to_owned()],
+        }];
+        let registrations = vec![WorkspaceRegistration {
+            id: workspace::workspace_id_for_path(Path::new(checkout_path)),
+            label: "Duplicate".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        }];
 
-        let selected =
-            find_workspace_for_context(&mut workspaces, Some(checkout_path), "session-workspace")
-                .expect("workspace for the selected checkout");
+        let catalog = workspace::build_catalog(&registrations, &spaces);
 
-        assert_eq!(selected.id, "registered-workspace");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].id, "w41");
     }
 
     #[test]

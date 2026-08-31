@@ -60,7 +60,7 @@ const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 /// The poller's memo of the last catalog build and the inputs it came from.
 struct CatalogCache {
     registrations: Vec<WorkspaceRegistration>,
-    temporary_paths: Vec<String>,
+    spaces: Vec<workspace::SessionSpace>,
     workspaces: Vec<WorkspaceSnapshot>,
     built_at: Instant,
 }
@@ -349,18 +349,17 @@ fn spawn_session_poller(context: LiveContext) {
                             Err(_) => return,
                         };
                         drop(runtime);
-                        let temporary_paths = Runtime::session_temporary_paths(payload);
+                        let spaces = Runtime::session_spaces(payload);
                         let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
                             cache.registrations == registrations
-                                && cache.temporary_paths == temporary_paths
+                                && cache.spaces == spaces
                                 && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
                         });
                         if !cache_is_fresh {
-                            let workspaces =
-                                workspace::build_catalog(&registrations, &temporary_paths);
+                            let workspaces = workspace::build_catalog(&registrations, &spaces);
                             catalog_cache = Some(CatalogCache {
                                 registrations: registrations.clone(),
-                                temporary_paths,
+                                spaces,
                                 workspaces,
                                 built_at: Instant::now(),
                             });
@@ -515,12 +514,21 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
         })
         .unwrap_or_default();
 
+    let workspaces = workspace_labels
+        .iter()
+        .map(|(workspace_id, label)| crate::sidebar::SessionWorkspacePayload {
+            workspace_id: (*workspace_id).to_owned(),
+            label: (*label).to_owned(),
+        })
+        .collect();
+
     Ok(SessionSnapshotPayload {
         focused_pane_id,
         tabs,
         layouts,
         agents,
         panes,
+        workspaces,
     })
 }
 
