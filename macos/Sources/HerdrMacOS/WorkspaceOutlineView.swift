@@ -270,10 +270,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
 
         func outlineViewItemDidCollapse(_ notification: Notification) {
             persistExpansionIfNeeded()
-            guard let node = notification.userInfo?["NSObject"] as? WorkspaceOutlineNode else { return }
-            node.children = []
-            node.state = .unloaded
-            outline?.reloadItem(node, reloadChildren: true)
+            // The node graph is scoped to rootPath, so retaining loaded children caches
+            // them by URL until the root changes instead of re-enumerating on re-expansion.
         }
 
         func outlineViewSelectionDidChange(_ notification: Notification) {
