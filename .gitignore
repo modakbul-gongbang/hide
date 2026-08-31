@@ -29,5 +29,11 @@ __pycache__/
 .build/
 .build-boundary/
 macos/build/
-# SwiftPM dependency files carry absolute paths
+# Stray SwiftPM compile output; these carry absolute paths
 *.d
+*.o
+*.swiftdeps
+*.swiftmodule
+*.swiftsourceinfo
+*.swiftdoc
+*.dia
