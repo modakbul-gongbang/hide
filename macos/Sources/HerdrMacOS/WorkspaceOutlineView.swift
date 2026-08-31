@@ -195,6 +195,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private weak var outline: WorkspaceNSOutlineView?
         private var rootNode: WorkspaceOutlineNode?
         private var rootPath: String?
+        private var rootGeneration: UInt64 = 0
         private var desiredExpandedPaths: Set<String> = []
         private var selectedPath: String?
         private var fontScale: CGFloat = 1
@@ -214,6 +215,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             self.selectedPath = selectedPath
             self.fontScale = fontScale
             if rootPath != rootURL.path {
+                rootGeneration &+= 1
                 rootPath = rootURL.path
                 rootNode = WorkspaceOutlineNode(entry: .init(url: rootURL, isDirectory: true))
                 outline?.reloadData()
@@ -260,6 +262,11 @@ struct WorkspaceOutlineView: NSViewRepresentable {
 
         func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
             guard let node = item as? WorkspaceOutlineNode, node.isDirectory else { return false }
+            if case .failed = node.state {
+                // Collapsing and expanding is an explicit retry. The previous
+                // failure remains visible until the user asks to try again.
+                node.state = .unloaded
+            }
             loadChildren(of: node)
             return true
         }
@@ -379,8 +386,22 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                     iconView.stringValue = icon.glyph
                     iconView.font = font
                 } else {
-                    iconView.stringValue = "·"
-                    iconView.font = NSFont.systemFont(ofSize: 12 * fontScale)
+                    let configuration = NSImage.SymbolConfiguration(
+                        pointSize: 11 * fontScale,
+                        weight: .regular
+                    )
+                    let attachment = NSTextAttachment()
+                    attachment.image = NSImage(
+                        systemSymbolName: icon.fallbackSystemImage,
+                        accessibilityDescription: node.name
+                    )?.withSymbolConfiguration(configuration)
+                    attachment.bounds = NSRect(
+                        x: 0,
+                        y: -2,
+                        width: 13 * fontScale,
+                        height: 13 * fontScale
+                    )
+                    iconView.attributedStringValue = NSAttributedString(attachment: attachment)
                 }
                 iconView.textColor = NSColor(HideTheme.color(for: icon.colorHex))
             }
@@ -389,6 +410,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private func loadChildren(of node: WorkspaceOutlineNode) {
             guard node.isDirectory else { return }
             guard case .unloaded = node.state else { return }
+            guard let loadRoot = rootNode else { return }
+            let loadGeneration = rootGeneration
             node.state = .loading
             outline?.reloadItem(node, reloadChildren: true)
             let url = node.url
@@ -396,6 +419,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 let result = await Task.detached(priority: .userInitiated) {
                     Result { try WorkspaceDirectoryLoader.loadDirectory(at: url) }
                 }.value
+                guard loadGeneration == rootGeneration, loadRoot === rootNode else {
+                    return
+                }
                 switch result {
                 case .success(let entries):
                     node.children = entries.map(WorkspaceOutlineNode.init(entry:))
