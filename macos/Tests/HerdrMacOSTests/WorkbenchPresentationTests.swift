@@ -198,8 +198,7 @@ struct WorkbenchPresentationTests {
             selectedPath: "/repo/Sources/App.swift",
             shortcutBindings: ["split_right": "command+option+r"],
             accentHex: "#A1B2C3",
-            fontSize: 15,
-            bypassWarnings: true
+            fontSize: 15
         )
         try await Task.sleep(for: .milliseconds(50))
         first = nil
@@ -218,7 +217,6 @@ struct WorkbenchPresentationTests {
         #expect(uiState.shortcutBindings["split_right"] == "command+option+r")
         #expect(uiState.accentHex == "#A1B2C3")
         #expect(uiState.fontSize == 15)
-        #expect(uiState.bypassWarnings)
         #expect(restored.snapshot?.pet.visible == true)
         #expect(uiState.workspaceRegistrations.map(\.id) == workspaceRegistrationIDs)
         #expect(uiState.deviceRegistrations.map(\.id) == deviceRegistrationIDs)
