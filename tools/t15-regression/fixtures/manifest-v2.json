@@ -50,7 +50,7 @@
       "command": ["tools/t14-e2e/t14-e2e", "--root", ".", "--manifest", "tools/t14-e2e/fixtures/manifest.json", "--mode", "contract"],
       "timeout_seconds": 30,
       "environment": {"LC_ALL": "en_US.UTF-8", "LC_CTYPE": "en_US.UTF-8", "LANG": "en_US.UTF-8"},
-      "evidence_paths": ["docs/verification/t14-native-e2e.md"]
+      "evidence_paths": []
     },
     {
       "id": "protocol-local",

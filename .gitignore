@@ -8,6 +8,12 @@ out/
 .research/
 agents/
 
+# Run artifacts are never committed; see "Evidence Belongs Outside The
+# Repository" in AGENTS.md. They belong under agents/runs/<slug>/.
+docs/verification/
+docs/screenshots/
+spikes/*/evidence/
+
 # Rust build output
 target
 target/
@@ -23,3 +29,5 @@ __pycache__/
 .build/
 .build-boundary/
 macos/build/
+# SwiftPM dependency files carry absolute paths
+*.d

@@ -1,5 +1,0 @@
-stamp=20260830T021058Z
-pre_quit_pids=94619
-94619     1 SN   02:36 Sun Aug 30 11:08:23 2026     ./dist/hide.app/Contents/MacOS/HerdrMacOS
-gone=1
-remaining=

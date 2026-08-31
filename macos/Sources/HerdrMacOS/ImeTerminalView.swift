@@ -4,7 +4,7 @@ import SwiftTerm
 /// Pure decision table for terminal byte delivery while an IME composition is
 /// being handled.
 ///
-/// Evidence basis (`spikes/swift-shell-pivot/evidence/v9-backspace-adapter-human-retest-trace.json`):
+/// Evidence basis, from a traced human retest of the Stage 0 spike:
 /// on Backspace during Korean composition the macOS IME re-marks the composing
 /// text, commits it through `insertText`, and lets the key fall through to
 /// SwiftTerm's `doCommand(deleteBackward:)`, which leaks a DEL byte into the

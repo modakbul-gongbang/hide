@@ -1,1 +1,0 @@
-77660 local-user ~ ./dist/hide.app/Contents/MacOS/HerdrMacOS

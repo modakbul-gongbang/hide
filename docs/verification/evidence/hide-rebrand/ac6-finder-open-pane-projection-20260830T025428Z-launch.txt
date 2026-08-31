@@ -1,3 +1,0 @@
-timestamp_utc=20260830T025428Z
-command=/usr/bin/open dist/hide.app
-open_exit=0

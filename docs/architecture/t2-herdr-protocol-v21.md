@@ -3,7 +3,7 @@
 ## Result
 
 T2 changes the authoritative Herdr protocol from revision 20 to revision 21 without a compatibility shim.
-The implementation lives in `~/projects/herdr`, and the exact uncommitted source delta is preserved in `docs/verification/t2-herdr-protocol-v21.patch` for the implementation record.
+The implementation lives in the local Herdr checkout. The exact source delta was captured as a patch in the run that made this change; run artifacts are not kept in this repository.
 The Herdr source checkout remains uncommitted because this approved run is local-only.
 
 ## Contract

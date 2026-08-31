@@ -1,3 +1,0 @@
-[33044:30044726:0827/234210.948466:WARNING:chrome/browser/signin/account_consistency_mode_manager.cc:74] Desktop Identity Consistency cannot be enabled as no OAuth client ID and client secret have been configured.
-[33044:30044726:0827/234211.101698:WARNING:cef/libcef/browser/browser_host_base.cc:911] Incorrect usage of CefBrowserHost::NotifyMoveOrResizeStarted
-[33044:30044726:0827/234211.101797:WARNING:cef/libcef/browser/browser_host_base.cc:911] Incorrect usage of CefBrowserHost::NotifyMoveOrResizeStarted

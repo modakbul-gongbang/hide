@@ -18,9 +18,9 @@ Generate an interaction and evidence plan without requiring an app with:
   --manifest fixtures/example-manifest.json
 ```
 
-Use `--mode static` for bundle inspection and `--mode run` only after the integrated app implements the telemetry contract in [the harness contract](../../docs/verification/t1-preflight-harness.md).
+Use `--mode static` for bundle inspection and `--mode run` only after the integrated app implements the telemetry contract the harness expects.
 
-The exclusive T5 Option+F check uses `spikes/integrated-preflight/t5-option-meta-v4-manifest.json` and its own output identity documented in [the T5 verification contract](../../docs/verification/t5-exclusive-option-meta.md).
+The exclusive T5 Option+F check uses `spikes/integrated-preflight/t5-option-meta-v4-manifest.json` and its own output identity.
 It requires a fresh output directory, records focus and source timelines, and injects physical keys only inside an approved hands-off window.
 
 The app never receives the action scenario.

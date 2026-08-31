@@ -44,8 +44,7 @@ No Herdr layout mutation is issued by the zoom model.
 The release app exposed one `AXWindow` containing an `AXList` navigator, `AXTabGroup`, and two `AXTextArea` pane elements in split mode.
 Zoom mode kept the navigator and tab group and removed the hidden sibling pane from the accessibility children.
 The application menu bar exposed `Herdr IDE` and `View`, and `View` exposed `Toggle Pane Zoom`.
-The final split and zoom screenshots are `docs/screenshots/t4/native-shell-split.png` and `docs/screenshots/t4/native-shell-zoomed.png`.
-The final runtime report is `docs/screenshots/t4/native-runtime.json`.
+Split, zoom, and the runtime report were captured as screenshots and JSON in the run that verified this; run artifacts are not kept in this repository.
 
 ## Verification
 

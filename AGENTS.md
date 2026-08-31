@@ -5,7 +5,18 @@
 - `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
 - `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. All authority (pane layout, focus, zoom, persisted state) lives here.
 - `src/` - removed retired Rust-native shell. The SSH/mini runtime is owned by `herdr-core/`; nothing links a root `src/` crate into the application.
-- `spikes/swift-shell-pivot/` - the Stage 0 spike, its evidence, and `VERDICTS.md`. A frozen record; do not edit it to reflect later changes.
+- `spikes/swift-shell-pivot/` - the Stage 0 spike source and its `VERDICTS.md`. A frozen record; do not edit it to reflect later changes. Its evidence output is no longer kept in the repository (see `Evidence Belongs Outside The Repository`).
+
+## Evidence Belongs Outside The Repository
+
+Screenshots, traces, sample output, run logs, browser profiles, and verification transcripts are run artifacts, not source. They do not belong in a commit.
+
+This rule exists because they were: `docs/verification/`, `docs/screenshots/`, and the spike `evidence/` directories grew to 660 files and 123 MB, and a Chrome profile committed under `spikes/integrated-preflight/` carried cookies and a symlink naming the workstation. A later scan for leaked identity passed because it read text and skipped images, while 184 screenshots showed the home directory and hostname in plain sight.
+
+- Write run artifacts under `agents/runs/<slug>/`. That whole namespace is local-only, so nothing there can reach a commit by accident.
+- Never add a path under `docs/verification/`, `docs/screenshots/`, or `spikes/*/evidence/`. They are gitignored; do not force past it.
+- When a document needs to cite evidence, state the finding and how it was measured. Do not commit the artifact so a path can be linked.
+- A verification claim is proven to the person reading the run, not to the repository. The receipt and the run directory are where it lives.
 
 ## Runtime Architecture
 
@@ -33,13 +44,16 @@ These rules exist because each one was violated and diagnosed in a real incident
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)
 
-This project uses the engineering-harness PRD pipeline. Agent-facing assets live in one visible namespace:
+This project uses the engineering-harness PRD pipeline. Agent-facing assets live in one visible namespace.
 
-- `agents/prd/` - PRD contracts, committed and human-approved before implementation.
+**The entire `agents/` tree is local-only.** `.gitignore` carries one line, `agents/`, and nothing under it is committed. PRDs, interview logs, rules, and run state stay on the machine that produced them. Do not `git add -f` a path under `agents/` to get around this.
+
+- `agents/prd/` - PRD contracts, human-approved before implementation.
+- `agents/interview/` - interview sources (`qa-log.md`), the canonical record behind a PRD.
 - `agents/rules/` - learned rules: `INDEX.md` is the ledger, `invariants/` hold machine-checked rules (trigger globs + executable check) that gate delivery, `pending/` holds lessons that have not landed yet.
-- `agents/runs/` - per-run state and evidence (gate verdicts + implement state under one `agents/runs/<slug>/`), gitignored (policy: one line `agents/runs/`), never hand-edited.
-- `agents/quick/` - quick lane state and evidence (generated contract, receipt, verify verdict, evidence blobs), gitignored (policy: one line `agents/quick/`), never hand-edited.
-- `agents/config.json` - pipeline configuration, committed.
+- `agents/runs/` - per-run state and evidence (gate verdicts + implement state under one `agents/runs/<slug>/`), never hand-edited. This is also where run artifacts go; see `Evidence Belongs Outside The Repository`.
+- `agents/quick/` - quick lane state and evidence (generated contract, receipt, verify verdict, evidence blobs), never hand-edited.
+- `agents/config.json` - pipeline configuration.
 
 Conventions:
 

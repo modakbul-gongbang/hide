@@ -1,4 +1,0 @@
-open_exit=0
-open_output=
-launch_pid=46115
-launch_round=1
