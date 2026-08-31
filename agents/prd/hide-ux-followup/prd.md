@@ -74,9 +74,10 @@ attach 경쟁이나 중복 시도는 살아 있는 pane을 닫힌 것으로 오�
 
 - SC5. Workspace 사이를 빠르게 전환하고 attach 실패를 복구한다.
   Actors: hide 사용자, hide app, herdr server, 다른 terminal client.
-  Primary path: warm A-B-A workspace 전환에서 선택 직후 대상 terminal의 첫 안정 frame이 나타나고, 현재 layout에 필요한 각 pane은 하나의 in-flight 또는 active attach만 가진다.
-  Failure state: 다른 client가 disposable pane을 소유해 attach가 거절되어도 authoritative pane은 살아 있는 것으로 남고 transport만 unavailable로 표시되며, 자동 retry storm과 `--takeover`가 없다.
-  Recovery: 소유권이 해제된 뒤 사용자가 명시적 Reconnect를 눌러 다시 붙는다.
+  Primary path: warm A-B-A workspace 전환에서 선택 직후 대상 terminal의 첫 안정 frame이 나타나고, Hide는 Herdr의 공식 `terminal session control` NDJSON bridge로 input, resize, frame을 주고받으며 pane 및 generation마다 하나의 in-flight 또는 active session만 가진다.
+  Failure state: 다른 client가 disposable pane을 소유해 control이 거절되어도 authoritative pane은 살아 있는 것으로 남고, Hide는 공식 `terminal session observe`로 전환해 live frame을 계속 표시하면서 read-only 상태와 원인을 보여준다.
+  자동 retry storm과 `--takeover`는 없다.
+  Recovery: 소유권이 해제된 뒤 사용자가 명시적 Reconnect를 누르면 observer를 controller로 교체해 input과 resize 권한을 회복한다.
   Reach: 1 pane, 15 pane, zoom-hidden output, delayed attach, external-owner conflict를 가진 disposable fixture를 사용한다.
 
 - SC6. 최근에 보던 agent를 `Option+Tab` 또는 Search로 찾는다.
@@ -178,13 +179,15 @@ None required.
   Mapping: R5, AC9, RF2.
 - D17. agent 소유 가정: 측정 후 성능 목표는 warm A-B-A 전환 p95 400ms 이하이면서 baseline 대비 50% 이상 개선이고 poll 주기만큼 빈 projection이 보이지 않는 것이다.
   Mapping: AC11, RF1.
-- D18. HerdrM은 device 및 pane ID 기반 선택, 선택된 terminal의 단일 attach view, attach failure와 pane lifecycle 분리, explicit reconnect의 established behavioral reference로만 사용한다.
+- D18. HerdrM은 device 및 pane ID 기반 선택, 선택된 terminal의 단일 attach view, attach failure와 pane lifecycle 분리, explicit reconnect의 behavioral reference로만 사용한다.
   Mapping: 5장, R10.
-  Hide의 multi-pane grid와 안전 경계 때문에 HerdrM의 상시 `--takeover`는 채택하지 않는다.
+  실제 transport 계약은 설치된 Herdr 0.8.2의 공식 `terminal session control` 및 `terminal session observe`를 따르며, Hide의 multi-pane grid와 안전 경계 때문에 상시 `--takeover`는 채택하지 않는다.
 - D19. principles intake는 `~/projects/oh-my-principle` commit `35ab76ca23d45e714f1630054855a8c8c4568d03`의 engineering 및 design principles와 engineering `practices/test.md` 전문을 기준으로 했다.
   Mapping: 11장 전부.
 - D20. design direction은 기존 Raycast 계열 dark native tool UI의 targeted evolution이며 variance 4, motion 1, density 7이다.
   Mapping: R2, R3, R5, R7, R8, R9, AC3, AC5, AC9, AC14, AC15, AC16.
+- D21. 구현 중 사용자가 "이거 바로 수정해줄 수 있어? 이거 herdr 공식기능을 당연히 써야지;; 그러면 빨라지고 버그도 사라지는거같은데?"라고 정정해, PTY 기반 direct attach 대신 설치된 Herdr 0.8.2의 공식 `terminal session control` 및 `terminal session observe`를 transport 계약으로 확정했다.
+  Mapping: 5장, R10, AC18, AC19, T2, RF6.
 
 거절 상태를 유지하는 대안:
 
@@ -193,6 +196,7 @@ None required.
 - `SPACES`와 `Space` 용어 통일은 Workspace 유지 결정으로 거절됐다.
 - Gemini, Cursor와 4타일 구성은 Claude 및 Codex 2타일 결정으로 거절됐다.
 - 자동 `--takeover`는 사용자 세션을 끊을 수 있어 안전 규칙과 충돌하므로 거절됐다.
+- PTY 기반 `herdr pane attach`를 Hide의 interactive transport로 계속 쓰는 대안은 공식 control 및 observe session 계약에 밀려 거절됐다.
 
 ## 5. Major Technical Structure Changes
 
@@ -209,8 +213,10 @@ None required.
   Core event 계약의 path, label, `initialize_git`는 유지하되 git init과 catalog subprocess가 runtime mutex 아래에서 실행되지 않게 하고 partial success와 failure를 명시한다.
 - New Agent는 기존 bundled `AgentMark` 자산과 provider argument builder를 재사용한다.
   obsolete bypass persistence를 제거하고 modal-local one-launch option으로 제한한다.
-- Pane 상태는 authoritative existence 및 closed와 attach transport의 `starting`, `attached`, `unavailable`, `ended`를 분리한다.
-  pane 및 generation마다 in-flight 또는 active attempt를 하나로 제한하고, exit를 owner conflict 등 구조화 category로 기록하며 explicit Reconnect만 새 attempt를 만든다.
+- Pane 상태는 authoritative existence 및 closed와 session transport의 `starting`, `controlling`, `observing`, `unavailable`, `ended`를 분리한다.
+  PTY 기반 `herdr pane attach`는 제거하고, interactive 경로는 공식 `herdr terminal session control`의 NDJSON frame, input, resize 계약을 사용한다.
+  owner conflict에서는 공식 `herdr terminal session observe`로 live frame을 유지하고 read-only 상태를 표시한다.
+  pane 및 generation마다 in-flight 또는 active session을 하나로 제한하고, exit를 owner conflict 등 구조화 category로 기록하며 explicit Reconnect만 controller 획득을 다시 시도한다.
 
 ## 6. Requirements
 
@@ -232,7 +238,8 @@ None required.
 - R9. New Agent modal은 Device, Claude 및 Codex logo tile 2개, Workspace 또는 checkout, Options, actions 순서로 구성한다.
   Bypass는 매번 OFF로 시작하고 ON 동안 warning을 계속 보여주며 선택 launch에만 Claude `--dangerously-skip-permissions` 또는 Codex `--dangerously-bypass-approvals-and-sandbox`를 붙인다.
 - R10. Authoritative pane lifecycle과 attach transport lifecycle을 분리한다.
-  pane 및 generation마다 attach attempt는 최대 하나이며 owner conflict나 transport EOF가 pane 자체를 closed로 만들지 않고 자동 retry 또는 takeover하지 않으며, 사용자가 명시적으로 Reconnect할 수 있다.
+  interactive transport는 Herdr 0.8.2 공식 `terminal session control` NDJSON bridge를 사용하고 owner conflict에서는 concurrent read-only `terminal session observe`로 전환한다.
+  pane 및 generation마다 session attempt는 최대 하나이며 owner conflict나 transport EOF가 pane 자체를 closed로 만들지 않고 자동 retry 또는 takeover하지 않으며, 사용자가 명시적으로 Reconnect해 control을 다시 시도할 수 있다.
 - R11. Attach와 전환 진단은 pane ID, generation, attempt, elapsed, exit category, retry decision을 구조화해 외부에서 관찰 가능하게 한다.
 - R12. 모든 검증은 이 작업이 만든 disposable workspace, pane, agent, filesystem fixture만 변경하고 기존 사용자 세션은 관찰 이외의 대상으로 쓰지 않는다.
 - R13. 구현은 기존 `HideTheme`, core snapshot 권한, six-function C ABI, Settings 및 keyboard command 패턴을 확장하며 새 외부 dependency나 별도 state authority를 만들지 않는다.
@@ -259,8 +266,8 @@ None required.
 | AC15 | New Workspace는 Finder가 먼저 열리고 cancel 시 Hide modal과 side effect가 없으며, 폴더 선택 후 확인 modal에서 이름과 git init을 정한다. Git init 성공, 선택 해제, 실패가 각각 정확히 표시되고 sidebar header 및 빈 상태는 `WORKSPACES`와 workspace 용어다. | judged | native screenshot + filesystem check: cancel, success, no-init, failure |
 | AC16 | New Agent modal은 Device, Claude/Codex logo tile 2개, Workspace/checkout, Options, action 순서이며 Gemini와 Cursor가 없고, bypass OFF 및 ON warning 상태를 모두 올바르게 보여준다. | judged | native screenshot: modal 전체와 두 bypass 상태 |
 | AC17 | Modal을 닫고 다시 열면 bypass가 OFF이고, Claude 및 Codex 선택은 정확한 provider flag를 launch 한 번에만 붙이며 이후 launch에는 남지 않는다. Obsolete persisted bypass 설정과 경로가 없다. | machine | pure argument tests + relaunch/modal state test + dead-path search |
-| AC18 | Delayed attach와 반복 poll에서도 pane 및 generation마다 in-flight 또는 active attach가 하나를 넘지 않고, transport EOF와 owner conflict가 authoritative pane existence를 closed로 바꾸지 않는다. | machine | deterministic attach lifecycle tests + structured logs |
-| AC19 | 다른 client가 소유한 disposable pane에서 hide는 `--takeover`하지 않고 unavailable 상태와 원인을 표시하며 자동 retry하지 않는다. 소유권 해제 후 explicit Reconnect 한 번으로 붙고 기존 client 및 사용자 session에는 영향이 없다. | judged | native screenshot + server/client log: conflict, no retry, reconnect |
+| AC18 | Delayed session과 반복 poll에서도 pane 및 generation마다 in-flight 또는 active control/observe session이 하나를 넘지 않고, `terminal.frame` NDJSON bytes가 terminal chunk로 전달되며 transport EOF와 owner conflict가 authoritative pane existence를 closed로 바꾸지 않는다. | machine | deterministic session lifecycle and NDJSON frame tests + structured logs |
+| AC19 | 다른 client가 소유한 disposable pane에서 Hide는 `--takeover`하거나 자동 retry하지 않고 공식 observer로 live frame을 계속 표시하면서 read-only 상태와 원인을 보여준다. 소유권 해제 후 explicit Reconnect 한 번으로 controller가 되어 input과 resize가 복구되고 기존 client 및 사용자 session에는 영향이 없다. | judged | native screenshot + server/client log: conflict, observer frames, no takeover/retry, reconnect input/resize |
 | AC20 | Rust 및 Swift 전체 테스트와 dev app build가 통과하고, exactly-one-instance 조건에서 설치 또는 명시된 dev bundle의 실제 native screenshot 세트가 10개 요구사항을 커버한다. | judged | build/test logs + screenshot manifest + process inventory |
 | AC21 | 최종 diff와 local commit에는 이 작업의 named source, tests, docs 및 receipt만 있고 기존 사용자 WIP, public push, PR, CI, release, 다른 session mutation이 없다. | machine | git diff/status/log + remote refs unchanged + Herdr before/after inventory |
 
@@ -271,7 +278,8 @@ None required.
   Covers R6, R10, R11, R12, AC10.
   Depends on: none.
 - T2. 측정으로 확인된 전환 병목과 attach lifecycle class를 수정한다.
-  Runtime lock, delta snapshot, projection clear, required rendered layout attach 정책 중 sample과 trace가 지목한 경로만 바꾸고 authoritative pane state, transport state, one-attempt invariant, explicit Reconnect, structured diagnostics를 구현한다.
+  Runtime lock, delta snapshot, projection clear 중 sample과 trace가 지목한 경로만 바꾸고 PTY 기반 direct attach를 공식 control/observe NDJSON session bridge로 교체한다.
+  Authoritative pane state, transport state, one-session invariant, observer fallback, explicit Reconnect, structured diagnostics를 구현한다.
   Covers R6, R10, R11, AC11, AC12, AC18, AC19.
   Depends on: T1.
 - T3. Terminal 및 Sidebar 기본 상호작용을 구현한다.
@@ -326,7 +334,7 @@ Native 검증은 코드 검사나 process 생존으로 대체하지 않는다.
 | V3 | native desktop/runtime | SC2, R2, R3, R4, AC3-AC7 | size 16 및 19 badge, simultaneous selection, relaunch collapse, shortcut, Pet setting을 실제 앱에서 판정한다. | yes | no |
 | V4 | native desktop/runtime | SC4, R5, AC7, AC8, AC9 | Pet dashboard의 모든 fixture 상태, 제공되지 않은 수치 부재, row focus, drag/click 분리를 검증한다. | yes | no |
 | V5 | performance profiling | SC5, R6, R11, AC10, AC11, AC12 | 수정 전 baseline과 app/server sample이 존재하고 목표 latency 및 delta/lock 계약을 만족한다. | yes | no |
-| V6 | live Herdr fixture | SC5, R10, R11, R12, AC18, AC19 | one-attempt invariant, external owner unavailable, no takeover/retry storm, explicit reconnect를 disposable pane에서 검증한다. | yes | no |
+| V6 | live Herdr fixture | SC5, R10, R11, R12, AC18, AC19 | one-session invariant, official control 및 observe NDJSON frame, external owner의 read-only live observation, no takeover/retry storm, explicit reconnect의 input 및 resize 복구를 disposable pane에서 검증한다. | yes | no |
 | V7 | automated behavior | SC6, R7, AC13 | MRU, cycle, cancel, removed target의 pure behavior를 검증한다. | yes | no |
 | V8 | native desktop/runtime | SC6, R7, AC14 | app-local Option+Tab과 grouped Search의 empty, one, many, cancel을 검증한다. | yes | no |
 | V9 | native desktop/runtime | SC3, R8, AC15 | Finder first, cancel, git success/no-init/failure, Workspace 용어를 검증한다. | yes | no |
@@ -353,7 +361,8 @@ Native 검증은 코드 검사나 process 생존으로 대체하지 않는다.
 - RF5. Finder cancel, sandbox permission, git init 실패는 서로 다른 결과다.
   어느 경로도 success 또는 empty state로 묵살하지 않는다.
 - RF6. 다른 client가 pane을 소유하면 attach가 실패할 수 있다.
-  자동 takeover 대신 unavailable과 explicit Reconnect를 사용하므로 사용자가 소유권을 해제하기 전에는 terminal을 렌더하지 못하는 것이 정상이다.
+  자동 takeover 대신 공식 observer로 terminal을 계속 렌더하고 read-only 상태를 명시한다.
+  사용자가 소유권을 해제하고 explicit Reconnect를 누르기 전에는 input과 resize를 보내지 않는다.
 - Open user decision 없음.
 
 ## 11. Implementation Guardrails
@@ -362,16 +371,16 @@ Native 검증은 코드 검사나 process 생존으로 대체하지 않는다.
 
 `~/projects/oh-my-principle` commit `35ab76ca23d45e714f1630054855a8c8c4568d03`의 engineering principles를 다음처럼 적용한다.
 
-- Rule 1, obsolete 삭제: raw path browser, bypass persistence, label-based routing, superseded attach close path처럼 변경이 대체한 경로를 같은 change에서 제거하고 compatibility shim을 남기지 않는다.
+- Rule 1, obsolete 삭제: raw path browser, bypass persistence, label-based routing, PTY 기반 `herdr pane attach`, superseded attach close path처럼 변경이 대체한 경로를 같은 change에서 제거하고 compatibility shim을 남기지 않는다.
 - Rule 2, 가장 단순한 완전 구현: 상태 점은 기존 overlay 비율만 조정하고 spinner framework를 만들지 않으며, 기존 SwiftUI 및 core pattern 안에서 끝낸다.
 - Rule 3, 층위 성장: measurement fixture, class fix, UI integration, full native verification 순서로 진행하되 최종 Done 범위는 축소하지 않는다.
 - Rule 4, 실패 명시: Finder cancel, git init failure, CLI spawn failure, attach conflict, disconnected, malformed snapshot을 success나 empty 값으로 덮지 않는다.
 - Rule 5, 모듈성: key policy, MRU, Pet projection, workspace creation, provider args, attach transport를 서로 분리하고 shell presentation이 core authority를 복제하지 않는다.
-- Rule 6, established solution 탐색: official HerdrM의 pane-ID selection, selected attach, failure overlay와 reconnect를 behavioral reference로 쓰되 Hide의 multi-pane 및 no-takeover 경계에 맞춘다.
+- Rule 6, established solution 탐색: Herdr 0.8.2의 공식 `terminal session control` 및 `terminal session observe`를 transport 계약으로 사용하고, HerdrM의 pane-ID selection과 reconnect는 behavioral reference로만 쓴다.
 - Rule 7, 기존 것 활용: `HideTheme`, `AgentBadge`, `AgentMark`, `pet_visible`, Settings, `NSEvent` monitor lifecycle, snapshot/dispatch, `CatalogCache`를 확장하고 새 dependency를 추가하지 않는다.
 - Rule 8, 장기 구조: pane existence와 attach transport를 분리하고 durable collapse 및 pane-ID identity를 단일 진실로 만들어 임시 flag를 남기지 않는다.
 - Rule 9, 답할 수 있는 로그: pane ID, generation, attempt, elapsed, exit category, retry decision과 performance phase를 구조화해 기록한다.
-- Rule 10, 외부 관찰 가능: attach unavailable, reconnect, git init failure, server disconnected를 UI 또는 안정된 log artifact에서 관찰할 수 있게 한다.
+- Rule 10, 외부 관찰 가능: controlling, observing read-only, unavailable, reconnect, git init failure, server disconnected를 UI 또는 안정된 log artifact에서 관찰할 수 있게 한다.
 - Rule 11, 두 번 실행 가정: repeated poll, duplicate attach completion, double modal open, repeated Reconnect, duplicate snapshot이 중복 process나 잘못된 상태를 만들지 않는다.
 - Rule 12, 테스트 가격: 사용자 관찰 결과와 pure boundary를 검증하고 SwiftUI 내부 view tree나 private wiring을 고정하는 저수익 테스트는 만들지 않는다.
 - Rule 13, 실패 class 수정: duplicate label은 pane-ID identity 전체로, attach EOF는 lifecycle 분리와 one-attempt invariant로 해결하며 개별 symptom을 조건문으로 덮지 않는다.

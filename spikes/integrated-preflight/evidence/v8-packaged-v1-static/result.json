@@ -1,7 +1,0 @@
-{
-  "schema": "herdr.t1-preflight.result.v1",
-  "status": "STATIC_PASS",
-  "run_id": "herdr-v8-packaged-v1",
-  "manifest_sha256": "51da3973c7aa73e892f69768fb484491c01ac31d4339f7324cfe3e243df49fee",
-  "bundle_evidence": "bundle-evidence.json"
-}

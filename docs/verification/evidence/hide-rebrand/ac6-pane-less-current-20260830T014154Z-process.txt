@@ -1,1 +1,0 @@
- 2841     1 S    04:37 ./dist/hide.app/Contents/MacOS/HerdrMacOS

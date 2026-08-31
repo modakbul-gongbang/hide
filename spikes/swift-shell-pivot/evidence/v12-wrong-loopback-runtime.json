@@ -1,1 +1,0 @@
-{"action":"status","pid":9609,"port":65534,"checkedAt":"2026-08-29T05:14:22Z","message":"The chromux endpoint did not respond. Browser status is stale; retry without stopping the live daemon.","phase":"stale","focusRequested":false,"profile":"default"}

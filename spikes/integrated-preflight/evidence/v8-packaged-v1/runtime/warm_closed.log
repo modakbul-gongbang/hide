@@ -1,6 +1,0 @@
-event=browser.closed helpers_expected=0 cef_initialized=false
-event=app.launched architecture=aarch64 lifecycle=appkit ide_pixels=wgpu browser_pixels=closed terminal=portable-pty
-event=render.failed stage=draw retryable=true error="Render failed: stage=wgpu.present target=surface cause=temporarily-unavailable retryable=true"
-2026-08-27 23:34:57.508 herdr-integrated-preflight[15547:30010351] +[IMKClient subclass]: chose IMKClient_Modern
-2026-08-27 23:34:57.508 herdr-integrated-preflight[15547:30010351] +[IMKInputSession subclass]: chose IMKInputSession_Modern
-event=app.first-usable first_usable_ms=174.702 window_id=24226 adapter="Apple M4 Pro (Metal)"

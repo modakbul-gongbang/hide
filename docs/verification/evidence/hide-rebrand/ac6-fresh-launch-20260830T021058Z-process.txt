@@ -1,1 +1,0 @@
-46115     1 S    00:00 Sun Aug 30 11:10:59 2026     ./dist/hide.app/Contents/MacOS/HerdrMacOS
