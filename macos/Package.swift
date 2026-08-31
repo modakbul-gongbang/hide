@@ -38,6 +38,9 @@ let package = Package(
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
             ],
             path: "Sources/HerdrMacOS",
+            resources: [
+                .process("Resources"),
+            ],
             linkerSettings: [
                 .linkedFramework("SystemConfiguration"),
                 .unsafeFlags([

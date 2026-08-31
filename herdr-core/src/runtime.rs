@@ -557,7 +557,12 @@ impl Runtime {
                     .find(|agent| agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id))
                     .and_then(|agent| agent.cwd.clone())
             })
-            .filter(|cwd| !cwd.trim().is_empty())
+            .map(|cwd| cwd.trim().to_owned())
+            // Herdr reports `/` for a pane whose process has exited, which
+            // says where the pane is not rather than where it is. Treating it
+            // as a directory produced an unnamed checkout row with no panes
+            // under it.
+            .filter(|cwd| !cwd.is_empty() && cwd != "/")
     }
 
     /// Rebuilds the navigator from the Herdr workspaces the session reports
@@ -3149,6 +3154,36 @@ mod tests {
                 .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
             Some(("w3Z", "w3Z:t1"))
         );
+    }
+
+    #[test]
+    fn an_exited_panes_root_directory_does_not_become_a_checkout() {
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "workspaces": [{"workspace_id": "w2W", "label": "modakbul"}],
+            "panes": [
+                {"pane_id": "w2W:p1", "cwd": "/private/tmp/hide-modakbul"},
+                {"pane_id": "w2W:pM", "cwd": "/"}
+            ],
+            "layouts": [{
+                "workspace_id": "w2W",
+                "tab_id": "w2W:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w2W:p1",
+                "panes": [
+                    {"pane_id": "w2W:p1", "rect": {"x": 0, "y": 0, "width": 40, "height": 24}},
+                    {"pane_id": "w2W:pM", "rect": {"x": 40, "y": 0, "width": 40, "height": 24}}
+                ],
+                "splits": []
+            }]
+        }))
+        .expect("exited pane payload");
+
+        let spaces = Runtime::session_spaces(&payload);
+
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(spaces[0].cwds, vec!["/private/tmp/hide-modakbul".to_owned()]);
     }
 
     #[test]

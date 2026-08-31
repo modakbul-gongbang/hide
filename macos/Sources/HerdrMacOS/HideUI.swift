@@ -447,11 +447,11 @@ private struct AgentNavigatorRow: View {
     var body: some View {
         Button { model.selectAgent(agent) } label: {
             HStack(alignment: .top, spacing: 8) {
-                Text(agent.agentKind == "claude" ? "C" : agent.agentKind == "codex" ? "O" : "?" )
-                    .hideFont(size: 10, weight: .bold, design: .rounded)
-                    .foregroundStyle(stateColor)
-                    .frame(width: 19, height: 19)
-                    .background(stateColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 5))
+                AgentBadge(
+                    agentKind: agent.agentKind,
+                    stateColor: stateColor,
+                    size: showsWorkspace ? 19 : 16
+                )
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
                         Text(showsWorkspace ? agent.workspaceLabel : agent.summary)
