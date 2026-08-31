@@ -579,23 +579,30 @@ private struct PaneResizeHandle: View {
     var body: some View {
         Rectangle()
             .fill(Color.clear)
-            .contentShape(Rectangle())
             .overlay { marker }
-            .animation(.easeOut(duration: 0.12), value: isActive)
             .frame(width: handleWidth, height: handleHeight)
-            .position(
-                x: canvasSize.width * CGFloat(divider.frame.x + divider.frame.width / 2),
-                y: canvasSize.height * CGFloat(divider.frame.y + divider.frame.height / 2)
-            )
+            // Everything that reacts to the pointer is attached here, above
+            // `.position`. That modifier expands the view to fill its parent
+            // and places the content inside, so a gesture attached after it
+            // answers across the whole canvas rather than on this strip.
+            .contentShape(Rectangle())
             .onHover(perform: hover)
             .gesture(dragGesture)
             .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
             .accessibilityLabel(isVertical ? "Resize pane width" : "Resize pane height")
+            .animation(.easeOut(duration: 0.12), value: isActive)
+            .position(
+                x: canvasSize.width * CGFloat(divider.frame.x + divider.frame.width / 2),
+                y: canvasSize.height * CGFloat(divider.frame.y + divider.frame.height / 2)
+            )
     }
 
+    /// A hint, not a feature: the divider should read as slightly lit while the
+    /// pointer is on it and a little firmer while held, never as an accent the
+    /// eye is drawn to.
     private var marker: some View {
         Capsule()
-            .fill(HideTheme.accent)
+            .fill(isDragging ? HideTheme.secondary : HideTheme.muted)
             .frame(
                 width: isVertical ? HideTheme.Layout.resizeHandleThickness : nil,
                 height: isVertical ? nil : HideTheme.Layout.resizeHandleThickness
