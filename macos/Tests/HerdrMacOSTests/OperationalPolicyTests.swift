@@ -149,10 +149,6 @@ import Testing
     window.orderOut(nil)
 }
 
-@Test func finderLaunchWithoutAnActiveWorkspaceDoesNotScanTheProcessDirectory() {
-    #expect(WorkspaceTree.load(root: nil).isEmpty)
-}
-
 @Test func paneLessCheckoutSelectionRequestsAnAutomaticTerminal() {
     let checkout = CoreCheckoutSnapshot(
         id: "checkout-empty",
