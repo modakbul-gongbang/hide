@@ -211,7 +211,7 @@ import Testing
             "pane_id": "w1:p1",
             "workspace_id": "w1",
             "tab_id": "w1:t1",
-            "cwd": "/Users/grab/projects/remote-repo",
+            "cwd": "/private/tmp/hide-remote-repo",
             "terminal_title": "remote-repo",
             "terminal_title_stripped": "remote-repo"
           }],
@@ -235,7 +235,7 @@ import Testing
     #expect(projection.focusedCheckoutID == checkout.id)
     #expect(projection.focusedTabID == tab.id)
     #expect(projection.focusedPaneID == pane.id)
-    #expect(checkout.path == "/Users/grab/projects/remote-repo")
+    #expect(checkout.path == "/private/tmp/hide-remote-repo")
     #expect(pane.cwd == checkout.path)
 
     let selected = projection.focused(workspaceID: workspace.id, checkoutID: checkout.id)
