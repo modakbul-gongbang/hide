@@ -149,29 +149,26 @@ private struct HideSidebar: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    HideSectionLabel(title: "WORKSPACES", count: model.workspaces.count)
+                    // What is blocked comes before where things live, because
+                    // it is the only part the user has to act on.
+                    let waiting = model.agentsNeedingAttention
+                    if !waiting.isEmpty {
+                        HideSectionLabel(title: "NEEDS YOU", count: waiting.count)
+                        ForEach(waiting) { agent in
+                            AgentNavigatorRow(agent: agent, showsWorkspace: true)
+                        }
+                    }
+
+                    HideSectionLabel(title: "SPACES", count: model.workspaces.count)
                     if model.workspaces.isEmpty {
                         EmptySidebarRow(
                             systemImage: "square.stack.3d.up",
-                            title: "No workspaces yet",
-                            detail: "Register a folder to see its repo and checkouts here."
+                            title: "No spaces yet",
+                            detail: "Register a folder or start an agent to open one."
                         )
                     } else {
                         ForEach(model.workspaces) { workspace in
                             WorkspaceNavigatorRow(workspace: workspace)
-                        }
-                    }
-
-                    HideSectionLabel(title: "AGENTS", count: model.agents.count)
-                    if model.agents.isEmpty {
-                        EmptySidebarRow(
-                            systemImage: "person.2",
-                            title: "No active agents",
-                            detail: "Start Claude or Codex from a checkout."
-                        )
-                    } else {
-                        ForEach(model.agents) { agent in
-                            AgentNavigatorRow(agent: agent)
                         }
                     }
                 }
@@ -326,7 +323,7 @@ private struct WorkspaceNavigatorRow: View {
                     .hideFont(size: 12, weight: .semibold)
                     .foregroundStyle(workspace.temporary ? HideTheme.warning : accent)
                     .frame(width: 16)
-                Text(workspace.repoName)
+                Text(workspace.label)
                     .hideFont(size: 12, weight: .semibold)
                     .foregroundStyle(HideTheme.primary)
                     .lineLimit(1)
@@ -358,6 +355,11 @@ private struct WorkspaceNavigatorRow: View {
                     checkout: checkout,
                     isFocused: model.focusedCheckout?.id == checkout.id
                 )
+                // The agents running on this branch, under the branch. Seeing
+                // what a space is doing is the reason to open it.
+                ForEach(model.agents(in: checkout)) { agent in
+                    AgentNavigatorRow(agent: agent, showsWorkspace: false)
+                }
             }
         }
         .padding(.bottom, 4)
@@ -370,6 +372,17 @@ private struct CheckoutNavigatorRow: View {
     let workspace: CoreWorkspaceSnapshot
     let checkout: CoreCheckoutSnapshot
     let isFocused: Bool
+
+    /// Panes, not tabs: a checkout row exists because panes are in it, and a
+    /// pane count is what tells the user how much is running there.
+    private var paneSummary: String {
+        let panes = checkout.tabs.reduce(0) { $0 + $1.panes.count }
+        switch panes {
+        case 0: return "no panes"
+        case 1: return "1 pane"
+        default: return "\(panes) panes"
+        }
+    }
 
     var body: some View {
         Button {
@@ -385,7 +398,7 @@ private struct CheckoutNavigatorRow: View {
                         .hideFont(size: 11, weight: isFocused ? .semibold : .regular)
                         .foregroundStyle(isFocused ? HideTheme.primary : HideTheme.secondary)
                         .lineLimit(1)
-                    Text(checkout.branch.map { "\($0) · \(checkout.tabs.count) tabs" } ?? "Folder · \(checkout.tabs.count) tabs")
+                    Text(paneSummary)
                         .hideFont(size: 9, design: .monospaced)
                         .foregroundStyle(HideTheme.muted)
                         .lineLimit(1)
@@ -417,6 +430,9 @@ private struct AgentNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
     let agent: SidebarAgent
+    /// Under a space the workspace name is the heading above the row, so
+    /// repeating it wastes the line the summary needs.
+    let showsWorkspace: Bool
 
     private var stateColor: Color {
         switch agent.state {
@@ -438,29 +454,34 @@ private struct AgentNavigatorRow: View {
                     .background(stateColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 5))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
-                        Text(agent.workspaceLabel)
-                            .hideFont(size: 11, weight: .semibold)
-                            .foregroundStyle(HideTheme.primary)
+                        Text(showsWorkspace ? agent.workspaceLabel : agent.summary)
+                            .hideFont(size: 11, weight: showsWorkspace ? .semibold : .regular)
+                            .foregroundStyle(showsWorkspace ? HideTheme.primary : HideTheme.secondary)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         Text(agent.elapsed)
                             .hideFont(size: 9, design: .monospaced)
                             .foregroundStyle(HideTheme.muted)
                     }
-                    Text(agent.summary)
-                        .hideFont(size: 10)
-                        .foregroundStyle(HideTheme.secondary)
-                        .lineLimit(2)
-                    Text(agent.state.replacingOccurrences(of: "_", with: " "))
-                        .hideFont(size: 9, weight: .medium)
-                        .foregroundStyle(stateColor)
+                    if showsWorkspace {
+                        Text(agent.summary)
+                            .hideFont(size: 10)
+                            .foregroundStyle(HideTheme.secondary)
+                            .lineLimit(2)
+                        Text(agent.state.replacingOccurrences(of: "_", with: " "))
+                            .hideFont(size: 9, weight: .medium)
+                            .foregroundStyle(stateColor)
+                    }
                 }
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 7)
+            .padding(.leading, showsWorkspace ? 15 : 52)
+            .padding(.trailing, 15)
+            .padding(.vertical, showsWorkspace ? 7 : 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("hide-agent-\(agent.id)")
+        .accessibilityLabel("\(agent.workspaceLabel), \(agent.agentKind), \(agent.state)")
     }
 }
 
@@ -538,7 +559,9 @@ private struct HideToolbar: View {
                 Image(systemName: "rectangle.3.group")
                     .foregroundStyle(accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.focusedWorkspace?.repoName ?? (model.isRemoteContext ? model.remote.targetLabel : "No workspace"))
+                    // The same name the sidebar uses, so the header names the
+                    // space the user clicked rather than a directory.
+                    Text(model.focusedWorkspace?.label ?? (model.isRemoteContext ? model.remote.targetLabel : "No workspace"))
                         .hideFont(size: 13, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
                     Text(model.focusedCheckout.map { checkout in

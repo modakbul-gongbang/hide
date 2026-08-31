@@ -156,6 +156,14 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.agents ?? []
     }
 
+    var agentsNeedingAttention: [SidebarAgent] {
+        SidebarGrouping.needingAttention(agents)
+    }
+
+    func agents(in checkout: CoreCheckoutSnapshot) -> [SidebarAgent] {
+        SidebarGrouping.agents(agents, in: checkout)
+    }
+
     var focusedWorkspace: CoreWorkspaceSnapshot? {
         if isRemoteContext {
             guard let navigation = remote.navigation else { return nil }
