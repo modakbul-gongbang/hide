@@ -46,9 +46,13 @@ These rules exist because each one was violated and diagnosed in a real incident
 
 This project uses the engineering-harness PRD pipeline. Agent-facing assets live in one visible namespace.
 
-**The entire `agents/` tree is local-only.** `.gitignore` carries one line, `agents/`, and nothing under it is committed. PRDs, interview logs, rules, and run state stay on the machine that produced them. Do not `git add -f` a path under `agents/` to get around this.
+**`agents/` is local-only by default, and `agents/prd/<slug>/prd.md` is the one exception.** `.gitignore` carries one line, `agents/`, so nothing under it is committed unless someone adds it deliberately. A PRD is the approved contract a reviewer reads to judge the change, so it is committed with `git add -f`; interview logs, rules, run state, and every run artifact stay on the machine that produced them.
 
-- `agents/prd/` - PRD contracts, human-approved before implementation.
+Because the ignore rule does not know about the exception, a new PRD is committed only when someone remembers the `-f`. Check `git ls-files agents/` before claiming a PRD is shared.
+
+Nothing else under `agents/` may be force-added. In particular, never force-add a run directory to make an evidence path linkable; see `Evidence Belongs Outside The Repository`.
+
+- `agents/prd/` - PRD contracts, human-approved before implementation. Committed.
 - `agents/interview/` - interview sources (`qa-log.md`), the canonical record behind a PRD.
 - `agents/rules/` - learned rules: `INDEX.md` is the ledger, `invariants/` hold machine-checked rules (trigger globs + executable check) that gate delivery, `pending/` holds lessons that have not landed yet.
 - `agents/runs/` - per-run state and evidence (gate verdicts + implement state under one `agents/runs/<slug>/`), never hand-edited. This is also where run artifacts go; see `Evidence Belongs Outside The Repository`.
