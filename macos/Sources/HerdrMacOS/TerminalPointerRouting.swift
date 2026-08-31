@@ -135,6 +135,14 @@ final class HideRemoteTerminalView: LocalProcessTerminalView, HideTerminalPointe
 
     override func interpretKeyEvents(_ eventArray: [NSEvent]) {
         if let event = eventArray.first,
+           let bytes = ModifiedTerminalInputPolicy.commandDeleteBytes(
+               for: event,
+               composing: hasMarkedText()
+           ) {
+            send(source: self, data: bytes[...])
+            return
+        }
+        if let event = eventArray.first,
            let bytes = ModifiedTerminalInputPolicy.shiftEnterBytes(
                for: event,
                kittyKeyboardEnabled: !terminal.keyboardEnhancementFlags.isEmpty,

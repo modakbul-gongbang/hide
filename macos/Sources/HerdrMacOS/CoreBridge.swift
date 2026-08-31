@@ -81,7 +81,6 @@ struct CorePetSnapshot: Decodable, Equatable {
     let shortcut: String?
     let shortcutError: String?
     let themeID: String
-    let lastClick: CorePetClick?
 
     /// True while herdr is answering. Every other connection value is an
     /// explicit failure the pet shows rather than posing idle through.
@@ -100,7 +99,6 @@ struct CorePetSnapshot: Decodable, Equatable {
         case shortcut
         case shortcutError = "shortcut_error"
         case themeID = "theme_id"
-        case lastClick = "last_click"
     }
 }
 
@@ -142,16 +140,6 @@ struct CorePetOrigin: Decodable, Equatable {
     let y: Double
 
     var point: CGPoint { CGPoint(x: x, y: y) }
-}
-
-struct CorePetClick: Decodable, Equatable {
-    let selectedPaneID: String?
-    let atUnixMilliseconds: UInt64
-
-    enum CodingKeys: String, CodingKey {
-        case selectedPaneID = "selected_pane_id"
-        case atUnixMilliseconds = "at_unix_ms"
-    }
 }
 
 struct CorePaneLayoutSnapshot: Decodable {
@@ -540,11 +528,39 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
     let paneID: String
     let closed: Bool
     let exitCode: Int32?
+    let transportState: String
+    let transportMessage: String?
+    let transportGeneration: UInt64
+    let transportAttempt: UInt64
+    let transportExitCategory: String?
+    let transportRetryDecision: String
 
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
         case closed
         case exitCode = "exit_code"
+        case transportState = "transport_state"
+        case transportMessage = "transport_message"
+        case transportGeneration = "transport_generation"
+        case transportAttempt = "transport_attempt"
+        case transportExitCategory = "transport_exit_category"
+        case transportRetryDecision = "transport_retry_decision"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+        exitCode = try container.decodeIfPresent(Int32.self, forKey: .exitCode)
+        transportState = try container.decodeIfPresent(String.self, forKey: .transportState) ?? "idle"
+        transportMessage = try container.decodeIfPresent(String.self, forKey: .transportMessage)
+        transportGeneration = try container.decodeIfPresent(UInt64.self, forKey: .transportGeneration) ?? 0
+        transportAttempt = try container.decodeIfPresent(UInt64.self, forKey: .transportAttempt) ?? 0
+        transportExitCategory = try container.decodeIfPresent(String.self, forKey: .transportExitCategory)
+        transportRetryDecision = try container.decodeIfPresent(
+            String.self,
+            forKey: .transportRetryDecision
+        ) ?? "none"
     }
 }
 
@@ -576,6 +592,7 @@ struct CoreUIStateSnapshot: Decodable {
     let leftSidebarVisible: Bool
     let rightWorkbenchVisible: Bool
     let expandedPaths: [String]
+    let collapsedWorkspaceIDs: [String]
     let selectedPath: String?
     let selectedPaneID: String?
     let shortcutBindings: [String: String]
@@ -585,12 +602,12 @@ struct CoreUIStateSnapshot: Decodable {
     let deviceRegistrations: [CoreDeviceRegistration]
     let accentHex: String
     let fontSize: Double
-    let bypassWarnings: Bool
 
     enum CodingKeys: String, CodingKey {
         case leftSidebarVisible = "left_sidebar_visible"
         case rightWorkbenchVisible = "right_workbench_visible"
         case expandedPaths = "expanded_paths"
+        case collapsedWorkspaceIDs = "collapsed_workspace_ids"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
         case shortcutBindings = "shortcut_bindings"
@@ -600,7 +617,6 @@ struct CoreUIStateSnapshot: Decodable {
         case deviceRegistrations = "device_registrations"
         case accentHex = "accent_hex"
         case fontSize = "font_size"
-        case bypassWarnings = "bypass_warnings"
     }
 
     init(from decoder: Decoder) throws {
@@ -608,6 +624,10 @@ struct CoreUIStateSnapshot: Decodable {
         leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
         rightWorkbenchVisible = try container.decodeIfPresent(Bool.self, forKey: .rightWorkbenchVisible) ?? true
         expandedPaths = try container.decode([String].self, forKey: .expandedPaths)
+        collapsedWorkspaceIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .collapsedWorkspaceIDs
+        ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
         shortcutBindings = try container.decodeIfPresent(
@@ -626,7 +646,6 @@ struct CoreUIStateSnapshot: Decodable {
         ) ?? []
         accentHex = try container.decodeIfPresent(String.self, forKey: .accentHex) ?? "#B9FF66"
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
-        bypassWarnings = try container.decodeIfPresent(Bool.self, forKey: .bypassWarnings) ?? false
     }
 }
 
@@ -803,6 +822,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private static let localSessionEventKinds: Set<String> = [
         "key",
         "terminal_resize",
+        "reconnect_pane",
         "focus_pane",
         "focus_checkout",
         "focus_tab",
@@ -1050,12 +1070,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     var pet: CorePetSnapshot? { snapshot?.pet }
 
-    /// The click the core resolves: it picks the oldest unseen pane and
-    /// focuses it, or reports none so the shell only raises its window.
-    func petClicked() {
-        dispatch(kind: "pet_click", payload: [:])
-    }
-
     func setPetVisible(_ visible: Bool) {
         dispatch(kind: "pet_set_visible", payload: ["visible": visible])
     }
@@ -1088,6 +1102,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
         ])
+    }
+
+    func reconnectPane(_ paneID: String) {
+        dispatch(kind: "reconnect_pane", payload: ["pane_id": paneID])
     }
 
     func focusTab(workspaceID: String, checkoutID: String, tabID: String) {
@@ -1275,13 +1293,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         leftSidebarVisible: Bool? = nil,
         rightWorkbenchVisible: Bool? = nil,
         expandedPaths: [String]? = nil,
+        collapsedWorkspaceIDs: [String]? = nil,
         selectedPath: String? = nil,
         selectedPaneID: String? = nil,
         focusedCheckoutID: String? = nil,
         shortcutBindings: [String: String]? = nil,
         accentHex: String? = nil,
-        fontSize: Double? = nil,
-        bypassWarnings: Bool? = nil
+        fontSize: Double? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -1290,12 +1308,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "left_sidebar_visible": leftSidebarVisible ?? current?.leftSidebarVisible ?? true,
             "right_workbench_visible": rightWorkbenchVisible ?? current?.rightWorkbenchVisible ?? true,
             "expanded_paths": expandedPaths ?? current?.expandedPaths ?? [],
+            "collapsed_workspace_ids": collapsedWorkspaceIDs ?? current?.collapsedWorkspaceIDs ?? [],
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
             "selected_pane_id": effectivePaneID.map { $0 as Any } ?? NSNull(),
             "shortcut_bindings": shortcutBindings ?? current?.shortcutBindings ?? [:],
             "accent_hex": accentHex ?? current?.accentHex ?? "#B9FF66",
             "font_size": fontSize ?? current?.fontSize ?? 13,
-            "bypass_warnings": bypassWarnings ?? current?.bypassWarnings ?? false,
         ]
         // Registration events own durable workspace/device lists. A generic
         // UI-state save must not replay a stale snapshot and erase the

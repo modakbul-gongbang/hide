@@ -214,7 +214,12 @@ fn inspect_space(space: &SessionSpace) -> WorkspaceSnapshot {
                 .is_some_and(|main| normalized_for_comparison(&main) != comparison)
         });
         checkouts.push(checkout(
-            &space.id, &root, &label, branch, is_worktree, false,
+            &space.id,
+            &root,
+            &label,
+            branch,
+            is_worktree,
+            false,
         ));
     }
 
@@ -256,7 +261,11 @@ fn current_branch(root: &Path) -> Option<String> {
 /// The repository's main working tree, which tells a linked worktree apart
 /// from the checkout that owns the git directory.
 fn main_worktree_root(root: &Path) -> Option<PathBuf> {
-    let output = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
+    let output = git(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()?;
     let common = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     (!common.is_empty())
         .then(|| PathBuf::from(common))

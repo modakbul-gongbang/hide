@@ -260,7 +260,6 @@ struct AppSettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            PetSettingsSection(model: model)
         }
         .formStyle(.grouped)
         .frame(width: 520, height: 470)

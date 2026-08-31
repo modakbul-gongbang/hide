@@ -72,14 +72,19 @@ struct ShellView: View {
     @EnvironmentObject private var model: ShellModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            if model.leftSidebarVisible {
-                HideSidebar()
-                    .frame(width: 292)
-                    .frame(maxHeight: .infinity, alignment: .topLeading)
+        ZStack {
+            HStack(spacing: 0) {
+                if model.leftSidebarVisible {
+                    HideSidebar()
+                        .frame(width: 292)
+                        .frame(maxHeight: .infinity, alignment: .topLeading)
+                }
+                HideMainView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            HideMainView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if let cycle = model.agentSwitcherCycle {
+                AgentSwitcherOverlay(cycle: cycle, agents: model.agents)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
@@ -103,6 +108,10 @@ struct ShellView: View {
         .sheet(isPresented: $model.showSettings) {
             HideSettingsView(model: model)
         }
+        .sheet(isPresented: $model.showPetDashboard) {
+            PetDashboardView()
+                .environmentObject(model)
+        }
         .alert(item: $model.workspaceToRemove) { workspace in
             Alert(
                 title: Text("Remove \(workspace.label) from Hide?"),
@@ -125,6 +134,239 @@ struct ShellView: View {
     }
 }
 
+private struct AgentSwitcherOverlay: View {
+    let cycle: AgentSwitcherCycle
+    let agents: [SidebarAgent]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("RECENT AGENTS")
+                .hideFont(size: 10, weight: .bold)
+                .foregroundStyle(HideTheme.muted)
+            ForEach(cycle.paneIDs, id: \.self) { paneID in
+                if let agent = agents.first(where: { $0.paneID == paneID }) {
+                    HStack(spacing: 10) {
+                        if let mark = AgentMark.image(for: agent.agentKind) {
+                            Image(nsImage: mark)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 19, height: 19)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(agent.summary)
+                                .hideFont(size: 12, weight: .semibold)
+                            Text("\(agent.workspaceLabel) · \(paneID)")
+                                .hideFont(size: 9, design: .monospaced)
+                                .foregroundStyle(HideTheme.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                    .background(
+                        paneID == cycle.selectedPaneID ? HideTheme.accent.opacity(0.16) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 360)
+        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10).stroke(HideTheme.divider)
+        }
+        .shadow(color: .black.opacity(0.45), radius: 22, y: 12)
+        .accessibilityIdentifier("agent-mru-switcher")
+    }
+}
+
+private struct PetDashboardView: View {
+    @EnvironmentObject private var model: ShellModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var projection: PetDashboardProjection { model.petDashboard }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "pawprint.fill")
+                    .foregroundStyle(HideTheme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agent dashboard")
+                        .hideFont(size: 17, weight: .bold)
+                    Text("Live state from the current Herdr snapshot")
+                        .hideFont(size: 10)
+                        .foregroundStyle(HideTheme.secondary)
+                }
+                Spacer()
+                Text(projection.connection)
+                    .hideFont(size: 10, weight: .semibold, design: .monospaced)
+                    .foregroundStyle(projection.connection == "connected" ? HideTheme.success : HideTheme.warning)
+                Button("Done", action: { dismiss() })
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(18)
+
+            HStack(spacing: 8) {
+                PetCountTile(label: "TOTAL", value: projection.counts.total, color: HideTheme.primary)
+                PetCountTile(label: "WORKING", value: projection.counts.working, color: HideTheme.accent)
+                PetCountTile(label: "DONE", value: projection.counts.done, color: HideTheme.success)
+                PetCountTile(label: "IDLE", value: projection.counts.idle, color: HideTheme.secondary)
+                PetCountTile(label: "ERROR", value: projection.counts.error, color: HideTheme.danger)
+                PetCountTile(label: "DISCONNECTED", value: projection.counts.disconnected, color: HideTheme.warning)
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 14)
+
+            if projection.connection != "connected" {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(HideTheme.warning)
+                    Text(projection.connectionMessage ?? "Herdr is disconnected. Rows show the last known agents as disconnected.")
+                        .hideFont(size: 10)
+                        .foregroundStyle(HideTheme.secondary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HideTheme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                .padding(.horizontal, 18)
+                .padding(.bottom, 10)
+            }
+
+            Divider().overlay(HideTheme.divider)
+
+            if projection.groups.isEmpty {
+                ContentUnavailableView(
+                    "No agents",
+                    systemImage: "sparkles",
+                    description: Text("Start a Claude or Codex agent to see its live status here.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(projection.groups) { group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(group.label.uppercased())
+                                        .hideFont(size: 10, weight: .bold)
+                                        .tracking(1)
+                                        .foregroundStyle(HideTheme.muted)
+                                    Spacer()
+                                    Text("\(group.agents.count)")
+                                        .hideFont(size: 10, design: .monospaced)
+                                        .foregroundStyle(HideTheme.muted)
+                                }
+                                ForEach(group.agents) { agent in
+                                    PetDashboardAgentRow(agent: agent) {
+                                        dismiss()
+                                        model.selectAgent(paneID: agent.paneID)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(18)
+                }
+            }
+        }
+        .frame(width: 760, height: 560)
+        .background(HideTheme.panel)
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("pet-agent-dashboard")
+    }
+}
+
+private struct PetCountTile: View {
+    let label: String
+    let value: Int
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .hideFont(size: 8, weight: .bold)
+                .tracking(0.7)
+                .foregroundStyle(HideTheme.muted)
+            Text("\(value)")
+                .hideFont(size: 18, weight: .bold, design: .rounded)
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+    }
+}
+
+private struct PetDashboardAgentRow: View {
+    let agent: PetDashboardRow
+    let action: () -> Void
+
+    private var statusColor: Color {
+        switch agent.status {
+        case "working": HideTheme.accent
+        case "done", "unseen_completion": HideTheme.success
+        case "error": HideTheme.danger
+        case "question", "approval": HideTheme.warning
+        case "disconnected": HideTheme.warning
+        default: HideTheme.secondary
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                AgentBadge(agentKind: agent.agentKind, stateColor: statusColor, size: 19)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agent.summary)
+                        .hideFont(size: 12, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                        .lineLimit(1)
+                    HStack(spacing: 7) {
+                        Text(agent.agentKind.capitalized)
+                        Text(agent.paneID)
+                        Text(agent.elapsed)
+                    }
+                    .hideFont(size: 9, design: .monospaced)
+                    .foregroundStyle(HideTheme.muted)
+                }
+                Spacer(minLength: 8)
+                if let ambient = agent.ambient {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("sub \(ambient.subagentsActive) · bg \(ambient.backgroundRunning)")
+                        if ambient.backgroundFailed > 0 {
+                            Text("failed \(ambient.backgroundFailed)")
+                                .foregroundStyle(HideTheme.danger)
+                        }
+                    }
+                    .hideFont(size: 8, design: .monospaced)
+                    .foregroundStyle(HideTheme.secondary)
+                }
+                if agent.unseen {
+                    Text("UNSEEN")
+                        .hideFont(size: 8, weight: .bold)
+                        .foregroundStyle(HideTheme.warning)
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(agent.status.uppercased())
+                        .hideFont(size: 9, weight: .bold)
+                        .foregroundStyle(statusColor)
+                    Text(agent.connection)
+                        .hideFont(size: 8, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                }
+            }
+            .padding(.horizontal, 11)
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
+            .background(HideTheme.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("pet-dashboard-agent-\(agent.paneID)")
+    }
+}
+
 private struct HideSidebar: View {
     @EnvironmentObject private var model: ShellModel
 
@@ -132,10 +374,10 @@ private struct HideSidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             HideBrandHeader()
             VStack(spacing: 5) {
-                HideActionButton(title: "New Workspace", systemImage: "plus.square", shortcut: "⌘N") {
+                HideActionButton(title: "New Workspace", systemImage: "plus.square", shortcut: "⌘⇧N") {
                     model.openNewWorkspace()
                 }
-                HideActionButton(title: "New Agent", systemImage: "sparkles", shortcut: "⌘⇧N") {
+                HideActionButton(title: "New Agent", systemImage: "sparkles", shortcut: "⌘N") {
                     model.openNewAgent()
                 }
                 HideActionButton(title: "Search", systemImage: "magnifyingglass", shortcut: "⌘K") {
@@ -161,12 +403,12 @@ private struct HideSidebar: View {
                         }
                     }
 
-                    HideSectionLabel(title: "SPACES", count: model.workspaces.count)
+                    HideSectionLabel(title: "WORKSPACES", count: model.workspaces.count)
                     if model.workspaces.isEmpty {
                         EmptySidebarRow(
                             systemImage: "square.stack.3d.up",
-                            title: "No spaces yet",
-                            detail: "Register a folder or start an agent to open one."
+                            title: "No workspaces yet",
+                            detail: "Add a folder to create your first workspace."
                         )
                     } else {
                         ForEach(model.workspaces) { workspace in
@@ -321,6 +563,18 @@ private struct WorkspaceNavigatorRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 7) {
+                Button {
+                    model.toggleWorkspace(workspace)
+                } label: {
+                    Image(systemName: workspace.expanded ? "chevron.down" : "chevron.right")
+                        .hideFont(size: 9, weight: .bold)
+                        .foregroundStyle(HideTheme.muted)
+                        .frame(width: 12, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
+                .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Image(systemName: workspace.isGit ? "folder.badge.gearshape" : "folder")
                     .hideFont(size: 12, weight: .semibold)
                     .foregroundStyle(workspace.temporary ? HideTheme.warning : accent)
@@ -351,16 +605,18 @@ private struct WorkspaceNavigatorRow: View {
             .padding(.top, 7)
             .padding(.bottom, 2)
 
-            ForEach(workspace.checkouts) { checkout in
-                CheckoutNavigatorRow(
-                    workspace: workspace,
-                    checkout: checkout,
-                    isFocused: model.focusedCheckout?.id == checkout.id
-                )
-                // The agents running on this branch, under the branch. Seeing
-                // what a space is doing is the reason to open it.
-                ForEach(model.agents(in: checkout)) { agent in
-                    AgentNavigatorRow(agent: agent, showsWorkspace: false)
+            if workspace.expanded {
+                ForEach(workspace.checkouts) { checkout in
+                    CheckoutNavigatorRow(
+                        workspace: workspace,
+                        checkout: checkout,
+                        isFocused: model.focusedCheckout?.id == checkout.id
+                    )
+                    // The agents running on this branch, under the branch. Seeing
+                    // what a workspace is doing is the reason to open it.
+                    ForEach(model.agents(in: checkout)) { agent in
+                        AgentNavigatorRow(agent: agent, showsWorkspace: false)
+                    }
                 }
             }
         }
@@ -446,6 +702,10 @@ private struct AgentNavigatorRow: View {
         }
     }
 
+    private var isFocused: Bool {
+        model.focusedPaneID == agent.paneID
+    }
+
     var body: some View {
         Button { model.selectAgent(agent) } label: {
             HStack(alignment: .top, spacing: 8) {
@@ -479,11 +739,13 @@ private struct AgentNavigatorRow: View {
             .padding(.leading, showsWorkspace ? 15 : 52)
             .padding(.trailing, 15)
             .padding(.vertical, showsWorkspace ? 7 : 4)
+            .background(isFocused ? accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
         .accessibilityLabel("\(agent.workspaceLabel), \(agent.agentKind), \(agent.state)")
+        .accessibilityValue(isFocused ? "Selected" : "Not selected")
     }
 }
 
@@ -696,8 +958,10 @@ private struct HideTerminalSurface: View {
                         PaneTerminalCell(
                             pane: pane,
                             status: model.paneStatus(for: pane.id),
+                            statusMessage: model.paneTransportMessage(for: pane.id),
                             isFocused: item.isFocused,
-                            onFocus: { model.focusPane(pane.id) }
+                            onFocus: { model.focusPane(pane.id) },
+                            onReconnect: { model.reconnectPane(pane.id) }
                         ) {
                             if model.isRemoteContext {
                                 RemoteTerminalHost(
@@ -897,13 +1161,11 @@ private struct HideStatusBar: View {
 private struct NewWorkspaceSheet: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.dismiss) private var dismiss
-    @State private var path = ""
     @State private var label = ""
     @State private var initializeGit = true
 
     private var selectedURL: URL? {
-        guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return URL(fileURLWithPath: path, isDirectory: true)
+        model.pendingWorkspaceURL
     }
 
     private var isExistingDirectory: Bool {
@@ -922,11 +1184,10 @@ private struct NewWorkspaceSheet: View {
             SheetHeader(title: "New Workspace", subtitle: "Register a folder without moving or copying files.")
             Form {
                 Section("Folder") {
-                    HStack {
-                        TextField("/path/to/project", text: $path)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Choose…", action: chooseFolder)
-                    }
+                    Text(selectedURL?.path ?? "No folder selected")
+                        .hideFont(size: 11, design: .monospaced)
+                        .foregroundStyle(HideTheme.secondary)
+                        .textSelection(.enabled)
                     TextField("Display name", text: $label, prompt: Text(selectedURL?.lastPathComponent ?? "Project"))
                         .textFieldStyle(.roundedBorder)
                 }
@@ -944,7 +1205,10 @@ private struct NewWorkspaceSheet: View {
             .scrollContentBackground(.hidden)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel") {
+                    model.cancelNewWorkspaceConfirmation()
+                    dismiss()
+                }
                 Button("Add workspace") {
                     guard let selectedURL else { return }
                     model.addWorkspace(
@@ -964,16 +1228,13 @@ private struct NewWorkspaceSheet: View {
         .frame(width: 570, height: 390)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url {
-            path = url.path
-            if label.isEmpty { label = url.lastPathComponent }
+        .onAppear {
+            if label.isEmpty {
+                label = selectedURL?.lastPathComponent ?? "Workspace"
+            }
+        }
+        .onDisappear {
+            model.cancelNewWorkspaceConfirmation()
         }
     }
 }
@@ -981,10 +1242,7 @@ private struct NewWorkspaceSheet: View {
 private struct NewAgentSheet: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedKind = "claude"
-    @State private var selectedCheckoutID = ""
-    @State private var selectedDeviceID = "local"
-    @State private var bypass = false
+    @State private var draft = NewAgentDraft.empty
 
     private var checkouts: [(workspace: CoreWorkspaceSnapshot, checkout: CoreCheckoutSnapshot)] {
         model.workspaces.flatMap { workspace in
@@ -996,40 +1254,48 @@ private struct NewAgentSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             SheetHeader(title: "New Agent", subtitle: "Run the selected CLI inside a checkout through Herdr.")
             Form {
+                Section("Device") {
+                    Picker("Run on", selection: $draft.selectedDeviceID) {
+                        ForEach(model.devices) { device in
+                            Text(device.label).tag(device.id)
+                        }
+                    }
+                }
                 Section("Agent") {
                     HStack(spacing: 9) {
-                        AgentChoiceTile(kind: "claude", selected: selectedKind == "claude") { selectedKind = "claude" }
-                        AgentChoiceTile(kind: "codex", selected: selectedKind == "codex") { selectedKind = "codex" }
+                        ForEach(NewAgentProvider.allCases, id: \.rawValue) { provider in
+                            AgentChoiceTile(
+                                kind: provider.rawValue,
+                                selected: draft.selectedKind == provider.rawValue
+                            ) {
+                                draft.selectedKind = provider.rawValue
+                            }
+                        }
                     }
-                    if !AgentCLIAvailability.isUsable(selectedKind) {
+                    if !AgentCLIAvailability.isUsable(draft.selectedKind) {
                         VStack(alignment: .leading, spacing: 5) {
-                            Label("\(selectedKind) is not on the login-shell PATH. Install it, then reopen this dialog.", systemImage: "exclamationmark.triangle")
+                            Label("\(draft.selectedKind) is not on the login-shell PATH. Install it, then reopen this dialog.", systemImage: "exclamationmark.triangle")
                                 .font(.caption)
                                 .foregroundStyle(HideTheme.warning)
-                            Link("Install \(selectedKind)", destination: selectedKind == "claude"
+                            Link("Install \(draft.selectedKind)", destination: draft.selectedKind == "claude"
                                 ? URL(string: "https://docs.anthropic.com/en/docs/claude-code/overview")!
                                 : URL(string: "https://developers.openai.com/codex/")!)
                                 .font(.caption)
                         }
                     }
                 }
-                Section("Context") {
-                    Picker("Device", selection: $selectedDeviceID) {
-                        ForEach(model.devices) { device in
-                            Text(device.label).tag(device.id)
-                        }
-                    }
-                    Picker("Checkout", selection: $selectedCheckoutID) {
+                Section("Workspace") {
+                    Picker("Workspace / checkout", selection: $draft.selectedCheckoutID) {
                         Text("Choose a checkout").tag("")
                         ForEach(checkouts, id: \.checkout.id) { item in
                             Text("\(item.workspace.repoName) / \(item.checkout.label)").tag(item.checkout.id)
                         }
                     }
                 }
-                Section("Safety") {
-                    Toggle("Pass the CLI bypass flag", isOn: $bypass)
-                    if bypass {
-                        Label("This passes a provider-specific bypass flag to \(selectedKind). Review its consequences before starting.", systemImage: "exclamationmark.triangle.fill")
+                Section("Options") {
+                    Toggle("Pass the CLI bypass flag", isOn: $draft.bypassWarnings)
+                    if draft.bypassWarnings {
+                        Label("This passes a provider-specific bypass flag to \(draft.selectedKind). Review its consequences before starting.", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundStyle(HideTheme.warning)
                     } else {
@@ -1045,26 +1311,28 @@ private struct NewAgentSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Start agent") {
-                    model.selectedAgentKind = selectedKind
-                    model.selectedAgentCheckoutID = selectedCheckoutID.isEmpty ? nil : selectedCheckoutID
-                    model.selectedAgentDeviceID = selectedDeviceID
-                    model.agentBypassWarnings = bypass
-                    model.startAgent()
+                    let bypassWarnings = draft.consumeBypassWarnings()
+                    model.selectedAgentKind = draft.selectedKind
+                    model.selectedAgentCheckoutID = draft.selectedCheckoutID.isEmpty ? nil : draft.selectedCheckoutID
+                    model.selectedAgentDeviceID = draft.selectedDeviceID
+                    model.startAgent(bypassWarnings: bypassWarnings)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(selectedCheckoutID.isEmpty || !AgentCLIAvailability.isUsable(selectedKind))
+                .disabled(draft.selectedCheckoutID.isEmpty || !AgentCLIAvailability.isUsable(draft.selectedKind))
             }
             .padding(18)
         }
-        .frame(width: 590, height: 500)
+        .frame(width: 590, height: 620)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
         .onAppear {
-            selectedKind = model.selectedAgentKind
-            selectedCheckoutID = model.selectedAgentCheckoutID ?? model.focusedCheckout?.id ?? ""
-            selectedDeviceID = model.selectedAgentDeviceID
-            bypass = model.agentBypassWarnings
+            draft = NewAgentDraft.fresh(
+                selectedKind: model.selectedAgentKind,
+                selectedCheckoutID: model.selectedAgentCheckoutID,
+                focusedCheckoutID: model.focusedCheckout?.id,
+                selectedDeviceID: model.selectedAgentDeviceID
+            )
         }
     }
 }
@@ -1078,8 +1346,13 @@ private struct AgentChoiceTile: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                Text(kind == "claude" ? "C" : "O")
-                    .hideFont(size: 19, weight: .bold, design: .rounded)
+                if let mark = AgentMark.image(for: kind) {
+                    Image(nsImage: mark)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 24, height: 24)
+                }
                 Text(kind.capitalized)
                     .hideFont(size: 11, weight: .semibold)
                 Text(AgentCLIAvailability.isUsable(kind) ? "installed" : "not found")
@@ -1101,11 +1374,16 @@ private struct HideSearchSheet: View {
     @Environment(\.hideAccent) private var accent
     @State private var query = ""
 
-    private var entries: [HideSearchEntry] {
-        var result = model.agents.map {
-            HideSearchEntry(id: "agent-\($0.id)", title: $0.summary, subtitle: "Agent · \($0.workspaceLabel)", kind: .agent($0))
-        }
-        result += model.workspaces.flatMap { workspace in
+    private var agentGroups: [HideSearchAgentGroup] {
+        HideSearchPresentation.agentGroups(
+            workspaces: model.workspaces,
+            agents: model.agents,
+            query: query
+        )
+    }
+
+    private var checkoutEntries: [HideSearchEntry] {
+        let entries = model.workspaces.flatMap { workspace in
             workspace.checkouts.map { checkout in
                 HideSearchEntry(
                     id: "checkout-\(checkout.id)",
@@ -1115,7 +1393,11 @@ private struct HideSearchSheet: View {
                 )
             }
         }
-        return HideSearchEntry.filtered(result, query: query)
+        return HideSearchEntry.filtered(entries, query: query)
+    }
+
+    private var entries: [HideSearchEntry] {
+        agentGroups.flatMap(\.entries) + checkoutEntries
     }
 
     var body: some View {
@@ -1123,7 +1405,7 @@ private struct HideSearchSheet: View {
             HStack(spacing: 9) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(accent)
-                TextField("Search agents and spaces", text: $query)
+                TextField("Search agents and workspaces", text: $query)
                     .textFieldStyle(.plain)
                     .hideFont(size: 16)
                     .onSubmit { if let first = entries.first { route(first) } }
@@ -1136,33 +1418,30 @@ private struct HideSearchSheet: View {
             .padding(14)
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(entries) { entry in
-                        Button { route(entry) } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: entry.kind.systemImage)
-                                    .foregroundStyle(accent)
-                                    .frame(width: 18)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(entry.title)
-                                        .hideFont(size: 12, weight: .semibold)
-                                        .foregroundStyle(HideTheme.primary)
-                                    Text(entry.subtitle)
-                                        .hideFont(size: 10, design: .monospaced)
-                                        .foregroundStyle(HideTheme.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                Text("↵")
-                                    .foregroundStyle(HideTheme.muted)
-                            }
+                    ForEach(agentGroups) { group in
+                        Text("\(group.workspace) > AGENTS")
+                            .hideFont(size: 10, weight: .bold)
+                            .foregroundStyle(HideTheme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 9)
-                            .contentShape(Rectangle())
+                            .padding(.top, 8)
+                        ForEach(group.entries) { entry in
+                            searchButton(entry)
                         }
-                        .buttonStyle(.plain)
+                    }
+                    if !checkoutEntries.isEmpty {
+                        Text("WORKSPACES > CHECKOUTS")
+                            .hideFont(size: 10, weight: .bold)
+                            .foregroundStyle(HideTheme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                        ForEach(checkoutEntries) { entry in
+                            searchButton(entry)
+                        }
                     }
                     if entries.isEmpty {
-                        Text("No matching agents or spaces")
+                        Text("No matching agents or workspaces")
                             .hideFont(size: 12)
                             .foregroundStyle(HideTheme.secondary)
                             .padding(28)
@@ -1176,12 +1455,73 @@ private struct HideSearchSheet: View {
         .preferredColorScheme(.dark)
     }
 
+    private func searchButton(_ entry: HideSearchEntry) -> some View {
+        Button { route(entry) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: entry.kind.systemImage)
+                    .foregroundStyle(accent)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title)
+                        .hideFont(size: 12, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                    Text(entry.subtitle)
+                        .hideFont(size: 10, design: .monospaced)
+                        .foregroundStyle(HideTheme.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text("↵").foregroundStyle(HideTheme.muted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private func route(_ entry: HideSearchEntry) {
         switch entry.kind {
         case let .agent(agent): model.selectAgent(agent)
         case let .checkout(_, checkout): model.selectCheckout(checkout)
         }
         dismiss()
+    }
+}
+
+struct HideSearchAgentGroup: Identifiable {
+    let id: String
+    let workspace: String
+    let entries: [HideSearchEntry]
+}
+
+enum HideSearchPresentation {
+    static func agentGroups(
+        workspaces: [CoreWorkspaceSnapshot],
+        agents: [SidebarAgent],
+        query: String
+    ) -> [HideSearchAgentGroup] {
+        workspaces.compactMap { workspace in
+            let paneIDs = Set(workspace.checkouts.flatMap(\.tabs).flatMap(\.panes).map(\.id))
+            let entries = agents
+                .filter { paneIDs.contains($0.paneID) }
+                .map {
+                    HideSearchEntry(
+                        id: "agent-\($0.paneID)",
+                        title: $0.summary,
+                        subtitle: $0.paneID,
+                        kind: .agent($0)
+                    )
+                }
+            let filtered = HideSearchEntry.filtered(entries, query: query)
+            return filtered.isEmpty
+                ? nil
+                : HideSearchAgentGroup(
+                    id: workspace.id,
+                    workspace: workspace.label,
+                    entries: filtered
+                )
+        }
     }
 }
 
@@ -1231,7 +1571,6 @@ struct HideSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var accentHex = "#B9FF66"
     @State private var fontSize = 13.0
-    @State private var bypassWarnings = false
 
     var body: some View {
         TabView {
@@ -1239,8 +1578,14 @@ struct HideSettingsView: View {
                 .tabItem { Label("General", systemImage: "slider.horizontal.3") }
             HideAppearanceSettings(model: model, accentHex: $accentHex, fontSize: $fontSize)
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
-            HideAgentSettings(model: model, bypassWarnings: $bypassWarnings)
+            HideAgentSettings(model: model)
                 .tabItem { Label("Agents", systemImage: "sparkles") }
+            Form {
+                PetSettingsSection(model: model)
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .tabItem { Label("Pet", systemImage: "pawprint") }
             HideDeviceSettings(model: model)
                 .tabItem { Label("Devices", systemImage: "externaldrive.connected.to.line.below") }
             AppSettingsView(model: model)
@@ -1253,7 +1598,6 @@ struct HideSettingsView: View {
         .onAppear {
             accentHex = model.core.snapshot?.uiState.accentHex ?? "#B9FF66"
             fontSize = model.core.snapshot?.uiState.fontSize ?? 13
-            bypassWarnings = model.core.snapshot?.uiState.bypassWarnings ?? false
         }
     }
 }
@@ -1353,7 +1697,6 @@ private struct HideAppearanceSettings: View {
 
 private struct HideAgentSettings: View {
     @ObservedObject var model: ShellModel
-    @Binding var bypassWarnings: Bool
 
     var body: some View {
         Form {
@@ -1361,12 +1704,8 @@ private struct HideAgentSettings: View {
                 HideCLIStatus(name: "claude")
                 HideCLIStatus(name: "codex")
             }
-            Section("Defaults") {
-                Toggle("Remember bypass choice for new agent dialogs", isOn: $bypassWarnings)
-                    .onChange(of: bypassWarnings) { _, value in
-                        model.updatePreferences(bypassWarnings: value)
-                    }
-                Text("This preference never suppresses the per-agent warning. Hide does not impose a CLI version lower bound.")
+            Section("Launch safety") {
+                Text("Permission bypass is always off when a New Agent dialog opens and applies only to that one launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

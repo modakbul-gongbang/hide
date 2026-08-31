@@ -58,7 +58,6 @@ pub struct PetSnapshot {
     pub shortcut: Option<String>,
     pub shortcut_error: Option<String>,
     pub theme_id: String,
-    pub last_click: Option<PetClickSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -77,14 +76,6 @@ pub struct PetBadgesSnapshot {
 pub struct PetOriginSnapshot {
     pub x: f64,
     pub y: f64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct PetClickSnapshot {
-    /// The pane the click jumped to, or `None` when nothing was unseen and
-    /// the click only raised the main window.
-    pub selected_pane_id: Option<String>,
-    pub at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -286,11 +277,17 @@ pub struct TerminalChunk {
     pub bytes_base64: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct TerminalPaneSnapshot {
     pub pane_id: String,
     pub closed: bool,
     pub exit_code: Option<i32>,
+    pub transport_state: String,
+    pub transport_message: Option<String>,
+    pub transport_generation: u64,
+    pub transport_attempt: u64,
+    pub transport_exit_category: Option<String>,
+    pub transport_retry_decision: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -313,6 +310,8 @@ pub struct UiStateSnapshot {
     #[serde(default = "default_panel_visible")]
     pub right_workbench_visible: bool,
     pub expanded_paths: Vec<String>,
+    #[serde(default)]
+    pub collapsed_workspace_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
@@ -331,8 +330,6 @@ pub struct UiStateSnapshot {
     pub accent_hex: String,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
-    #[serde(default)]
-    pub bypass_warnings: bool,
 }
 
 impl Default for UiStateSnapshot {
@@ -341,6 +338,7 @@ impl Default for UiStateSnapshot {
             left_sidebar_visible: true,
             right_workbench_visible: true,
             expanded_paths: Vec::new(),
+            collapsed_workspace_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),
@@ -355,7 +353,6 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             font_size: default_font_size(),
-            bypass_warnings: false,
         }
     }
 }
@@ -613,7 +610,6 @@ impl PetSnapshot {
             shortcut: None,
             shortcut_error: None,
             theme_id: "default".to_owned(),
-            last_click: None,
         }
     }
 }

@@ -77,15 +77,17 @@ final class ShellModel: ObservableObject {
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
     @Published var showNewWorkspace = false
+    @Published private(set) var pendingWorkspaceURL: URL?
     @Published var showNewAgent = false
     @Published var showSearch = false
     @Published var showSettings = false
+    @Published var showPetDashboard = false
+    @Published private(set) var agentSwitcherCycle: AgentSwitcherCycle?
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
     @Published var interactionNotice: String?
     @Published var selectedAgentKind = "claude"
     @Published var selectedAgentCheckoutID: String?
     @Published var selectedAgentDeviceID = "local"
-    @Published var agentBypassWarnings = false
     @Published private(set) var paneShortcuts: [PaneCommand: PaneShortcut]
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
@@ -100,6 +102,7 @@ final class ShellModel: ObservableObject {
     private var lastRemoteDevice: CoreDeviceSnapshot?
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
+    private var agentMRU = AgentMRU()
 
     init(
         core: CoreBridge = CoreBridge(),
@@ -109,14 +112,16 @@ final class ShellModel: ObservableObject {
         self.core = core
         self.browser = browser
         self.remote = remote
-        agentBypassWarnings = core.snapshot?.uiState.bypassWarnings ?? false
         let shortcutResolution = PaneShortcutPolicy.resolve(
             stored: core.snapshot?.uiState.shortcutBindings ?? [:]
         )
         paneShortcuts = shortcutResolution.bindings
         shortcutDiagnostic = shortcutResolution.diagnostic ?? Self.uiStateDiagnostic(core.snapshot)
-        coreSubscription = core.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
+        observeAgentFocus(in: core.snapshot)
+        coreSubscription = core.$snapshot.sink { [weak self] snapshot in
+            guard let self else { return }
+            self.observeAgentFocus(in: snapshot)
+            self.objectWillChange.send()
         }
         browserSubscription = browser.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -312,9 +317,43 @@ final class ShellModel: ObservableObject {
         if isRemoteContext {
             return paneMetadata(for: paneID)?.state ?? "unavailable"
         }
-        return core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID })?.closed == true
-            ? "closed"
-            : "attached"
+        guard let pane = core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID }) else {
+            return "idle"
+        }
+        return pane.closed ? "closed" : pane.transportState
+    }
+
+    func paneTransportMessage(for paneID: String) -> String? {
+        core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID })?.transportMessage
+    }
+
+    var petDashboard: PetDashboardProjection {
+        PetDashboardProjector.project(
+            agents: agents,
+            workspaces: workspaces,
+            connection: core.snapshot?.status.herdr.state ?? "disconnected",
+            connectionMessage: core.snapshot?.status.herdr.message
+        )
+    }
+
+    func openPetDashboard() {
+        showPetDashboard = true
+    }
+
+    func selectAgent(paneID: String) {
+        guard let agent = agents.first(where: { $0.paneID == paneID }) else {
+            interactionNotice = "Agent pane \(paneID) is no longer available."
+            return
+        }
+        selectAgent(agent)
+    }
+
+    func reconnectPane(_ paneID: String) {
+        guard !isRemoteContext else {
+            interactionNotice = "Reconnect is currently available for local panes only."
+            return
+        }
+        core.reconnectPane(paneID)
     }
 
     func focusPane(_ paneID: String) {
@@ -389,8 +428,18 @@ final class ShellModel: ObservableObject {
     }
 
     func openNewWorkspace() {
-        showNewWorkspace = true
         interactionNotice = nil
+        let panel = NSOpenPanel()
+        panel.title = "Choose a folder for the workspace"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.pendingWorkspaceURL = url
+            self.showNewWorkspace = true
+        }
     }
 
     func openNewAgent(checkoutID: String? = nil) {
@@ -459,14 +508,18 @@ final class ShellModel: ObservableObject {
     }
 
     func selectAgent(_ agent: SidebarAgent) {
-        guard let workspace = workspaces.first(where: { $0.label == agent.workspaceLabel }),
-              let checkout = workspace.checkouts.first(where: { checkout in
-                  checkout.tabs.contains(where: { tab in tab.panes.contains(where: { $0.id == agent.paneID }) })
-              }) ?? workspace.checkouts.first
+        guard let identity = workspaces.lazy.compactMap({ workspace in
+            workspace.checkouts.lazy.compactMap { checkout in
+                checkout.tabs.contains(where: { tab in
+                    tab.panes.contains(where: { $0.id == agent.paneID })
+                }) ? (workspace, checkout) : nil
+            }.first
+        }).first
         else {
             interactionNotice = "The selected agent is not attached to a known checkout."
             return
         }
+        let (workspace, checkout) = identity
         if isRemoteContext {
             remote.focus(workspaceID: workspace.id, checkoutID: checkout.id, paneID: agent.paneID)
             remote.perform(.focusAgent(paneID: agent.paneID))
@@ -477,6 +530,50 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
+    func beginOrAdvanceAgentSwitcher() {
+        observeAgentFocus(in: core.snapshot)
+        if agentSwitcherCycle != nil {
+            agentSwitcherCycle?.advance()
+            return
+        }
+        agentSwitcherCycle = AgentSwitcherCycle(
+            originalPaneID: focusedPaneID,
+            paneIDs: agentMRU.paneIDs
+        )
+    }
+
+    func commitAgentSwitcher() {
+        guard let cycle = agentSwitcherCycle else { return }
+        defer { agentSwitcherCycle = nil }
+        let available = Set(agents.map(\.paneID))
+        guard let paneID = cycle.committedPaneID(availablePaneIDs: available),
+              let agent = agents.first(where: { $0.paneID == paneID })
+        else { return }
+        selectAgent(agent)
+    }
+
+    func cancelAgentSwitcher() {
+        agentSwitcherCycle = nil
+    }
+
+    private func observeAgentFocus(in snapshot: CoreSnapshot?) {
+        let currentAgents = snapshot?.navigator.agents ?? []
+        agentMRU.observe(
+            focusedPaneID: snapshot?.paneLayout?.focusedPaneID ?? snapshot?.terminal.paneID,
+            availablePaneIDs: Set(currentAgents.map(\.paneID))
+        )
+    }
+
+    func toggleWorkspace(_ workspace: CoreWorkspaceSnapshot) {
+        var collapsed = Set(core.snapshot?.uiState.collapsedWorkspaceIDs ?? [])
+        if workspace.expanded {
+            collapsed.insert(workspace.id)
+        } else {
+            collapsed.remove(workspace.id)
+        }
+        core.persistUIState(collapsedWorkspaceIDs: collapsed.sorted())
+    }
+
     func addWorkspace(path: URL, label: String, initializeGit: Bool) {
         guard path.isFileURL else {
             interactionNotice = "Choose a local folder before adding the workspace."
@@ -484,7 +581,13 @@ final class ShellModel: ObservableObject {
         }
         core.createWorkspace(path: path, label: label, initializeGit: initializeGit)
         showNewWorkspace = false
-        interactionNotice = "Workspace registration requested. Files stay where they are."
+        pendingWorkspaceURL = nil
+        interactionNotice = "Workspace registration requested. Git and registration results will appear in Hide."
+    }
+
+    func cancelNewWorkspaceConfirmation() {
+        showNewWorkspace = false
+        pendingWorkspaceURL = nil
     }
 
     func requestRemoveWorkspace(_ workspace: CoreWorkspaceSnapshot) {
@@ -536,7 +639,7 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    func startAgent() {
+    func startAgent(bypassWarnings: Bool) {
         guard let checkout = selectedAgentCheckout else {
             interactionNotice = "Choose a checkout before starting an agent."
             return
@@ -548,17 +651,16 @@ final class ShellModel: ObservableObject {
         core.startAgent(
             agent: selectedAgentKind,
             checkoutPath: checkout.path,
-            bypassWarnings: agentBypassWarnings
+            bypassWarnings: bypassWarnings
         )
         showNewAgent = false
         interactionNotice = "Agent start requested. Hide does not handle credentials."
     }
 
-    func updatePreferences(accentHex: String? = nil, fontSize: Double? = nil, bypassWarnings: Bool? = nil) {
+    func updatePreferences(accentHex: String? = nil, fontSize: Double? = nil) {
         core.persistUIState(
             accentHex: accentHex,
-            fontSize: fontSize,
-            bypassWarnings: bypassWarnings
+            fontSize: fontSize
         )
     }
 

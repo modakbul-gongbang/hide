@@ -358,6 +358,80 @@ private struct HerdrCommandResult {
     let error: Data
 }
 
+enum NewAgentProvider: String, CaseIterable, Equatable {
+    case claude
+    case codex
+
+    var bypassFlag: String {
+        switch self {
+        case .claude:
+            "--dangerously-skip-permissions"
+        case .codex:
+            "--dangerously-bypass-approvals-and-sandbox"
+        }
+    }
+}
+
+struct NewAgentDraft: Equatable {
+    var selectedKind: String
+    var selectedCheckoutID: String
+    var selectedDeviceID: String
+    var bypassWarnings: Bool
+
+    static let empty = NewAgentDraft(
+        selectedKind: NewAgentProvider.claude.rawValue,
+        selectedCheckoutID: "",
+        selectedDeviceID: "local",
+        bypassWarnings: false
+    )
+
+    static func fresh(
+        selectedKind: String,
+        selectedCheckoutID: String?,
+        focusedCheckoutID: String?,
+        selectedDeviceID: String
+    ) -> NewAgentDraft {
+        NewAgentDraft(
+            selectedKind: NewAgentProvider(rawValue: selectedKind)?.rawValue
+                ?? NewAgentProvider.claude.rawValue,
+            selectedCheckoutID: selectedCheckoutID ?? focusedCheckoutID ?? "",
+            selectedDeviceID: selectedDeviceID,
+            bypassWarnings: false
+        )
+    }
+
+    mutating func consumeBypassWarnings() -> Bool {
+        let value = bypassWarnings
+        bypassWarnings = false
+        return value
+    }
+}
+
+enum AgentLaunchArguments {
+    static func build(
+        provider: NewAgentProvider,
+        paneID: String,
+        checkoutPath: String,
+        idempotencyKey: String,
+        bypassWarnings: Bool
+    ) -> [String] {
+        let agent = provider.rawValue
+        var arguments = [
+            "agent", "new", "hide-\(agent)",
+            "--kind", agent,
+            "--pane", paneID,
+            "--idempotency-key", idempotencyKey,
+            "--cwd", checkoutPath,
+            "--no-focus",
+        ]
+        if bypassWarnings {
+            arguments.append("--")
+            arguments.append(provider.bypassFlag)
+        }
+        return arguments
+    }
+}
+
 /// Starts an agent through the selected Herdr runtime. hide only supplies
 /// non-secret routing arguments; authentication remains entirely owned by the
 /// selected CLI and Herdr server.
@@ -370,6 +444,12 @@ enum HerdrAgentLauncher {
         workspaceID: String?,
         bypassWarnings: Bool
     ) -> AgentLaunchResult {
+        guard let provider = NewAgentProvider(rawValue: agent) else {
+            return AgentLaunchResult(
+                succeeded: false,
+                message: "Hide supports only Claude and Codex agent launches."
+            )
+        }
         guard AgentCLIAvailability.isUsable(agent) else {
             return AgentLaunchResult(
                 succeeded: false,
@@ -395,20 +475,13 @@ enum HerdrAgentLauncher {
         }
 
         let idempotencyKey = "hide-\(agent)-\(UUID().uuidString.lowercased())"
-        var arguments = [
-            "agent", "new", "hide-\(agent)",
-            "--kind", agent,
-            "--pane", targetPaneID,
-            "--idempotency-key", idempotencyKey,
-            "--cwd", checkoutPath,
-            "--no-focus",
-        ]
-        if bypassWarnings {
-            arguments.append("--")
-            arguments.append(contentsOf: agent == "claude"
-                ? ["--dangerously-skip-permissions"]
-                : ["--dangerously-bypass-approvals-and-sandbox"])
-        }
+        let arguments = AgentLaunchArguments.build(
+            provider: provider,
+            paneID: targetPaneID,
+            checkoutPath: checkoutPath,
+            idempotencyKey: idempotencyKey,
+            bypassWarnings: bypassWarnings
+        )
 
         let process = Process()
         let output = Pipe()
