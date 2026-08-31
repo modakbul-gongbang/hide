@@ -1607,10 +1607,32 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return NSHomeDirectory() + "/.config/herdr/herdr.sock"
     }
 
-    static func defaultStatePath() -> String {
+    /// The release bundle identifier. A build carrying any other identifier is
+    /// a per-worktree instance (see `macos/scripts/build_dev_app.sh`).
+    nonisolated static let releaseBundleIdentifier = "me.grab.hide"
+
+    /// Where this instance keeps its persisted UI state.
+    ///
+    /// Two builds may run at once - one per worktree - and they must not
+    /// overwrite each other's selected pane, expanded folders, panel
+    /// visibility, and pet position. The bundle identifier is what already
+    /// separates those instances to the system, so it separates their state
+    /// too. The release identifier keeps the original path so an upgrade does
+    /// not lose the state the user already has.
+    nonisolated static func defaultStatePath(
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier
+    ) -> String {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("hide/state.json").path
+        let root = base.appendingPathComponent("hide")
+        guard let identifier = bundleIdentifier, identifier != releaseBundleIdentifier else {
+            return root.appendingPathComponent("state.json").path
+        }
+        return root
+            .appendingPathComponent("instances")
+            .appendingPathComponent(identifier)
+            .appendingPathComponent("state.json")
+            .path
     }
 
     /// Compatibility entry point for existing callers. Runtime selection

@@ -13,19 +13,74 @@ import Testing
 }
 
 @Test func childToolEnvironmentHasOnlyNonSecretRoutingValues() {
-    let allowedKeys = Set(["HOME", "USER", "PATH", "SSH_AUTH_SOCK", "HERDR_CONFIG_PATH"])
+    let allowedKeys = Set(
+        HideRuntimeEnvironment.substitutedKeys + HideRuntimeEnvironment.forwardedRoutingKeys
+    )
 
     #expect(Set(HideRuntimeEnvironment.childEnvironment().keys).isSubset(of: allowedKeys))
 }
 
 @Test func finderLikeEnvironmentUsesAVisibleSafePATHFallback() {
+    let allowedKeys = Set(
+        HideRuntimeEnvironment.substitutedKeys + HideRuntimeEnvironment.forwardedRoutingKeys
+    )
     let environment = HideRuntimeEnvironment.childEnvironment(
         inherited: ["HOME": "/tmp/hide-finder", "USER": "tester"],
         loginPath: nil
     )
 
     #expect(environment["PATH"] == "/usr/bin:/bin")
-    #expect(Set(environment.keys).isSubset(of: ["HOME", "USER", "PATH", "SSH_AUTH_SOCK", "HERDR_CONFIG_PATH"]))
+    #expect(Set(environment.keys).isSubset(of: allowedKeys))
+}
+
+@Test func childToolsReachTheSameHerdrSessionTheShellReads() {
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: [
+            "HOME": "/tmp/hide-routing",
+            "USER": "tester",
+            "HERDR_SOCKET_PATH": "/private/tmp/hide-worktree/herdr.sock",
+            "HERDR_CONFIG_PATH": "/private/tmp/hide-worktree/config",
+        ],
+        loginPath: "/usr/bin:/bin"
+    )
+
+    // A child that reaches the default socket while the core reads an override
+    // creates panes in a session the user is not looking at.
+    #expect(environment["HERDR_SOCKET_PATH"] == "/private/tmp/hide-worktree/herdr.sock")
+    #expect(environment["HERDR_CONFIG_PATH"] == "/private/tmp/hide-worktree/config")
+}
+
+@Test func anEmptyRoutingValueIsNotForwardedAsIfItWereConfigured() {
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: ["HOME": "/tmp/hide-routing", "USER": "tester", "HERDR_SOCKET_PATH": ""],
+        loginPath: "/usr/bin:/bin"
+    )
+
+    #expect(environment["HERDR_SOCKET_PATH"] == nil)
+}
+
+@Test func perWorktreeInstancesKeepSeparateUIState() {
+    let release = CoreBridge.defaultStatePath(
+        bundleIdentifier: CoreBridge.releaseBundleIdentifier
+    )
+    let worktree = CoreBridge.defaultStatePath(bundleIdentifier: "me.grab.hide.workbench")
+    let otherWorktree = CoreBridge.defaultStatePath(bundleIdentifier: "me.grab.hide.ux")
+
+    // The installed app keeps the path it already writes, so an upgrade does
+    // not silently start from an empty workspace.
+    #expect(release.hasSuffix("/hide/state.json"))
+    #expect(worktree != release)
+    #expect(worktree != otherWorktree)
+    #expect(worktree.hasSuffix("/hide/instances/me.grab.hide.workbench/state.json"))
+}
+
+@Test func anUnidentifiedBundleFallsBackToTheReleaseStatePath() {
+    // A `swift test` process and a plain executable run have no bundle
+    // identifier; they must not invent a third state file.
+    #expect(
+        CoreBridge.defaultStatePath(bundleIdentifier: nil)
+            == CoreBridge.defaultStatePath(bundleIdentifier: CoreBridge.releaseBundleIdentifier)
+    )
 }
 
 @Test func missingRuntimeReturnsAVisibleServerStartFailure() {

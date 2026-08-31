@@ -108,6 +108,24 @@ enum HideRuntimeEnvironment {
         )
     }
 
+    /// Routing values a child tool needs and the shell can only pass on if it
+    /// has one itself. Every key here is a path or a socket, never a secret.
+    ///
+    /// This list, not a chain of hand-written `if let` blocks, is what decides
+    /// the forwarded set. `HERDR_SOCKET_PATH` was missing for exactly that
+    /// reason: the core honoured the override and read one Herdr session while
+    /// the `herdr` processes the shell spawned reached the default socket, so
+    /// panes appeared in a session nobody asked for.
+    static let forwardedRoutingKeys = [
+        "SSH_AUTH_SOCK",
+        "HERDR_CONFIG_PATH",
+        "HERDR_SOCKET_PATH",
+    ]
+
+    /// Values every child needs, with what the shell substitutes when the
+    /// launch environment (a Finder launch, notably) does not carry one.
+    static let substitutedKeys = ["HOME", "USER", "PATH"]
+
     static func childEnvironment(
         inherited: [String: String],
         loginPath: String?
@@ -117,11 +135,10 @@ enum HideRuntimeEnvironment {
             "USER": inherited["USER"] ?? NSUserName(),
             "PATH": loginPath ?? inherited["PATH"] ?? "/usr/bin:/bin",
         ]
-        if let socket = inherited["SSH_AUTH_SOCK"], !socket.isEmpty {
-            environment["SSH_AUTH_SOCK"] = socket
-        }
-        if let config = inherited["HERDR_CONFIG_PATH"], !config.isEmpty {
-            environment["HERDR_CONFIG_PATH"] = config
+        for key in forwardedRoutingKeys {
+            if let value = inherited[key], !value.isEmpty {
+                environment[key] = value
+            }
         }
         return environment
     }
