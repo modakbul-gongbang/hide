@@ -19,7 +19,15 @@ git_common_dir="$(git -C "$worktree_root" rev-parse --path-format=absolute --git
 if [[ "$git_dir" == "$git_common_dir" ]]; then
     instance_suffix=""
 else
+    # Worktrees are usually named after the work, and that name often already
+    # starts with the product name, which would read as `hide-hide-ux-r3`.
     instance_suffix="$(basename "$worktree_root")"
+    instance_suffix="${instance_suffix#hide-}"
+    # A worktree named exactly `hide` leaves nothing to distinguish it, so keep
+    # the directory name rather than falling back to the release identity.
+    if [[ -z "$instance_suffix" ]]; then
+        instance_suffix="$(basename "$worktree_root")"
+    fi
 fi
 
 if [[ -n "$instance_suffix" ]]; then
