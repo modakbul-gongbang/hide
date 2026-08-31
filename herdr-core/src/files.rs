@@ -38,6 +38,7 @@ pub fn open(path: &Path) -> Result<EditorSnapshot, String> {
     };
 
     Ok(EditorSnapshot {
+        viewer_visible: true,
         path: Some(path.to_string_lossy().into_owned()),
         language,
         contents_utf8,
@@ -217,6 +218,7 @@ mod tests {
     #[test]
     fn draft_updates_keep_unsaved_contents_in_memory() {
         let mut editor = EditorSnapshot {
+            viewer_visible: true,
             path: Some("/tmp/existing.txt".to_owned()),
             language: Some("txt".to_owned()),
             contents_utf8: Some("old".to_owned()),

@@ -654,7 +654,31 @@ final class ShellModel: ObservableObject {
         }.first
     }
 
+    var leftSidebarVisible: Bool {
+        core.snapshot?.uiState.leftSidebarVisible ?? true
+    }
+
+    var rightWorkbenchVisible: Bool {
+        core.snapshot?.uiState.rightWorkbenchVisible ?? true
+    }
+
+    func toggleLeftSidebar() {
+        core.persistUIState(leftSidebarVisible: !leftSidebarVisible)
+    }
+
+    func toggleRightWorkbench() {
+        core.persistUIState(rightWorkbenchVisible: !rightWorkbenchVisible)
+    }
+
     func focus(_ surface: ShellSurface) {
+        switch surface {
+        case .agents where !leftSidebarVisible:
+            core.persistUIState(leftSidebarVisible: true)
+        case .workbench where !rightWorkbenchVisible:
+            core.persistUIState(rightWorkbenchVisible: true)
+        default:
+            break
+        }
         activeSurface = surface
     }
 

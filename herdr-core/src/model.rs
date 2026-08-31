@@ -295,6 +295,7 @@ pub struct TerminalPaneSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorSnapshot {
+    pub viewer_visible: bool,
     pub path: Option<String>,
     pub language: Option<String>,
     pub contents_utf8: Option<String>,
@@ -307,6 +308,10 @@ pub struct EditorSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
+    #[serde(default = "default_panel_visible")]
+    pub left_sidebar_visible: bool,
+    #[serde(default = "default_panel_visible")]
+    pub right_workbench_visible: bool,
     pub expanded_paths: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
@@ -333,6 +338,8 @@ pub struct UiStateSnapshot {
 impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
+            left_sidebar_visible: true,
+            right_workbench_visible: true,
             expanded_paths: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
@@ -380,6 +387,10 @@ pub(crate) fn default_accent_hex() -> String {
 
 pub(crate) fn default_font_size() -> f32 {
     13.0
+}
+
+pub(crate) fn default_panel_visible() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -533,6 +544,7 @@ impl Snapshot {
                 panes: Vec::new(),
             },
             editor: EditorSnapshot {
+                viewer_visible: false,
                 path: None,
                 language: None,
                 contents_utf8: None,

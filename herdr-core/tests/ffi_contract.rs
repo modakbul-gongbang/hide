@@ -1221,6 +1221,58 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
 }
 
 #[test]
+fn closing_and_reopening_the_same_file_preserves_its_unsaved_draft() {
+    let core = create();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../macos/VerificationFixtures/Sample.swift");
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "file_open",
+            "payload": {"path": path}
+        }),
+    );
+    assert_eq!(snapshot(core)["editor"]["viewer_visible"], true);
+
+    let draft = "// unsaved workbench draft\n";
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "file_draft",
+            "payload": {"contents_utf8": draft}
+        }),
+    );
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "file_viewer_visibility",
+            "payload": {"visible": false}
+        }),
+    );
+    let closed = snapshot(core);
+    assert_eq!(closed["editor"]["viewer_visible"], false);
+    assert_eq!(closed["editor"]["dirty"], true);
+    assert_eq!(closed["editor"]["contents_utf8"], draft);
+
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "file_open",
+            "payload": {"path": path}
+        }),
+    );
+    let reopened = snapshot(core);
+    assert_eq!(reopened["editor"]["viewer_visible"], true);
+    assert_eq!(reopened["editor"]["dirty"], true);
+    assert_eq!(reopened["editor"]["contents_utf8"], draft);
+    herdr_core_destroy(core);
+}
+
+#[test]
 fn corrupt_ui_state_falls_back_to_defaults_with_structured_status() {
     let corrupt_state =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corrupt-ui-state.json");

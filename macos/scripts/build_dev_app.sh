@@ -33,6 +33,12 @@ install -m 644 \
 # to travel with the app rather than being read out of the checkout.
 /usr/bin/ditto "$worktree_root/assets/pet-theme" "$app_root/Contents/Resources/pet-theme"
 
+# Third-party resources and their notices ship as one unit. Copy the directory
+# so a newly added licensed resource cannot be bundled without its attribution.
+/usr/bin/ditto \
+    "$macos_root/Resources/THIRD_PARTY_NOTICES" \
+    "$app_root/Contents/Resources/THIRD_PARTY_NOTICES"
+
 for resource_bundle in "$macos_root"/.build/arm64-apple-macosx/debug/*.bundle; do
     if [[ -d "$resource_bundle" ]]; then
         /usr/bin/ditto "$resource_bundle" "$app_root/Contents/Resources/$(basename "$resource_bundle")"

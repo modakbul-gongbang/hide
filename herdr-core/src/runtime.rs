@@ -184,7 +184,16 @@ struct FileConflictPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct FileViewerVisibilityPayload {
+    visible: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct UiStateUpdatePayload {
+    #[serde(default)]
+    left_sidebar_visible: Option<bool>,
+    #[serde(default)]
+    right_workbench_visible: Option<bool>,
     expanded_paths: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
@@ -271,6 +280,7 @@ enum ValidatedEvent {
     FileDraft(FileDraftPayload),
     FileSave(FileSavePayload),
     FileConflict(FileConflictPayload),
+    FileViewerVisibility(FileViewerVisibilityPayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
@@ -2264,6 +2274,13 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::FileOpen(payload)
+                if self.snapshot.editor.path.as_deref() == Some(payload.path.as_str()) =>
+            {
+                self.snapshot.editor.viewer_visible = true;
+                self.snapshot.ui_state.selected_path = Some(payload.path);
+                true
+            }
             ValidatedEvent::FileOpen(payload) => match files::open(Path::new(&payload.path)) {
                 Ok(editor) => {
                     self.snapshot.editor = editor;
@@ -2327,6 +2344,18 @@ impl Runtime {
                     true
                 }
             },
+            ValidatedEvent::FileViewerVisibility(payload) => {
+                if payload.visible && self.snapshot.editor.path.is_none() {
+                    self.set_error(
+                        "file.viewer_without_document",
+                        "A file must be selected before the viewer can open",
+                        false,
+                    );
+                    return true;
+                }
+                self.snapshot.editor.viewer_visible = payload.visible;
+                true
+            }
             ValidatedEvent::TerminalResize(payload) => {
                 if payload.rows == 0 || payload.cols == 0 {
                     self.set_error(
@@ -2351,6 +2380,12 @@ impl Runtime {
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
                 self.snapshot.ui_state = UiStateSnapshot {
+                    left_sidebar_visible: payload
+                        .left_sidebar_visible
+                        .unwrap_or(current.left_sidebar_visible),
+                    right_workbench_visible: payload
+                        .right_workbench_visible
+                        .unwrap_or(current.right_workbench_visible),
                     expanded_paths: payload.expanded_paths,
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
@@ -2633,6 +2668,9 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_save" => decode!(FileSavePayload, FileSave),
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
+        "file_viewer_visibility" => {
+            decode!(FileViewerVisibilityPayload, FileViewerVisibility)
+        }
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),

@@ -549,6 +549,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
 }
 
 struct CoreEditorSnapshot: Decodable {
+    let viewerVisible: Bool?
     let path: String?
     let language: String?
     let contentsUTF8: String?
@@ -559,6 +560,7 @@ struct CoreEditorSnapshot: Decodable {
     let diff: CoreDiffSnapshot?
 
     enum CodingKeys: String, CodingKey {
+        case viewerVisible = "viewer_visible"
         case path
         case language
         case contentsUTF8 = "contents_utf8"
@@ -571,6 +573,8 @@ struct CoreEditorSnapshot: Decodable {
 }
 
 struct CoreUIStateSnapshot: Decodable {
+    let leftSidebarVisible: Bool
+    let rightWorkbenchVisible: Bool
     let expandedPaths: [String]
     let selectedPath: String?
     let selectedPaneID: String?
@@ -584,6 +588,8 @@ struct CoreUIStateSnapshot: Decodable {
     let bypassWarnings: Bool
 
     enum CodingKeys: String, CodingKey {
+        case leftSidebarVisible = "left_sidebar_visible"
+        case rightWorkbenchVisible = "right_workbench_visible"
         case expandedPaths = "expanded_paths"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
@@ -599,6 +605,8 @@ struct CoreUIStateSnapshot: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
+        rightWorkbenchVisible = try container.decodeIfPresent(Bool.self, forKey: .rightWorkbenchVisible) ?? true
         expandedPaths = try container.decode([String].self, forKey: .expandedPaths)
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
@@ -1259,7 +1267,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_conflict", payload: ["action": action])
     }
 
+    func setFileViewerVisible(_ visible: Bool) {
+        dispatch(kind: "file_viewer_visibility", payload: ["visible": visible])
+    }
+
     func persistUIState(
+        leftSidebarVisible: Bool? = nil,
+        rightWorkbenchVisible: Bool? = nil,
         expandedPaths: [String]? = nil,
         selectedPath: String? = nil,
         selectedPaneID: String? = nil,
@@ -1273,6 +1287,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let effectivePath = selectedPath ?? current?.selectedPath
         let effectivePaneID = selectedPaneID ?? current?.selectedPaneID
         var payload: [String: Any] = [
+            "left_sidebar_visible": leftSidebarVisible ?? current?.leftSidebarVisible ?? true,
+            "right_workbench_visible": rightWorkbenchVisible ?? current?.rightWorkbenchVisible ?? true,
             "expanded_paths": expandedPaths ?? current?.expandedPaths ?? [],
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
             "selected_pane_id": effectivePaneID.map { $0 as Any } ?? NSNull(),

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     DeviceRegistration, PetOriginSnapshot, UiStateSnapshot, WorkspaceRegistration,
-    default_accent_hex, default_font_size,
+    default_accent_hex, default_font_size, default_panel_visible,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -15,6 +15,10 @@ const UI_STATE_SCHEMA_VERSION: u32 = 1;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StoredUiState {
     schema_version: u32,
+    #[serde(default = "default_panel_visible")]
+    left_sidebar_visible: bool,
+    #[serde(default = "default_panel_visible")]
+    right_workbench_visible: bool,
     expanded_paths: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
@@ -74,6 +78,8 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
     }
     (
         UiStateSnapshot {
+            left_sidebar_visible: stored.left_sidebar_visible,
+            right_workbench_visible: stored.right_workbench_visible,
             expanded_paths: stored.expanded_paths,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
@@ -102,6 +108,8 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         .map_err(|_| "UI state directory could not be prepared".to_owned())?;
     let stored = StoredUiState {
         schema_version: UI_STATE_SCHEMA_VERSION,
+        left_sidebar_visible: state.left_sidebar_visible,
+        right_workbench_visible: state.right_workbench_visible,
         expanded_paths: state.expanded_paths.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
@@ -150,10 +158,32 @@ mod tests {
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
+        assert!(state.left_sidebar_visible);
+        assert!(state.right_workbench_visible);
         assert!(state.shortcut_bindings.is_empty());
         assert!(state.pet_visible, "a pre-pet store still shows the pet");
         assert_eq!(state.pet_origin, None);
         assert_eq!(state.pet_shortcut, None);
+    }
+
+    #[test]
+    fn panel_visibility_survives_save_and_relaunch_load() {
+        let root = std::env::temp_dir().join(format!("herdr-core-panels-{}", std::process::id()));
+        let path = root.join("state.json");
+        let state = UiStateSnapshot {
+            left_sidebar_visible: false,
+            right_workbench_visible: false,
+            ..UiStateSnapshot::default()
+        };
+
+        save(&path, &state).expect("persist panel visibility");
+        let (restored, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(!restored.left_sidebar_visible);
+        assert!(!restored.right_workbench_visible);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
     }
 
     #[test]

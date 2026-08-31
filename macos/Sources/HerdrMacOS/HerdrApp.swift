@@ -262,6 +262,18 @@ struct ShellCommands: Commands {
                 model.focus(.workbench)
             }
             .keyboardShortcut("3", modifiers: .command)
+
+            Divider()
+
+            Button("Toggle Left Sidebar") {
+                model.toggleLeftSidebar()
+            }
+            .keyboardShortcut("b", modifiers: .command)
+
+            Button("Toggle Workbench") {
+                model.toggleRightWorkbench()
+            }
+            .keyboardShortcut("b", modifiers: [.command, .option])
         }
 
         CommandMenu("Pane") {

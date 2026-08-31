@@ -73,9 +73,11 @@ struct ShellView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            HideSidebar()
-                .frame(width: 292)
-                .frame(maxHeight: .infinity, alignment: .topLeading)
+            if model.leftSidebarVisible {
+                HideSidebar()
+                    .frame(width: 292)
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+            }
             HideMainView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -533,10 +535,18 @@ private struct HideMainView: View {
                 .fill(HideTheme.divider)
                 .frame(height: 1)
             HSplitView {
-                HideTerminalSurface()
-                    .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
-                WorkbenchPanel()
-                    .frame(minWidth: 285, idealWidth: 355, maxWidth: 430, maxHeight: .infinity)
+                ZStack {
+                    HideTerminalSurface()
+                    if !model.isRemoteContext,
+                       model.core.snapshot?.editor.viewerVisible == true {
+                        WorkbenchViewerOverlay()
+                    }
+                }
+                .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
+                if model.rightWorkbenchVisible {
+                    WorkbenchPanel()
+                        .frame(minWidth: 285, idealWidth: 355, maxWidth: 430, maxHeight: .infinity)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(1)
@@ -572,6 +582,24 @@ private struct HideToolbar: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                Button {
+                    model.toggleLeftSidebar()
+                } label: {
+                    Image(systemName: model.leftSidebarVisible ? "sidebar.left" : "rectangle.leftthird.inset.filled")
+                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Toggle left sidebar (⌘B)")
+                .accessibilityLabel(model.leftSidebarVisible ? "Hide left sidebar" : "Show left sidebar")
+                .accessibilityIdentifier("hide-toggle-left-sidebar")
+                Button {
+                    model.toggleRightWorkbench()
+                } label: {
+                    Image(systemName: model.rightWorkbenchVisible ? "sidebar.right" : "rectangle.rightthird.inset.filled")
+                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Toggle Workbench (⌘⌥B)")
+                .accessibilityLabel(model.rightWorkbenchVisible ? "Hide Workbench" : "Show Workbench")
+                .accessibilityIdentifier("hide-toggle-right-workbench")
                 if model.isRemoteContext {
                     Label("mini \(model.remote.phase.rawValue)", systemImage: "externaldrive.connected.to.line.below")
                         .hideFont(size: 10, weight: .medium)
