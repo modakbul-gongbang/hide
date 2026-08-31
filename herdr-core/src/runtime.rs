@@ -6,13 +6,13 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::live::{
-    LiveContext, PaneAttach, PaneControlAction, PaneControlOutcome, PaneSplitDirection,
-    SessionFetchError,
+    LiveContext, PaneControlAction, PaneControlOutcome, PaneSplitDirection, SessionFetchError,
+    TerminalSession, TerminalSessionMode,
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
-    PetBadgesSnapshot, PetClickSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot,
-    Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot, Surface,
+    TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, workspace};
@@ -195,6 +195,8 @@ struct UiStateUpdatePayload {
     #[serde(default)]
     right_workbench_visible: Option<bool>,
     expanded_paths: Vec<String>,
+    #[serde(default)]
+    collapsed_workspace_ids: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
     #[serde(default)]
@@ -211,8 +213,6 @@ struct UiStateUpdatePayload {
     accent_hex: Option<String>,
     #[serde(default)]
     font_size: Option<f32>,
-    #[serde(default)]
-    bypass_warnings: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,7 +284,7 @@ enum ValidatedEvent {
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
-    PetClick,
+    ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
     PetMove(PetMovePayload),
@@ -293,15 +293,52 @@ enum ValidatedEvent {
     PetShortcutUpdate(PetShortcutPayload),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TerminalSessionLifecycle {
+    state: &'static str,
+    message: Option<String>,
+    generation: u64,
+    attempt: u64,
+    mode: Option<TerminalSessionMode>,
+    exit_category: Option<String>,
+    retry_decision: &'static str,
+}
+
+impl Default for TerminalSessionLifecycle {
+    fn default() -> Self {
+        Self {
+            state: "idle",
+            message: None,
+            generation: 0,
+            attempt: 0,
+            mode: None,
+            exit_category: None,
+            retry_decision: "automatic_initial",
+        }
+    }
+}
+
+fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bool {
+    !has_active_session
+        && !matches!(
+            state,
+            "starting" | "controlling" | "observing" | "unavailable" | "ended"
+        )
+}
+
 pub struct Runtime {
     snapshot: Snapshot,
     state_path: PathBuf,
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
-    attaches: HashMap<String, PaneAttach>,
-    attach_generations: HashMap<String, u64>,
-    next_attach_generation: u64,
+    terminal_sessions: HashMap<String, TerminalSession>,
+    terminal_session_generations: HashMap<String, u64>,
+    terminal_session_lifecycles: HashMap<String, TerminalSessionLifecycle>,
+    next_terminal_session_generation: u64,
     terminal_sizes: HashMap<String, (u16, u16)>,
+    #[cfg(test)]
+    suppress_terminal_session_workers: bool,
+    workspace_creations_in_flight: HashSet<String>,
     /// The last moment any agent was working or waiting on the user. The pet
     /// measures idleness from here, so roam and sleep are driven by real
     /// session activity rather than wall-clock uptime.
@@ -398,10 +435,14 @@ impl Runtime {
             state_path,
             remote_targets,
             live: None,
-            attaches: HashMap::new(),
-            attach_generations: HashMap::new(),
-            next_attach_generation: 0,
+            terminal_sessions: HashMap::new(),
+            terminal_session_generations: HashMap::new(),
+            terminal_session_lifecycles: HashMap::new(),
+            next_terminal_session_generation: 0,
             terminal_sizes: HashMap::new(),
+            #[cfg(test)]
+            suppress_terminal_session_workers: false,
+            workspace_creations_in_flight: HashSet::new(),
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
@@ -513,12 +554,7 @@ impl Runtime {
         let labels: HashMap<&str, &str> = payload
             .workspaces
             .iter()
-            .map(|workspace| {
-                (
-                    workspace.workspace_id.as_str(),
-                    workspace.label.trim(),
-                )
-            })
+            .map(|workspace| (workspace.workspace_id.as_str(), workspace.label.trim()))
             .collect();
         let mut spaces: Vec<workspace::SessionSpace> = Vec::new();
         for layout in &payload.layouts {
@@ -599,6 +635,10 @@ impl Runtime {
                 &self.last_session_spaces,
             ),
         };
+        Self::apply_workspace_expansion(
+            &mut workspaces,
+            &self.snapshot.ui_state.collapsed_workspace_ids,
+        );
         let projected_agents = project_agents(payload.clone()).agents;
 
         for layout in &payload.layouts {
@@ -892,6 +932,24 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
         precomputed: Option<live::PrecomputedCatalog>,
     ) -> bool {
+        let live_pane_ids = fetched.as_ref().ok().map(|payload| {
+            payload
+                .layouts
+                .iter()
+                .flat_map(|layout| layout.panes.iter())
+                .map(|pane| pane.pane_id.clone())
+                .collect::<HashSet<_>>()
+        });
+        if let Some(live_pane_ids) = live_pane_ids.as_ref() {
+            self.terminal_sessions
+                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+            self.terminal_session_generations
+                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+            self.terminal_session_lifecycles
+                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+            self.terminal_sizes
+                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+        }
         let mut excluded = Vec::new();
         let catalog_changed = fetched
             .as_ref()
@@ -1100,7 +1158,6 @@ impl Runtime {
             shortcut: self.snapshot.ui_state.pet_shortcut.clone(),
             shortcut_error: self.snapshot.pet.shortcut_error.clone(),
             theme_id: self.snapshot.pet.theme_id.clone(),
-            last_click: self.snapshot.pet.last_click.clone(),
         };
         if self.snapshot.pet == next {
             return false;
@@ -1170,14 +1227,7 @@ impl Runtime {
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let desired = pane_ids.iter().cloned().collect::<HashSet<_>>();
         let layout_changed = self.snapshot.pane_layout.as_ref() != Some(&layout);
-
-        self.attaches.retain(|pane_id, _| desired.contains(pane_id));
-        self.attach_generations
-            .retain(|pane_id, _| desired.contains(pane_id));
-        self.terminal_sizes
-            .retain(|pane_id, _| desired.contains(pane_id));
 
         let previous = self
             .snapshot
@@ -1192,11 +1242,7 @@ impl Runtime {
                 previous
                     .get(pane_id)
                     .cloned()
-                    .unwrap_or_else(|| TerminalPaneSnapshot {
-                        pane_id: pane_id.clone(),
-                        closed: false,
-                        exit_code: None,
-                    })
+                    .unwrap_or_else(|| self.terminal_pane_snapshot(pane_id))
             })
             .collect();
 
@@ -1219,7 +1265,7 @@ impl Runtime {
 
         if self.live.is_some() {
             for pane_id in pane_ids {
-                self.request_attach(&pane_id);
+                self.request_terminal_control(&pane_id);
             }
         }
         layout_changed
@@ -1235,15 +1281,33 @@ impl Runtime {
         {
             return;
         }
-        self.snapshot.terminal.panes.push(TerminalPaneSnapshot {
+        let pane = self.terminal_pane_snapshot(pane_id);
+        self.snapshot.terminal.panes.push(pane);
+    }
+
+    fn terminal_pane_snapshot(&self, pane_id: &str) -> TerminalPaneSnapshot {
+        let lifecycle = self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .cloned()
+            .unwrap_or_default();
+        TerminalPaneSnapshot {
             pane_id: pane_id.to_owned(),
             closed: false,
             exit_code: None,
-        });
+            transport_state: lifecycle.state.to_owned(),
+            transport_message: lifecycle.message,
+            transport_generation: lifecycle.generation,
+            transport_attempt: lifecycle.attempt,
+            transport_exit_category: lifecycle.exit_category,
+            transport_retry_decision: lifecycle.retry_decision.to_owned(),
+        }
     }
 
-    fn set_terminal_closed(&mut self, pane_id: &str, closed: bool) {
-        self.ensure_terminal_pane(pane_id);
+    fn sync_transport_projection(&mut self, pane_id: &str) {
+        let Some(lifecycle) = self.terminal_session_lifecycles.get(pane_id).cloned() else {
+            return;
+        };
         if let Some(pane) = self
             .snapshot
             .terminal
@@ -1251,21 +1315,13 @@ impl Runtime {
             .iter_mut()
             .find(|pane| pane.pane_id == pane_id)
         {
-            pane.closed = closed;
-            if !closed {
-                pane.exit_code = None;
-            }
+            pane.transport_state = lifecycle.state.to_owned();
+            pane.transport_message = lifecycle.message;
+            pane.transport_generation = lifecycle.generation;
+            pane.transport_attempt = lifecycle.attempt;
+            pane.transport_exit_category = lifecycle.exit_category;
+            pane.transport_retry_decision = lifecycle.retry_decision.to_owned();
         }
-        self.sync_focused_terminal_projection();
-    }
-
-    fn terminal_is_closed(&self, pane_id: &str) -> bool {
-        self.snapshot
-            .terminal
-            .panes
-            .iter()
-            .find(|pane| pane.pane_id == pane_id)
-            .is_some_and(|pane| pane.closed)
     }
 
     fn sync_focused_terminal_projection(&mut self) {
@@ -1296,6 +1352,46 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         match (action, result) {
+            (PaneControlAction::Project { pane_id }, Ok(outcome)) => {
+                if self.snapshot.terminal.pane_id.as_deref() != Some(pane_id.as_str()) {
+                    self.push_diagnostic(
+                        "pane.projection.stale",
+                        format!("Ignored stale projection for pane {pane_id}"),
+                    );
+                    return false;
+                }
+                let Some(layout) = outcome.layout else {
+                    self.set_error(
+                        "pane.projection_missing_layout",
+                        format!("Pane {pane_id} projection returned no layout"),
+                        true,
+                    );
+                    return true;
+                };
+                if !layout.pane_ids().contains(&pane_id.as_str()) {
+                    self.set_error(
+                        "pane.projection_mismatch",
+                        format!("Projected layout does not contain pane {pane_id}"),
+                        true,
+                    );
+                    return true;
+                }
+                self.push_diagnostic(
+                    "pane.projection.ready",
+                    format!("Pane {pane_id} projected in {elapsed_ms} ms"),
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_projection",
+                        "kind": "pane.projection_ready",
+                        "pane_id": pane_id,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+                self.apply_pane_layout(layout);
+                true
+            }
             (PaneControlAction::Focus { pane_id }, Ok(outcome)) => {
                 let Some(layout) = outcome.layout else {
                     self.set_error(
@@ -1431,8 +1527,9 @@ impl Runtime {
                     })
                 );
 
-                let _retired_attach = self.attaches.remove(&pane_id);
-                self.attach_generations.remove(&pane_id);
+                let _retired_session = self.terminal_sessions.remove(&pane_id);
+                self.terminal_session_generations.remove(&pane_id);
+                self.terminal_session_lifecycles.remove(&pane_id);
                 self.terminal_sizes.remove(&pane_id);
                 self.snapshot
                     .terminal
@@ -1464,6 +1561,10 @@ impl Runtime {
                 self.sync_focused_terminal_projection();
                 true
             }
+            (PaneControlAction::Project { .. }, Err(message)) => {
+                self.set_error("pane.projection_failed", message, true);
+                true
+            }
             (PaneControlAction::Focus { .. }, Err(message)) => {
                 self.set_error("pane.focus_failed", message, true);
                 true
@@ -1483,26 +1584,138 @@ impl Runtime {
         }
     }
 
-    /// Appends live pane bytes when the delivering attach is still current.
-    pub fn ingest_attach_output(&mut self, pane_id: &str, generation: u64, bytes: &[u8]) -> bool {
-        if self.attach_generations.get(pane_id) != Some(&generation) {
+    /// Appends only the decoded frame bytes when the delivering official
+    /// terminal session is still the current generation and mode.
+    pub fn ingest_terminal_session_frame(
+        &mut self,
+        pane_id: &str,
+        generation: u64,
+        mode: TerminalSessionMode,
+        bytes: &[u8],
+    ) -> bool {
+        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
         }
-        if !self.attaches.contains_key(pane_id) {
+        if self
+            .terminal_sessions
+            .get(pane_id)
+            .is_none_or(|session| session.mode != mode)
+        {
             return false;
         }
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
         true
     }
 
-    /// Marks the terminal closed when the current attach stream ends.
-    pub fn ingest_attach_exit(&mut self, pane_id: &str, generation: u64, message: String) -> bool {
-        if self.attach_generations.get(pane_id) != Some(&generation) {
+    /// Handles a `terminal.closed` envelope or stdout EOF. An owner conflict
+    /// falls back exactly once to Herdr's concurrent read-only observer; every
+    /// other close ends only the transport, never the authoritative pane.
+    pub fn ingest_terminal_session_closed(
+        &mut self,
+        pane_id: &str,
+        generation: u64,
+        mode: TerminalSessionMode,
+        reason: Option<String>,
+    ) -> bool {
+        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
         }
-        self.set_terminal_closed(pane_id, true);
+        if self
+            .terminal_sessions
+            .get(pane_id)
+            .is_none_or(|session| session.mode != mode)
+        {
+            return false;
+        }
+        let _ended_session = self.terminal_sessions.remove(pane_id);
+        let attempt = self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .map_or(1, |lifecycle| lifecycle.attempt);
+        let category = live::terminal_closed_category(reason.as_deref());
+        let message = reason
+            .unwrap_or_else(|| format!("Pane {pane_id} terminal {} session ended", mode.as_str()));
+
+        if mode == TerminalSessionMode::Control && category == "owner_conflict" {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "terminal_session",
+                    "kind": "terminal.control_owner_conflict",
+                    "pane_id": pane_id,
+                    "generation": generation,
+                    "attempt": attempt,
+                    "mode": mode.as_str(),
+                    "duration_ms": 0,
+                    "exit_category": category,
+                    "retry_decision": "observe_once",
+                })
+            );
+            self.start_terminal_session(
+                pane_id,
+                TerminalSessionMode::Observe,
+                attempt,
+                "observe_once",
+                Some(format!(
+                    "Another client owns terminal control. Viewing {pane_id} read-only; use Reconnect to try control again."
+                )),
+            );
+            return true;
+        }
+
+        self.terminal_session_lifecycles.insert(
+            pane_id.to_owned(),
+            TerminalSessionLifecycle {
+                state: "ended",
+                message: Some(message.clone()),
+                generation,
+                attempt,
+                mode: Some(mode),
+                exit_category: Some(category.to_owned()),
+                retry_decision: "manual",
+            },
+        );
+        self.sync_transport_projection(pane_id);
         let notice = format!("\r\n[{message}]\r\n");
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "terminal_session",
+                "kind": "terminal.session_ended",
+                "pane_id": pane_id,
+                "generation": generation,
+                "attempt": attempt,
+                "mode": mode.as_str(),
+                "duration_ms": 0,
+                "exit_category": category,
+                "retry_decision": "manual",
+            })
+        );
+        true
+    }
+
+    pub fn ingest_terminal_session_write_failure(
+        &mut self,
+        pane_id: &str,
+        generation: u64,
+        message: String,
+    ) -> bool {
+        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
+            return false;
+        }
+        self.set_error("terminal.write_failed", message.clone(), true);
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "terminal_session",
+                "kind": "terminal.control_write_failed",
+                "pane_id": pane_id,
+                "generation": generation,
+                "message": message,
+                "retry_decision": "manual",
+            })
+        );
         true
     }
 
@@ -1529,15 +1742,33 @@ impl Runtime {
     }
 
     fn rebuild_catalog(&mut self) {
-        self.snapshot.navigator.workspaces = workspace::build_catalog(
+        let mut workspaces = workspace::build_catalog(
             &self.snapshot.ui_state.workspace_registrations,
             &self.last_session_spaces,
         );
+        Self::apply_workspace_expansion(
+            &mut workspaces,
+            &self.snapshot.ui_state.collapsed_workspace_ids,
+        );
+        self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
             &self.snapshot.ui_state.device_registrations,
         );
         self.resync_navigator_focus();
+    }
+
+    fn apply_workspace_expansion(
+        workspaces: &mut [crate::model::WorkspaceSnapshot],
+        collapsed_workspace_ids: &[String],
+    ) {
+        let collapsed = collapsed_workspace_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        for workspace in workspaces {
+            workspace.expanded = !collapsed.contains(workspace.id.as_str());
+        }
     }
 
     fn persist_current_ui_state(&mut self) {
@@ -1650,9 +1881,94 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
-        self.reset_terminal_projection(next_pane_id);
+        self.reset_terminal_projection(next_pane_id.clone());
         self.sync_active_tab_projection();
         self.persist_current_ui_state();
+        if let (Some(context), Some(pane_id)) = (self.live.as_ref().cloned(), next_pane_id)
+            && let Err(message) =
+                live::spawn_pane_control(context, PaneControlAction::Project { pane_id })
+        {
+            self.set_error("pane.projection_worker_failed", message, true);
+        }
+        true
+    }
+
+    pub fn ingest_workspace_creation(
+        &mut self,
+        request_path: &str,
+        result: Result<live::WorkspaceCreationOutcome, String>,
+        elapsed_ms: u128,
+    ) -> bool {
+        self.workspace_creations_in_flight.remove(request_path);
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(message) => {
+                self.set_error("workspace.create_failed", message, false);
+                return true;
+            }
+        };
+        if self.snapshot.ui_state.workspace_registrations == outcome.base_registrations {
+            self.snapshot.ui_state.workspace_registrations = outcome.registrations;
+            self.snapshot.navigator.workspaces = outcome.workspaces;
+            Self::apply_workspace_expansion(
+                &mut self.snapshot.navigator.workspaces,
+                &self.snapshot.ui_state.collapsed_workspace_ids,
+            );
+        } else if !self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|registration| registration.id == outcome.registration.id)
+        {
+            self.snapshot
+                .ui_state
+                .workspace_registrations
+                .push(outcome.registration.clone());
+            self.push_diagnostic(
+                "workspace.catalog.refresh_pending",
+                "Workspace registrations changed during creation; the live poller will refresh the catalog",
+            );
+        }
+        self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+        if let Some(checkout_id) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == outcome.registration.id)
+            .and_then(|workspace| workspace.checkouts.first())
+            .map(|checkout| checkout.id.clone())
+        {
+            self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+        }
+        self.resync_navigator_focus();
+        self.persist_current_ui_state();
+        let git_init_failed = outcome.git_init_error.is_some();
+        if let Some(message) = outcome.git_init_error.as_ref() {
+            self.set_error(
+                "workspace.git_init_failed",
+                format!("Workspace was registered, but Git initialization failed: {message}"),
+                true,
+            );
+        }
+        self.push_diagnostic(
+            "workspace.registered",
+            format!(
+                "Registered workspace {} in {elapsed_ms} ms",
+                outcome.registration.path
+            ),
+        );
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "workspace",
+                "kind": "workspace.registered",
+                "path": outcome.registration.path,
+                "duration_ms": elapsed_ms,
+                    "git_init": if git_init_failed { "failed" } else { "complete_or_skipped" },
+            })
+        );
         true
     }
 
@@ -1703,7 +2019,7 @@ impl Runtime {
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
                 if self.live.is_some() {
-                    self.write_attached(&payload.pane_id, &payload.bytes_base64);
+                    self.write_terminal_control(&payload.pane_id, &payload.bytes_base64);
                 } else {
                     // Fixture mode has no PTY behind the pane; the loopback
                     // echo is the whole byte bridge.
@@ -1721,23 +2037,6 @@ impl Runtime {
                 true
             }
             ValidatedEvent::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
-            ValidatedEvent::PetClick => {
-                // Every toggle surface and the click itself share one state,
-                // so the click never has to guess which pane the user meant:
-                // the oldest unseen pane wins, and with nothing unseen the
-                // shell only raises its window.
-                let selected_pane_id = self.snapshot.pet.attention_pane_ids.first().cloned();
-                if let Some(pane_id) = selected_pane_id.clone() {
-                    self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
-                    self.persist_ui_state();
-                    self.focus_pane(pane_id);
-                }
-                self.snapshot.pet.last_click = Some(PetClickSnapshot {
-                    selected_pane_id,
-                    at_unix_ms: unix_milliseconds(),
-                });
-                true
-            }
             ValidatedEvent::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
             ValidatedEvent::PetToggleVisible => {
                 let visible = !self.snapshot.ui_state.pet_visible;
@@ -1794,6 +2093,45 @@ impl Runtime {
                 self.focus_pane(payload.pane_id);
                 true
             }
+            ValidatedEvent::ReconnectPane(payload) => {
+                let pane_id = payload.pane_id;
+                let pane_exists = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .flat_map(|tab| tab.panes.iter())
+                    .any(|pane| pane.id == pane_id);
+                if !pane_exists {
+                    self.set_error(
+                        "pane.reconnect_missing",
+                        format!("Pane {pane_id} no longer exists"),
+                        false,
+                    );
+                    return true;
+                }
+                let previous_attempt = self
+                    .terminal_session_lifecycles
+                    .get(&pane_id)
+                    .map_or(0, |lifecycle| lifecycle.attempt);
+                let _retired_session = self.terminal_sessions.remove(&pane_id);
+                self.terminal_session_lifecycles.insert(
+                    pane_id.clone(),
+                    TerminalSessionLifecycle {
+                        attempt: previous_attempt,
+                        retry_decision: "manual",
+                        ..TerminalSessionLifecycle::default()
+                    },
+                );
+                self.push_diagnostic(
+                    "pane.reconnect.requested",
+                    format!("Reconnect requested for pane {pane_id}"),
+                );
+                self.request_terminal_control(&pane_id);
+                true
+            }
             ValidatedEvent::OpenBrowser(payload) => {
                 self.snapshot.status.chromux.profile = payload.profile;
                 let action = chromux::plan_open(&self.snapshot.status.chromux.profile, None, None);
@@ -1836,6 +2174,37 @@ impl Runtime {
                 }
             }
             ValidatedEvent::CreateWorkspace(payload) => {
+                if let Some(context) = self.live.as_ref().cloned() {
+                    if !self
+                        .workspace_creations_in_flight
+                        .insert(payload.path.clone())
+                    {
+                        self.push_diagnostic(
+                            "workspace.create.duplicate",
+                            format!("Workspace creation is already running for {}", payload.path),
+                        );
+                        return false;
+                    }
+                    let path = payload.path.clone();
+                    let result = live::spawn_workspace_creation(
+                        context,
+                        payload.path,
+                        payload.label,
+                        payload.initialize_git,
+                        self.snapshot.ui_state.workspace_registrations.clone(),
+                        self.last_session_spaces.clone(),
+                    );
+                    if let Err(message) = result {
+                        self.workspace_creations_in_flight.remove(&path);
+                        self.set_error("workspace.create_worker_failed", message, true);
+                    } else {
+                        self.push_diagnostic(
+                            "workspace.create.requested",
+                            format!("Creating workspace from {path}"),
+                        );
+                    }
+                    return true;
+                }
                 let registration = match workspace::registration(
                     &payload.path,
                     &payload.label,
@@ -2367,8 +2736,9 @@ impl Runtime {
                 }
                 self.terminal_sizes
                     .insert(payload.pane_id.clone(), (payload.rows, payload.cols));
-                if let Some(attach) = self.attaches.get_mut(&payload.pane_id)
-                    && let Err(message) = attach.resize(payload.rows, payload.cols)
+                if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
+                    && session.mode == TerminalSessionMode::Control
+                    && let Err(message) = session.resize(payload.rows, payload.cols)
                 {
                     self.set_error("terminal.resize_failed", message, true);
                     return true;
@@ -2387,6 +2757,7 @@ impl Runtime {
                         .right_workbench_visible
                         .unwrap_or(current.right_workbench_visible),
                     expanded_paths: payload.expanded_paths,
+                    collapsed_workspace_ids: payload.collapsed_workspace_ids,
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
                     shortcut_bindings: payload.shortcut_bindings,
@@ -2407,7 +2778,6 @@ impl Runtime {
                         .unwrap_or(current.device_registrations),
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     font_size: payload.font_size.unwrap_or(current.font_size),
-                    bypass_warnings: payload.bypass_warnings.unwrap_or(current.bypass_warnings),
                 };
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
@@ -2428,51 +2798,179 @@ impl Runtime {
         }
     }
 
-    /// Begins a pane attach without spawning or waiting for a process on the
-    /// caller. Re-focusing the active pane is a no-op; a different pane makes
-    /// the selection visible immediately and finishes on a worker.
-    fn request_attach(&mut self, pane_id: &str) {
-        if self.attaches.contains_key(pane_id) && !self.terminal_is_closed(pane_id) {
+    /// Starts one control attempt. Repeated polls are no-ops while any
+    /// official control or observer session is starting or active.
+    fn request_terminal_control(&mut self, pane_id: &str) {
+        let current = self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .cloned()
+            .unwrap_or_default();
+        if !terminal_control_request_allowed(
+            current.state,
+            self.terminal_sessions.contains_key(pane_id),
+        ) {
+            self.sync_transport_projection(pane_id);
             return;
         }
-        self.next_attach_generation = self.next_attach_generation.saturating_add(1);
-        let generation = self.next_attach_generation;
-        self.attach_generations
+        let attempt = current.attempt.saturating_add(1);
+        self.start_terminal_session(
+            pane_id,
+            TerminalSessionMode::Control,
+            attempt,
+            if attempt == 1 {
+                "automatic_initial"
+            } else {
+                "manual"
+            },
+            None,
+        );
+    }
+
+    fn start_terminal_session(
+        &mut self,
+        pane_id: &str,
+        mode: TerminalSessionMode,
+        attempt: u64,
+        retry_decision: &'static str,
+        message: Option<String>,
+    ) {
+        self.next_terminal_session_generation =
+            self.next_terminal_session_generation.saturating_add(1);
+        let generation = self.next_terminal_session_generation;
+        self.terminal_session_generations
             .insert(pane_id.to_owned(), generation);
-        let _retired_attach = self.attaches.remove(pane_id);
-        self.set_terminal_closed(pane_id, false);
-        // Reset only this pane's SwiftTerm grid; other panes retain their
-        // independent terminal state while the replacement attach starts.
+        let _retired_session = self.terminal_sessions.remove(pane_id);
+        self.terminal_session_lifecycles.insert(
+            pane_id.to_owned(),
+            TerminalSessionLifecycle {
+                state: "starting",
+                message,
+                generation,
+                attempt,
+                mode: Some(mode),
+                exit_category: None,
+                retry_decision,
+            },
+        );
+        self.sync_transport_projection(pane_id);
+        // Reset only this pane's SwiftTerm grid. The first official frame is
+        // a full ANSI frame, while other panes retain their own state.
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(b"\x1bc"));
-        self.push_diagnostic("pane.attach.requested", format!("Attaching pane {pane_id}"));
+        self.push_diagnostic(
+            "terminal.session_requested",
+            format!(
+                "Starting terminal {} session for pane {pane_id}",
+                mode.as_str()
+            ),
+        );
+        #[cfg(test)]
+        if self.suppress_terminal_session_workers {
+            self.terminal_sessions.insert(
+                pane_id.to_owned(),
+                TerminalSession::test_stub(pane_id, generation, mode),
+            );
+            if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
+                lifecycle.state = match mode {
+                    TerminalSessionMode::Control => "controlling",
+                    TerminalSessionMode::Observe => "observing",
+                };
+                lifecycle.retry_decision = if mode == TerminalSessionMode::Observe {
+                    "manual"
+                } else {
+                    "none"
+                };
+            }
+            self.sync_transport_projection(pane_id);
+            return;
+        }
         let context = self
             .live
             .as_ref()
             .cloned()
-            .expect("request_attach is only called with live configured");
-        if let Err(message) = live::spawn_pane_attach(
+            .expect("terminal sessions are only requested with live configured");
+        if let Err(message) = live::spawn_terminal_session(
             context,
             pane_id.to_owned(),
             generation,
+            mode,
             self.terminal_sizes.get(pane_id).map_or(24, |size| size.0),
             self.terminal_sizes.get(pane_id).map_or(80, |size| size.1),
         ) {
-            self.set_terminal_closed(pane_id, true);
-            let notice = format!("\r\n[Attach to {pane_id} failed: {message}]\r\n");
+            self.record_terminal_session_failure(
+                pane_id,
+                generation,
+                attempt,
+                mode,
+                "worker_start_failed",
+                &message,
+                0,
+            );
+            let notice = format!(
+                "\r\n[Terminal {} session for {pane_id} failed: {message}]\r\n",
+                mode.as_str()
+            );
             self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
-            self.set_error("pane.attach_worker_failed", message, true);
+            self.set_error("terminal.session_worker_failed", message, true);
         }
     }
 
-    pub fn ingest_attach_spawn(
+    fn record_terminal_session_failure(
+        &mut self,
+        pane_id: &str,
+        generation: u64,
+        attempt: u64,
+        mode: TerminalSessionMode,
+        category: &str,
+        message: &str,
+        elapsed_ms: u128,
+    ) {
+        self.terminal_session_lifecycles.insert(
+            pane_id.to_owned(),
+            TerminalSessionLifecycle {
+                state: "unavailable",
+                message: Some(message.to_owned()),
+                generation,
+                attempt,
+                mode: Some(mode),
+                exit_category: Some(category.to_owned()),
+                retry_decision: "manual",
+            },
+        );
+        self.sync_transport_projection(pane_id);
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "terminal_session",
+                "kind": "terminal.session_unavailable",
+                "pane_id": pane_id,
+                "generation": generation,
+                "attempt": attempt,
+                "mode": mode.as_str(),
+                "duration_ms": elapsed_ms,
+                "exit_category": category,
+                "retry_decision": "manual",
+            })
+        );
+    }
+
+    pub fn ingest_terminal_session_spawn(
         &mut self,
         generation: u64,
         pane_id: &str,
-        result: Result<PaneAttach, String>,
+        mode: TerminalSessionMode,
+        result: Result<TerminalSession, String>,
         elapsed_ms: u128,
         context: &LiveContext,
     ) -> bool {
-        if self.attach_generations.get(pane_id) != Some(&generation) {
+        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
+            return false;
+        }
+        if self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .is_none_or(|lifecycle| lifecycle.mode != Some(mode))
+        {
             return false;
         }
         if let Some(layout) = self.snapshot.pane_layout.as_ref()
@@ -2481,48 +2979,114 @@ impl Runtime {
             return false;
         }
         match result {
-            Ok(mut attach) => {
-                if let Err(message) =
-                    attach.start_reader(context.runtime.clone(), context.notifier.clone())
-                {
-                    self.set_terminal_closed(pane_id, true);
-                    self.set_error("pane.attach_reader_failed", message, true);
+            Ok(session) => {
+                self.terminal_sessions.insert(pane_id.to_owned(), session);
+                let reader_result = self
+                    .terminal_sessions
+                    .get_mut(pane_id)
+                    .expect("terminal session was just inserted")
+                    .start_reader(context.runtime.clone(), context.notifier.clone());
+                if let Err(message) = reader_result {
+                    let _failed_session = self.terminal_sessions.remove(pane_id);
+                    let attempt = self
+                        .terminal_session_lifecycles
+                        .get(pane_id)
+                        .map_or(1, |lifecycle| lifecycle.attempt);
+                    self.record_terminal_session_failure(
+                        pane_id,
+                        generation,
+                        attempt,
+                        mode,
+                        "reader_start_failed",
+                        &message,
+                        elapsed_ms,
+                    );
+                    self.set_error("terminal.session_reader_failed", message, true);
                     return true;
                 }
-                self.attaches.insert(pane_id.to_owned(), attach);
-                self.set_terminal_closed(pane_id, false);
+                let attempt = self
+                    .terminal_session_lifecycles
+                    .get(pane_id)
+                    .map_or(1, |lifecycle| lifecycle.attempt);
+                let message = self
+                    .terminal_session_lifecycles
+                    .get(pane_id)
+                    .and_then(|lifecycle| lifecycle.message.clone());
+                let state = match mode {
+                    TerminalSessionMode::Control => "controlling",
+                    TerminalSessionMode::Observe => "observing",
+                };
+                self.terminal_session_lifecycles.insert(
+                    pane_id.to_owned(),
+                    TerminalSessionLifecycle {
+                        state,
+                        message,
+                        generation,
+                        attempt,
+                        mode: Some(mode),
+                        exit_category: None,
+                        retry_decision: if mode == TerminalSessionMode::Observe {
+                            "manual"
+                        } else {
+                            "none"
+                        },
+                    },
+                );
+                self.sync_transport_projection(pane_id);
                 self.push_diagnostic(
-                    "pane.attach.ready",
-                    format!("Pane {pane_id} attached in {elapsed_ms} ms"),
+                    "terminal.session_ready",
+                    format!(
+                        "Pane {pane_id} terminal {} session ready in {elapsed_ms} ms",
+                        mode.as_str()
+                    ),
                 );
                 eprintln!(
                     "{}",
                     serde_json::json!({
-                        "component": "pane_attach",
-                        "kind": "pane.attach_ready",
+                        "component": "terminal_session",
+                        "kind": "terminal.session_ready",
                         "pane_id": pane_id,
                         "generation": generation,
+                        "attempt": attempt,
+                        "mode": mode.as_str(),
                         "duration_ms": elapsed_ms,
+                        "exit_category": null,
+                        "retry_decision": if mode == TerminalSessionMode::Observe { "manual" } else { "none" },
                     })
                 );
                 true
             }
             Err(message) => {
-                self.set_terminal_closed(pane_id, true);
-                let notice = format!("\r\n[Attach to {pane_id} failed: {message}]\r\n");
+                let attempt = self
+                    .terminal_session_lifecycles
+                    .get(pane_id)
+                    .map_or(1, |lifecycle| lifecycle.attempt);
+                self.record_terminal_session_failure(
+                    pane_id,
+                    generation,
+                    attempt,
+                    mode,
+                    "spawn_failed",
+                    &message,
+                    elapsed_ms,
+                );
+                let notice = format!(
+                    "\r\n[Terminal {} session for {pane_id} failed: {message}]\r\n",
+                    mode.as_str()
+                );
                 self.append_terminal_chunk(
                     pane_id.to_owned(),
                     live::encode_base64(notice.as_bytes()),
                 );
-                self.set_error("pane.attach_failed", message, true);
+                self.set_error("terminal.session_failed", message, true);
                 true
             }
         }
     }
 
-    /// Routes key bytes to the attached pane's PTY. Failures surface as
-    /// explicit errors instead of silently dropping input.
-    fn write_attached(&mut self, pane_id: &str, bytes_base64: &str) {
+    /// Routes key bytes only to an official controller. The actual pipe write
+    /// runs on the session writer thread, outside the runtime mutex.
+    fn write_terminal_control(&mut self, pane_id: &str, bytes_base64: &str) {
         let bytes = match live::decode_base64(bytes_base64) {
             Ok(bytes) => bytes,
             Err(message) => {
@@ -2530,16 +3094,25 @@ impl Runtime {
                 return;
             }
         };
-        match self.attaches.get_mut(pane_id) {
-            Some(attach) => {
-                if let Err(message) = attach.write_bytes(&bytes) {
+        match self.terminal_sessions.get(pane_id) {
+            Some(session) if session.mode == TerminalSessionMode::Control => {
+                if let Err(message) = session.write_bytes(&bytes) {
                     self.set_error("terminal.write_failed", message, true);
                 }
             }
+            Some(_) => {
+                self.set_error(
+                    "terminal.read_only",
+                    format!(
+                        "Pane {pane_id} is read-only because another client owns terminal control; use Reconnect to try again"
+                    ),
+                    true,
+                );
+            }
             None => {
                 self.set_error(
-                    "terminal.not_attached",
-                    format!("Pane {pane_id} is not attached; select or retry that pane"),
+                    "terminal.unavailable",
+                    format!("Pane {pane_id} has no terminal session; use Reconnect to try again"),
                     true,
                 );
             }
@@ -2674,7 +3247,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
-        "pet_click" => Ok(ValidatedEvent::PetClick),
+        "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(ValidatedEvent::PetToggleVisible),
         "pet_move" => decode!(PetMovePayload, PetMove),
@@ -2747,6 +3320,199 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_RUNTIME_STATE_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn repeated_polls_do_not_start_a_second_terminal_session() {
+        assert!(terminal_control_request_allowed("idle", false));
+        for state in [
+            "starting",
+            "controlling",
+            "observing",
+            "unavailable",
+            "ended",
+        ] {
+            assert!(!terminal_control_request_allowed(state, false), "{state}");
+        }
+        assert!(!terminal_control_request_allowed("idle", true));
+    }
+
+    #[test]
+    fn runtime_owner_conflict_observes_ignores_stale_delivery_and_reconnects_once() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        runtime.snapshot.navigator.workspaces = vec![workspace(
+            "w1",
+            "Fixture",
+            "/tmp/hide-terminal-session-runtime",
+            vec![checkout(
+                "w1",
+                "checkout-1",
+                "/tmp/hide-terminal-session-runtime",
+                Some(pane("w1:p1", "/tmp/hide-terminal-session-runtime")),
+            )],
+        )];
+        runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+            pane_id: "w1:p1".to_owned(),
+            closed: false,
+            ..TerminalPaneSnapshot::default()
+        }];
+        runtime.next_terminal_session_generation = 40;
+        runtime
+            .terminal_session_generations
+            .insert("w1:p1".to_owned(), 40);
+        runtime.terminal_session_lifecycles.insert(
+            "w1:p1".to_owned(),
+            TerminalSessionLifecycle {
+                state: "controlling",
+                generation: 40,
+                attempt: 1,
+                mode: Some(TerminalSessionMode::Control),
+                retry_decision: "none",
+                ..TerminalSessionLifecycle::default()
+            },
+        );
+        runtime.terminal_sessions.insert(
+            "w1:p1".to_owned(),
+            TerminalSession::test_stub("w1:p1", 40, TerminalSessionMode::Control),
+        );
+
+        let owner_conflict = "terminal attach failed: terminal 42 already has an attached client; retry with --takeover";
+        assert!(runtime.ingest_terminal_session_closed(
+            "w1:p1",
+            40,
+            TerminalSessionMode::Control,
+            Some(owner_conflict.to_owned()),
+        ));
+        let observing = runtime
+            .terminal_session_lifecycles
+            .get("w1:p1")
+            .expect("observer lifecycle");
+        assert_eq!(observing.state, "observing");
+        assert_eq!(observing.mode, Some(TerminalSessionMode::Observe));
+        assert_eq!(observing.generation, 41);
+        assert_eq!(observing.attempt, 1);
+        assert_eq!(runtime.terminal_sessions.len(), 1);
+        assert_eq!(
+            runtime.terminal_sessions["w1:p1"].mode,
+            TerminalSessionMode::Observe
+        );
+        assert!(
+            !runtime.snapshot.terminal.panes[0].closed,
+            "transport owner conflict must not close the authoritative pane"
+        );
+
+        let chunk_count = runtime.snapshot.terminal.chunks.len();
+        assert!(!runtime.ingest_terminal_session_frame(
+            "w1:p1",
+            40,
+            TerminalSessionMode::Control,
+            b"stale-generation",
+        ));
+        assert!(!runtime.ingest_terminal_session_frame(
+            "w1:p1",
+            41,
+            TerminalSessionMode::Control,
+            b"stale-mode",
+        ));
+        assert!(!runtime.ingest_terminal_session_closed(
+            "w1:p1",
+            40,
+            TerminalSessionMode::Control,
+            Some(owner_conflict.to_owned()),
+        ));
+        assert_eq!(runtime.snapshot.terminal.chunks.len(), chunk_count);
+        assert_eq!(runtime.next_terminal_session_generation, 41);
+
+        let reconnect = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "reconnect_pane",
+            "payload": {"pane_id": "w1:p1"}
+        }))
+        .expect("reconnect event");
+        assert!(runtime.dispatch_json(&reconnect));
+        let controlling = runtime
+            .terminal_session_lifecycles
+            .get("w1:p1")
+            .expect("controller lifecycle");
+        assert_eq!(controlling.state, "controlling");
+        assert_eq!(controlling.mode, Some(TerminalSessionMode::Control));
+        assert_eq!(controlling.generation, 42);
+        assert_eq!(controlling.attempt, 2);
+        assert_eq!(runtime.terminal_sessions.len(), 1);
+
+        runtime.request_terminal_control("w1:p1");
+        assert_eq!(runtime.next_terminal_session_generation, 42);
+        assert_eq!(
+            runtime
+                .terminal_session_lifecycles
+                .get("w1:p1")
+                .expect("same controller")
+                .attempt,
+            2
+        );
+    }
+
+    #[test]
+    fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_visible() {
+        let mut runtime = runtime();
+        let missing_path = "/tmp/hide-workspace-missing";
+        runtime
+            .workspace_creations_in_flight
+            .insert(missing_path.to_owned());
+
+        assert!(runtime.ingest_workspace_creation(
+            missing_path,
+            Err("Workspace path does not exist".to_owned()),
+            4,
+        ));
+        assert!(!runtime.workspace_creations_in_flight.contains(missing_path));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("workspace.create_failed")
+        );
+
+        let partial_path = "/tmp/hide-workspace-partial";
+        let registration = WorkspaceRegistration {
+            id: "workspace:partial".to_owned(),
+            label: "Partial".to_owned(),
+            path: partial_path.to_owned(),
+            device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+        };
+        runtime
+            .workspace_creations_in_flight
+            .insert(partial_path.to_owned());
+
+        assert!(runtime.ingest_workspace_creation(
+            partial_path,
+            Ok(live::WorkspaceCreationOutcome {
+                registration: registration.clone(),
+                base_registrations: Vec::new(),
+                registrations: vec![registration.clone()],
+                workspaces: Vec::new(),
+                git_init_error: Some("git init failed explicitly".to_owned()),
+            }),
+            7,
+        ));
+        assert!(!runtime.workspace_creations_in_flight.contains(partial_path));
+        assert_eq!(
+            runtime.snapshot.ui_state.workspace_registrations,
+            [registration]
+        );
+        let error = runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .expect("partial failure stays visible");
+        assert_eq!(error.kind, "workspace.git_init_failed");
+        assert!(error.message.contains("registered"));
+        assert!(error.message.contains("git init failed explicitly"));
+    }
 
     fn runtime() -> Runtime {
         let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
@@ -2905,6 +3671,7 @@ mod tests {
             pane_id: "pane-a".to_owned(),
             closed: false,
             exit_code: None,
+            ..TerminalPaneSnapshot::default()
         }];
         runtime.snapshot.ui_state.selected_pane_id = Some("pane-a".to_owned());
 
@@ -3221,7 +3988,10 @@ mod tests {
         let spaces = Runtime::session_spaces(&payload);
 
         assert_eq!(spaces.len(), 1);
-        assert_eq!(spaces[0].cwds, vec!["/private/tmp/hide-modakbul".to_owned()]);
+        assert_eq!(
+            spaces[0].cwds,
+            vec!["/private/tmp/hide-modakbul".to_owned()]
+        );
     }
 
     #[test]
@@ -3285,6 +4055,7 @@ mod tests {
             pane_id: "w2X:pB".to_owned(),
             closed: false,
             exit_code: None,
+            ..TerminalPaneSnapshot::default()
         }];
 
         let selected_pane = "w3V:p1";
@@ -3298,8 +4069,7 @@ mod tests {
                 "focused_checkout_id": checkout_id,
                 "shortcut_bindings": {},
                 "accent_hex": "#B9FF66",
-                "font_size": 13,
-                "bypass_warnings": false
+                "font_size": 13
             }
         }))
         .expect("selected pane state event");
@@ -3510,6 +4280,7 @@ mod tests {
             pane_id: "w3P:p1".to_owned(),
             closed: false,
             exit_code: None,
+            ..TerminalPaneSnapshot::default()
         }];
         runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
             workspace_id: "w3P".to_owned(),

@@ -61,6 +61,20 @@ enum CompositionInputPolicy {
 /// is ESC CR, which agent CLIs interpret as a newline rather than submission.
 enum ModifiedTerminalInputPolicy {
     static let shiftEnterFallback: [UInt8] = [0x1b, 0x0d]
+    static let commandDeleteBytes: [UInt8] = [0x15]
+
+    static func commandDeleteBytes(
+        for event: NSEvent,
+        composing: Bool
+    ) -> [UInt8]? {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard !composing,
+              event.type == .keyDown,
+              event.keyCode == 51,
+              modifiers == .command
+        else { return nil }
+        return commandDeleteBytes
+    }
 
     static func shiftEnterBytes(
         for event: NSEvent,
@@ -109,6 +123,14 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
         defer {
             composingAtEvent = false
             plainBackspaceEvent = false
+        }
+        if let event = eventArray.first,
+           let bytes = ModifiedTerminalInputPolicy.commandDeleteBytes(
+               for: event,
+               composing: composingAtEvent
+           ) {
+            terminalDelegate?.send(source: self, data: bytes[...])
+            return
         }
         if let event = eventArray.first,
            let bytes = ModifiedTerminalInputPolicy.shiftEnterBytes(

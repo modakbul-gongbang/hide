@@ -20,6 +20,8 @@ struct StoredUiState {
     #[serde(default = "default_panel_visible")]
     right_workbench_visible: bool,
     expanded_paths: Vec<String>,
+    #[serde(default)]
+    collapsed_workspace_ids: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
     #[serde(default)]
@@ -42,8 +44,6 @@ struct StoredUiState {
     accent_hex: String,
     #[serde(default = "default_font_size")]
     font_size: f32,
-    #[serde(default)]
-    bypass_warnings: bool,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -81,6 +81,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             left_sidebar_visible: stored.left_sidebar_visible,
             right_workbench_visible: stored.right_workbench_visible,
             expanded_paths: stored.expanded_paths,
+            collapsed_workspace_ids: stored.collapsed_workspace_ids,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
@@ -93,7 +94,6 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             font_size: stored.font_size,
-            bypass_warnings: stored.bypass_warnings,
         },
         LoadDisposition::Loaded,
     )
@@ -111,6 +111,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         left_sidebar_visible: state.left_sidebar_visible,
         right_workbench_visible: state.right_workbench_visible,
         expanded_paths: state.expanded_paths.clone(),
+        collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),
@@ -123,7 +124,6 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         font_size: state.font_size,
-        bypass_warnings: state.bypass_warnings,
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -241,6 +241,36 @@ mod tests {
                 .map(String::as_str),
             Some("command+option+r")
         );
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
+    }
+
+    #[test]
+    fn workspace_collapse_survives_relaunch_without_changing_file_tree_expansion() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-core-workspace-collapse-{}",
+            std::process::id()
+        ));
+        let path = root.join("state.json");
+        let mut state = UiStateSnapshot {
+            expanded_paths: vec!["/repo/src".to_owned()],
+            collapsed_workspace_ids: vec!["workspace:alpha".to_owned()],
+            ..UiStateSnapshot::default()
+        };
+
+        save(&path, &state).expect("persist independent expansion state");
+        let (restored, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(restored.expanded_paths, ["/repo/src"]);
+        assert_eq!(restored.collapsed_workspace_ids, ["workspace:alpha"]);
+
+        state.expanded_paths.push("/repo/tests".to_owned());
+        save(&path, &state).expect("persist file tree expansion independently");
+        let restored_again = load(&path).0;
+        assert_eq!(restored_again.expanded_paths, ["/repo/src", "/repo/tests"]);
+        assert_eq!(restored_again.collapsed_workspace_ids, ["workspace:alpha"]);
+
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);
     }

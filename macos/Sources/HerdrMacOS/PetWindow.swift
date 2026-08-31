@@ -137,9 +137,10 @@ private final class PetWindowLifecycle: @unchecked Sendable {
 
 /// Renders the pet and routes its gestures back into the core.
 ///
-/// The core owns every decision the pet expresses - pose, badge counts, which
-/// pane a click jumps to, whether the pet is shown at all. This controller
-/// only draws that snapshot and reports gestures.
+/// The core owns the pet state it expresses: pose, badge counts, visibility,
+/// and placement. This controller draws that snapshot, separates click from
+/// drag, and opens the shell dashboard; only a dashboard row dispatches pane
+/// focus back through the core.
 @MainActor
 final class PetWindowController: NSObject, NSWindowDelegate {
     private struct HitRegionProbe {
@@ -380,10 +381,10 @@ final class PetWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// A click raises the IDE and lets the core decide which pane to jump to.
+    /// A click raises the IDE and opens the snapshot-backed agent dashboard.
     private func handleClick() {
         model.core.notePetActivity()
-        model.core.petClicked()
+        model.openPetDashboard()
         guard let mainWindow else { return }
         NSApplication.shared.activate(ignoringOtherApps: true)
         mainWindow.makeKeyAndOrderFront(nil)
@@ -555,7 +556,6 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             "theme_loaded": theme != nil,
             "theme_error": themeError ?? "",
             "attention_pane_ids": pet?.attentionPaneIDs ?? [],
-            "last_click_pane_id": pet?.lastClick?.selectedPaneID ?? "",
             "badges": badgeRecord,
         ]
         let hitRegionRecord: [String: Any] = [

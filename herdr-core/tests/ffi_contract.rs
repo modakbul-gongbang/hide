@@ -64,7 +64,7 @@ fn create_with_socket_override_hidden(options: &[u8]) -> *mut HerdrCore {
 }
 
 #[test]
-fn live_key_without_attach_surfaces_an_explicit_error() {
+fn live_key_without_control_session_surfaces_an_explicit_error() {
     let missing_state =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/missing-ui-state.json");
     let options = serde_json::to_vec(&json!({
@@ -84,7 +84,7 @@ fn live_key_without_attach_surfaces_an_explicit_error() {
     let after = snapshot(core);
     assert_eq!(
         after["status"]["last_error"]["kind"],
-        "terminal.not_attached"
+        "terminal.unavailable"
     );
     assert_eq!(after["status"]["last_error"]["retryable"], true);
     // The live key path must not echo input back as terminal output.
@@ -235,7 +235,6 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "badges",
             "connection",
             "connection_message",
-            "last_click",
             "origin",
             "pose",
             "roam_allowed",
@@ -324,75 +323,6 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     );
 
     herdr_core_destroy(core);
-}
-
-#[test]
-fn pet_click_selects_the_oldest_unseen_pane_and_focus_only_when_none_is_unseen() {
-    // A click persists the pane selection, so this run needs its own state
-    // file rather than the shared "this file is absent" fixture path.
-    let state_path =
-        std::env::temp_dir().join(format!("herdr-core-pet-click-{}.json", std::process::id()));
-    let _ = fs::remove_file(&state_path);
-    let core = create_with_socket_override_hidden(&options_with_state(&state_path));
-    assert!(!core.is_null());
-    dispatch(
-        core,
-        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
-            "agents": [pet_agent("earlier", "status_error_new", "\u{d7}", "00", "0000000000009")],
-            "layouts": [single_pane_layout("w1", "earlier")]
-        }}),
-    );
-    // A later snapshot adds a second unseen pane that sorts ahead of the
-    // first by rank; click order must still follow first observation.
-    dispatch(
-        core,
-        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
-            "agents": [
-                pet_agent("later", "status_question_new", "?", "01", "0000000000001"),
-                pet_agent("earlier", "status_error_new", "\u{d7}", "00", "0000000000009")
-            ],
-            "layouts": [single_pane_layout("w1", "earlier")]
-        }}),
-    );
-    let both = snapshot(core);
-    assert_eq!(
-        both["pet"]["attention_pane_ids"],
-        json!(["earlier", "later"]),
-        "the pane observed unseen first is clicked first"
-    );
-
-    dispatch(
-        core,
-        json!({"schema_version": 2, "kind": "pet_click", "payload": {}}),
-    );
-    let clicked = snapshot(core);
-    assert_eq!(clicked["pet"]["last_click"]["selected_pane_id"], "earlier");
-    assert_eq!(clicked["ui_state"]["selected_pane_id"], "earlier");
-
-    // Nothing unseen: the click reports no pane, so the shell only raises
-    // its own window.
-    dispatch(
-        core,
-        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
-            "agents": [pet_agent("quiet", "status_idle", "\u{25cb}", "10", "0000000000001")],
-            "layouts": [single_pane_layout("w1", "quiet")]
-        }}),
-    );
-    dispatch(
-        core,
-        json!({"schema_version": 2, "kind": "pet_click", "payload": {}}),
-    );
-    let quiet = snapshot(core);
-    assert!(
-        quiet["pet"]["attention_pane_ids"]
-            .as_array()
-            .expect("attention array")
-            .is_empty()
-    );
-    assert!(quiet["pet"]["last_click"]["selected_pane_id"].is_null());
-
-    herdr_core_destroy(core);
-    let _ = fs::remove_file(&state_path);
 }
 
 #[test]
@@ -697,6 +627,20 @@ fn unknown_kind_and_version_mismatch_are_observable() {
 
     dispatch(
         core,
+        json!({"schema_version": 2, "kind": "pet_click", "payload": {}}),
+    );
+    let retired_pet_click = snapshot(core);
+    assert_eq!(
+        retired_pet_click["status"]["last_error"]["kind"],
+        "event.unknown_kind"
+    );
+    assert!(
+        retired_pet_click["ui_state"]["selected_pane_id"].is_null(),
+        "the retired direct-jump event cannot focus a pane"
+    );
+
+    dispatch(
+        core,
         json!({"schema_version": 99, "kind": "focus_pane", "payload": {"pane_id": "p1"}}),
     );
     let mismatch = snapshot(core);
@@ -798,8 +742,12 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
         &herdr_bin,
         concat!(
             "#!/bin/sh\n",
-            "if [ \"$1\" = pane ] && [ \"$2\" = attach ]; then\n",
-            "  exec /usr/bin/tail -f /dev/null\n",
+            "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
+            "  /usr/bin/printf '%s\\n' '{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":80,\"height\":24,\"full\":true,\"bytes\":\"G2M=\"}'\n",
+            "  while IFS= read -r line; do\n",
+            "    case \"$line\" in *'\"type\":\"terminal.release\"'*) exit 0 ;; esac\n",
+            "  done\n",
+            "  exit 0\n",
             "fi\n",
             "/bin/sleep 1\n",
             "/usr/bin/printf '%s\\n' '{\"id\":\"test\",\"result\":{\"pane\":{\"pane_id\":\"w-test:p2\"}}}'\n",
@@ -825,12 +773,12 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
             }
         }),
     );
-    let _attach_ready = wait_for_snapshot(core, Duration::from_secs(2), |current| {
+    let _terminal_ready = wait_for_snapshot(core, Duration::from_secs(2), |current| {
         current["status"]["diagnostics"]
             .as_array()
             .is_some_and(|diagnostics| {
                 diagnostics.iter().any(|diagnostic| {
-                    diagnostic["kind"] == "pane.attach.ready"
+                    diagnostic["kind"] == "terminal.session_ready"
                         && diagnostic["message"]
                             .as_str()
                             .is_some_and(|message| message.contains("w-test:p1"))
@@ -912,34 +860,40 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
 }
 
 #[test]
-fn multi_pane_attach_destroy_returns_without_waiting_and_reaps_children() {
+fn multi_pane_terminal_session_destroy_releases_and_reaps_children() {
     let suffix = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "herdr-core-attach-lifecycle-{}-{suffix}",
+        "herdr-core-terminal-lifecycle-{}-{suffix}",
         std::process::id()
     ));
     fs::create_dir_all(&root).expect("lifecycle fixture directory");
-    let herdr_bin = root.join("herdr-attach-fixture");
+    let herdr_bin = root.join("herdr-terminal-fixture");
     fs::write(
         &herdr_bin,
         format!(
             concat!(
                 "#!/bin/sh\n",
-                "if [ \"$1\" = pane ] && [ \"$2\" = attach ]; then\n",
-                "  /usr/bin/printf '%s' \"$$\" > '{}/'$3.pid\n",
-                "  exec /usr/bin/tail -f /dev/null\n",
+                "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
+                "  /usr/bin/printf '%s' \"$$\" > '{}/'$4.pid\n",
+                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":80,\"height\":24,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                "  while IFS= read -r line; do\n",
+                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    case \"$line\" in *'\"type\":\"terminal.release\"'*) exit 0 ;; esac\n",
+                "  done\n",
+                "  exit 0\n",
                 "fi\n",
                 "exit 1\n",
             ),
+            root.display(),
             root.display()
         ),
     )
-    .expect("attach fixture executable");
+    .expect("terminal fixture executable");
     fs::set_permissions(&herdr_bin, fs::Permissions::from_mode(0o755))
-        .expect("attach fixture permissions");
+        .expect("terminal fixture permissions");
     let state_path = root.join("state.json");
     let options = slow_live_options(&state_path, &herdr_bin);
     let core = create_with_socket_override_hidden(&options);
@@ -976,10 +930,13 @@ fn multi_pane_attach_destroy_returns_without_waiting_and_reaps_children() {
     for pane_id in panes {
         let pid_path = root.join(format!("{pane_id}.pid"));
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !pid_path.exists() {
+        while fs::read_to_string(&pid_path)
+            .ok()
+            .is_none_or(|pid| pid.trim().parse::<u32>().is_err())
+        {
             assert!(
                 Instant::now() < deadline,
-                "attach pid was not recorded for {pane_id}"
+                "terminal session pid was not fully recorded for {pane_id}"
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -989,7 +946,7 @@ fn multi_pane_attach_destroy_returns_without_waiting_and_reaps_children() {
         .iter()
         .map(|pane_id| {
             fs::read_to_string(root.join(format!("{pane_id}.pid")))
-                .expect("attach pid file")
+                .expect("terminal session pid file")
                 .trim()
                 .to_owned()
         })
@@ -999,10 +956,10 @@ fn multi_pane_attach_destroy_returns_without_waiting_and_reaps_children() {
     let destroy_elapsed = destroy_started.elapsed();
     assert!(
         destroy_elapsed < Duration::from_millis(250),
-        "destroy waited {destroy_elapsed:?} for attach children"
+        "destroy waited {destroy_elapsed:?} for terminal session children"
     );
 
-    for pid in child_pids {
+    for (pane_id, pid) in panes.iter().zip(child_pids) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while std::process::Command::new("/bin/kill")
             .args(["-0", &pid])
@@ -1013,10 +970,17 @@ fn multi_pane_attach_destroy_returns_without_waiting_and_reaps_children() {
         {
             assert!(
                 Instant::now() < deadline,
-                "attach child {pid} was not reaped"
+                "terminal session child {pid} was not reaped"
             );
             std::thread::sleep(Duration::from_millis(20));
         }
+        let input = fs::read_to_string(root.join(format!("{pane_id}.stdin")))
+            .expect("terminal control stdin capture");
+        assert_eq!(
+            input.lines().last(),
+            Some(r#"{"type":"terminal.release"}"#),
+            "drop sends the official release frame for {pane_id}"
+        );
     }
     fs::remove_dir_all(root).expect("lifecycle fixture cleanup");
 }

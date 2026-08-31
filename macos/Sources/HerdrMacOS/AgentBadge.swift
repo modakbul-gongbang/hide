@@ -57,7 +57,7 @@ struct AgentBadge: View {
         .overlay(alignment: .bottomTrailing) {
             Circle()
                 .fill(stateColor)
-                .frame(width: size * 0.32, height: size * 0.32)
+                .frame(width: size * 0.36, height: size * 0.36)
                 .overlay(
                     Circle().stroke(HideTheme.sidebar, lineWidth: size * 0.08)
                 )

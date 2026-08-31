@@ -1,17 +1,17 @@
 //! Live herdr integration: session snapshot polling over the local API socket
-//! and pane byte transport through `herdr pane attach` under a PTY.
+//! and pane byte transport through Herdr's terminal session NDJSON bridge.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -34,7 +34,7 @@ pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_R
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Everything an attach spawn needs from the live configuration.
+/// Everything a terminal session spawn needs from the live configuration.
 #[derive(Clone)]
 pub struct LiveContext {
     pub socket_path: PathBuf,
@@ -49,6 +49,72 @@ pub struct LiveContext {
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+}
+
+pub struct WorkspaceCreationOutcome {
+    pub registration: WorkspaceRegistration,
+    pub base_registrations: Vec<WorkspaceRegistration>,
+    pub registrations: Vec<WorkspaceRegistration>,
+    pub workspaces: Vec<WorkspaceSnapshot>,
+    pub git_init_error: Option<String>,
+}
+
+pub fn spawn_workspace_creation(
+    context: LiveContext,
+    path: String,
+    label: String,
+    initialize_git: bool,
+    base_registrations: Vec<WorkspaceRegistration>,
+    spaces: Vec<workspace::SessionSpace>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-workspace-create".to_owned())
+        .spawn(move || {
+            let started = Instant::now();
+            let request_path = path.clone();
+            let result = workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID)
+                .and_then(|registration| {
+                    let root = Path::new(&registration.path);
+                    if !root.exists() {
+                        return Err(format!(
+                            "Workspace path does not exist: {}",
+                            registration.path
+                        ));
+                    }
+                    let git_init_error = initialize_git
+                        .then(|| workspace::initialize_git(root).err())
+                        .flatten();
+                    let mut registrations = base_registrations.clone();
+                    if !registrations
+                        .iter()
+                        .any(|existing| existing.id == registration.id)
+                    {
+                        registrations.push(registration.clone());
+                    }
+                    let workspaces = workspace::build_catalog(&registrations, &spaces);
+                    Ok(WorkspaceCreationOutcome {
+                        registration,
+                        base_registrations,
+                        registrations,
+                        workspaces,
+                        git_init_error,
+                    })
+                });
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_workspace_creation(&request_path, result, elapsed_ms),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("workspace creation worker could not be started: {error}"))
 }
 
 /// How long a catalog built from unchanged inputs keeps being reused before
@@ -83,6 +149,12 @@ impl PaneSplitDirection {
 
 #[derive(Clone, Debug)]
 pub enum PaneControlAction {
+    /// Fetches the authoritative layout containing a pane without changing
+    /// Herdr's global focus. Checkout navigation uses this to avoid waiting
+    /// for the next one-second session poll.
+    Project {
+        pane_id: String,
+    },
     Focus {
         pane_id: String,
     },
@@ -110,6 +182,13 @@ fn execute_pane_control(
     context: &LiveContext,
     action: &PaneControlAction,
 ) -> Result<PaneControlOutcome, String> {
+    if let PaneControlAction::Project { pane_id } = action {
+        return fetch_pane_layout(&context.socket_path, pane_id).map(|layout| PaneControlOutcome {
+            created_pane_id: None,
+            layout: Some(layout),
+            layout_refresh_error: None,
+        });
+    }
     if let PaneControlAction::Focus { pane_id } = action {
         request(
             &context.socket_path,
@@ -149,12 +228,14 @@ fn execute_pane_control(
                         })?,
                 )
             }
-            PaneControlAction::Focus { .. }
+            PaneControlAction::Project { .. }
+            | PaneControlAction::Focus { .. }
             | PaneControlAction::ToggleZoom { .. }
             | PaneControlAction::Close { .. } => None,
         };
         let layout_pane_id = created_pane_id.as_deref().unwrap_or_else(|| match action {
-            PaneControlAction::Focus { pane_id }
+            PaneControlAction::Project { pane_id }
+            | PaneControlAction::Focus { pane_id }
             | PaneControlAction::Split { pane_id, .. }
             | PaneControlAction::ToggleZoom { pane_id }
             | PaneControlAction::Close { pane_id } => pane_id,
@@ -211,6 +292,7 @@ fn fetch_pane_layout(socket_path: &Path, pane_id: &str) -> Result<PaneLayoutSnap
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
     let worker_name = match &action {
+        PaneControlAction::Project { .. } => "herdr-core-pane-project".to_owned(),
         PaneControlAction::Focus { .. } => "herdr-core-pane-focus".to_owned(),
         PaneControlAction::Split { direction, .. } => {
             format!("herdr-core-pane-split-{}", direction.as_str())
@@ -242,8 +324,8 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
 
 fn pane_control_arguments(action: &PaneControlAction) -> Vec<String> {
     match action {
-        PaneControlAction::Focus { .. } => {
-            unreachable!("pane focus uses the socket API instead of the CLI")
+        PaneControlAction::Project { .. } | PaneControlAction::Focus { .. } => {
+            unreachable!("pane projection and focus use the socket API instead of the CLI")
         }
         PaneControlAction::Split {
             pane_id,
@@ -516,10 +598,12 @@ pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, Sessi
 
     let workspaces = workspace_labels
         .iter()
-        .map(|(workspace_id, label)| crate::sidebar::SessionWorkspacePayload {
-            workspace_id: (*workspace_id).to_owned(),
-            label: (*label).to_owned(),
-        })
+        .map(
+            |(workspace_id, label)| crate::sidebar::SessionWorkspacePayload {
+                workspace_id: (*workspace_id).to_owned(),
+                label: (*label).to_owned(),
+            },
+        )
         .collect();
 
     Ok(SessionSnapshotPayload {
@@ -712,22 +796,174 @@ fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, Str
         .ok_or_else(|| format!("{method} response is missing result"))
 }
 
-/// A live byte transport to one herdr pane: `herdr pane attach <pane_id>`
-/// running under a local PTY. Dropping it kills the attach client.
-pub struct PaneAttach {
-    pub pane_id: String,
-    pub generation: u64,
-    master: Box<dyn MasterPty + Send>,
-    child: Option<Box<dyn Child + Send + Sync>>,
-    writer: Box<dyn Write + Send>,
-    reader: Option<Box<dyn Read + Send>>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalSessionMode {
+    Control,
+    Observe,
 }
 
-impl PaneAttach {
+impl TerminalSessionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Control => "control",
+            Self::Observe => "observe",
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum TerminalSessionEvent {
+    Frame {
+        seq: u64,
+        width: u16,
+        height: u16,
+        full: bool,
+        bytes: Vec<u8>,
+    },
+    Closed {
+        reason: Option<String>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum TerminalSessionEnvelope {
+    #[serde(rename = "terminal.frame")]
+    Frame {
+        seq: u64,
+        encoding: String,
+        width: u16,
+        height: u16,
+        full: bool,
+        bytes: String,
+    },
+    #[serde(rename = "terminal.closed")]
+    Closed { reason: Option<String> },
+}
+
+pub fn parse_terminal_session_line(line: &str) -> Result<TerminalSessionEvent, String> {
+    if line.trim().is_empty() {
+        return Err("terminal session emitted an empty NDJSON line".to_owned());
+    }
+    let envelope: TerminalSessionEnvelope = serde_json::from_str(line)
+        .map_err(|error| format!("terminal session emitted invalid NDJSON: {error}"))?;
+    match envelope {
+        TerminalSessionEnvelope::Frame {
+            seq,
+            encoding,
+            width,
+            height,
+            full,
+            bytes,
+        } => {
+            if encoding != "ansi" {
+                return Err(format!(
+                    "terminal session negotiated unsupported encoding {encoding:?}"
+                ));
+            }
+            Ok(TerminalSessionEvent::Frame {
+                seq,
+                width,
+                height,
+                full,
+                bytes: decode_base64(&bytes)?,
+            })
+        }
+        TerminalSessionEnvelope::Closed { reason } => Ok(TerminalSessionEvent::Closed { reason }),
+    }
+}
+
+pub fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
+    let mut line = serde_json::to_string(&json!({
+        "type": "terminal.input",
+        "bytes": encode_base64(bytes),
+    }))
+    .map_err(|error| format!("terminal input could not be encoded: {error}"))?;
+    line.push('\n');
+    Ok(line)
+}
+
+pub fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
+    if rows == 0 || cols == 0 {
+        return Err("terminal dimensions must be positive".to_owned());
+    }
+    let mut line = serde_json::to_string(&json!({
+        "type": "terminal.resize",
+        "cols": cols,
+        "rows": rows,
+        "cell_width_px": 0,
+        "cell_height_px": 0,
+    }))
+    .map_err(|error| format!("terminal resize could not be encoded: {error}"))?;
+    line.push('\n');
+    Ok(line)
+}
+
+pub fn terminal_release_line() -> String {
+    "{\"type\":\"terminal.release\"}\n".to_owned()
+}
+
+pub fn terminal_closed_category(reason: Option<&str>) -> &'static str {
+    let Some(reason) = reason else {
+        return "transport_eof";
+    };
+    let normalized = reason.to_ascii_lowercase();
+    if normalized.contains("already has an attached client")
+        && normalized.contains("retry with --takeover")
+    {
+        "owner_conflict"
+    } else {
+        "terminal_closed"
+    }
+}
+
+fn terminal_session_arguments(
+    mode: TerminalSessionMode,
+    pane_id: &str,
+    rows: u16,
+    cols: u16,
+) -> Vec<String> {
+    vec![
+        "terminal".to_owned(),
+        "session".to_owned(),
+        mode.as_str().to_owned(),
+        pane_id.to_owned(),
+        "--cols".to_owned(),
+        cols.to_string(),
+        "--rows".to_owned(),
+        rows.to_string(),
+    ]
+}
+
+/// One official Herdr terminal session process. Control is writable; observe
+/// is concurrent and read-only. Dropping it stops only this client process.
+pub struct TerminalSession {
+    pub pane_id: String,
+    pub generation: u64,
+    pub mode: TerminalSessionMode,
+    child: Option<Child>,
+    writer: Option<Sender<String>>,
+    reader: Option<ChildStdout>,
+}
+
+impl TerminalSession {
+    #[cfg(test)]
+    pub fn test_stub(pane_id: &str, generation: u64, mode: TerminalSessionMode) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            generation,
+            mode,
+            child: None,
+            writer: None,
+            reader: None,
+        }
+    }
+
     pub fn spawn(
         context: &LiveContext,
         pane_id: &str,
         generation: u64,
+        mode: TerminalSessionMode,
         rows: u16,
         cols: u16,
     ) -> Result<Self, String> {
@@ -737,43 +973,46 @@ impl PaneAttach {
                     .to_owned(),
             );
         };
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| format!("PTY could not be opened: {error}"))?;
-        let mut command = CommandBuilder::new(herdr_bin);
-        command.arg("pane");
-        command.arg("attach");
-        command.arg(pane_id);
-        command.env("HERDR_SOCKET_PATH", &context.socket_path);
-        command.env("TERM", "xterm-256color");
-        command.env("LANG", "en_US.UTF-8");
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| format!("herdr pane attach could not be spawned: {error}"))?;
-        drop(pair.slave);
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| format!("PTY writer could not be taken: {error}"))?;
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| format!("PTY reader could not be cloned: {error}"))?;
+        let mut command = Command::new(herdr_bin);
+        command
+            .args(terminal_session_arguments(mode, pane_id, rows, cols))
+            .env("HERDR_SOCKET_PATH", &context.socket_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        if mode == TerminalSessionMode::Control {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        let mut child = command.spawn().map_err(|error| {
+            format!(
+                "herdr terminal session {} could not be spawned: {error}",
+                mode.as_str()
+            )
+        })?;
+        let writer = if mode == TerminalSessionMode::Control {
+            let stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| "terminal control stdin was not piped".to_owned())?;
+            Some(spawn_terminal_control_writer(
+                context, pane_id, generation, stdin,
+            )?)
+        } else {
+            None
+        };
+        let reader = child
+            .stdout
+            .take()
+            .ok_or_else(|| "terminal session stdout was not piped".to_owned())?;
 
         Ok(Self {
             pane_id: pane_id.to_owned(),
             generation,
-            master: pair.master,
+            mode,
             child: Some(child),
-            writer,
             reader: Some(reader),
+            writer,
         })
     }
 
@@ -782,47 +1021,76 @@ impl PaneAttach {
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
     ) -> Result<(), String> {
-        let Some(mut reader) = self.reader.take() else {
-            return Err("attach reader was already started".to_owned());
+        let Some(reader) = self.reader.take() else {
+            return Err("terminal session reader was already started".to_owned());
         };
         let generation = self.generation;
         let reader_pane = self.pane_id.clone();
+        let mode = self.mode;
         thread::Builder::new()
-            .name(format!("herdr-core-attach-{reader_pane}"))
+            .name(format!(
+                "herdr-core-terminal-{}-{reader_pane}",
+                mode.as_str()
+            ))
             .spawn(move || {
-                let mut bytes = [0_u8; 8192];
+                let mut lines = BufReader::new(reader).lines();
                 loop {
-                    match reader.read(&mut bytes) {
-                        Ok(0) => {
-                            deliver_attach_exit(
+                    match lines.next() {
+                        None => {
+                            deliver_terminal_session_closed(
                                 &runtime,
                                 &notifier,
                                 generation,
                                 &reader_pane,
-                                format!(
-                                    "Pane {reader_pane} attach ended; it may be attached elsewhere or closed"
-                                ),
+                                mode,
+                                None,
                             );
                             return;
                         }
-                        Ok(count) => {
-                            if !deliver_attach_output(
-                                &runtime,
-                                &notifier,
-                                &reader_pane,
-                                generation,
-                                &bytes[..count],
-                            ) {
+                        Some(Ok(line)) => match parse_terminal_session_line(&line) {
+                            Ok(TerminalSessionEvent::Frame { bytes, .. }) => {
+                                if !deliver_terminal_session_frame(
+                                    &runtime,
+                                    &notifier,
+                                    &reader_pane,
+                                    generation,
+                                    mode,
+                                    &bytes,
+                                ) {
+                                    return;
+                                }
+                            }
+                            Ok(TerminalSessionEvent::Closed { reason }) => {
+                                deliver_terminal_session_closed(
+                                    &runtime,
+                                    &notifier,
+                                    generation,
+                                    &reader_pane,
+                                    mode,
+                                    reason,
+                                );
                                 return;
                             }
-                        }
-                        Err(error) => {
-                            deliver_attach_exit(
+                            Err(message) => {
+                                deliver_terminal_session_closed(
+                                    &runtime,
+                                    &notifier,
+                                    generation,
+                                    &reader_pane,
+                                    mode,
+                                    Some(message),
+                                );
+                                return;
+                            }
+                        },
+                        Some(Err(error)) => {
+                            deliver_terminal_session_closed(
                                 &runtime,
                                 &notifier,
                                 generation,
                                 &reader_pane,
-                                format!("Pane {reader_pane} stream failed: {error}"),
+                                mode,
+                                Some(format!("terminal session stream failed: {error}")),
                             );
                             return;
                         }
@@ -830,54 +1098,116 @@ impl PaneAttach {
                 }
             })
             .map(|_| ())
-            .map_err(|error| format!("attach reader thread could not be started: {error}"))
+            .map_err(|error| format!("terminal session reader could not be started: {error}"))
     }
 
-    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.writer
-            .write_all(bytes)
-            .and_then(|()| self.writer.flush())
-            .map_err(|error| format!("pane input could not be written: {error}"))
+    pub fn write_bytes(&self, bytes: &[u8]) -> Result<(), String> {
+        let Some(writer) = self.writer.as_ref() else {
+            return Err(format!(
+                "Pane {} is read-only because another client owns terminal control",
+                self.pane_id
+            ));
+        };
+        let line = terminal_input_line(bytes)?;
+        writer
+            .send(line)
+            .map_err(|_| "terminal control input channel is closed".to_owned())
     }
 
-    pub fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
-        self.master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| format!("pane could not be resized: {error}"))
+    pub fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
+        let Some(writer) = self.writer.as_ref() else {
+            return Err(format!(
+                "Pane {} is read-only because another client owns terminal control",
+                self.pane_id
+            ));
+        };
+        let line = terminal_resize_line(rows, cols)?;
+        writer
+            .send(line)
+            .map_err(|_| "terminal control resize channel is closed".to_owned())
     }
 }
 
-impl Drop for PaneAttach {
+fn spawn_terminal_control_writer(
+    context: &LiveContext,
+    pane_id: &str,
+    generation: u64,
+    mut stdin: ChildStdin,
+) -> Result<Sender<String>, String> {
+    let (sender, receiver) = channel::<String>();
+    let writer_pane = pane_id.to_owned();
+    let runtime = context.runtime.clone();
+    let notifier = context.notifier.clone();
+    thread::Builder::new()
+        .name(format!("herdr-core-terminal-writer-{writer_pane}"))
+        .spawn(move || {
+            for line in receiver {
+                if let Err(error) = stdin
+                    .write_all(line.as_bytes())
+                    .and_then(|()| stdin.flush())
+                {
+                    deliver_terminal_session_write_failure(
+                        &runtime,
+                        &notifier,
+                        &writer_pane,
+                        generation,
+                        format!("terminal control write failed: {error}"),
+                    );
+                    return;
+                }
+            }
+        })
+        .map_err(|error| format!("terminal control writer could not be started: {error}"))?;
+    Ok(sender)
+}
+
+impl Drop for TerminalSession {
     fn drop(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.send(terminal_release_line());
+        }
         let Some(mut child) = self.child.take() else {
             return;
         };
         let pane_id = self.pane_id.clone();
-        if let Err(error) = child.kill() {
-            eprintln!(
-                "{}",
-                json!({
-                    "component": "live",
-                    "kind": "pane.attach_kill_failed",
-                    "pane_id": pane_id,
-                    "message": error.to_string(),
-                })
-            );
-        }
         if let Err(error) = thread::Builder::new()
-            .name(format!("herdr-core-attach-reaper-{pane_id}"))
+            .name(format!("herdr-core-terminal-reaper-{pane_id}"))
             .spawn(move || {
+                for _ in 0..20 {
+                    match child.try_wait() {
+                        Ok(Some(_)) => return,
+                        Ok(None) => thread::sleep(Duration::from_millis(10)),
+                        Err(error) => {
+                            eprintln!(
+                                "{}",
+                                json!({
+                                    "component": "terminal_session",
+                                    "kind": "terminal.session_status_failed",
+                                    "pane_id": pane_id,
+                                    "message": error.to_string(),
+                                })
+                            );
+                            break;
+                        }
+                    }
+                }
+                if let Err(error) = child.kill() {
+                    eprintln!(
+                        "{}",
+                        json!({
+                            "component": "terminal_session",
+                            "kind": "terminal.session_kill_failed",
+                            "pane_id": pane_id,
+                            "message": error.to_string(),
+                        })
+                    );
+                }
                 if let Err(error) = child.wait() {
                     eprintln!(
                         "{}",
                         json!({
-                            "component": "live",
-                            "kind": "pane.attach_wait_failed",
+                            "component": "terminal_session",
+                            "kind": "terminal.session_wait_failed",
                             "pane_id": pane_id,
                             "message": error.to_string(),
                         })
@@ -888,8 +1218,8 @@ impl Drop for PaneAttach {
             eprintln!(
                 "{}",
                 json!({
-                    "component": "live",
-                    "kind": "pane.attach_reaper_spawn_failed",
+                    "component": "terminal_session",
+                    "kind": "terminal.session_reaper_spawn_failed",
                     "message": error.to_string(),
                 })
             );
@@ -897,26 +1227,30 @@ impl Drop for PaneAttach {
     }
 }
 
-pub fn spawn_pane_attach(
+pub fn spawn_terminal_session(
     context: LiveContext,
     pane_id: String,
     generation: u64,
+    mode: TerminalSessionMode,
     rows: u16,
     cols: u16,
 ) -> Result<(), String> {
     thread::Builder::new()
-        .name(format!("herdr-core-attach-spawn-{pane_id}"))
+        .name(format!(
+            "herdr-core-terminal-{}-spawn-{pane_id}",
+            mode.as_str()
+        ))
         .spawn(move || {
             let started = Instant::now();
-            let result = PaneAttach::spawn(&context, &pane_id, generation, rows, cols);
+            let result = TerminalSession::spawn(&context, &pane_id, generation, mode, rows, cols);
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => {
-                    guard.ingest_attach_spawn(generation, &pane_id, result, elapsed_ms, &context)
-                }
+                Ok(mut guard) => guard.ingest_terminal_session_spawn(
+                    generation, &pane_id, mode, result, elapsed_ms, &context,
+                ),
                 Err(_) => return,
             };
             drop(runtime);
@@ -925,21 +1259,22 @@ pub fn spawn_pane_attach(
             }
         })
         .map(|_| ())
-        .map_err(|error| format!("attach worker could not be started: {error}"))
+        .map_err(|error| format!("terminal session worker could not be started: {error}"))
 }
 
-fn deliver_attach_output(
+fn deliver_terminal_session_frame(
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
     pane_id: &str,
     generation: u64,
+    mode: TerminalSessionMode,
     bytes: &[u8],
 ) -> bool {
     let Some(runtime) = runtime.upgrade() else {
         return false;
     };
     let delivered = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_attach_output(pane_id, generation, bytes),
+        Ok(mut guard) => guard.ingest_terminal_session_frame(pane_id, generation, mode, bytes),
         Err(_) => return false,
     };
     drop(runtime);
@@ -949,18 +1284,39 @@ fn deliver_attach_output(
     delivered
 }
 
-fn deliver_attach_exit(
+fn deliver_terminal_session_closed(
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
     generation: u64,
     pane_id: &str,
+    mode: TerminalSessionMode,
+    reason: Option<String>,
+) {
+    let Some(runtime) = runtime.upgrade() else {
+        return;
+    };
+    let delivered = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_terminal_session_closed(pane_id, generation, mode, reason),
+        Err(_) => return,
+    };
+    drop(runtime);
+    if delivered {
+        notifier.notify();
+    }
+}
+
+fn deliver_terminal_session_write_failure(
+    runtime: &Weak<Mutex<Runtime>>,
+    notifier: &ChangeNotifier,
+    pane_id: &str,
+    generation: u64,
     message: String,
 ) {
     let Some(runtime) = runtime.upgrade() else {
         return;
     };
     let delivered = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_attach_exit(pane_id, generation, message),
+        Ok(mut guard) => guard.ingest_terminal_session_write_failure(pane_id, generation, message),
         Err(_) => return,
     };
     drop(runtime);
@@ -997,6 +1353,88 @@ mod tests {
 
         let schema: Value = serde_json::from_str(CONTRACT).expect("contract is valid JSON");
         assert_eq!(schema["protocol"], HERDR_PROTOCOL_REVISION);
+    }
+
+    #[test]
+    fn official_terminal_ndjson_boundary_decodes_frames_and_closed_reasons() {
+        let frame = parse_terminal_session_line(
+            r#"{"type":"terminal.frame","seq":7,"encoding":"ansi","width":100,"height":30,"full":true,"bytes":"G1szMW0="}"#,
+        )
+        .expect("frame parses");
+        assert_eq!(
+            frame,
+            TerminalSessionEvent::Frame {
+                seq: 7,
+                width: 100,
+                height: 30,
+                full: true,
+                bytes: b"\x1b[31m".to_vec(),
+            }
+        );
+
+        let reason = "terminal attach failed: terminal 42 already has an attached client; retry with --takeover";
+        let closed = parse_terminal_session_line(&format!(
+            r#"{{"type":"terminal.closed","reason":{}}}"#,
+            serde_json::to_string(reason).expect("reason JSON")
+        ))
+        .expect("closed parses");
+        assert_eq!(
+            closed,
+            TerminalSessionEvent::Closed {
+                reason: Some(reason.to_owned())
+            }
+        );
+        assert_eq!(terminal_closed_category(Some(reason)), "owner_conflict");
+        assert_eq!(terminal_closed_category(None), "transport_eof");
+    }
+
+    #[test]
+    fn official_terminal_control_boundary_encodes_input_resize_and_release() {
+        let input: Value = serde_json::from_str(
+            terminal_input_line(b"hello\n")
+                .expect("input line")
+                .trim_end(),
+        )
+        .expect("input JSON");
+        assert_eq!(input["type"], "terminal.input");
+        assert_eq!(input["bytes"], "aGVsbG8K");
+
+        let resize: Value = serde_json::from_str(
+            terminal_resize_line(30, 100)
+                .expect("resize line")
+                .trim_end(),
+        )
+        .expect("resize JSON");
+        assert_eq!(resize["type"], "terminal.resize");
+        assert_eq!(resize["cols"], 100);
+        assert_eq!(resize["rows"], 30);
+        assert_eq!(resize["cell_width_px"], 0);
+        assert_eq!(resize["cell_height_px"], 0);
+
+        let release: Value =
+            serde_json::from_str(terminal_release_line().trim_end()).expect("release JSON");
+        assert_eq!(release, json!({"type": "terminal.release"}));
+    }
+
+    #[test]
+    fn official_terminal_cli_arguments_never_request_takeover() {
+        assert_eq!(
+            terminal_session_arguments(TerminalSessionMode::Control, "w1:p2", 30, 100),
+            [
+                "terminal", "session", "control", "w1:p2", "--cols", "100", "--rows", "30"
+            ]
+        );
+        assert_eq!(
+            terminal_session_arguments(TerminalSessionMode::Observe, "w1:p2", 30, 100),
+            [
+                "terminal", "session", "observe", "w1:p2", "--cols", "100", "--rows", "30"
+            ]
+        );
+        assert!(
+            terminal_session_arguments(TerminalSessionMode::Control, "w1:p2", 30, 100)
+                .iter()
+                .all(|argument| argument != "--takeover")
+        );
     }
 
     #[test]

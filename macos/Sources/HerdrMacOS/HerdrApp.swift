@@ -20,6 +20,8 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     private var petMenuBarController: PetMenuBarController?
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
     private var petVisibilityObservation: AnyCancellable?
+    private var agentSwitcherKeyMonitor: Any?
+    private var agentSwitcherFlagsMonitor: Any?
 
     override init() {
         let startedAt = Date()
@@ -68,6 +70,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         presentMainWindow(window, source: "launch")
         petWindowController = PetWindowController(mainWindow: window, model: model)
         petWindowController?.refreshVisibility()
+        installAgentSwitcherMonitors()
 
         // All four toggle surfaces write the same core visibility state, so
         // the menu bar only has to follow the snapshot to stay in step with
@@ -131,6 +134,42 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 detail: "visible_\(mainWindow.isVisible)_windows_\(NSApplication.shared.windows.count)"
             )
             self.model.core.startRuntimeInitialization()
+        }
+    }
+
+    private func installAgentSwitcherMonitors() {
+        agentSwitcherKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self else { return event }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.keyCode == 48, modifiers == .option {
+                self.model.beginOrAdvanceAgentSwitcher()
+                return nil
+            }
+            if event.keyCode == 53, self.model.agentSwitcherCycle != nil {
+                self.model.cancelAgentSwitcher()
+                return nil
+            }
+            return event
+        }
+        agentSwitcherFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
+            guard let self else { return event }
+            if self.model.agentSwitcherCycle != nil,
+               !event.modifierFlags.contains(.option)
+            {
+                self.model.commitAgentSwitcher()
+            }
+            return event
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let agentSwitcherKeyMonitor {
+            NSEvent.removeMonitor(agentSwitcherKeyMonitor)
+        }
+        if let agentSwitcherFlagsMonitor {
+            NSEvent.removeMonitor(agentSwitcherFlagsMonitor)
         }
     }
 
@@ -247,6 +286,23 @@ struct ShellCommands: Commands {
     @ObservedObject var model: ShellModel
 
     var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Agent") {
+                model.openNewAgent()
+            }
+            .keyboardShortcut("n", modifiers: .command)
+
+            Button("New Workspace") {
+                model.openNewWorkspace()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+
+            Button("Search") {
+                model.openSearch()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+        }
+
         CommandMenu("Navigate") {
             Button("Focus Agents") {
                 model.focus(.agents)

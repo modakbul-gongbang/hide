@@ -63,4 +63,46 @@ import Testing
         #expect(!CompositionInputPolicy.isPlainBackspace(keyCode: 51, modifiers: [.option]))
         #expect(!CompositionInputPolicy.isPlainBackspace(keyCode: 49, modifiers: []))
     }
+
+    @Test func commandDeleteProducesOneControlUOnlyOutsideComposition() {
+        let commandDelete = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .command,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "\u{7f}",
+            charactersIgnoringModifiers: "\u{7f}",
+            isARepeat: false,
+            keyCode: 51
+        )!
+        #expect(ModifiedTerminalInputPolicy.commandDeleteBytes(
+            for: commandDelete,
+            composing: false
+        ) == [0x15])
+        #expect(ModifiedTerminalInputPolicy.commandDeleteBytes(
+            for: commandDelete,
+            composing: true
+        ) == nil)
+
+        for modifiers: NSEvent.ModifierFlags in [[], [.command, .shift], [.command, .option], .control] {
+            let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\u{7f}",
+                charactersIgnoringModifiers: "\u{7f}",
+                isARepeat: false,
+                keyCode: 51
+            )!
+            #expect(ModifiedTerminalInputPolicy.commandDeleteBytes(
+                for: event,
+                composing: false
+            ) == nil)
+        }
+    }
 }

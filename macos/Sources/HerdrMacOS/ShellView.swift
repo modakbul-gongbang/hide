@@ -236,8 +236,10 @@ private struct TerminalPanel: View {
                         PaneTerminalCell(
                             pane: pane,
                             status: model.paneStatus(for: pane.id),
+                            statusMessage: model.paneTransportMessage(for: pane.id),
                             isFocused: item.isFocused,
-                            onFocus: { model.focusPane(pane.id) }
+                            onFocus: { model.focusPane(pane.id) },
+                            onReconnect: { model.reconnectPane(pane.id) }
                         ) {
                             TerminalHost(
                                 bridge: model.core,
@@ -484,21 +486,27 @@ struct PaneLayoutCanvas<Content: View>: View {
 struct PaneTerminalCell<Content: View>: View {
     let pane: CorePaneSnapshot
     let status: String
+    let statusMessage: String?
     let isFocused: Bool
     let onFocus: () -> Void
+    let onReconnect: () -> Void
     private let content: () -> Content
 
     init(
         pane: CorePaneSnapshot,
         status: String,
+        statusMessage: String? = nil,
         isFocused: Bool,
         onFocus: @escaping () -> Void,
+        onReconnect: @escaping () -> Void = {},
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
         self.status = status
+        self.statusMessage = statusMessage
         self.isFocused = isFocused
         self.onFocus = onFocus
+        self.onReconnect = onReconnect
         self.content = content
     }
 
@@ -510,8 +518,10 @@ struct PaneTerminalCell<Content: View>: View {
                 : pane.label,
             cwd: pane.cwd,
             status: status,
+            statusMessage: statusMessage,
             isFocused: isFocused,
             onFocus: onFocus,
+            onReconnect: onReconnect,
             content: content
         )
     }
@@ -527,8 +537,10 @@ struct HideTerminalPaneCard<Content: View>: View {
     let title: String
     let cwd: String
     let status: String
+    let statusMessage: String?
     let isFocused: Bool
     let onFocus: () -> Void
+    let onReconnect: () -> Void
     private let content: () -> Content
 
     init(
@@ -536,23 +548,28 @@ struct HideTerminalPaneCard<Content: View>: View {
         title: String,
         cwd: String,
         status: String,
+        statusMessage: String? = nil,
         isFocused: Bool,
         onFocus: @escaping () -> Void,
+        onReconnect: @escaping () -> Void = {},
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.paneID = paneID
         self.title = title
         self.cwd = cwd
         self.status = status
+        self.statusMessage = statusMessage
         self.isFocused = isFocused
         self.onFocus = onFocus
+        self.onReconnect = onReconnect
         self.content = content
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Button(action: onFocus) {
-                HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button(action: onFocus) {
+                    HStack(spacing: 8) {
                     Image(systemName: isFocused ? "circle.inset.filled" : "circle")
                         .foregroundStyle(isFocused ? HideTheme.accent : HideTheme.secondary)
                     VStack(alignment: .leading, spacing: 1) {
@@ -570,20 +587,51 @@ struct HideTerminalPaneCard<Content: View>: View {
                         }
                     }
                     Spacer(minLength: 4)
-                    Text(status)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+                if status == "observing" {
+                    Text("Read-only")
+                        .hideFont(size: 9, weight: .semibold)
+                        .foregroundStyle(HideTheme.warning)
+                    Button("Reconnect", action: onReconnect)
+                        .buttonStyle(.borderless)
+                        .hideFont(size: 9, weight: .semibold)
+                        .help(statusMessage ?? "Another client owns terminal control")
+                } else if status == "unavailable" || status == "ended" {
+                    Button("Reconnect", action: onReconnect)
+                        .buttonStyle(.borderless)
+                        .hideFont(size: 9, weight: .semibold)
+                        .help(statusMessage ?? "Terminal transport is unavailable")
+                } else {
+                    Text(status == "controlling" ? "Live" : status == "starting" ? "Connecting" : status)
                         .hideFont(size: 9)
                         .foregroundStyle(status == "closed" ? HideTheme.danger : HideTheme.secondary)
                 }
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38, alignment: .leading)
 
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
+
+            if let statusMessage,
+               status == "observing" || status == "unavailable" || status == "ended" {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: status == "observing" ? "lock.fill" : "exclamationmark.triangle.fill")
+                    Text(statusMessage)
+                        .lineLimit(2)
+                }
+                .hideFont(size: 9)
+                .foregroundStyle(status == "observing" ? HideTheme.warning : HideTheme.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HideTheme.elevated)
+            }
 
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
