@@ -4,12 +4,9 @@ out/
 .vite/
 .DS_Store
 
-# PRD pipeline runtime state
-agents/implement/
-agents/runs/
-agents/quick/
-
-agents/interview/*/.cadence.json
+# Local research and agent pipeline files
+.research/
+agents/
 
 # Rust build output
 target
