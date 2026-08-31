@@ -13,7 +13,10 @@ struct WorkbenchPanel: View {
             PanelHeader(
                 title: "Workbench",
                 systemImage: "doc.text.magnifyingglass",
-                trailing: model.isRemoteContext ? "Remote" : (activeRoot?.lastPathComponent ?? "No workspace")
+                trailing: model.isRemoteContext ? "Remote" : (activeRoot?.lastPathComponent ?? "No workspace"),
+                collapseAction: model.toggleRightWorkbench,
+                collapseAccessibilityLabel: "Hide Workbench",
+                collapseAccessibilityIdentifier: "hide-toggle-right-workbench"
             )
             Rectangle()
                 .fill(HideTheme.divider)

@@ -382,13 +382,13 @@ final class ShellModel: ObservableObject {
 
     func openTerminalLink(_ rawValue: String, paneID: String) {
         switch TerminalLinkResolver.parse(rawValue) {
-        case .web(let url):
+        case .external(let url):
             guard NSWorkspace.shared.open(url) else {
-                interactionNotice = "The default browser could not open this terminal URL."
-                HideLaunchTrace.mark("terminal.link.failed", detail: "browser_open")
+                interactionNotice = "The default macOS app could not open this terminal URL."
+                HideLaunchTrace.mark("terminal.link.failed", detail: "external_open")
                 return
             }
-            HideLaunchTrace.mark("terminal.link.opened", detail: "web")
+            HideLaunchTrace.mark("terminal.link.opened", detail: "external")
         case .file(let path, _, _):
             if isRemoteContext {
                 interactionNotice = "\(path) belongs to the remote device. Remote Workbench preview is not available in the current read-only snapshot contract."
