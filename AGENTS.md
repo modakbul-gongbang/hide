@@ -68,4 +68,13 @@ Conventions:
 
 ## Design Reference
 
-- `DESIGN.md` records the Raycast public design references, MIT attribution context, and the `HideTheme` token source used by the macOS shell.
+Read `DESIGN.md` before changing any surface a user looks at, and design against its tokens instead of choosing values at the call site.
+
+It is the design source of truth for the macOS shell.
+The system is a single dark mode with a four-step surface ladder, hairline 1px borders and no drop shadows, Inter with the `ss03` stylistic set, a radius scale running from 6px keycaps to 16px containers, and a spacing system the layout follows.
+Saturated accent colors belong to category illustration, never to chrome.
+
+`HideTheme` in `macos/Sources/HerdrMacOS/HideUI.swift` carries those tokens into the shell, so a new color, radius, or spacing value is added there and used from there rather than written inline.
+When the existing system does not cover a case, say so and propose the addition; do not settle it with a one-off value in a view.
+
+`DESIGN.md` also records the Raycast public design references and their MIT attribution context.
