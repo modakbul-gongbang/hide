@@ -350,6 +350,7 @@ enum HerdrAgentLauncher {
         agent: String,
         checkoutPath: String,
         paneID: String?,
+        workspaceID: String?,
         bypassWarnings: Bool
     ) -> AgentLaunchResult {
         guard AgentCLIAvailability.isUsable(agent) else {
@@ -365,6 +366,7 @@ enum HerdrAgentLauncher {
         } else if let createdPaneID = createRootPane(
             herdrPath: herdrPath,
             checkoutPath: checkoutPath,
+            workspaceID: workspaceID,
             agent: agent
         ) {
             targetPaneID = createdPaneID
@@ -421,20 +423,36 @@ enum HerdrAgentLauncher {
         )
     }
 
+    /// Opens the pane an agent will run in.
+    ///
+    /// A repository Herdr already has a workspace for gets another tab in that
+    /// workspace; only a repository Herdr has never seen gets a new workspace.
+    /// Creating a workspace per launch left one empty duplicate space behind
+    /// for every agent started on a paneless checkout.
     private static func createRootPane(
         herdrPath: String,
         checkoutPath: String,
+        workspaceID: String?,
         agent: String
     ) -> String? {
-        let result = run(
-            herdrPath: herdrPath,
-            arguments: [
+        let arguments: [String]
+        if let workspaceID, !workspaceID.isEmpty {
+            arguments = [
+                "tab", "create",
+                "--workspace", workspaceID,
+                "--cwd", checkoutPath,
+                "--label", "hide \(agent)",
+                "--no-focus",
+            ]
+        } else {
+            arguments = [
                 "workspace", "create",
                 "--cwd", checkoutPath,
                 "--label", "hide \(agent)",
                 "--no-focus",
             ]
-        )
+        }
+        let result = run(herdrPath: herdrPath, arguments: arguments)
         guard result.status == 0,
               let object = try? JSONSerialization.jsonObject(with: result.output) as? [String: Any],
               let resultObject = object["result"] as? [String: Any],
