@@ -33,6 +33,9 @@ macos/build/
 *.d
 *.o
 *.swiftdeps
+# The compiler writes a `~` backup beside each of the above; ignoring only the
+# plain name let four of them reach `git status` as untracked candidates.
+*~
 *.swiftmodule
 *.swiftsourceinfo
 *.swiftdoc

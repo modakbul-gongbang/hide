@@ -123,6 +123,40 @@ struct PaneShortcutSettingsTests {
         #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(commandOptionTab))
     }
 
+    @Test func theTwoSwitcherChordsNeverMatchTheSameEvent() {
+        // The reverse chord is the forward chord plus Shift, so an event must
+        // answer to exactly one of them or the monitor would swallow Shift+Tab
+        // as a plain advance.
+        let optionTab = keyEvent(characters: "\t", keyCode: 48, modifiers: [.option])
+        let optionShiftTab = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.option, .shift]
+        )
+
+        #expect(PaneKeyEventPolicy.isAgentSwitcherAdvance(optionTab))
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherRetreat(optionTab))
+
+        #expect(PaneKeyEventPolicy.isAgentSwitcherRetreat(optionShiftTab))
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(optionShiftTab))
+    }
+
+    @Test func reverseSwitcherChordIgnoresCapsLockButRejectsExtraModifiers() {
+        let capsLocked = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.option, .shift, .capsLock]
+        )
+        #expect(PaneKeyEventPolicy.isAgentSwitcherRetreat(capsLocked))
+
+        let withCommand = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.command, .option, .shift]
+        )
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherRetreat(withCommand))
+    }
+
     @Test func ordinaryScrollRoutesLocallyWhileOptionScrollKeepsTerminalMouseReporting() {
         let ordinary = scrollEvent(deltaY: 3, modifiers: [.capsLock])
         let option = scrollEvent(deltaY: 3, modifiers: [.option, .capsLock])

@@ -577,6 +577,22 @@ final class ShellModel: ObservableObject {
         )
     }
 
+    /// Option+Shift+Tab. Opening the switcher with the reverse chord starts at
+    /// the least recent agent, which is where walking backwards from the
+    /// current one arrives.
+    func beginOrRetreatAgentSwitcher() {
+        observeAgentFocus(in: core.snapshot)
+        if agentSwitcherCycle != nil {
+            agentSwitcherCycle?.retreat()
+            return
+        }
+        agentSwitcherCycle = AgentSwitcherCycle(
+            originalPaneID: focusedPaneID,
+            paneIDs: agentMRU.paneIDs,
+            direction: .backward
+        )
+    }
+
     func commitAgentSwitcher() {
         guard let cycle = agentSwitcherCycle else { return }
         defer { agentSwitcherCycle = nil }

@@ -36,6 +36,7 @@ enum HideTheme {
     /// spacing and radius scale above, which any view may reach for.
     enum Layout {
         static let hairlineWidth: CGFloat = 1
+        static let resizeHandleThickness: CGFloat = 2
         static let panelCollapseControlSize: CGFloat = 18
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292

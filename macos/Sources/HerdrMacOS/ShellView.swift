@@ -525,6 +525,7 @@ struct PaneLayoutCanvas<Content: View>: View {
     let onResize: (String, PaneResizeDirection, Double) -> Void
     private let content: (PaneGridItem) -> Content
 
+
     init(
         items: [PaneGridItem],
         dividers: [PaneGridDivider] = [],
@@ -542,34 +543,98 @@ struct PaneLayoutCanvas<Content: View>: View {
             ZStack {
                 HideTerminalGrid(items: items, content: content)
                 ForEach(dividers) { divider in
-                    let isVertical = divider.axis == .vertical
-                    Rectangle()
-                        .fill(Color.clear)
-                        .contentShape(Rectangle())
-                        .frame(
-                            width: isVertical ? HideTheme.spacingMD : geometry.size.width * CGFloat(divider.frame.width),
-                            height: isVertical ? geometry.size.height * CGFloat(divider.frame.height) : HideTheme.spacingMD
-                        )
-                        .position(
-                            x: geometry.size.width * CGFloat(divider.frame.x + divider.frame.width / 2),
-                            y: geometry.size.height * CGFloat(divider.frame.y + divider.frame.height / 2)
-                        )
-                        .gesture(
-                            DragGesture(minimumDistance: HideTheme.spacingXXS).onEnded { value in
-                                let delta = isVertical
-                                    ? Double(value.translation.width / max(geometry.size.width, 1))
-                                    : Double(value.translation.height / max(geometry.size.height, 1))
-                                guard abs(delta) >= 0.001 else { return }
-                                let direction: PaneResizeDirection = isVertical
-                                    ? (delta > 0 ? .right : .left)
-                                    : (delta > 0 ? .down : .up)
-                                onResize(divider.paneID, direction, min(abs(delta), 0.5))
-                            }
-                        )
-                        .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
-                        .accessibilityLabel(isVertical ? "Resize pane width" : "Resize pane height")
+                    PaneResizeHandle(
+                        divider: divider,
+                        canvasSize: geometry.size,
+                        onResize: onResize
+                    )
                 }
             }
+        }
+    }
+}
+
+/// The grab strip between two panes. It is transparent so it does not draw a
+/// line the layout never asked for, which also means nothing tells the pointer
+/// it can resize here - hence the hover paint and the resize cursor.
+private struct PaneResizeHandle: View {
+    let divider: PaneGridDivider
+    let canvasSize: CGSize
+    let onResize: (String, PaneResizeDirection, Double) -> Void
+
+    @State private var isHovering = false
+    @State private var isDragging = false
+
+    private var isVertical: Bool { divider.axis == .vertical }
+    private var isActive: Bool { isHovering || isDragging }
+
+    private var handleWidth: CGFloat {
+        isVertical ? HideTheme.spacingMD : canvasSize.width * CGFloat(divider.frame.width)
+    }
+
+    private var handleHeight: CGFloat {
+        isVertical ? canvasSize.height * CGFloat(divider.frame.height) : HideTheme.spacingMD
+    }
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .overlay { marker }
+            .animation(.easeOut(duration: 0.12), value: isActive)
+            .frame(width: handleWidth, height: handleHeight)
+            .position(
+                x: canvasSize.width * CGFloat(divider.frame.x + divider.frame.width / 2),
+                y: canvasSize.height * CGFloat(divider.frame.y + divider.frame.height / 2)
+            )
+            .onHover(perform: hover)
+            .gesture(dragGesture)
+            .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
+            .accessibilityLabel(isVertical ? "Resize pane width" : "Resize pane height")
+    }
+
+    private var marker: some View {
+        Capsule()
+            .fill(HideTheme.accent)
+            .frame(
+                width: isVertical ? HideTheme.Layout.resizeHandleThickness : nil,
+                height: isVertical ? nil : HideTheme.Layout.resizeHandleThickness
+            )
+            .opacity(isActive ? 1 : 0)
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: HideTheme.spacingXXS)
+            .onChanged { _ in isDragging = true }
+            .onEnded { value in
+                isDragging = false
+                if !isHovering { setCursor(active: false) }
+                let span = isVertical ? canvasSize.width : canvasSize.height
+                let travel = isVertical ? value.translation.width : value.translation.height
+                let delta = Double(travel / max(span, 1))
+                guard abs(delta) >= 0.001 else { return }
+                let direction: PaneResizeDirection = isVertical
+                    ? (delta > 0 ? .right : .left)
+                    : (delta > 0 ? .down : .up)
+                onResize(divider.paneID, direction, min(abs(delta), 0.5))
+            }
+    }
+
+    private func hover(_ hovering: Bool) {
+        isHovering = hovering
+        // A drag that wandered off the strip still owns the cursor; leave it.
+        guard !isDragging else { return }
+        setCursor(active: hovering)
+    }
+
+    /// `push`/`pop` rather than `set`, because the pointer leaving a view does
+    /// not restore the cursor on its own and every other surface would keep the
+    /// resize arrows.
+    private func setCursor(active: Bool) {
+        if active {
+            (isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+        } else {
+            NSCursor.pop()
         }
     }
 }
@@ -783,7 +848,17 @@ struct PanelHeader: View {
     let trailing: String
     let collapseAction: (() -> Void)?
     let collapseAccessibilityLabel: String?
+    let collapseShortcut: String?
     let collapseAccessibilityIdentifier: String?
+
+    /// The tooltip says what the control does and how to reach it from the
+    /// keyboard; the accessibility label stays bare because VoiceOver announces
+    /// the shortcut itself and would otherwise say it twice.
+    private var collapseHelp: String {
+        let label = collapseAccessibilityLabel ?? "Collapse panel"
+        guard let collapseShortcut else { return label }
+        return "\(label) (\(collapseShortcut))"
+    }
 
     init(
         title: String,
@@ -791,8 +866,10 @@ struct PanelHeader: View {
         trailing: String,
         collapseAction: (() -> Void)? = nil,
         collapseAccessibilityLabel: String? = nil,
+        collapseShortcut: String? = nil,
         collapseAccessibilityIdentifier: String? = nil
     ) {
+        self.collapseShortcut = collapseShortcut
         self.title = title
         self.systemImage = systemImage
         self.trailing = trailing
@@ -820,7 +897,7 @@ struct PanelHeader: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HideTheme.secondary)
-                .help(collapseAccessibilityLabel ?? "Collapse panel")
+                .help(collapseHelp)
                 .accessibilityLabel(collapseAccessibilityLabel ?? "Collapse panel")
                 .accessibilityIdentifier(collapseAccessibilityIdentifier ?? "collapse-panel")
             }

@@ -16,6 +16,7 @@ struct WorkbenchPanel: View {
                 trailing: model.isRemoteContext ? "Remote" : (activeRoot?.lastPathComponent ?? "No workspace"),
                 collapseAction: model.toggleRightWorkbench,
                 collapseAccessibilityLabel: "Hide Workbench",
+                collapseShortcut: "⌘⌥B",
                 collapseAccessibilityIdentifier: "hide-toggle-right-workbench"
             )
             Rectangle()

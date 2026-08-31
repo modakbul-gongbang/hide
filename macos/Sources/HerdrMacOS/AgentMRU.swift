@@ -15,25 +15,42 @@ struct AgentMRU: Equatable {
     }
 }
 
+enum AgentSwitcherDirection {
+    case forward
+    case backward
+}
+
 struct AgentSwitcherCycle: Equatable {
     let originalPaneID: String?
     let paneIDs: [String]
     private(set) var selectedIndex: Int
 
-    init?(originalPaneID: String?, paneIDs: [String]) {
+    /// Index 0 is the agent already focused, so opening the switcher skips it:
+    /// forward lands on the previous agent, backward on the least recent one.
+    init?(
+        originalPaneID: String?,
+        paneIDs: [String],
+        direction: AgentSwitcherDirection = .forward
+    ) {
         let unique = paneIDs.reduce(into: [String]()) { result, paneID in
             if !result.contains(paneID) { result.append(paneID) }
         }
         guard unique.count > 1 else { return nil }
         self.originalPaneID = originalPaneID
         self.paneIDs = unique
-        selectedIndex = 1
+        selectedIndex = direction == .forward ? 1 : unique.count - 1
     }
 
     var selectedPaneID: String { paneIDs[selectedIndex] }
 
     mutating func advance() {
         selectedIndex = (selectedIndex + 1) % paneIDs.count
+    }
+
+    /// Option+Shift+Tab walks the cycle the other way, the direction the system
+    /// switcher established. Wrapping past the first entry lands on the last.
+    mutating func retreat() {
+        selectedIndex = (selectedIndex + paneIDs.count - 1) % paneIDs.count
     }
 
     func committedPaneID(availablePaneIDs: Set<String>) -> String? {

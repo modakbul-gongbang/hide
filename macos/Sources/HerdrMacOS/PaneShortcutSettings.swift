@@ -239,6 +239,15 @@ enum PaneKeyEventPolicy {
             && event.keyCode == 48
             && event.modifierFlags.intersection(chordModifiers) == .option
     }
+
+    /// Option+Shift+Tab, the reverse of the chord above. Shift is the only
+    /// added modifier, so Command or Control still falls through to whatever
+    /// owns that chord.
+    static func isAgentSwitcherRetreat(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 48
+            && event.modifierFlags.intersection(chordModifiers) == [.option, .shift]
+    }
 }
 
 enum PaneMenuPolicy {

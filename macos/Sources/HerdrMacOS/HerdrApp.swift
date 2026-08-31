@@ -68,6 +68,14 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
+            // The reverse chord is checked first: it is the forward chord plus
+            // Shift, so testing forward first would swallow it.
+            if PaneKeyEventPolicy.isAgentSwitcherRetreat(event) {
+                MainActor.assumeIsolated {
+                    self.model.beginOrRetreatAgentSwitcher()
+                }
+                return nil
+            }
             if PaneKeyEventPolicy.isAgentSwitcherAdvance(event) {
                 MainActor.assumeIsolated {
                     self.model.beginOrAdvanceAgentSwitcher()
