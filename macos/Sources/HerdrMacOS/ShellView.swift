@@ -764,7 +764,6 @@ struct PaneTerminalCell<Content: View>: View {
                 cwd: pane.cwd,
                 paneID: pane.id
             ),
-            cwd: pane.cwd,
             status: status,
             statusMessage: statusMessage,
             isFocused: isFocused,
@@ -793,12 +792,11 @@ enum PaneHeaderPresentation {
 /// Shared chrome for local and remote panes.
 ///
 /// The terminal implementation is supplied by the caller, but the pane
-/// identity, cwd, focus affordance, border, and sizing stay identical across
-/// devices. This keeps a remote pane from becoming a separate visual mode.
+/// identity, label, border, and sizing stay identical across devices. This
+/// keeps a remote pane from becoming a separate visual mode.
 struct HideTerminalPaneCard<Content: View>: View {
     let paneID: String
     let title: String
-    let cwd: String
     let status: String
     let statusMessage: String?
     let isFocused: Bool
@@ -809,7 +807,6 @@ struct HideTerminalPaneCard<Content: View>: View {
     init(
         paneID: String,
         title: String,
-        cwd: String,
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
@@ -819,7 +816,6 @@ struct HideTerminalPaneCard<Content: View>: View {
     ) {
         self.paneID = paneID
         self.title = title
-        self.cwd = cwd
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
@@ -830,63 +826,38 @@ struct HideTerminalPaneCard<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button(action: onFocus) {
-                    HStack(spacing: 8) {
-                    Image(systemName: isFocused ? "circle.inset.filled" : "circle")
-                        .foregroundStyle(isFocused ? HideTheme.accent : HideTheme.secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(title)
-                            .hideFont(size: 10, weight: .semibold)
-                            .foregroundStyle(HideTheme.primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        if !cwd.isEmpty {
-                            Text(cwd)
-                                .hideFont(size: 9, design: .monospaced)
-                                .foregroundStyle(HideTheme.muted)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    }
+            Button(action: onFocus) {
+                Text(title)
+                    .hideFont(size: 10, weight: .semibold)
+                    .foregroundStyle(HideTheme.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
-                if status == "observing" {
-                    Text("Read-only")
-                        .hideFont(size: 9, weight: .semibold)
-                        .foregroundStyle(HideTheme.warning)
-                    Button("Reconnect", action: onReconnect)
-                        .buttonStyle(.borderless)
-                        .hideFont(size: 9, weight: .semibold)
-                        .help(statusMessage ?? "Another client owns terminal control")
-                } else if status == "unavailable" || status == "ended" {
-                    Button("Reconnect", action: onReconnect)
-                        .buttonStyle(.borderless)
-                        .hideFont(size: 9, weight: .semibold)
-                        .help(statusMessage ?? "Terminal transport is unavailable")
-                } else {
-                    Text(status == "controlling" ? "Live" : status == "starting" ? "Connecting" : status)
-                        .hideFont(size: 9)
-                        .foregroundStyle(status == "closed" ? HideTheme.danger : HideTheme.secondary)
-                }
             }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38, alignment: .leading)
+            .buttonStyle(.plain)
+            .padding(.horizontal, HideTheme.spacingSM)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: HideTheme.Layout.paneHeaderHeight,
+                maxHeight: HideTheme.Layout.paneHeaderHeight,
+                alignment: .leading
+            )
+            .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
 
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
 
-            if let statusMessage,
-               status == "observing" || status == "unavailable" || status == "ended" {
+            if let transportNotice {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: status == "observing" ? "lock.fill" : "exclamationmark.triangle.fill")
-                    Text(statusMessage)
+                    Text(transportNotice)
                         .lineLimit(2)
+                    Spacer(minLength: HideTheme.spacingSM)
+                    Button("Reconnect", action: onReconnect)
+                        .buttonStyle(.borderless)
+                        .hideFont(size: 9, weight: .semibold)
                 }
                 .hideFont(size: 9)
                 .foregroundStyle(status == "observing" ? HideTheme.warning : HideTheme.secondary)
@@ -911,6 +882,17 @@ struct HideTerminalPaneCard<Content: View>: View {
                 )
         }
         .accessibilityIdentifier("terminal-pane-\(paneID)")
+    }
+
+    private var transportNotice: String? {
+        switch status {
+        case "observing":
+            statusMessage ?? "Another client owns terminal control."
+        case "unavailable", "ended", "closed":
+            statusMessage ?? "Terminal transport is unavailable."
+        default:
+            nil
+        }
     }
 }
 

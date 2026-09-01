@@ -42,6 +42,7 @@ enum HideTheme {
         /// draws, because a divider has to be easy to grab, not easy to see.
         static let resizeHandleGrabWidth: CGFloat = 20
         static let panelCollapseControlSize: CGFloat = 18
+        static let paneHeaderHeight: CGFloat = 28
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
         static let sidebarMaxWidth: CGFloat = 440
@@ -155,10 +156,6 @@ struct ShellView: View {
         .environment(\.hideAccent, HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
         .environment(\.hideFontScale, CGFloat((model.core.snapshot?.uiState.fontSize ?? 13) / 13))
         .tint(HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
-        .sheet(isPresented: $model.showNewWorkspace) {
-            NewWorkspaceSheet()
-                .environmentObject(model)
-        }
         .sheet(isPresented: $model.showNewAgent) {
             NewAgentSheet()
                 .environmentObject(model)
@@ -1573,6 +1570,11 @@ private struct HideTerminalSurface: View {
                         MissingTerminalPaneCell(paneID: item.paneID)
                     }
                 }
+                .id(model.focusedTab?.stableID ?? "no-herdr-tab")
+                .clipped()
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1747,87 +1749,6 @@ private struct HideStatusBar: View {
         .frame(height: 27)
         .background(HideTheme.panel)
         .accessibilityIdentifier("hide-status-bar")
-    }
-}
-
-private struct NewWorkspaceSheet: View {
-    @EnvironmentObject private var model: ShellModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var label = ""
-    @State private var initializeGit = true
-
-    private var selectedURL: URL? {
-        model.pendingWorkspaceURL
-    }
-
-    private var isExistingDirectory: Bool {
-        guard let selectedURL else { return false }
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: selectedURL.path, isDirectory: &isDirectory) && isDirectory.boolValue
-    }
-
-    private var hasGitMetadata: Bool {
-        guard let selectedURL else { return false }
-        return FileManager.default.fileExists(atPath: selectedURL.appendingPathComponent(".git").path)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SheetHeader(title: "New Workspace", subtitle: "Register a folder without moving or copying files.")
-            Form {
-                Section("Folder") {
-                    Text(selectedURL?.path ?? "No folder selected")
-                        .hideFont(size: 11, design: .monospaced)
-                        .foregroundStyle(HideTheme.secondary)
-                        .textSelection(.enabled)
-                    TextField("Display name", text: $label, prompt: Text(selectedURL?.lastPathComponent ?? "Project"))
-                        .textFieldStyle(.roundedBorder)
-                }
-                Section("Git") {
-                    Toggle("Initialize Git when this folder is not a repository", isOn: $initializeGit)
-                        .disabled(hasGitMetadata)
-                    Text(hasGitMetadata
-                        ? "Git metadata already exists. Hide will only discover it."
-                        : "Default is on, but git init runs only after you press Add workspace.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    model.cancelNewWorkspaceConfirmation()
-                    dismiss()
-                }
-                Button("Add workspace") {
-                    guard let selectedURL else { return }
-                    model.addWorkspace(
-                        path: selectedURL,
-                        label: label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? (selectedURL.lastPathComponent.isEmpty ? "Workspace" : selectedURL.lastPathComponent)
-                            : label,
-                        initializeGit: initializeGit && !hasGitMetadata
-                    )
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!isExistingDirectory)
-            }
-            .padding(18)
-        }
-        .frame(width: 570, height: 390)
-        .background(HideTheme.panel)
-        .preferredColorScheme(.dark)
-        .onAppear {
-            if label.isEmpty {
-                label = selectedURL?.lastPathComponent ?? "Workspace"
-            }
-        }
-        .onDisappear {
-            model.cancelNewWorkspaceConfirmation()
-        }
     }
 }
 

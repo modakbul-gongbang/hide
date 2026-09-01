@@ -183,8 +183,6 @@ final class ShellModel: ObservableObject {
     @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
-    @Published var showNewWorkspace = false
-    @Published private(set) var pendingWorkspaceURL: URL?
     @Published var showNewAgent = false
     @Published var showSearch = false
     @Published var showFileSearch = false
@@ -590,8 +588,15 @@ final class ShellModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            self.pendingWorkspaceURL = url
-            self.showNewWorkspace = true
+            let label = url.lastPathComponent.isEmpty ? "Workspace" : url.lastPathComponent
+            let hasGitMetadata = FileManager.default.fileExists(
+                atPath: url.appendingPathComponent(".git").path
+            )
+            self.core.createWorkspace(
+                path: url,
+                label: label,
+                initializeGit: !hasGitMetadata
+            )
         }
     }
 
@@ -844,22 +849,6 @@ final class ShellModel: ObservableObject {
         core.persistUIState(collapsedWorkspaceIDs: collapsed.sorted())
     }
 
-    func addWorkspace(path: URL, label: String, initializeGit: Bool) {
-        guard path.isFileURL else {
-            interactionNotice = "Choose a local folder before adding the workspace."
-            return
-        }
-        core.createWorkspace(path: path, label: label, initializeGit: initializeGit)
-        showNewWorkspace = false
-        pendingWorkspaceURL = nil
-        interactionNotice = "Workspace registration requested. Git and registration results will appear in Hide."
-    }
-
-    func cancelNewWorkspaceConfirmation() {
-        showNewWorkspace = false
-        pendingWorkspaceURL = nil
-    }
-
     func requestRemoveWorkspace(_ workspace: CoreWorkspaceSnapshot) {
         workspaceToRemove = workspace
     }
@@ -1000,7 +989,6 @@ final class ShellModel: ObservableObject {
             bypassWarnings: bypassWarnings
         )
         showNewAgent = false
-        interactionNotice = "Agent start requested. Hide does not handle credentials."
     }
 
     func updatePreferences(accentHex: String? = nil, fontSize: Double? = nil) {

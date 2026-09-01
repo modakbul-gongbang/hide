@@ -22,10 +22,8 @@ struct NewAgentLaunchTests {
             AgentLaunchArguments.build(
                 provider: .claude,
                 paneID: "w1:p1",
-                checkoutPath: "/tmp/project",
-                idempotencyKey: "launch-1",
                 bypassWarnings: firstBypass
-            ) == baseArguments(agent: "claude", idempotencyKey: "launch-1") + [
+            ) == baseArguments(agent: "claude") + [
                 "--", "--dangerously-skip-permissions",
             ]
         )
@@ -34,10 +32,8 @@ struct NewAgentLaunchTests {
             AgentLaunchArguments.build(
                 provider: .claude,
                 paneID: "w1:p1",
-                checkoutPath: "/tmp/project",
-                idempotencyKey: "launch-2",
                 bypassWarnings: secondBypass
-            ) == baseArguments(agent: "claude", idempotencyKey: "launch-2")
+            ) == baseArguments(agent: "claude")
         )
     }
 
@@ -46,10 +42,8 @@ struct NewAgentLaunchTests {
             AgentLaunchArguments.build(
                 provider: .codex,
                 paneID: "w1:p1",
-                checkoutPath: "/tmp/project",
-                idempotencyKey: "launch-3",
                 bypassWarnings: true
-            ) == baseArguments(agent: "codex", idempotencyKey: "launch-3") + [
+            ) == baseArguments(agent: "codex") + [
                 "--", "--dangerously-bypass-approvals-and-sandbox",
             ]
         )
@@ -79,14 +73,42 @@ struct NewAgentLaunchTests {
         #expect(!reopened.bypassWarnings)
     }
 
-    private func baseArguments(agent: String, idempotencyKey: String) -> [String] {
+    @Test func anExistingProjectAlwaysGetsAFocusedNewTab() {
+        #expect(
+            AgentRootPaneArguments.build(
+                workspaceID: "w1",
+                checkoutPath: "/tmp/project",
+                agent: "codex"
+            ) == [
+                "tab", "create",
+                "--workspace", "w1",
+                "--cwd", "/tmp/project",
+                "--label", "hide codex",
+                "--focus",
+            ]
+        )
+    }
+
+    @Test func aProjectWithoutAHerdrWorkspaceGetsAFocusedRootPane() {
+        #expect(
+            AgentRootPaneArguments.build(
+                workspaceID: nil,
+                checkoutPath: "/tmp/project",
+                agent: "claude"
+            ) == [
+                "workspace", "create",
+                "--cwd", "/tmp/project",
+                "--label", "hide claude",
+                "--focus",
+            ]
+        )
+    }
+
+    private func baseArguments(agent: String) -> [String] {
         [
-            "agent", "new", "hide-\(agent)",
+            "agent", "start", "hide-\(agent)",
             "--kind", agent,
             "--pane", "w1:p1",
-            "--idempotency-key", idempotencyKey,
-            "--cwd", "/tmp/project",
-            "--no-focus",
         ]
     }
 }

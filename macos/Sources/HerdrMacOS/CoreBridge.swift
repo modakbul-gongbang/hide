@@ -1352,7 +1352,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             bridgeError = "The verified bundled Herdr runtime is not available for this launch."
             return
         }
-        let paneID = paneID(for: checkoutPath)
         let workspaceID = herdrWorkspaceID(for: checkoutPath)
         let herdrPath = runtimeSelection.path
         Task { @MainActor [weak self] in
@@ -1361,7 +1360,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     herdrPath: herdrPath,
                     agent: agent,
                     checkoutPath: checkoutPath,
-                    paneID: paneID,
                     workspaceID: workspaceID,
                     bypassWarnings: bypassWarnings
                 )
@@ -1711,22 +1709,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func environmentState(for key: String) -> String? {
         snapshot?.status.environment.first(where: { $0.key == key })?.state
-    }
-
-    private func paneID(for checkoutPath: String) -> String? {
-        let normalizedCheckout = URL(fileURLWithPath: checkoutPath, isDirectory: true)
-            .standardizedFileURL
-            .path
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return snapshot?.navigator.workspaces
-            .flatMap { $0.checkouts }
-            .first(where: { checkout in
-                checkout.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == normalizedCheckout
-            })?
-            .tabs
-            .flatMap { $0.panes }
-            .first?
-            .id
     }
 
     /// The Herdr workspace already holding this checkout's repository, if any.

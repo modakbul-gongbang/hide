@@ -411,24 +411,43 @@ enum AgentLaunchArguments {
     static func build(
         provider: NewAgentProvider,
         paneID: String,
-        checkoutPath: String,
-        idempotencyKey: String,
         bypassWarnings: Bool
     ) -> [String] {
         let agent = provider.rawValue
         var arguments = [
-            "agent", "new", "hide-\(agent)",
+            "agent", "start", "hide-\(agent)",
             "--kind", agent,
             "--pane", paneID,
-            "--idempotency-key", idempotencyKey,
-            "--cwd", checkoutPath,
-            "--no-focus",
         ]
         if bypassWarnings {
             arguments.append("--")
             arguments.append(provider.bypassFlag)
         }
         return arguments
+    }
+}
+
+enum AgentRootPaneArguments {
+    static func build(
+        workspaceID: String?,
+        checkoutPath: String,
+        agent: String
+    ) -> [String] {
+        if let workspaceID, !workspaceID.isEmpty {
+            return [
+                "tab", "create",
+                "--workspace", workspaceID,
+                "--cwd", checkoutPath,
+                "--label", "hide \(agent)",
+                "--focus",
+            ]
+        }
+        return [
+            "workspace", "create",
+            "--cwd", checkoutPath,
+            "--label", "hide \(agent)",
+            "--focus",
+        ]
     }
 }
 
@@ -440,7 +459,6 @@ enum HerdrAgentLauncher {
         herdrPath: String,
         agent: String,
         checkoutPath: String,
-        paneID: String?,
         workspaceID: String?,
         bypassWarnings: Bool
     ) -> AgentLaunchResult {
@@ -458,9 +476,7 @@ enum HerdrAgentLauncher {
         }
 
         let targetPaneID: String
-        if let paneID, !paneID.isEmpty {
-            targetPaneID = paneID
-        } else if let createdPaneID = createRootPane(
+        if let createdPaneID = createRootPane(
             herdrPath: herdrPath,
             checkoutPath: checkoutPath,
             workspaceID: workspaceID,
@@ -474,12 +490,9 @@ enum HerdrAgentLauncher {
             )
         }
 
-        let idempotencyKey = "hide-\(agent)-\(UUID().uuidString.lowercased())"
         let arguments = AgentLaunchArguments.build(
             provider: provider,
             paneID: targetPaneID,
-            checkoutPath: checkoutPath,
-            idempotencyKey: idempotencyKey,
             bypassWarnings: bypassWarnings
         )
 
@@ -513,35 +526,24 @@ enum HerdrAgentLauncher {
         )
     }
 
-    /// Opens the pane an agent will run in.
+    /// Opens the single-pane tab an agent will run in.
     ///
     /// A repository Herdr already has a workspace for gets another tab in that
     /// workspace; only a repository Herdr has never seen gets a new workspace.
     /// Creating a workspace per launch left one empty duplicate space behind
-    /// for every agent started on a paneless checkout.
+    /// for every agent started on a paneless checkout. Starting the agent in
+    /// the returned root pane keeps the new tab at exactly one pane.
     private static func createRootPane(
         herdrPath: String,
         checkoutPath: String,
         workspaceID: String?,
         agent: String
     ) -> String? {
-        let arguments: [String]
-        if let workspaceID, !workspaceID.isEmpty {
-            arguments = [
-                "tab", "create",
-                "--workspace", workspaceID,
-                "--cwd", checkoutPath,
-                "--label", "hide \(agent)",
-                "--no-focus",
-            ]
-        } else {
-            arguments = [
-                "workspace", "create",
-                "--cwd", checkoutPath,
-                "--label", "hide \(agent)",
-                "--no-focus",
-            ]
-        }
+        let arguments = AgentRootPaneArguments.build(
+            workspaceID: workspaceID,
+            checkoutPath: checkoutPath,
+            agent: agent
+        )
         let result = run(herdrPath: herdrPath, arguments: arguments)
         guard result.status == 0,
               let object = try? JSONSerialization.jsonObject(with: result.output) as? [String: Any],
