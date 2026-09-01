@@ -190,6 +190,37 @@ struct PaneShortcutSettingsTests {
         #expect(terminal.scrollPosition == 1)
     }
 
+    /// Suppressing mouse reporting is what lets an ordinary wheel move Hide's
+    /// scrollback instead of being eaten by the program in the pane. It is only
+    /// correct in the main buffer. A full-screen agent TUI switches to the
+    /// alternate buffer, which has no scrollback, and SwiftTerm then turns the
+    /// suppressed wheel into cursor keys: the transcript never moves and stray
+    /// arrows reach the agent's prompt.
+    @MainActor
+    @Test func aFullScreenTuiKeepsTheWheelBecauseItsBufferHasNoScrollback() {
+        let view = ImeTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 300),
+            font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        )
+
+        #expect(!view.terminal.isCurrentBufferAlternate)
+        #expect(
+            PaneScrollPolicy.suppressesMouseReporting(
+                isAlternateBuffer: view.terminal.isCurrentBufferAlternate
+            )
+        )
+
+        // DECSET 1049: what a full-screen TUI sends when it takes the screen.
+        view.feed(text: "\u{1b}[?1049h")
+
+        #expect(view.terminal.isCurrentBufferAlternate)
+        #expect(
+            !PaneScrollPolicy.suppressesMouseReporting(
+                isAlternateBuffer: view.terminal.isCurrentBufferAlternate
+            )
+        )
+    }
+
     @MainActor
     @Test func terminalHitTestingRecoversAfterViewerOverlayIsRemoved() {
         let window = PaneCommandWindow(

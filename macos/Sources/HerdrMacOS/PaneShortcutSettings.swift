@@ -274,6 +274,19 @@ enum PaneScrollPolicy {
                 .intersection(.deviceIndependentFlagsMask)
                 .contains(.option)
     }
+
+    /// Whether the wheel should move Hide's own scrollback instead of being
+    /// reported to the application running in the pane.
+    ///
+    /// Only the main buffer has scrollback to move. Every full-screen agent TUI
+    /// runs in the alternate buffer, which has none, and suppressing mouse
+    /// reporting there makes SwiftTerm translate the wheel into cursor keys
+    /// instead: the transcript does not move and stray arrows land in the
+    /// agent's prompt. The application owns the wheel in that buffer, and
+    /// reporting it as mouse buttons is how a TUI scrolls its own viewport.
+    static func suppressesMouseReporting(isAlternateBuffer: Bool) -> Bool {
+        !isAlternateBuffer
+    }
 }
 
 @MainActor
@@ -288,7 +301,13 @@ final class PaneCommandWindow: NSWindow {
         if PaneScrollPolicy.routesToLocalScroll(event),
            let terminal = terminalView(at: event.locationInWindow)
         {
-            terminal.withMouseReportingDisabled {
+            if PaneScrollPolicy.suppressesMouseReporting(
+                isAlternateBuffer: terminal.terminal.isCurrentBufferAlternate
+            ) {
+                terminal.withMouseReportingDisabled {
+                    terminal.scrollWheel(with: event)
+                }
+            } else {
                 terminal.scrollWheel(with: event)
             }
             return
