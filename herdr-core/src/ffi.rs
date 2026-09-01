@@ -179,8 +179,10 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                         &target.ssh_alias,
                     )
                     .map_err(|error| error.to_string())?;
-                    let client = crate::remote::RusshRemoteClient::new(alias)
-                        .map_err(|error| error.to_string())?;
+                    let client = Arc::new(
+                        crate::remote::RusshRemoteClient::new(alias)
+                            .map_err(|error| error.to_string())?,
+                    );
                     let connector = client
                         .herdr_api_connector(target.herdr_socket_path.clone())
                         .map_err(|error| error.to_string())?;
@@ -189,6 +191,17 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                         crate::live::RemoteControlContext::new(
                             target.id.clone(),
                             Arc::clone(&connector),
+                            Arc::downgrade(&runtime),
+                            ChangeNotifier {
+                                registration: Arc::clone(&callback),
+                            },
+                        ),
+                    );
+                    lock_recover(&runtime).install_remote_terminal(
+                        crate::live::RemoteTerminalContext::new(
+                            target.id.clone(),
+                            Arc::clone(&client),
+                            target.herdr_socket_path.clone(),
                             Arc::downgrade(&runtime),
                             ChangeNotifier {
                                 registration: Arc::clone(&callback),

@@ -332,10 +332,6 @@ import Testing
         RemoteShellCommand.loginShell("herdr pane focus w1:p1")
             == "zsh -ilc 'herdr pane focus w1:p1'"
     )
-    let attach = RemoteShellCommand.attach(paneID: "w1:p2")
-    #expect(attach.contains("herdr pane attach 'w1:p2' 2>/dev/null"))
-    #expect(attach.contains("remote terminal initialization failed on mini"))
-    #expect(!attach.contains("panic"))
 }
 
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {

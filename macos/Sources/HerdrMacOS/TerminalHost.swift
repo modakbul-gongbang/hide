@@ -5,6 +5,7 @@ import SwiftUI
 struct TerminalHost: NSViewRepresentable {
     @ObservedObject var bridge: CoreBridge
     let paneID: String
+    let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -23,9 +24,7 @@ struct TerminalHost: NSViewRepresentable {
         terminal.linkReporting = .implicit
         terminal.linkHighlightMode = .hover
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
-        terminal.onPointerFocus = { [weak bridge] in
-            bridge?.focusPane(paneID)
-        }
+        terminal.onPointerFocus = onFocus
         context.coordinator.terminal = terminal
         context.coordinator.registrationID = bridge.registerTerminal(
             paneID: paneID,
@@ -49,6 +48,7 @@ struct TerminalHost: NSViewRepresentable {
     func updateNSView(_ terminal: TerminalView, context: Context) {
         context.coordinator.bridge = bridge
         context.coordinator.onOpenLink = onOpenLink
+        (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
     }
 
     static func dismantleNSView(_ terminal: TerminalView, coordinator: Coordinator) {
@@ -59,6 +59,7 @@ struct TerminalHost: NSViewRepresentable {
             )
         }
         terminal.terminalDelegate = nil
+        (terminal as? ImeTerminalView)?.onPointerFocus = nil
     }
 
     final class Coordinator: NSObject, TerminalViewDelegate {

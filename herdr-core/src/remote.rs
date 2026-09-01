@@ -12,6 +12,7 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -27,7 +28,7 @@ use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileType as SftpFileType, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::runtime::{Builder, Runtime};
 
@@ -1496,6 +1497,90 @@ impl RusshRemoteClient {
         })
     }
 
+    pub(crate) fn open_terminal_session(
+        &self,
+        socket_path: &str,
+        pane_id: &str,
+        mode: &str,
+        rows: u16,
+        cols: u16,
+    ) -> RemoteResult<RemoteTerminalProcess> {
+        let command = remote_terminal_command(socket_path, pane_id, mode, rows, cols)?;
+        let session = self
+            .runtime
+            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
+        let operation = self.runtime.block_on(async {
+            let channel = session.channel_open_session().await.map_err(|error| {
+                remote_error(
+                    "remote-terminal-session",
+                    pane_id,
+                    RemoteStage::Herdr,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            channel.exec(true, command).await.map_err(|error| {
+                remote_error(
+                    "remote-terminal-session",
+                    pane_id,
+                    RemoteStage::Herdr,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let writer = (mode == "control").then(|| {
+                Box::new(RemoteTerminalWriter {
+                    runtime: Arc::clone(&self.runtime),
+                    writer: Box::pin(channel.make_writer()),
+                }) as Box<dyn Write + Send>
+            });
+            let reader = Box::new(RemoteTerminalReader {
+                runtime: Arc::clone(&self.runtime),
+                channel,
+                pending: Vec::new(),
+                pending_offset: 0,
+            }) as Box<dyn Read + Send>;
+            Ok::<_, RemoteError>((reader, writer))
+        });
+        match operation {
+            Ok((reader, writer)) => {
+                let connection = RemoteTerminalConnection {
+                    runtime: Arc::clone(&self.runtime),
+                    session: Some(session),
+                    target_id: self.host.host_id.clone(),
+                    pane_id: pane_id.to_owned(),
+                };
+                Ok(RemoteTerminalProcess {
+                    reader,
+                    writer,
+                    shutdown: Box::new(move || connection.shutdown()),
+                })
+            }
+            Err(primary) => {
+                let cleanup = self
+                    .runtime
+                    .block_on(session.disconnect(
+                        Disconnect::ByApplication,
+                        "remote terminal session open failed",
+                        "en",
+                    ))
+                    .map_err(|error| {
+                        remote_error(
+                            "remote-terminal-session",
+                            pane_id,
+                            RemoteStage::Cleanup,
+                            error,
+                            true,
+                            false,
+                        )
+                    });
+                combine_cleanup("remote-terminal-session", pane_id, Err(primary), cleanup)
+            }
+        }
+    }
+
     pub fn staged_capability_test(
         &self,
         operation_id: &str,
@@ -2303,6 +2388,185 @@ impl RusshRemoteClient {
             closed: AtomicBool::new(false),
         })
     }
+}
+
+pub(crate) struct RemoteTerminalProcess {
+    reader: Box<dyn Read + Send>,
+    writer: Option<Box<dyn Write + Send>>,
+    shutdown: Box<dyn FnOnce() + Send>,
+}
+
+impl RemoteTerminalProcess {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Box<dyn Read + Send>,
+        Option<Box<dyn Write + Send>>,
+        Box<dyn FnOnce() + Send>,
+    ) {
+        (self.reader, self.writer, self.shutdown)
+    }
+}
+
+struct RemoteTerminalReader {
+    runtime: Arc<Runtime>,
+    channel: Channel<Msg>,
+    pending: Vec<u8>,
+    pending_offset: usize,
+}
+
+impl RemoteTerminalReader {
+    fn copy_pending(&mut self, buffer: &mut [u8]) -> usize {
+        let available = self.pending.len().saturating_sub(self.pending_offset);
+        let copied = available.min(buffer.len());
+        buffer[..copied].copy_from_slice(
+            &self.pending[self.pending_offset..self.pending_offset.saturating_add(copied)],
+        );
+        self.pending_offset = self.pending_offset.saturating_add(copied);
+        if self.pending_offset == self.pending.len() {
+            self.pending.clear();
+            self.pending_offset = 0;
+        }
+        copied
+    }
+}
+
+impl Read for RemoteTerminalReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if self.pending_offset < self.pending.len() {
+            return Ok(self.copy_pending(buffer));
+        }
+        loop {
+            match self.runtime.block_on(self.channel.wait()) {
+                Some(ChannelMsg::Data { data }) if !data.is_empty() => {
+                    self.pending = data.to_vec();
+                    return Ok(self.copy_pending(buffer));
+                }
+                Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    let detail = String::from_utf8_lossy(&data);
+                    let detail = detail.trim();
+                    return Err(io::Error::other(if detail.is_empty() {
+                        "remote Herdr terminal session wrote an empty stderr record".to_owned()
+                    } else {
+                        format!("remote Herdr terminal session failed: {detail}")
+                    }));
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) if exit_status != 0 => {
+                    return Err(io::Error::other(format!(
+                        "remote Herdr terminal session exited with status {exit_status}"
+                    )));
+                }
+                Some(ChannelMsg::Eof | ChannelMsg::Close) | None => return Ok(0),
+                Some(_) => continue,
+            }
+        }
+    }
+}
+
+struct RemoteTerminalWriter {
+    runtime: Arc<Runtime>,
+    writer: Pin<Box<dyn AsyncWrite + Send>>,
+}
+
+impl Write for RemoteTerminalWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.runtime.block_on(self.writer.write(buffer))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.runtime.block_on(self.writer.flush())
+    }
+}
+
+struct RemoteTerminalConnection {
+    runtime: Arc<Runtime>,
+    session: Option<Handle<KnownHostHandler>>,
+    target_id: String,
+    pane_id: String,
+}
+
+impl RemoteTerminalConnection {
+    fn shutdown(mut self) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        if let Err(error) = self.runtime.block_on(session.disconnect(
+            Disconnect::ByApplication,
+            "remote terminal session complete",
+            "en",
+        )) {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "remote_terminal_session",
+                    "kind": "disconnect.failed",
+                    "target": self.target_id,
+                    "pane_id": self.pane_id,
+                    "message": error.to_string(),
+                })
+            );
+        }
+    }
+}
+
+fn remote_terminal_command(
+    socket_path: &str,
+    pane_id: &str,
+    mode: &str,
+    rows: u16,
+    cols: u16,
+) -> RemoteResult<String> {
+    if !Path::new(socket_path).is_absolute()
+        || socket_path.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(remote_error(
+            "remote-terminal-session",
+            pane_id,
+            RemoteStage::Herdr,
+            "remote Herdr socket path must be absolute and single-line",
+            false,
+            true,
+        ));
+    }
+    if pane_id.trim().is_empty() || pane_id.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err(remote_error(
+            "remote-terminal-session",
+            pane_id,
+            RemoteStage::Herdr,
+            "remote Herdr pane id must be non-empty and single-line",
+            false,
+            true,
+        ));
+    }
+    if !matches!(mode, "control" | "observe") {
+        return Err(remote_error(
+            "remote-terminal-session",
+            pane_id,
+            RemoteStage::Herdr,
+            "remote Herdr terminal mode must be control or observe",
+            false,
+            true,
+        ));
+    }
+    if rows == 0 || cols == 0 {
+        return Err(remote_error(
+            "remote-terminal-session",
+            pane_id,
+            RemoteStage::Herdr,
+            "remote Herdr terminal dimensions must be positive",
+            false,
+            true,
+        ));
+    }
+    Ok(format!(
+        "env HERDR_SOCKET_PATH={} PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr terminal session {} {} --cols {cols} --rows {rows}",
+        shell_quote(socket_path),
+        shell_quote(mode),
+        shell_quote(pane_id),
+    ))
 }
 
 async fn authenticate(session: &mut Handle<KnownHostHandler>, host: &SshAlias) -> RemoteResult<()> {
@@ -3465,6 +3729,34 @@ mod tests {
     }
 
     #[test]
+    fn remote_terminal_command_uses_official_structured_session_contract() {
+        let command = remote_terminal_command(
+            "/Users/grab/.config/herdr/herdr.sock",
+            "w1:pane with ' quote",
+            "control",
+            42,
+            120,
+        )
+        .expect("valid terminal command");
+        assert_eq!(
+            command,
+            "env HERDR_SOCKET_PATH='/Users/grab/.config/herdr/herdr.sock' PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr terminal session 'control' 'w1:pane with '\\'' quote' --cols 120 --rows 42"
+        );
+        assert!(!command.contains("pane attach"));
+        assert!(!command.contains("ssh "));
+    }
+
+    #[test]
+    fn remote_terminal_command_rejects_untrusted_contract_values() {
+        assert!(remote_terminal_command("relative.sock", "w1:p1", "control", 24, 80).is_err());
+        assert!(
+            remote_terminal_command("/tmp/herdr.sock", "w1:p1\nwhoami", "control", 24, 80).is_err()
+        );
+        assert!(remote_terminal_command("/tmp/herdr.sock", "w1:p1", "takeover", 24, 80).is_err());
+        assert!(remote_terminal_command("/tmp/herdr.sock", "w1:p1", "observe", 0, 80).is_err());
+    }
+
+    #[test]
     #[ignore = "requires HERDR_TEST_SSH_ALIAS and HERDR_TEST_SOCKET_PATH"]
     fn official_remote_socket_snapshot_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
@@ -3513,6 +3805,149 @@ mod tests {
         assert_eq!(snapshot.protocol, REMOTE_PROTOCOL_REVISION);
         assert!(!snapshot.host.host_id.is_empty());
         assert!(!snapshot.host.session_id.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_TERMINAL_* variables"]
+    fn official_remote_terminal_session_fixture_probe() {
+        use std::io::{BufRead, BufReader};
+        use std::sync::mpsc::channel;
+
+        let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
+            .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
+        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
+            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
+        let workspace_id = std::env::var("HERDR_TEST_REMOTE_TERMINAL_WORKSPACE_ID")
+            .expect("HERDR_TEST_REMOTE_TERMINAL_WORKSPACE_ID names the owned fixture workspace");
+        let pane_id = std::env::var("HERDR_TEST_REMOTE_TERMINAL_PANE_ID")
+            .expect("HERDR_TEST_REMOTE_TERMINAL_PANE_ID names the owned fixture pane");
+        let cwd = std::env::var("HERDR_TEST_REMOTE_TERMINAL_CWD")
+            .expect("HERDR_TEST_REMOTE_TERMINAL_CWD names the owned fixture directory");
+        assert!(
+            cwd.starts_with("/tmp/herdr-ide-verify-"),
+            "remote terminal fixture must use the owned fixture namespace"
+        );
+
+        let home = std::env::var_os("HOME").expect("HOME is configured");
+        let alias =
+            SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
+                .expect("SSH alias resolves");
+        let client = RusshRemoteClient::new(alias).expect("remote client initializes");
+        let snapshot = client
+            .fetch_herdr_snapshot_value(&socket_path)
+            .expect("fixture session snapshot");
+        let snapshot = snapshot["snapshot"]
+            .as_object()
+            .map(|_| &snapshot["snapshot"])
+            .expect("session.snapshot response contains a snapshot");
+        let owned_workspace = snapshot["workspaces"]
+            .as_array()
+            .and_then(|workspaces| {
+                workspaces.iter().find(|workspace| {
+                    workspace["workspace_id"].as_str() == Some(workspace_id.as_str())
+                })
+            })
+            .expect("owned fixture workspace is present");
+        assert!(
+            owned_workspace["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("herdr-ide-verify-")),
+            "remote terminal refused a workspace outside the owned fixture namespace"
+        );
+        assert!(snapshot["panes"].as_array().is_some_and(|panes| {
+            let canonical_cwd = cwd
+                .strip_prefix("/tmp/")
+                .map(|suffix| format!("/private/tmp/{suffix}"));
+            panes.iter().any(|pane| {
+                pane["pane_id"].as_str() == Some(pane_id.as_str())
+                    && pane["workspace_id"].as_str() == Some(workspace_id.as_str())
+                    && (pane["cwd"].as_str() == Some(cwd.as_str())
+                        || pane["cwd"].as_str() == canonical_cwd.as_deref())
+            })
+        }));
+
+        let process = client
+            .open_terminal_session(&socket_path, &pane_id, "control", 30, 100)
+            .expect("official remote terminal control session opens");
+        let (reader, writer, shutdown) = process.into_parts();
+        let mut writer = writer.expect("control session exposes a writer");
+        let (progress_sender, progress_receiver) = channel();
+        let (closed_sender, closed_receiver) = channel();
+        let marker = "HERDR_IDE_REMOTE_TERMINAL_OK";
+        let reader_thread = std::thread::spawn(move || {
+            let mut marker_seen = false;
+            let mut resized_frame_seen = false;
+            for line in BufReader::new(reader).lines() {
+                let line = match line {
+                    Ok(line) => line,
+                    Err(error) => {
+                        let _ = closed_sender.send(Err(error.to_string()));
+                        return;
+                    }
+                };
+                match crate::live::parse_terminal_session_line(&line) {
+                    Ok(crate::live::TerminalSessionEvent::Frame {
+                        width,
+                        height,
+                        bytes,
+                        ..
+                    }) => {
+                        resized_frame_seen |= width == 100 && height == 30;
+                        marker_seen |= String::from_utf8_lossy(&bytes).contains(marker);
+                        if marker_seen && resized_frame_seen {
+                            let _ = progress_sender.send(());
+                        }
+                    }
+                    Ok(crate::live::TerminalSessionEvent::Closed { .. }) => {
+                        let _ = closed_sender.send(Ok((marker_seen, resized_frame_seen)));
+                        return;
+                    }
+                    Err(error) => {
+                        let _ = closed_sender.send(Err(error));
+                        return;
+                    }
+                }
+            }
+            let _ = closed_sender.send(Ok((marker_seen, resized_frame_seen)));
+        });
+
+        writer
+            .write_all(
+                crate::live::terminal_resize_line(30, 100)
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .expect("resize request writes");
+        writer
+            .write_all(
+                crate::live::terminal_scroll_line("up", 2)
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .expect("scroll request writes");
+        writer
+            .write_all(
+                crate::live::terminal_input_line(format!("printf '{marker}\\n'\r").as_bytes())
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .expect("terminal input writes");
+        writer.flush().expect("structured requests flush");
+        progress_receiver
+            .recv_timeout(Duration::from_secs(15))
+            .expect("remote terminal frame reports the input marker and resized grid");
+        writer
+            .write_all(crate::live::terminal_release_line().as_bytes())
+            .expect("release request writes");
+        writer.flush().expect("release request flushes");
+        drop(writer);
+        let observed = closed_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("remote terminal stream closes after release")
+            .expect("remote terminal reader remains valid");
+        shutdown();
+        reader_thread.join().expect("reader thread joins");
+        assert_eq!(observed, (true, true));
     }
 
     #[test]

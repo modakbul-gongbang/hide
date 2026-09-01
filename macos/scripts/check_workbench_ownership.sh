@@ -8,7 +8,6 @@ git -C "$repo_root" diff --quiet HEAD -- \
     macos/Sources/HerdrMacOS/AgentBadge.swift \
     macos/Sources/HerdrMacOS/OperationalModels.swift \
     macos/Sources/HerdrMacOS/PaneShortcutSettings.swift \
-    macos/Sources/HerdrMacOS/RemoteTerminalHost.swift \
     macos/Sources/HerdrMacOS/ShellView.swift \
     macos/Sources/HerdrMacOS/TerminalHost.swift \
     macos/Sources/HerdrMacOS/ImeTerminalView.swift \

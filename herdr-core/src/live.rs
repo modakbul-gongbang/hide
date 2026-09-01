@@ -1,9 +1,9 @@
 //! Live Herdr commands and pane byte transport. Session state synchronization
 //! lives in `session_sync` and uses the sequenced socket event stream.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
@@ -22,6 +22,7 @@ use crate::model::{
     PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
     WorkspaceSnapshot,
 };
+use crate::remote::RusshRemoteClient;
 use crate::runtime::Runtime;
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
@@ -36,6 +37,64 @@ pub struct LiveContext {
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
     pub(crate) api_connector: Arc<dyn ApiConnector>,
+}
+
+/// Everything an official remote terminal session needs. SSH transports the
+/// CLI's NDJSON stream; pane state and terminal semantics remain Herdr-owned.
+#[derive(Clone)]
+pub struct RemoteTerminalContext {
+    target_id: String,
+    client: Arc<RusshRemoteClient>,
+    socket_path: String,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+}
+
+impl RemoteTerminalContext {
+    pub(crate) fn new(
+        target_id: impl Into<String>,
+        client: Arc<RusshRemoteClient>,
+        socket_path: impl Into<String>,
+        runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
+    ) -> Self {
+        Self {
+            target_id: target_id.into(),
+            client,
+            socket_path: socket_path.into(),
+            runtime,
+            notifier,
+        }
+    }
+
+    pub(crate) fn target_id(&self) -> &str {
+        &self.target_id
+    }
+}
+
+#[derive(Clone)]
+pub enum TerminalSessionContext {
+    Local(LiveContext),
+    Remote {
+        context: RemoteTerminalContext,
+        source_pane_id: String,
+    },
+}
+
+impl TerminalSessionContext {
+    fn runtime(&self) -> &Weak<Mutex<Runtime>> {
+        match self {
+            Self::Local(context) => &context.runtime,
+            Self::Remote { context, .. } => &context.runtime,
+        }
+    }
+
+    fn notifier(&self) -> &ChangeNotifier {
+        match self {
+            Self::Local(context) => &context.notifier,
+            Self::Remote { context, .. } => &context.notifier,
+        }
+    }
 }
 
 pub struct WorkspaceCreationOutcome {
@@ -919,9 +978,22 @@ pub struct TerminalSession {
     pub pane_id: String,
     pub generation: u64,
     pub mode: TerminalSessionMode,
-    child: Option<Child>,
-    writer: Option<Sender<String>>,
-    reader: Option<ChildStdout>,
+    cleanup: Option<TerminalSessionCleanup>,
+    writer: Option<Sender<TerminalWriterCommand>>,
+    reader: Option<Box<dyn Read + Send>>,
+}
+
+enum TerminalSessionCleanup {
+    Local(Child),
+    Remote(Box<dyn FnOnce() + Send>),
+}
+
+enum TerminalWriterCommand {
+    Line(String),
+    Release {
+        line: String,
+        acknowledged: Sender<()>,
+    },
 }
 
 impl TerminalSession {
@@ -931,13 +1003,40 @@ impl TerminalSession {
             pane_id: pane_id.to_owned(),
             generation,
             mode,
-            child: None,
+            cleanup: None,
             writer: None,
             reader: None,
         }
     }
 
     pub fn spawn(
+        context: &TerminalSessionContext,
+        pane_id: &str,
+        generation: u64,
+        mode: TerminalSessionMode,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Self, String> {
+        match context {
+            TerminalSessionContext::Local(context) => {
+                Self::spawn_local(context, pane_id, generation, mode, rows, cols)
+            }
+            TerminalSessionContext::Remote {
+                context,
+                source_pane_id,
+            } => Self::spawn_remote(
+                context,
+                pane_id,
+                source_pane_id,
+                generation,
+                mode,
+                rows,
+                cols,
+            ),
+        }
+    }
+
+    fn spawn_local(
         context: &LiveContext,
         pane_id: &str,
         generation: u64,
@@ -974,7 +1073,11 @@ impl TerminalSession {
                 .take()
                 .ok_or_else(|| "terminal control stdin was not piped".to_owned())?;
             Some(spawn_terminal_control_writer(
-                context, pane_id, generation, stdin,
+                context.runtime.clone(),
+                context.notifier.clone(),
+                pane_id,
+                generation,
+                Box::new(stdin),
             )?)
         } else {
             None
@@ -988,9 +1091,65 @@ impl TerminalSession {
             pane_id: pane_id.to_owned(),
             generation,
             mode,
-            child: Some(child),
-            reader: Some(reader),
+            cleanup: Some(TerminalSessionCleanup::Local(child)),
+            reader: Some(Box::new(reader)),
             writer,
+        })
+    }
+
+    fn spawn_remote(
+        context: &RemoteTerminalContext,
+        pane_id: &str,
+        source_pane_id: &str,
+        generation: u64,
+        mode: TerminalSessionMode,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Self, String> {
+        let process = context
+            .client
+            .open_terminal_session(
+                &context.socket_path,
+                source_pane_id,
+                mode.as_str(),
+                rows,
+                cols,
+            )
+            .map_err(|error| error.to_string())?;
+        let (reader, transport_writer, shutdown) = process.into_parts();
+        let writer = match (mode, transport_writer) {
+            (TerminalSessionMode::Control, Some(writer)) => {
+                match spawn_terminal_control_writer(
+                    context.runtime.clone(),
+                    context.notifier.clone(),
+                    pane_id,
+                    generation,
+                    writer,
+                ) {
+                    Ok(writer) => Some(writer),
+                    Err(error) => {
+                        shutdown();
+                        return Err(error);
+                    }
+                }
+            }
+            (TerminalSessionMode::Control, None) => {
+                shutdown();
+                return Err("remote terminal control stream has no writer".to_owned());
+            }
+            (TerminalSessionMode::Observe, None) => None,
+            (TerminalSessionMode::Observe, Some(_)) => {
+                shutdown();
+                return Err("remote terminal observer unexpectedly exposed a writer".to_owned());
+            }
+        };
+        Ok(Self {
+            pane_id: pane_id.to_owned(),
+            generation,
+            mode,
+            cleanup: Some(TerminalSessionCleanup::Remote(shutdown)),
+            writer,
+            reader: Some(reader),
         })
     }
 
@@ -1088,7 +1247,7 @@ impl TerminalSession {
         };
         let line = terminal_input_line(bytes)?;
         writer
-            .send(line)
+            .send(TerminalWriterCommand::Line(line))
             .map_err(|_| "terminal control input channel is closed".to_owned())
     }
 
@@ -1101,7 +1260,7 @@ impl TerminalSession {
         };
         let line = terminal_scroll_line(direction, lines)?;
         writer
-            .send(line)
+            .send(TerminalWriterCommand::Line(line))
             .map_err(|_| "terminal control scroll channel is closed".to_owned())
     }
 
@@ -1114,29 +1273,37 @@ impl TerminalSession {
         };
         let line = terminal_resize_line(rows, cols)?;
         writer
-            .send(line)
+            .send(TerminalWriterCommand::Line(line))
             .map_err(|_| "terminal control resize channel is closed".to_owned())
     }
 }
 
 fn spawn_terminal_control_writer(
-    context: &LiveContext,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
     pane_id: &str,
     generation: u64,
-    mut stdin: ChildStdin,
-) -> Result<Sender<String>, String> {
-    let (sender, receiver) = channel::<String>();
+    mut stdin: Box<dyn Write + Send>,
+) -> Result<Sender<TerminalWriterCommand>, String> {
+    let (sender, receiver) = channel::<TerminalWriterCommand>();
     let writer_pane = pane_id.to_owned();
-    let runtime = context.runtime.clone();
-    let notifier = context.notifier.clone();
     thread::Builder::new()
         .name(format!("herdr-core-terminal-writer-{writer_pane}"))
         .spawn(move || {
-            for line in receiver {
-                if let Err(error) = stdin
+            for command in receiver {
+                let (line, release_acknowledgement, is_release) = match command {
+                    TerminalWriterCommand::Line(line) => (line, None, false),
+                    TerminalWriterCommand::Release { line, acknowledged } => {
+                        (line, Some(acknowledged), true)
+                    }
+                };
+                let result = stdin
                     .write_all(line.as_bytes())
-                    .and_then(|()| stdin.flush())
-                {
+                    .and_then(|()| stdin.flush());
+                if let Some(acknowledgement) = release_acknowledgement {
+                    let _ = acknowledgement.send(());
+                }
+                if let Err(error) = result {
                     deliver_terminal_session_write_failure(
                         &runtime,
                         &notifier,
@@ -1144,6 +1311,9 @@ fn spawn_terminal_control_writer(
                         generation,
                         format!("terminal control write failed: {error}"),
                     );
+                    return;
+                }
+                if is_release {
                     return;
                 }
             }
@@ -1154,55 +1324,42 @@ fn spawn_terminal_control_writer(
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
-        if let Some(writer) = self.writer.take() {
-            let _ = writer.send(terminal_release_line());
-        }
-        let Some(mut child) = self.child.take() else {
+        let release_acknowledgement = self.writer.take().and_then(|writer| {
+            let (acknowledged, acknowledgement) = channel();
+            writer
+                .send(TerminalWriterCommand::Release {
+                    line: terminal_release_line(),
+                    acknowledged,
+                })
+                .ok()
+                .map(|()| acknowledgement)
+        });
+        let Some(cleanup) = self.cleanup.take() else {
             return;
         };
         let pane_id = self.pane_id.clone();
         if let Err(error) = thread::Builder::new()
             .name(format!("herdr-core-terminal-reaper-{pane_id}"))
             .spawn(move || {
-                for _ in 0..20 {
-                    match child.try_wait() {
-                        Ok(Some(_)) => return,
-                        Ok(None) => thread::sleep(Duration::from_millis(10)),
-                        Err(error) => {
-                            eprintln!(
-                                "{}",
-                                json!({
-                                    "component": "terminal_session",
-                                    "kind": "terminal.session_status_failed",
-                                    "pane_id": pane_id,
-                                    "message": error.to_string(),
-                                })
-                            );
-                            break;
-                        }
+                if let Some(acknowledgement) = release_acknowledgement
+                    && acknowledgement
+                        .recv_timeout(Duration::from_secs(1))
+                        .is_err()
+                {
+                    eprintln!(
+                        "{}",
+                        json!({
+                            "component": "terminal_session",
+                            "kind": "terminal.release_unacknowledged",
+                            "pane_id": pane_id,
+                        })
+                    );
+                }
+                match cleanup {
+                    TerminalSessionCleanup::Local(mut child) => {
+                        reap_local_terminal_child(&mut child, &pane_id)
                     }
-                }
-                if let Err(error) = child.kill() {
-                    eprintln!(
-                        "{}",
-                        json!({
-                            "component": "terminal_session",
-                            "kind": "terminal.session_kill_failed",
-                            "pane_id": pane_id,
-                            "message": error.to_string(),
-                        })
-                    );
-                }
-                if let Err(error) = child.wait() {
-                    eprintln!(
-                        "{}",
-                        json!({
-                            "component": "terminal_session",
-                            "kind": "terminal.session_wait_failed",
-                            "pane_id": pane_id,
-                            "message": error.to_string(),
-                        })
-                    );
+                    TerminalSessionCleanup::Remote(shutdown) => shutdown(),
                 }
             })
         {
@@ -1218,8 +1375,51 @@ impl Drop for TerminalSession {
     }
 }
 
+fn reap_local_terminal_child(child: &mut Child, pane_id: &str) {
+    for _ in 0..20 {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "component": "terminal_session",
+                        "kind": "terminal.session_status_failed",
+                        "pane_id": pane_id,
+                        "message": error.to_string(),
+                    })
+                );
+                break;
+            }
+        }
+    }
+    if let Err(error) = child.kill() {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "terminal_session",
+                "kind": "terminal.session_kill_failed",
+                "pane_id": pane_id,
+                "message": error.to_string(),
+            })
+        );
+    }
+    if let Err(error) = child.wait() {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "terminal_session",
+                "kind": "terminal.session_wait_failed",
+                "pane_id": pane_id,
+                "message": error.to_string(),
+            })
+        );
+    }
+}
+
 pub fn spawn_terminal_session(
-    context: LiveContext,
+    context: TerminalSessionContext,
     pane_id: String,
     generation: u64,
     mode: TerminalSessionMode,
@@ -1235,18 +1435,26 @@ pub fn spawn_terminal_session(
             let started = Instant::now();
             let result = TerminalSession::spawn(&context, &pane_id, generation, mode, rows, cols);
             let elapsed_ms = started.elapsed().as_millis();
-            let Some(runtime) = context.runtime.upgrade() else {
+            let worker_runtime = context.runtime().clone();
+            let notifier = context.notifier().clone();
+            let Some(runtime) = worker_runtime.upgrade() else {
                 return;
             };
             let changed = match runtime.lock() {
                 Ok(mut guard) => guard.ingest_terminal_session_spawn(
-                    generation, &pane_id, mode, result, elapsed_ms, &context,
+                    generation,
+                    &pane_id,
+                    mode,
+                    result,
+                    elapsed_ms,
+                    worker_runtime,
+                    notifier.clone(),
                 ),
                 Err(_) => return,
             };
             drop(runtime);
             if changed {
-                context.notifier.notify();
+                notifier.notify();
             }
         })
         .map(|_| ())

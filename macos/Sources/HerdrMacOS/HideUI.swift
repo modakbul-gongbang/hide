@@ -1334,23 +1334,13 @@ private struct HideTerminalSurface: View {
                             onFocus: { model.focusPane(pane.id) },
                             onReconnect: { model.reconnectPane(pane.id) }
                         ) {
-                            if model.isRemoteContext {
-                                RemoteTerminalHost(
-                                    remote: model.remote,
-                                    sshAlias: model.remote.sshAlias,
-                                    paneID: pane.id,
-                                    onFocus: { model.focusPane(pane.id) },
-                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
-                                )
-                                .accessibilityLabel("Remote SwiftTerm terminal for \(pane.id)")
-                            } else {
-                                TerminalHost(
-                                    bridge: model.core,
-                                    paneID: pane.id,
-                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
-                                )
-                                    .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
-                            }
+                            TerminalHost(
+                                bridge: model.core,
+                                paneID: pane.id,
+                                onFocus: { model.focusPane(pane.id) },
+                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                            )
+                            .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
                         }
                     } else {
                         MissingTerminalPaneCell(paneID: item.paneID)

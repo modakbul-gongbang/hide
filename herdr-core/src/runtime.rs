@@ -10,8 +10,8 @@ use serde_json::Value;
 use crate::ffi::ChangeNotifier;
 use crate::live::{
     LiveContext, PaneControlAction, PaneControlOutcome, PaneResizeDirection, PaneSplitDirection,
-    RemoteControlAction, RemoteControlContext, RemoteControlOutcome, SessionFetchError,
-    TerminalSession, TerminalSessionMode,
+    RemoteControlAction, RemoteControlContext, RemoteControlOutcome, RemoteTerminalContext,
+    SessionFetchError, TerminalSession, TerminalSessionContext, TerminalSessionMode,
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
@@ -252,6 +252,44 @@ fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&
         .filter(|pane_id| !pane_id.trim().is_empty())
 }
 
+fn remote_terminal_pane_sets(
+    session: &RemoteSessionSnapshot,
+    target_is_active: bool,
+) -> (HashSet<String>, HashSet<String>) {
+    let live_pane_ids = session
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .map(|pane| pane.id.clone())
+        .collect::<HashSet<_>>();
+    if !target_is_active {
+        return (live_pane_ids, HashSet::new());
+    }
+    let active_tab_id = session.focused_tab_id.as_deref().or_else(|| {
+        session
+            .focused_workspace_id
+            .as_deref()
+            .and_then(|workspace_id| session.active_tab_ids.get(workspace_id))
+            .map(String::as_str)
+    });
+    let active_tab = active_tab_id.and_then(|tab_id| {
+        session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .find(|tab| tab.id.as_deref() == Some(tab_id))
+    });
+    let active_pane_ids = active_tab
+        .into_iter()
+        .flat_map(|tab| tab.panes.iter())
+        .map(|pane| pane.id.clone())
+        .collect();
+    (live_pane_ids, active_pane_ids)
+}
+
 fn remote_tab_creation_key(
     target_id: &str,
     action: &RemoteControlAction,
@@ -452,6 +490,7 @@ pub struct Runtime {
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
+    remote_terminals: HashMap<String, RemoteTerminalContext>,
     remote_control_requests: VecDeque<(String, String)>,
     remote_tab_creations_in_flight: HashSet<(String, String, String, String)>,
     terminal_sessions: HashMap<String, TerminalSession>,
@@ -566,6 +605,7 @@ impl Runtime {
             remote_targets,
             live: None,
             remote_controls: HashMap::new(),
+            remote_terminals: HashMap::new(),
             remote_control_requests: VecDeque::new(),
             remote_tab_creations_in_flight: HashSet::new(),
             terminal_sessions: HashMap::new(),
@@ -713,6 +753,11 @@ impl Runtime {
 
     pub fn install_remote_control(&mut self, context: RemoteControlContext) {
         self.remote_controls
+            .insert(context.target_id().to_owned(), context);
+    }
+
+    pub fn install_remote_terminal(&mut self, context: RemoteTerminalContext) {
+        self.remote_terminals
             .insert(context.target_id().to_owned(), context);
     }
 
@@ -1316,6 +1361,12 @@ impl Runtime {
         target_id: &str,
         fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
     ) -> bool {
+        let pane_sets = fetched.as_ref().ok().map(|session| {
+            remote_terminal_pane_sets(
+                session,
+                self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
+            )
+        });
         let Some(status) = self
             .snapshot
             .status
@@ -1380,7 +1431,117 @@ impl Runtime {
                 changed = true;
             }
         }
+        if let Some((live_pane_ids, active_pane_ids)) = pane_sets {
+            changed |=
+                self.reconcile_remote_terminal_panes(target_id, &live_pane_ids, &active_pane_ids);
+        }
         changed
+    }
+
+    fn reconcile_remote_terminal_panes(
+        &mut self,
+        target_id: &str,
+        live_pane_ids: &HashSet<String>,
+        active_pane_ids: &HashSet<String>,
+    ) -> bool {
+        let target_prefix = format!("remote:{target_id}:pane:");
+        let belongs_to_target = |pane_id: &str| pane_id.starts_with(&target_prefix);
+        let projected_pane_ids = self
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .filter(|pane| belongs_to_target(&pane.pane_id))
+            .map(|pane| pane.pane_id.clone())
+            .collect::<HashSet<_>>();
+        let mut changed = &projected_pane_ids != live_pane_ids;
+        let before_map_entries = self.terminal_sessions.len()
+            + self.terminal_session_generations.len()
+            + self.terminal_session_lifecycles.len()
+            + self.terminal_sizes.len();
+        self.terminal_sessions
+            .retain(|pane_id, _| !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id));
+        self.terminal_session_generations
+            .retain(|pane_id, _| !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id));
+        self.terminal_session_lifecycles
+            .retain(|pane_id, _| !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id));
+        self.terminal_sizes
+            .retain(|pane_id, _| !belongs_to_target(pane_id) || live_pane_ids.contains(pane_id));
+        let after_map_entries = self.terminal_sessions.len()
+            + self.terminal_session_generations.len()
+            + self.terminal_session_lifecycles.len()
+            + self.terminal_sizes.len();
+        changed |= before_map_entries != after_map_entries;
+
+        self.snapshot.terminal.panes.retain(|pane| {
+            !belongs_to_target(&pane.pane_id) || live_pane_ids.contains(&pane.pane_id)
+        });
+        let mut pane_ids = live_pane_ids.iter().cloned().collect::<Vec<_>>();
+        pane_ids.sort();
+        for pane_id in &pane_ids {
+            self.ensure_terminal_pane(pane_id);
+        }
+        let idle_lifecycle = TerminalSessionLifecycle::default();
+        for pane in self.snapshot.terminal.panes.iter_mut().filter(|pane| {
+            belongs_to_target(&pane.pane_id) && !active_pane_ids.contains(&pane.pane_id)
+        }) {
+            let idle = TerminalPaneSnapshot {
+                pane_id: pane.pane_id.clone(),
+                closed: false,
+                exit_code: None,
+                transport_state: idle_lifecycle.state.to_owned(),
+                transport_message: None,
+                transport_generation: 0,
+                transport_attempt: 0,
+                transport_exit_category: None,
+                transport_retry_decision: idle_lifecycle.retry_decision.to_owned(),
+            };
+            if *pane != idle {
+                *pane = idle;
+                changed = true;
+            }
+        }
+        let mut active_pane_ids = active_pane_ids.iter().cloned().collect::<Vec<_>>();
+        active_pane_ids.sort();
+        for pane_id in active_pane_ids {
+            let current = self
+                .terminal_session_lifecycles
+                .get(&pane_id)
+                .cloned()
+                .unwrap_or_default();
+            changed |= terminal_control_request_allowed(
+                current.state,
+                self.terminal_sessions.contains_key(&pane_id),
+            );
+            self.request_terminal_control(&pane_id);
+        }
+        changed
+    }
+
+    fn reconcile_remote_terminal_selection(&mut self) -> bool {
+        let focused_device_id = self.snapshot.navigator.focused_device_id.clone();
+        let sessions = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .filter_map(|status| {
+                status
+                    .session
+                    .clone()
+                    .map(|session| (status.target_id.clone(), session))
+            })
+            .collect::<Vec<_>>();
+        sessions
+            .into_iter()
+            .fold(false, |changed, (target_id, session)| {
+                let (live_pane_ids, active_pane_ids) = remote_terminal_pane_sets(
+                    &session,
+                    focused_device_id.as_deref() == Some(target_id.as_str()),
+                );
+                self.reconcile_remote_terminal_panes(&target_id, &live_pane_ids, &active_pane_ids)
+                    | changed
+            })
     }
 
     /// Reconciles the pane and checkout ids loaded from disk against the first
@@ -1450,14 +1611,14 @@ impl Runtime {
                 .collect::<HashSet<_>>()
         });
         if let Some(live_pane_ids) = live_pane_ids.as_ref() {
-            self.terminal_sessions
-                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+            let keep =
+                |pane_id: &str| pane_id.starts_with("remote:") || live_pane_ids.contains(pane_id);
+            self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
             self.terminal_session_generations
-                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+                .retain(|pane_id, _| keep(pane_id));
             self.terminal_session_lifecycles
-                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
-            self.terminal_sizes
-                .retain(|pane_id, _| live_pane_ids.contains(pane_id));
+                .retain(|pane_id, _| keep(pane_id));
+            self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
         }
         let mut excluded = Vec::new();
         let catalog_changed = fetched
@@ -1759,7 +1920,7 @@ impl Runtime {
             .drain(..)
             .map(|pane| (pane.pane_id.clone(), pane))
             .collect::<HashMap<_, _>>();
-        self.snapshot.terminal.panes = pane_ids
+        let mut terminal_panes = pane_ids
             .iter()
             .map(|pane_id| {
                 previous
@@ -1767,7 +1928,14 @@ impl Runtime {
                     .cloned()
                     .unwrap_or_else(|| self.terminal_pane_snapshot(pane_id))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let mut remote_panes = previous
+            .into_values()
+            .filter(|pane| pane.pane_id.starts_with("remote:"))
+            .collect::<Vec<_>>();
+        remote_panes.sort_by(|left, right| left.pane_id.cmp(&right.pane_id));
+        terminal_panes.extend(remote_panes);
+        self.snapshot.terminal.panes = terminal_panes;
 
         // Herdr owns focus and input routing. The shell never keeps a second,
         // hover- or click-local focus value alongside the authoritative layout.
@@ -2466,6 +2634,7 @@ impl Runtime {
             );
         }
         self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+        self.reconcile_remote_terminal_selection();
         if let Some(checkout_id) = self
             .snapshot
             .navigator
@@ -2553,7 +2722,11 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
-                if self.live.is_some() {
+                if self.live.is_some()
+                    || self.remote_terminals.keys().any(|target_id| {
+                        remote_pane_source_id(target_id, &payload.pane_id).is_some()
+                    })
+                {
                     self.write_terminal_control(&payload.pane_id, &payload.bytes_base64);
                 } else {
                     // Fixture mode has no PTY behind the pane; the loopback
@@ -2780,6 +2953,7 @@ impl Runtime {
                 self.rebuild_catalog();
                 self.snapshot.navigator.focused_device_id =
                     Some(workspace::LOCAL_DEVICE_ID.to_owned());
+                self.reconcile_remote_terminal_selection();
                 if let Some(checkout_id) = self
                     .snapshot
                     .navigator
@@ -2933,6 +3107,7 @@ impl Runtime {
                     return true;
                 }
                 self.snapshot.navigator.focused_device_id = Some(payload.device_id);
+                self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
                 true
             }
@@ -3402,6 +3577,7 @@ impl Runtime {
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(
                     &mut self.snapshot.navigator.workspaces,
                     &self.snapshot.ui_state.collapsed_workspace_ids,
@@ -3506,11 +3682,41 @@ impl Runtime {
             self.sync_transport_projection(pane_id);
             return;
         }
-        let context = self
-            .live
-            .as_ref()
-            .cloned()
-            .expect("terminal sessions are only requested with live configured");
+        let context = if pane_id.starts_with("remote:") {
+            self.remote_terminals
+                .iter()
+                .find_map(|(target_id, context)| {
+                    remote_pane_source_id(target_id, pane_id).map(|source_pane_id| {
+                        TerminalSessionContext::Remote {
+                            context: context.clone(),
+                            source_pane_id: source_pane_id.to_owned(),
+                        }
+                    })
+                })
+        } else {
+            self.live
+                .as_ref()
+                .cloned()
+                .map(TerminalSessionContext::Local)
+        };
+        let Some(context) = context else {
+            let message = if pane_id.starts_with("remote:") {
+                format!("Pane {pane_id} has no configured remote terminal transport")
+            } else {
+                "Local terminal sessions require a live Herdr connection".to_owned()
+            };
+            self.record_terminal_session_failure(
+                pane_id,
+                generation,
+                attempt,
+                mode,
+                "transport_unavailable",
+                &message,
+                0,
+            );
+            self.set_error("terminal.transport_unavailable", message, true);
+            return;
+        };
         if let Err(message) = live::spawn_terminal_session(
             context,
             pane_id.to_owned(),
@@ -3583,7 +3789,8 @@ impl Runtime {
         mode: TerminalSessionMode,
         result: Result<TerminalSession, String>,
         elapsed_ms: u128,
-        context: &LiveContext,
+        worker_runtime: Weak<Mutex<Runtime>>,
+        notifier: crate::ffi::ChangeNotifier,
     ) -> bool {
         if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
@@ -3595,7 +3802,8 @@ impl Runtime {
         {
             return false;
         }
-        if let Some(layout) = self.snapshot.pane_layout.as_ref()
+        if !pane_id.starts_with("remote:")
+            && let Some(layout) = self.snapshot.pane_layout.as_ref()
             && !layout.pane_ids().contains(&pane_id)
         {
             return false;
@@ -3607,7 +3815,7 @@ impl Runtime {
                     .terminal_sessions
                     .get_mut(pane_id)
                     .expect("terminal session was just inserted")
-                    .start_reader(context.runtime.clone(), context.notifier.clone());
+                    .start_reader(worker_runtime, notifier);
                 if let Err(message) = reader_result {
                     let _failed_session = self.terminal_sessions.remove(pane_id);
                     let attempt = self
@@ -3947,7 +4155,7 @@ mod tests {
     use super::*;
     use crate::live::SessionFetchError;
     use crate::model::{
-        CheckoutSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot,
+        CheckoutSnapshot, DeviceSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot,
         RemoteSessionSnapshot, RemoteStatusSnapshot, TabSnapshot, TerminalPaneSnapshot,
         WorkspaceRegistration, WorkspaceSnapshot,
     };
@@ -4119,6 +4327,172 @@ mod tests {
             .expect("duplicate outcome is visible to the caller");
         assert_eq!(diagnostic.kind, "remote.control.duplicate_tab_ignored");
         assert!(runtime.snapshot.status.last_error.is_none());
+    }
+
+    #[test]
+    fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        runtime.snapshot.navigator.devices.push(DeviceSnapshot {
+            id: "mini".to_owned(),
+            label: "Mac mini".to_owned(),
+            kind: "remote".to_owned(),
+            state: "available".to_owned(),
+            ssh_alias: Some("mini".to_owned()),
+            agent_count: 0,
+        });
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: "mini".to_owned(),
+            state: "not_connected".to_owned(),
+            message: None,
+            last_checked_at_unix_ms: None,
+            session: None,
+        });
+        runtime.snapshot.terminal.panes.push(TerminalPaneSnapshot {
+            pane_id: "w-local:p1".to_owned(),
+            ..TerminalPaneSnapshot::default()
+        });
+        let pane_id = "remote:mini:pane:w9:p1";
+        let inactive_pane_id = "remote:mini:pane:w9:p2";
+        let workspace_id = "remote:mini:workspace:w9";
+        let checkout_id = "remote:mini:checkout:w9";
+        let active_tab_id = "remote:mini:tab:w9:t1";
+        let inactive_tab_id = "remote:mini:tab:w9:t2";
+        let mut remote_checkout = checkout(
+            workspace_id,
+            checkout_id,
+            "/tmp/herdr-remote-terminal",
+            Some(pane(pane_id, "/tmp/herdr-remote-terminal")),
+        );
+        remote_checkout.tabs[0].id = Some(active_tab_id.to_owned());
+        remote_checkout.tabs.push(TabSnapshot {
+            id: Some(inactive_tab_id.to_owned()),
+            workspace_id: Some(workspace_id.to_owned()),
+            checkout_id: Some(checkout_id.to_owned()),
+            label: Some("Inactive".to_owned()),
+            empty: false,
+            panes: vec![pane(inactive_pane_id, "/tmp/herdr-remote-terminal")],
+        });
+        let mut remote_workspace = workspace(
+            workspace_id,
+            "Remote fixture",
+            "/tmp/herdr-remote-terminal",
+            vec![remote_checkout],
+        );
+        remote_workspace.remote_target_id = Some("mini".to_owned());
+        remote_workspace.device_id = "mini".to_owned();
+        let session = RemoteSessionSnapshot {
+            workspaces: vec![remote_workspace],
+            agents: Vec::new(),
+            active_tab_ids: [(workspace_id.to_owned(), active_tab_id.to_owned())]
+                .into_iter()
+                .collect(),
+            focused_workspace_id: Some(workspace_id.to_owned()),
+            focused_checkout_id: Some(checkout_id.to_owned()),
+            focused_tab_id: Some(active_tab_id.to_owned()),
+            focused_pane_id: Some(pane_id.to_owned()),
+            pane_layouts: Vec::new(),
+        };
+
+        assert!(runtime.ingest_remote_session("mini", Ok(session.clone())));
+        assert!(runtime.terminal_sessions.is_empty());
+        assert!(
+            runtime
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .filter(|pane| pane.pane_id.starts_with("remote:mini:pane:"))
+                .all(|pane| pane.transport_state == "idle")
+        );
+
+        let focus_remote = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_device",
+            "payload": {"device_id": "mini"}
+        }))
+        .expect("focus remote event");
+        assert!(runtime.dispatch_json(&focus_remote));
+        assert_eq!(
+            runtime.terminal_sessions[pane_id].mode,
+            TerminalSessionMode::Control
+        );
+        assert_eq!(
+            runtime.terminal_session_lifecycles[pane_id].state,
+            "controlling"
+        );
+        assert!(
+            runtime
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == pane_id)
+        );
+        assert!(!runtime.terminal_sessions.contains_key(inactive_pane_id));
+        assert_eq!(
+            runtime
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == inactive_pane_id)
+                .expect("inactive pane remains projected")
+                .transport_state,
+            "idle"
+        );
+        assert!(!runtime.ingest_remote_session("mini", Ok(session)));
+
+        let focus_local = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_device",
+            "payload": {"device_id": "local"}
+        }))
+        .expect("focus local event");
+        assert!(runtime.dispatch_json(&focus_local));
+        assert!(runtime.terminal_sessions.is_empty());
+        assert_eq!(
+            runtime
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == pane_id)
+                .expect("inactive target pane remains projected")
+                .transport_state,
+            "idle"
+        );
+
+        assert!(runtime.ingest_remote_session(
+            "mini",
+            Ok(RemoteSessionSnapshot {
+                workspaces: Vec::new(),
+                agents: Vec::new(),
+                active_tab_ids: Default::default(),
+                focused_workspace_id: None,
+                focused_checkout_id: None,
+                focused_tab_id: None,
+                focused_pane_id: None,
+                pane_layouts: Vec::new(),
+            })
+        ));
+        assert!(!runtime.terminal_sessions.contains_key(pane_id));
+        assert!(
+            runtime
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == "w-local:p1")
+        );
+        assert!(
+            runtime
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .all(|pane| pane.pane_id != pane_id)
+        );
     }
 
     #[test]

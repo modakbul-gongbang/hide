@@ -596,7 +596,6 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var navigation: RemoteNavigationSnapshot?
     @Published private(set) var files: [RemoteFileNode] = []
     @Published private(set) var fileError: String?
-    @Published private(set) var attachError: String?
     @Published private(set) var checkedAt = "never"
     @Published private(set) var targetLabel = "mini"
     private(set) var sshAlias = "mini"
@@ -606,7 +605,7 @@ final class RemoteRuntimeModel: ObservableObject {
     private var loadedFilePath: String?
 
     var statusMessage: String {
-        attachError ?? message
+        message
     }
 
     func refreshMini() {
@@ -621,7 +620,6 @@ final class RemoteRuntimeModel: ObservableObject {
         workspaces = []
         files = []
         fileError = nil
-        attachError = nil
         loadedFilePath = nil
         phase = .idle
         message = "Remote mini has not been checked yet."
@@ -639,7 +637,6 @@ final class RemoteRuntimeModel: ObservableObject {
         refreshGeneration = UUID()
         activeTargetID = targetID
         fileError = nil
-        attachError = nil
         targetLabel = label
         self.sshAlias = sshAlias
         if let status = statusesByTarget[targetID] {
@@ -760,12 +757,6 @@ final class RemoteRuntimeModel: ObservableObject {
         }
     }
 
-    func recordAttachFailure(paneID: String, exitCode: Int32?) {
-        let suffix = exitCode.map { " (exit \($0))" } ?? ""
-        attachError = "Remote terminal initialization failed for \(paneID)\(suffix). Check the SSH PTY/TERM and remote Herdr session, then retry."
-        log(kind: "remote.terminal_attach_failed")
-    }
-
     private func remoteFailure(_ result: ProcessReceipt, label: String) -> String {
         let detail = String(decoding: result.stderr, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -811,16 +802,6 @@ enum RemoteShellCommand {
         "zsh -ilc \(quote(command))"
     }
 
-    /// Keep remote Herdr diagnostics out of the terminal surface.
-    ///
-    /// A pane attach failure can include a Rust panic when the remote shell
-    /// has no usable PTY or TERM. The failure remains observable through the
-    /// exit code and the normalized sentence below, without leaking an
-    /// implementation traceback into the product UI.
-    static func attach(paneID: String) -> String {
-        let command = "herdr pane attach \(quote(paneID)) 2>/dev/null; status=$?; if [ \"$status\" -ne 0 ]; then printf '\\r\\nHide: remote terminal initialization failed on mini (exit %s). Check SSH PTY/TERM and the remote Herdr session, then retry.\\r\\n' \"$status\"; exit \"$status\"; fi"
-        return command
-    }
 }
 
 enum DestructiveTargetKind: String, Sendable {
