@@ -1512,7 +1512,11 @@ private struct HideStatusBar: View {
                 .frame(width: 6, height: 6)
             Text(model.isRemoteContext
                 ? model.remote.statusMessage
-                : (model.core.bridgeError ?? model.core.snapshot?.status.herdr.message ?? "Waiting for Herdr"))
+                : HerdrStatusPresentation.localMessage(
+                    bridgeError: model.core.bridgeError,
+                    state: model.core.snapshot?.status.herdr.state,
+                    providerMessage: model.core.snapshot?.status.herdr.message
+                ))
                 .lineLimit(1)
             Spacer()
             Text("\(model.agents.count) agents")

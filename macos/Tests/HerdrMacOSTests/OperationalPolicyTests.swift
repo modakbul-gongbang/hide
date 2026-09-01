@@ -196,6 +196,29 @@ import Testing
     #expect(CheckoutSelectionPolicy.action(for: checkout) == .focusExisting)
 }
 
+@Test func connectedHerdrStatusDoesNotLookLikeItIsStillWaiting() {
+    #expect(HerdrStatusPresentation.localMessage(
+        bridgeError: nil,
+        state: "connected",
+        providerMessage: nil
+    ) == "Connected to Herdr")
+    #expect(HerdrStatusPresentation.localMessage(
+        bridgeError: nil,
+        state: "not_connected",
+        providerMessage: nil
+    ) == "Waiting for Herdr")
+    #expect(HerdrStatusPresentation.localMessage(
+        bridgeError: "Bridge failed",
+        state: "connected",
+        providerMessage: "Provider failed"
+    ) == "Bridge failed")
+    #expect(HerdrStatusPresentation.localMessage(
+        bridgeError: nil,
+        state: "stale",
+        providerMessage: "Provider failed"
+    ) == "Provider failed")
+}
+
 @Test func terminalLayoutMustBelongToTheFocusedCheckoutBeforeRendering() {
     let checkout = CoreCheckoutSnapshot(
         id: "checkout-b",

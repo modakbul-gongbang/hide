@@ -78,6 +78,22 @@ enum TerminalLayoutPolicy {
     }
 }
 
+enum HerdrStatusPresentation {
+    static func localMessage(
+        bridgeError: String?,
+        state: String?,
+        providerMessage: String?
+    ) -> String {
+        if let bridgeError {
+            return bridgeError
+        }
+        if let providerMessage {
+            return providerMessage
+        }
+        return state == "connected" ? "Connected to Herdr" : "Waiting for Herdr"
+    }
+}
+
 @MainActor
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
