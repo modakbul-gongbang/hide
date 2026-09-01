@@ -3131,6 +3131,7 @@ impl Runtime {
         result: Result<TerminalSession, String>,
         elapsed_ms: u128,
         context: &LiveContext,
+        backfill: Option<Vec<u8>>,
     ) -> bool {
         if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
@@ -3149,6 +3150,12 @@ impl Runtime {
         }
         match result {
             Ok(session) => {
+                // After the grid reset above and before the first frame: the
+                // rows Herdr kept from this pane's host PTY, which the attach
+                // stream itself never carries.
+                if let Some(bytes) = backfill {
+                    self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(&bytes));
+                }
                 self.terminal_sessions.insert(pane_id.to_owned(), session);
                 let reader_result = self
                     .terminal_sessions
