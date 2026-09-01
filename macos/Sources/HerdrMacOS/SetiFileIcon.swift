@@ -71,7 +71,7 @@ enum SetiFileIconCatalog {
 enum SetiIconFont {
     static let postScriptName = "seti"
     static var resourceURL: URL? {
-        Bundle.module.url(forResource: "seti-subset", withExtension: "woff")
+        PackagedResourceBundle.app?.url(forResource: "seti-subset", withExtension: "woff")
     }
 
     static let isAvailable: Bool = {

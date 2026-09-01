@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Highlightr
 import Testing
 @testable import HerdrMacOS
 
@@ -27,7 +28,7 @@ struct WorkbenchPresentationTests {
         #expect(sourceEntries.map(\.url.lastPathComponent) == ["Nested.swift"])
     }
 
-    @Test func setiCatalogCoversRepositoryFormatsAndHasOneGenericFallback() {
+    @Test @MainActor func setiCatalogCoversRepositoryFormatsAndHasOneGenericFallback() {
         let cases: [(String, String)] = [
             ("Package.swift", "\u{E092}"),
             ("lib.rs", "\u{E082}"),
@@ -46,6 +47,18 @@ struct WorkbenchPresentationTests {
         #expect(SetiFileIconCatalog.icon(fileName: "unrecognised.hide").fallbackSystemImage == "doc")
         let bundledFontBytes = SetiIconFont.resourceURL.flatMap { try? Data(contentsOf: $0).count }
         #expect(bundledFontBytes == 5_976)
+        #expect(AgentMark.image(for: "codex") != nil)
+        let highlighter = Highlightr()
+        #expect(highlighter != nil)
+        #expect(highlighter?.setTheme(to: "atom-one-dark") == true)
+
+        let plainTextFallback = HighlightedCodeEditor.makeTextStorage(
+            language: "swift",
+            highlightr: nil
+        )
+        #expect(!(plainTextFallback is CodeAttributedString))
+        plainTextFallback.replaceCharacters(in: NSRange(location: 0, length: 0), with: "let value = 1")
+        #expect(plainTextFallback.string == "let value = 1")
 
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

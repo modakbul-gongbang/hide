@@ -16,7 +16,7 @@ enum AgentMark {
         if let cached = cache.object(forKey: name as NSString) {
             return cached
         }
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
+        guard let url = PackagedResourceBundle.app?.url(forResource: name, withExtension: "png"),
               let image = NSImage(contentsOf: url)
         else {
             return nil

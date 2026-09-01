@@ -12,9 +12,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let storage = CodeAttributedString()
-        storage.language = language
-        _ = storage.highlightr.setTheme(to: "atom-one-dark")
+        let storage = Self.makeTextStorage(language: language)
 
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
@@ -43,6 +41,32 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
         return scrollView
+    }
+
+    static func makeTextStorage(
+        language: String?,
+        highlightr: Highlightr? = Highlightr()
+    ) -> NSTextStorage {
+        guard let highlightr else {
+            let payload = [
+                "component": "code_editor",
+                "fallback": "plain_text",
+                "kind": "syntax_highlighter.unavailable",
+                "message": "Highlightr resources are unavailable; syntax highlighting was disabled",
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: payload),
+               var line = String(data: data, encoding: .utf8)
+            {
+                line.append("\n")
+                FileHandle.standardError.write(Data(line.utf8))
+            }
+            return NSTextStorage()
+        }
+
+        let storage = CodeAttributedString(highlightr: highlightr)
+        storage.language = language
+        _ = highlightr.setTheme(to: "atom-one-dark")
+        return storage
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {

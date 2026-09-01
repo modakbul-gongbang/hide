@@ -52,6 +52,7 @@ swift build --package-path "$macos_root" --disable-keychain --disable-sandbox \
     -Xswiftc -D \
     -Xswiftc "HERDR_CORE_${rust_archive_hash}"
 
+rm -rf -- "$app_root"
 mkdir -p "$app_root/Contents/MacOS" "$app_root/Contents/Resources"
 install -m 755 \
     "$macos_root/.build/arm64-apple-macosx/debug/HerdrMacOS" \

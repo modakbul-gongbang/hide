@@ -12,10 +12,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "Vendor/SwiftTerm"),
-        .package(
-            url: "https://github.com/raspu/Highlightr.git",
-            exact: "2.3.0"
-        ),
+        .package(path: "Vendor/Highlightr"),
         .package(
             url: "https://github.com/gonzalezreal/swift-markdown-ui.git",
             exact: "2.4.1"
@@ -51,6 +48,7 @@ let package = Package(
             dependencies: [
                 "HerdrMacOS",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
+                .product(name: "Highlightr", package: "Highlightr"),
             ],
             path: "Tests/HerdrMacOSTests"
         ),
