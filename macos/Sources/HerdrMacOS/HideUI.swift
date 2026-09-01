@@ -24,6 +24,7 @@ enum HideTheme {
     static let spacingLG: CGFloat = 16
     static let spacingXL: CGFloat = 24
 
+    static let radiusExtraSmall: CGFloat = 4
     static let radiusSmall: CGFloat = 6
     static let radiusMedium: CGFloat = 8
     static let radiusLarge: CGFloat = 10
@@ -558,14 +559,15 @@ private struct SidebarUtilityBar: View {
         devices.first(where: { $0.id == model.selectedDeviceID }) ?? devices.first
     }
 
-    private var highestUsage: Double? {
-        usages.compactMap(\.usedPercent).max()
+    private func availablePercent(for usage: CoreProviderUsageSnapshot) -> Double? {
+        guard usage.state == "available" else { return nil }
+        return usage.usedPercent
     }
 
-    private var usageColor: Color {
-        guard let highestUsage else { return HideTheme.muted }
-        if highestUsage >= 90 { return HideTheme.danger }
-        if highestUsage >= 70 { return HideTheme.warning }
+    private func usageColor(for usage: CoreProviderUsageSnapshot) -> Color {
+        guard let percent = availablePercent(for: usage) else { return HideTheme.muted }
+        if percent >= 90 { return HideTheme.danger }
+        if percent >= 70 { return HideTheme.warning }
         return HideTheme.success
     }
 
@@ -616,17 +618,28 @@ private struct SidebarUtilityBar: View {
             Button {
                 showingUsage.toggle()
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "gauge.with.dots.needle.33percent")
-                    if let highestUsage {
-                        Text("\(Int(highestUsage.rounded()))%")
-                            .hideFont(size: 9, weight: .semibold, design: .monospaced)
+                HStack(spacing: HideTheme.spacingXS) {
+                    ForEach(usages) { usage in
+                        HStack(spacing: HideTheme.spacingXXS) {
+                            HideProviderMark(
+                                usage: usage,
+                                isMuted: availablePercent(for: usage) == nil
+                            )
+                            if let percent = availablePercent(for: usage) {
+                                Text("\(Int(percent.rounded()))%")
+                                    .hideFont(size: 9, weight: .semibold, design: .monospaced)
+                            }
+                        }
+                        .foregroundStyle(usageColor(for: usage))
+                        .padding(.horizontal, HideTheme.spacingXS)
+                        .frame(minHeight: 30)
+                        .background(
+                            HideTheme.elevated,
+                            in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                        )
                     }
                 }
-                .hideFont(size: 10, weight: .medium)
-                .foregroundStyle(usageColor)
                 .frame(minWidth: 30, minHeight: 30)
-                .padding(.horizontal, highestUsage == nil ? 0 : 4)
             }
             .buttonStyle(.plain)
             .help("Weekly provider usage")
@@ -660,6 +673,34 @@ private struct SidebarUtilityBar: View {
         device.state == "ready" || device.state == "available"
             ? HideTheme.success
             : HideTheme.warning
+    }
+}
+
+private struct HideProviderMark: View {
+    let usage: CoreProviderUsageSnapshot
+    let isMuted: Bool
+
+    var body: some View {
+        Group {
+            if let mark = AgentMark.image(for: usage.provider) {
+                Image(nsImage: mark)
+                    .renderingMode(isMuted ? .template : .original)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(HideTheme.muted)
+                    .padding(HideTheme.spacingXXS)
+            } else {
+                Text(usage.label.prefix(1))
+                    .hideFont(size: 9, weight: .bold, design: .rounded)
+                    .foregroundStyle(isMuted ? HideTheme.muted : HideTheme.secondary)
+            }
+        }
+        .frame(width: HideTheme.spacingLG, height: HideTheme.spacingLG)
+        .background(
+            HideTheme.elevated,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
+        )
     }
 }
 
@@ -733,21 +774,7 @@ private struct HideWeeklyUsageRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
-                Group {
-                    if let mark = AgentMark.image(for: usage.provider) {
-                        Image(nsImage: mark)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .padding(2)
-                    } else {
-                        Text(usage.label.prefix(1))
-                            .hideFont(size: 9, weight: .bold, design: .rounded)
-                            .foregroundStyle(HideTheme.secondary)
-                    }
-                }
-                .frame(width: 16, height: 16)
-                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: 4))
+                HideProviderMark(usage: usage, isMuted: false)
 
                 Text(usage.label)
                     .hideFont(size: 11, weight: .medium)
