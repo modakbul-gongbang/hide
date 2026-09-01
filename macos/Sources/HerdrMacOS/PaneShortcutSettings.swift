@@ -298,47 +298,6 @@ final class PaneCommandWindow: NSWindow {
             super.sendEvent(event)
             return
         }
-        if event.type == .scrollWheel, let contentView {
-            let point = event.locationInWindow
-            let hit = contentView.hitTest(point)
-            var chain: [String] = []
-            var walker: NSView? = hit
-            while let view = walker {
-                chain.append(String(describing: type(of: view)))
-                walker = view.superview
-            }
-            var terminals: [String] = []
-            func collect(_ root: NSView) {
-                for subview in root.subviews {
-                    if let terminal = subview as? TerminalView {
-                        let f = terminal.convert(terminal.bounds, to: nil)
-                        terminals.append(
-                            "\(type(of: terminal))@\(NSStringFromRect(f))hidden=\(terminal.isHidden)alpha=\(terminal.alphaValue)"
-                        )
-                    }
-                    collect(subview)
-                }
-            }
-            collect(contentView)
-            let found = terminalView(at: point)
-            NSLog(
-                "HIDESCROLL3 point=%@ hit=%@ found=%d alt=%@ reporting=%@ mouseMode=%@ altScroll=%@ suppress=%@ chain=%@ terminals=%@",
-                NSStringFromPoint(point),
-                String(describing: hit.map { type(of: $0) }),
-                found == nil ? 0 : 1,
-                String(describing: found?.terminal.isCurrentBufferAlternate),
-                String(describing: found?.allowMouseReporting),
-                String(describing: found?.terminal.mouseMode),
-                String(describing: found?.terminal.alternateScrollMode),
-                String(describing: found.map {
-                    PaneScrollPolicy.suppressesMouseReporting(
-                        isAlternateBuffer: $0.terminal.isCurrentBufferAlternate
-                    )
-                }),
-                chain.joined(separator: "<"),
-                terminals.joined(separator: " | ")
-            )
-        }
         if PaneScrollPolicy.routesToLocalScroll(event),
            let terminal = terminalView(at: event.locationInWindow)
         {
