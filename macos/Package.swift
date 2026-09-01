@@ -11,10 +11,7 @@ let package = Package(
         .executable(name: "HerdrMacOS", targets: ["HerdrMacOS"]),
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/migueldeicaza/SwiftTerm.git",
-            exact: "1.20.0"
-        ),
+        .package(path: "Vendor/SwiftTerm"),
         .package(
             url: "https://github.com/raspu/Highlightr.git",
             exact: "2.3.0"
@@ -51,7 +48,10 @@ let package = Package(
         ),
         .testTarget(
             name: "HerdrMacOSTests",
-            dependencies: ["HerdrMacOS"],
+            dependencies: [
+                "HerdrMacOS",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             path: "Tests/HerdrMacOSTests"
         ),
     ]
