@@ -521,7 +521,7 @@ fn session_snapshot_exposes_authoritative_recursive_layout_and_per_pane_state() 
 }
 
 #[test]
-fn session_poll_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
+fn session_sync_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
     let core = create();
     dispatch(
         core,

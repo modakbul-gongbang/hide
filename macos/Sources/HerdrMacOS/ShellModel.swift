@@ -806,8 +806,8 @@ final class ShellModel: ObservableObject {
             pendingCheckoutStarts.remove(checkoutID)
             if result.succeeded, let paneID = result.paneID {
                 // Keep Herdr's global focus untouched. The returned pane is
-                // the local projection anchor until the next session poll
-                // supplies its authoritative layout.
+                // the local projection anchor until session sync supplies its
+                // authoritative layout.
                 core.persistUIState(
                     selectedPaneID: paneID,
                     focusedCheckoutID: checkoutID

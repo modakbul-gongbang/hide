@@ -84,15 +84,17 @@ checks.
 
 The pet's pose and badge row come from whatever the herdr server reports, and
 an unseen error cannot be produced on demand from a real agent.
-`macos/scripts/pet_scenario_server.py` serves scripted `session.snapshot`
-responses over a Unix socket using the same protocol revision the real server
-speaks, so the app exercises its ordinary polling path:
+`macos/scripts/pet_scenario_server.py` serves the `session.snapshot`,
+`events.subscribe`, and `agent.list` boundaries over a Unix socket using the
+same protocol revision the real server speaks, so the app exercises its
+ordinary event-sync path:
 
 ```sh
 macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
 HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS
 ```
 
-The scenario file is re-read on every request, so editing it changes what the
-next poll sees. Stopping the server (or deleting the socket) is how the
-"herdr went away" case is produced; restarting it proves the recovery.
+The scenario file is re-read on every snapshot or agent-list request, so
+editing it changes what the next one-second agent refresh sees.
+Stopping the server (or deleting the socket) is how the "herdr went away"
+case is produced; restarting it proves subscription and telemetry recovery.

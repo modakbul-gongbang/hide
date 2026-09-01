@@ -43,8 +43,8 @@ pub struct Snapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PetSnapshot {
     pub visible: bool,
-    /// `connected` while the herdr session poll is answering; otherwise the
-    /// poll's own failure state, so a missing socket is never a silent idle.
+    /// `connected` while Herdr session sync is healthy; otherwise the sync
+    /// failure state, so a missing socket is never a silent idle.
     pub connection: String,
     pub connection_message: Option<String>,
     pub pose: String,

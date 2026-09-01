@@ -29,8 +29,8 @@ impl ProviderUsageReader {
     }
 
     /// Returns a fresh projection only when the refresh window lapses. File
-    /// discovery and JSON parsing stay outside the runtime mutex in the live
-    /// poller, and the one-second session tick reuses this cached answer.
+    /// discovery and JSON parsing stay outside the runtime mutex in the
+    /// session-sync coordinator, which reuses this cached answer.
     pub fn read_if_due(&mut self) -> Option<Vec<ProviderUsageSnapshot>> {
         if self
             .last_read

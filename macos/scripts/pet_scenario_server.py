@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Serve scripted herdr session snapshots over a Unix socket.
+"""Serve a scripted Herdr session over a Unix socket.
 
 Verification-only. The pet's poses, badge row, and attention queue are driven
 by whatever the herdr server reports, and driving a real agent into an unseen
 error on demand is not something the product can do. This speaks the same
-`session.snapshot` contract (protocol 21) the real server does, so the app
-under test exercises its ordinary polling path end to end, including the
-1s poll clock the roam and sleep transitions depend on.
+`session.snapshot`, `events.subscribe`, and `agent.list` contracts (protocol
+21) the real server does. The app under test therefore exercises its ordinary
+event-sync path end to end, including the 1s agent refresh clock that drives
+roam and sleep transitions.
 
-The scenario is re-read from disk on every request, so a scenario file edited
-while the app is running changes what the next poll sees. Deleting the socket
-(or stopping this process) is how the "herdr went away" case is produced.
+The scenario is re-read from disk on every snapshot and agent-list request, so
+a scenario file edited while the app is running changes what the next refresh
+sees. Deleting the socket (or stopping this process) is how the "herdr went
+away" case is produced.
 
     ./pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json
 
@@ -29,6 +31,10 @@ import sys
 import threading
 
 PROTOCOL = 21
+VERSION = "0.8.2"
+HOST = {"host_id": "pet-scenario", "session_id": "fixture"}
+WORKSPACE_ID = "wF"
+TAB_ID = "wF:t1"
 
 STATE_TOKENS = {
     "question": "status_question_new",
@@ -59,7 +65,7 @@ SORT_RANKS = {
 }
 
 
-def build_snapshot(scenario: dict) -> dict:
+def build_agents(scenario: dict) -> list[dict]:
     agents = []
     for index, entry in enumerate(scenario.get("agents", [])):
         pane_id = entry.get("pane_id") or f"fixture:p{index}"
@@ -73,8 +79,12 @@ def build_snapshot(scenario: dict) -> dict:
             "elapsed": entry.get("elapsed", "1m"),
         }
         agent = {
+            "terminal_id": f"fixture-term-{index}",
             "pane_id": pane_id,
-            "workspace_id": entry.get("workspace_id", "wF"),
+            "workspace_id": entry.get("workspace_id", WORKSPACE_ID),
+            "tab_id": entry.get("tab_id", TAB_ID),
+            "focused": index == 0,
+            "revision": 0,
             "agent": entry.get("agent", "codex"),
             "agent_status": entry.get("agent_status", "unknown"),
             "cwd": entry.get("cwd", "/tmp/herdr-ide-verify-pet"),
@@ -83,17 +93,69 @@ def build_snapshot(scenario: dict) -> dict:
         if "ambient" in entry:
             agent["ambient"] = entry["ambient"]
         agents.append(agent)
+    return agents
+
+
+def build_snapshot(scenario: dict) -> dict:
+    agents = build_agents(scenario)
 
     first_pane = agents[0]["pane_id"] if agents else "fixture:p0"
     area = {"x": 0, "y": 0, "width": 120, "height": 40}
     return {
+        "version": VERSION,
         "protocol": PROTOCOL,
+        "host": HOST,
+        "event_sequence": 0,
         "focused_pane_id": first_pane,
-        "workspaces": [{"workspace_id": "wF", "label": "Pet Scenario"}],
+        "focused_tab_id": TAB_ID,
+        "focused_workspace_id": WORKSPACE_ID,
+        "workspaces": [
+            {
+                "workspace_id": WORKSPACE_ID,
+                "number": 1,
+                "label": "Pet Scenario",
+                "focused": True,
+                "pane_count": 1,
+                "tab_count": 1,
+                "active_tab_id": TAB_ID,
+                "agent_status": "idle",
+            }
+        ],
+        "tabs": [
+            {
+                "workspace_id": WORKSPACE_ID,
+                "tab_id": TAB_ID,
+                "number": 1,
+                "label": "1",
+                "focused": True,
+                "pane_count": 1,
+                "agent_status": "idle",
+            }
+        ],
+        "panes": [
+            {
+                "workspace_id": WORKSPACE_ID,
+                "tab_id": TAB_ID,
+                "pane_id": first_pane,
+                "surface": {
+                    "kind": "terminal",
+                    "attach": {
+                        "host": HOST,
+                        "transport": "herdr_client",
+                        "protocol": PROTOCOL,
+                        "terminal_id": "fixture-term-0",
+                    },
+                },
+                "focused": True,
+                "agent_status": "idle",
+                "revision": 0,
+                "cwd": "/tmp/herdr-ide-verify-pet",
+            }
+        ],
         "layouts": [
             {
-                "workspace_id": "wF",
-                "tab_id": "tF",
+                "workspace_id": WORKSPACE_ID,
+                "tab_id": TAB_ID,
                 "zoomed": False,
                 "area": area,
                 "focused_pane_id": first_pane,
@@ -102,7 +164,23 @@ def build_snapshot(scenario: dict) -> dict:
             }
         ],
         "agents": agents,
+        "lineage": [],
     }
+
+
+def read_scenario(scenario_path: str) -> dict:
+    with open(scenario_path, encoding="utf-8") as handle_file:
+        return json.load(handle_file)
+
+
+def send_result(connection: socket.socket, request_id: object, result: dict) -> None:
+    response = {"id": request_id, "result": result}
+    connection.sendall((json.dumps(response) + "\n").encode())
+
+
+def send_error(connection: socket.socket, request_id: object, code: str, message: str) -> None:
+    response = {"id": request_id, "error": {"code": code, "message": message}}
+    connection.sendall((json.dumps(response) + "\n").encode())
 
 
 def serve(socket_path: str, scenario_path: str) -> None:
@@ -126,42 +204,49 @@ def serve(socket_path: str, scenario_path: str) -> None:
             except json.JSONDecodeError:
                 return
             request_id = request.get("id")
-            if request.get("method") != "session.snapshot":
-                connection.sendall(
-                    (
-                        json.dumps(
-                            {
-                                "id": request_id,
-                                "error": {
-                                    "code": "unsupported",
-                                    "message": f"scenario server serves session.snapshot only, got {request.get('method')}",
-                                },
-                            }
-                        )
-                        + "\n"
-                    ).encode()
+            method = request.get("method")
+            if method == "events.subscribe":
+                send_result(
+                    connection,
+                    request_id,
+                    {
+                        "type": "subscription_started",
+                        "host": HOST,
+                        "sequence": 0,
+                        "oldest_available_sequence": 1,
+                    },
+                )
+                try:
+                    while connection.recv(1):
+                        pass
+                except OSError:
+                    pass
+                return
+            if method not in {"session.snapshot", "agent.list"}:
+                send_error(
+                    connection,
+                    request_id,
+                    "unsupported",
+                    f"scenario server does not serve {method}",
                 )
                 return
-            # Re-read every request so editing the scenario changes the very
-            # next poll.
             try:
-                with open(scenario_path, encoding="utf-8") as handle_file:
-                    scenario = json.load(handle_file)
+                scenario = read_scenario(scenario_path)
             except (OSError, json.JSONDecodeError) as error:
-                connection.sendall(
-                    (
-                        json.dumps(
-                            {
-                                "id": request_id,
-                                "error": {"code": "scenario", "message": str(error)},
-                            }
-                        )
-                        + "\n"
-                    ).encode()
-                )
+                send_error(connection, request_id, "scenario", str(error))
                 return
-            response = {"id": request_id, "result": {"snapshot": build_snapshot(scenario)}}
-            connection.sendall((json.dumps(response) + "\n").encode())
+            if method == "session.snapshot":
+                send_result(
+                    connection,
+                    request_id,
+                    {"type": "session_snapshot", "snapshot": build_snapshot(scenario)},
+                )
+            else:
+                send_result(
+                    connection,
+                    request_id,
+                    {"type": "agent_list", "agents": build_agents(scenario)},
+                )
 
     try:
         while True:

@@ -605,8 +605,8 @@ impl Runtime {
     }
 
     /// Groups the session's working directories under the Herdr workspace that
-    /// owns them. Shared with the live poller so a catalog precomputed outside
-    /// the runtime lock is built from the same inputs.
+    /// owns them. Shared with the session-sync coordinator so a catalog
+    /// precomputed outside the runtime lock is built from the same inputs.
     ///
     /// Layouts carry the workspace a pane belongs to and `panes` carries its
     /// directory, so the two together give each workspace the set of
@@ -682,7 +682,7 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
         self.last_session_spaces = Self::session_spaces(payload);
-        // The catalog shells out to git, so the poller builds it before
+        // The catalog shells out to git, so the sync coordinator builds it before
         // taking the runtime lock; a catalog whose registrations no longer
         // match current state is discarded and rebuilt inline.
         let mut workspaces = match precomputed {
@@ -836,7 +836,7 @@ impl Runtime {
 
     /// Reconciles the focused checkout, its owning workspace, root path, and
     /// active tab projection after a catalog replacement. Catalog rebuilds
-    /// happen from both the live poller and event handlers, so this policy
+    /// happen from both background sync and event handlers, so this policy
     /// must have one implementation to keep those paths convergent.
     fn resync_navigator_focus(&mut self) {
         let focused_checkout_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
@@ -926,8 +926,8 @@ impl Runtime {
         }
     }
 
-    /// Applies a live session poll result: projected agents on success, an
-    /// explicit herdr status on failure. Returns whether the snapshot changed.
+    /// Applies a live session-sync result: projected agents on success, an
+    /// explicit Herdr status on failure. Returns whether the snapshot changed.
     pub fn ingest_session(
         &mut self,
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
@@ -1176,9 +1176,9 @@ impl Runtime {
         changed | self.refresh_pet()
     }
 
-    /// Applies provider usage that the live poller read outside the runtime
-    /// mutex. The two fixed rows are revisioned with the rest snapshot, so an
-    /// unchanged refresh produces no shell work.
+    /// Applies provider usage that the session-sync coordinator read outside
+    /// the runtime mutex. The two fixed rows are revisioned with the rest
+    /// snapshot, so an unchanged refresh produces no shell work.
     pub fn ingest_provider_usage(
         &mut self,
         provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
@@ -1888,8 +1888,8 @@ impl Runtime {
 
     /// Drops the previous checkout's rendered layout before selecting the
     /// next one. Herdr's globally focused pane may belong to another
-    /// workspace, so retaining it here would let the next poll redraw stale
-    /// terminal content while the selected checkout has no pane yet.
+    /// workspace, so retaining it here would let the next sync update redraw
+    /// stale terminal content while the selected checkout has no pane yet.
     fn clear_terminal_projection(&mut self) {
         self.snapshot.pane_layout = None;
         self.snapshot.zoomed = None;
@@ -1909,8 +1909,8 @@ impl Runtime {
 
     /// A launcher result is a local projection anchor, not a Herdr focus
     /// request. Keep it authoritative over an older terminal pane while the
-    /// next live poll catches up, and make the missing layout visible instead
-    /// of retaining unrelated same-cwd content.
+    /// next event-stream projection catches up, and make the missing layout
+    /// visible instead of retaining unrelated same-cwd content.
     fn apply_selected_pane_anchor(&mut self, pane_id: Option<String>) {
         let layout_contains_pane = pane_id.as_deref().is_some_and(|selected_pane_id| {
             self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
@@ -2032,7 +2032,7 @@ impl Runtime {
                 .push(outcome.registration.clone());
             self.push_diagnostic(
                 "workspace.catalog.refresh_pending",
-                "Workspace registrations changed during creation; the live poller will refresh the catalog",
+                "Workspace registrations changed during creation; session sync will refresh the catalog",
             );
         }
         self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
@@ -2975,7 +2975,7 @@ impl Runtime {
                     &mut self.snapshot.navigator.workspaces,
                     &self.snapshot.ui_state.collapsed_workspace_ids,
                 );
-                // The live poller owns session-derived temporary workspaces.
+                // Session sync owns session-derived temporary workspaces.
                 // UI-state persistence must not rebuild from an empty session
                 // and erase the catalog that the user is currently viewing.
                 match persistence::save(&self.state_path, &self.snapshot.ui_state) {
@@ -2989,7 +2989,7 @@ impl Runtime {
         }
     }
 
-    /// Starts one control attempt. Repeated polls are no-ops while any
+    /// Starts one control attempt. Repeated sync updates are no-ops while any
     /// official control or observer session is starting or active.
     fn request_terminal_control(&mut self, pane_id: &str) {
         let current = self
@@ -3515,7 +3515,7 @@ mod tests {
     static NEXT_RUNTIME_STATE_ID: AtomicU64 = AtomicU64::new(0);
 
     #[test]
-    fn repeated_polls_do_not_start_a_second_terminal_session() {
+    fn repeated_sync_updates_do_not_start_a_second_terminal_session() {
         assert!(terminal_control_request_allowed("idle", false));
         for state in [
             "starting",
@@ -3824,7 +3824,7 @@ mod tests {
     }
 
     #[test]
-    fn ui_state_update_applies_workspace_expansion_without_waiting_for_a_poll() {
+    fn ui_state_update_applies_workspace_expansion_without_waiting_for_sync() {
         let mut runtime = runtime();
         runtime.snapshot.navigator.workspaces = vec![workspace(
             "workspace-a",
@@ -4611,7 +4611,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wholly_broken_poll_keeps_the_last_valid_agents_and_says_it_is_disconnected() {
+    fn a_broken_sync_update_keeps_the_last_valid_agents_and_says_it_is_disconnected() {
         let mut runtime = runtime();
         runtime.ingest_session(Ok(working_payload()));
         assert_eq!(runtime.snapshot().navigator.agents.len(), 1);
@@ -4639,19 +4639,19 @@ mod tests {
         );
         assert_eq!(down.pet.badges.disconnected, 1);
 
-        // The next valid poll recovers on its own.
+        // The next valid sync update recovers on its own.
         runtime.ingest_session(Ok(working_payload()));
         assert_eq!(runtime.snapshot().pet.pose, "carrying");
         assert_eq!(runtime.snapshot().pet.connection, "connected");
     }
 
     #[test]
-    fn ingesting_the_same_poll_twice_reports_no_further_change() {
+    fn ingesting_the_same_snapshot_twice_reports_no_further_change() {
         let mut runtime = runtime();
         assert!(runtime.ingest_session(Ok(working_payload())));
         assert!(
             !runtime.ingest_session(Ok(working_payload())),
-            "an unchanged snapshot must not wake the shell every poll"
+            "an unchanged snapshot must not wake the shell on every refresh"
         );
     }
 }

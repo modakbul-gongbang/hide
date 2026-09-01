@@ -142,8 +142,8 @@ impl PaneResizeDirection {
 #[derive(Clone, Debug)]
 pub enum PaneControlAction {
     /// Fetches the authoritative layout containing a pane without changing
-    /// Herdr's global focus. Checkout navigation uses this to avoid waiting
-    /// for the next one-second session poll.
+    /// Herdr's global focus. Checkout navigation uses this to update directly
+    /// instead of waiting for the corresponding event-stream projection.
     Project {
         pane_id: String,
     },
@@ -1393,7 +1393,7 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "workspaces": [
-                {"workspace_id": "w1", "label": "herdr-ide"},
+                {"workspace_id": "w1", "label": "herdr-ide", "active_tab_id": "w1:t1"},
             ],
             "layouts": [],
             "agents": [
@@ -1441,7 +1441,7 @@ mod tests {
     fn wire_snapshot_preserves_herdr_tab_labels() {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
-            "workspaces": [{"workspace_id": "w1", "label": "verify"}],
+            "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1"}],
             "tabs": [{
                 "workspace_id": "w1",
                 "tab_id": "w1:t1",
@@ -1473,7 +1473,7 @@ mod tests {
     fn session_layout_projects_authoritative_nested_tree_and_zoom() {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
-            "workspaces": [{"workspace_id": "w1", "label": "verify"}],
+            "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1"}],
             "agents": [],
             "focused_pane_id": "w1:p3",
             "layouts": [{

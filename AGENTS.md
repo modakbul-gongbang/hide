@@ -22,19 +22,20 @@ This rule exists because they were: `docs/verification/`, `docs/screenshots/`, a
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls state out (`herdr_core_snapshot`) whenever the change notifier fires.
-A background session poller (`live.rs`) polls the herdr server socket once per second and ingests the result; per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
+The event sync coordinator (`session_sync.rs`) bootstraps from `session.snapshot`, resumes ordered topology updates through `events.subscribe`, and refreshes agent telemetry with `agent.list` once per second.
+Per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
 Everything the shell renders comes from that one snapshot pull; the shell holds no authority.
 
 ## Herdr API Contract
 
-Before changing any Herdr integration, read both official references for the Herdr version this repository ships or targets:
+Before changing, debugging, or reviewing any Herdr integration, read both current official references in full for the Herdr version this repository ships or targets:
 
 - [CLI reference](https://herdr.dev/docs/cli-reference/)
 - [Socket API](https://herdr.dev/docs/socket-api/)
 
 This repository uses both layers, and they are not separate backends: the Herdr CLI is a wrapper over the same local socket API.
-The local live runtime is primarily a raw socket client: `herdr-core/src/live.rs` sends newline-delimited JSON methods such as `session.snapshot`, `pane.layout`, `pane.focus`, and `pane.resize` over the Unix socket.
-CLI wrappers are used where Herdr owns higher-level or streaming behavior, including terminal control/observe sessions, selected pane operations, remote SSH snapshot/attach commands, and contract diagnostics.
+The local live runtime is primarily a raw socket client: `herdr-core/src/herdr_api.rs`, `herdr-core/src/session_sync.rs`, and `herdr-core/src/live.rs` send newline-delimited JSON methods such as `session.snapshot`, `events.subscribe`, `agent.list`, `pane.layout`, `pane.focus`, and `pane.resize` over the Unix socket.
+CLI wrappers are used where Herdr owns higher-level or streaming behavior, including terminal control/observe sessions, CLI-owned pane commands, remote SSH snapshot/attach commands, and contract diagnostics.
 
 Follow the official layer boundary when adding behavior:
 
@@ -49,9 +50,9 @@ These rules exist because each one was violated and diagnosed in a real incident
 
 - Never hold the runtime mutex across a subprocess, blocking I/O, or a large serialization.
   Every shell snapshot read and every attach thread blocks on that mutex; whatever you hold it through becomes UI latency.
-  Precompute outside the lock and pass results in (see the session poller's `PrecomputedCatalog` in `live.rs`).
+  Precompute outside the lock and pass results in (see `PrecomputedCatalog` in `session_sync.rs`).
 - Never fork subprocesses (git especially) in a per-tick or per-event path.
-  The workspace catalog caches by input equality plus a refresh window (`CatalogCache` in `live.rs`); extend that cache rather than adding a new per-tick invocation.
+  The workspace catalog caches by input equality plus a refresh window (`CatalogCache` in `session_sync.rs`); extend that cache rather than adding a new per-tick invocation.
 - The snapshot wire is sized by what changed, not by total state.
   Terminal chunks ride a sequence cursor; do not re-send retained state wholesale.
   When adding a snapshot field, decide its channel: rarely-changing sections belong in the revisioned `rest`, per-event scalars ride top-level, high-volume streams need their own cursor.

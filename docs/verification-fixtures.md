@@ -8,7 +8,7 @@ How pet and shell behaviour is driven to a known state without a real agent.
 the `_new` unseen-token contract, per-agent state projection and ordering,
 ambient parsing, the pet's pose ladder and sleep sequence, badge buckets,
 the oldest-unseen click key, per-item exclusion of a broken agent record, and
-the connection lifecycle (a wholly malformed poll keeps the last valid agent
+the connection lifecycle (a malformed sync update keeps the last valid agent
 list and reports the failure).
 
 ```sh
@@ -38,9 +38,10 @@ swift test --package-path macos
 The pet's pose and badge row come from whatever the herdr server reports, and
 an unseen error or a two-pane attention race cannot be produced on demand
 from real agents. `macos/scripts/pet_scenario_server.py` serves scripted
-`session.snapshot` responses over a Unix socket at the same protocol revision
-the real server speaks, so the app under test runs its ordinary polling path,
-including the poll clock that the roam and sleep transitions depend on.
+`session.snapshot`, `events.subscribe`, and `agent.list` responses over a Unix
+socket at the same protocol revision the real server speaks, so the app under
+test runs its ordinary event-sync path, including the one-second agent refresh
+that the roam and sleep transitions depend on.
 
 ```sh
 macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
@@ -51,9 +52,10 @@ HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/HerdrIDE.app/Contents/MacO
 
 A scenario is `{"agents": [{"pane_id", "state", "summary", "ambient"?}]}`
 where `state` is `question`, `approval`, `error`, `working`, `done`, `idle`,
-`acknowledged`, or a raw token name. The file is re-read on every request, so
-editing it changes the next poll; stopping the server produces the
-disconnected case and restarting it proves recovery.
+`acknowledged`, or a raw token name.
+The file is re-read on every snapshot or agent-list request, so editing it
+changes the next refresh; stopping the server produces the disconnected case
+and restarting it proves recovery.
 
 ## The verification receipt
 

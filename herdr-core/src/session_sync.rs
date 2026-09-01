@@ -107,8 +107,17 @@ struct ActiveSubscription {
 impl ActiveSubscription {
     fn stop(mut self) {
         let _ = self.shutdown.shutdown(Shutdown::Both);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "session_sync",
+                    "kind": "subscription_reader.join_failed",
+                    "generation": self.generation,
+                })
+            );
         }
     }
 }
@@ -152,20 +161,21 @@ fn run_coordinator(
         }
 
         if subscription.is_none() && Instant::now() >= reconnect_at {
-            let attempt = if needs_bootstrap || replica.is_none() {
-                connect_from_snapshot(&context, &sender, &mut subscription_generation).map(
-                    |(next_replica, next_subscription)| {
-                        replica = Some(next_replica);
-                        next_subscription
-                    },
-                )
-            } else {
-                connect_from_cursor(
+            let has_projection = replica.is_some();
+            let attempt = match (needs_bootstrap, replica.as_ref()) {
+                (false, Some(current)) => {
+                    connect_from_cursor(&context, current, &sender, &mut subscription_generation)
+                }
+                _ => connect_from_snapshot(
                     &context,
-                    replica.as_ref().expect("replica exists without bootstrap"),
                     &sender,
                     &mut subscription_generation,
+                    has_projection,
                 )
+                .map(|(next_replica, next_subscription)| {
+                    replica = Some(next_replica);
+                    next_subscription
+                }),
             };
 
             match attempt {
@@ -184,6 +194,7 @@ fn run_coordinator(
                     needs_bootstrap = false;
                 }
                 Err(failure) => {
+                    log_sync_failure("connect.failed", replica.as_ref(), &failure.error);
                     needs_bootstrap |= failure.needs_bootstrap;
                     if !publish_failure(&context, failure.error) {
                         return;
@@ -335,12 +346,13 @@ fn connect_from_snapshot(
     context: &LiveContext,
     sender: &Sender<CoordinatorMessage>,
     generation: &mut u64,
+    has_projection: bool,
 ) -> Result<(SessionReplica, ActiveSubscription), ConnectFailure> {
     let replica = fetch_replica(&context.socket_path).map_err(|error| ConnectFailure {
         error,
         needs_bootstrap: true,
     })?;
-    let subscription = open_subscription(context, &replica, sender, generation)?;
+    let subscription = open_subscription(context, &replica, sender, generation, has_projection)?;
     Ok((replica, subscription))
 }
 
@@ -350,7 +362,7 @@ fn connect_from_cursor(
     sender: &Sender<CoordinatorMessage>,
     generation: &mut u64,
 ) -> Result<ActiveSubscription, ConnectFailure> {
-    open_subscription(context, replica, sender, generation)
+    open_subscription(context, replica, sender, generation, true)
 }
 
 fn open_subscription(
@@ -358,6 +370,7 @@ fn open_subscription(
     replica: &SessionReplica,
     sender: &Sender<CoordinatorMessage>,
     generation: &mut u64,
+    has_projection: bool,
 ) -> Result<ActiveSubscription, ConnectFailure> {
     let subscription = herdr_api::subscribe(
         &context.socket_path,
@@ -365,7 +378,7 @@ fn open_subscription(
         TOPOLOGY_SUBSCRIPTIONS,
         SYNC_REQUEST_TIMEOUT,
     )
-    .map_err(|error| connect_failure_from_api(error, true, replica.cursor))?;
+    .map_err(|error| connect_failure_from_api(error, has_projection, replica.cursor))?;
     if subscription.ack.host != replica.host {
         return Err(ConnectFailure {
             error: SessionFetchError::Stale(format!(
@@ -657,7 +670,6 @@ struct ConnectFailure {
 struct WorkspaceWire {
     workspace_id: String,
     label: String,
-    #[serde(default)]
     active_tab_id: String,
 }
 
@@ -665,16 +677,13 @@ struct WorkspaceWire {
 struct TabWire {
     tab_id: String,
     workspace_id: String,
-    #[serde(default)]
     label: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct PaneWire {
     pane_id: String,
-    #[serde(default)]
     workspace_id: String,
-    #[serde(default)]
     tab_id: String,
     #[serde(default)]
     cwd: Option<String>,
@@ -795,6 +804,7 @@ struct SessionReplica {
     cursor: u64,
     state: ProjectionState,
     pending_layouts: BTreeSet<String>,
+    pending_workspace_closures: BTreeSet<String>,
     last_event: Option<(u64, String)>,
 }
 
@@ -807,7 +817,23 @@ struct ApplyOutcome {
 impl SessionReplica {
     fn from_snapshot(snapshot: &Value) -> Result<Self, SessionFetchError> {
         validate_protocol(snapshot)?;
-        for field in ["workspaces", "tabs", "panes", "layouts", "agents"] {
+        if !snapshot
+            .get("version")
+            .and_then(Value::as_str)
+            .is_some_and(|version| !version.trim().is_empty())
+        {
+            return Err(SessionFetchError::Malformed(
+                "snapshot is missing version".to_owned(),
+            ));
+        }
+        for field in [
+            "workspaces",
+            "tabs",
+            "panes",
+            "layouts",
+            "agents",
+            "lineage",
+        ] {
             if !snapshot.get(field).is_some_and(Value::is_array) {
                 return Err(SessionFetchError::Malformed(format!(
                     "snapshot is missing {field}"
@@ -821,6 +847,11 @@ impl SessionReplica {
             .map_err(|error| {
                 SessionFetchError::Malformed(format!("snapshot host is malformed: {error}"))
             })?;
+        if host.host_id.trim().is_empty() || host.session_id.trim().is_empty() {
+            return Err(SessionFetchError::Malformed(
+                "snapshot host contains an empty identifier".to_owned(),
+            ));
+        }
         let cursor = snapshot
             .get("event_sequence")
             .and_then(Value::as_u64)
@@ -835,9 +866,11 @@ impl SessionReplica {
             cursor,
             state,
             pending_layouts: BTreeSet::new(),
+            pending_workspace_closures: BTreeSet::new(),
             last_event: None,
         };
         replica.validate()?;
+        replica.validate_active_tabs()?;
         Ok(replica)
     }
 
@@ -846,7 +879,7 @@ impl SessionReplica {
     }
 
     fn ready_to_publish(&self) -> bool {
-        self.pending_layouts.is_empty()
+        self.pending_layouts.is_empty() && self.pending_workspace_closures.is_empty()
     }
 
     fn replace_agents(&mut self, agents: Vec<WireAgent>) {
@@ -911,13 +944,31 @@ impl SessionReplica {
 
     fn apply_new_event(&mut self, event: &str, data: &Value) -> Result<bool, SessionFetchError> {
         match event {
-            "workspace_created" | "workspace_updated" | "workspace_metadata_updated" => {
+            "workspace_created" => {
                 let payload: WorkspaceEvent = decode_event_data(data, event)?;
-                if event == "workspace_created" && !payload.workspace.active_tab_id.is_empty() {
-                    self.pending_layouts
-                        .insert(payload.workspace.active_tab_id.clone());
+                validate_workspace_wire(event, &payload.workspace)?;
+                if self
+                    .state
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.workspace_id == payload.workspace.workspace_id)
+                {
+                    return Err(malformed_event(event, "created workspace already exists"));
                 }
-                upsert_workspace(&mut self.state.workspaces, payload.workspace);
+                self.pending_layouts
+                    .insert(payload.workspace.active_tab_id.clone());
+                self.state.workspaces.push(payload.workspace);
+            }
+            "workspace_updated" | "workspace_metadata_updated" => {
+                let payload: WorkspaceEvent = decode_event_data(data, event)?;
+                validate_workspace_wire(event, &payload.workspace)?;
+                let workspace = self
+                    .state
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| workspace.workspace_id == payload.workspace.workspace_id)
+                    .ok_or_else(|| malformed_event(event, "updated workspace does not exist"))?;
+                *workspace = payload.workspace;
             }
             "workspace_renamed" => {
                 let payload: WorkspaceRenamedEvent = decode_event_data(data, event)?;
@@ -929,36 +980,145 @@ impl SessionReplica {
                     .ok_or_else(|| malformed_event(event, "renamed workspace does not exist"))?;
                 workspace.label = payload.label;
             }
-            "workspace_moved" | "workspace_reordered" => {
-                let payload: WorkspaceListEvent = decode_event_data(data, event)?;
+            "workspace_moved" => {
+                let payload: WorkspaceMovedEvent = decode_event_data(data, event)?;
+                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+                for workspace in &payload.workspaces {
+                    validate_workspace_wire(event, workspace)?;
+                }
+                if payload.insert_index > payload.workspaces.len()
+                    || !payload
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.workspace_id == payload.workspace_id)
+                {
+                    return Err(malformed_event(
+                        event,
+                        "resulting workspace order does not contain the moved workspace at a valid index",
+                    ));
+                }
+                self.state.workspaces = payload.workspaces;
+            }
+            "workspace_reordered" => {
+                let payload: WorkspaceReorderedEvent = decode_event_data(data, event)?;
+                for workspace in &payload.workspaces {
+                    validate_workspace_wire(event, workspace)?;
+                }
+                if payload.workspace_ids.is_empty()
+                    || payload.workspace_ids.iter().any(|workspace_id| {
+                        workspace_id.trim().is_empty()
+                            || !payload
+                                .workspaces
+                                .iter()
+                                .any(|workspace| &workspace.workspace_id == workspace_id)
+                    })
+                {
+                    return Err(malformed_event(
+                        event,
+                        "resulting workspace order does not contain every reordered workspace",
+                    ));
+                }
                 self.state.workspaces = payload.workspaces;
             }
             "workspace_closed" => {
                 let payload: WorkspaceClosedEvent = decode_event_data(data, event)?;
+                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+                if !self
+                    .state
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.workspace_id == payload.workspace_id)
+                {
+                    return Err(malformed_event(event, "closed workspace does not exist"));
+                }
                 self.remove_workspace(&payload.workspace_id);
             }
             "workspace_focused" => {
                 let payload: WorkspaceIdEvent = decode_event_data(data, event)?;
                 ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+                if !self
+                    .state
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.workspace_id == payload.workspace_id)
+                {
+                    return Err(malformed_event(event, "focused workspace does not exist"));
+                }
             }
-            "worktree_created" | "worktree_opened" => {
-                let payload: WorktreeWorkspaceEvent = decode_event_data(data, event)?;
+            "worktree_created" => {
+                let payload: WorktreeCreatedEvent = decode_event_data(data, event)?;
+                validate_workspace_wire(event, &payload.workspace)?;
+                upsert_workspace(&mut self.state.workspaces, payload.workspace);
+            }
+            "worktree_opened" => {
+                let payload: WorktreeOpenedEvent = decode_event_data(data, event)?;
+                validate_workspace_wire(event, &payload.workspace)?;
                 upsert_workspace(&mut self.state.workspaces, payload.workspace);
             }
             "worktree_removed" => {
                 let payload: WorktreeRemovedEvent = decode_event_data(data, event)?;
+                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
                 if let Some(workspace) = payload.workspace {
+                    validate_workspace_wire(event, &workspace)?;
+                    if workspace.workspace_id != payload.workspace_id {
+                        return Err(malformed_event(
+                            event,
+                            "workspace does not match workspace_id",
+                        ));
+                    }
                     upsert_workspace(&mut self.state.workspaces, workspace);
                 }
             }
             "tab_created" => {
                 let payload: TabEvent = decode_event_data(data, event)?;
+                validate_tab_wire(event, &payload.tab)?;
+                if !self
+                    .state
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.workspace_id == payload.tab.workspace_id)
+                {
+                    return Err(malformed_event(
+                        event,
+                        "created tab references a missing workspace",
+                    ));
+                }
+                if self
+                    .state
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.tab_id == payload.tab.tab_id)
+                {
+                    return Err(malformed_event(event, "created tab already exists"));
+                }
                 self.pending_layouts.insert(payload.tab.tab_id.clone());
-                upsert_tab(&mut self.state.tabs, payload.tab);
+                self.state.tabs.push(payload.tab);
             }
             "tab_closed" => {
                 let payload: TabIdEvent = decode_event_data(data, event)?;
                 ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+                let workspace_tab_count = self
+                    .state
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.workspace_id == payload.workspace_id)
+                    .count();
+                let tab = self
+                    .state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.tab_id == payload.tab_id)
+                    .ok_or_else(|| malformed_event(event, "closed tab does not exist"))?;
+                if tab.workspace_id != payload.workspace_id {
+                    return Err(malformed_event(
+                        event,
+                        "closed tab belongs to another workspace",
+                    ));
+                }
+                if workspace_tab_count == 1 {
+                    self.pending_workspace_closures
+                        .insert(payload.workspace_id.clone());
+                }
                 self.remove_tab(&payload.tab_id);
             }
             "tab_renamed" => {
@@ -978,7 +1138,24 @@ impl SessionReplica {
                 tab.label = payload.label;
             }
             "tab_moved" => {
-                let payload: TabListEvent = decode_event_data(data, event)?;
+                let payload: TabMovedEvent = decode_event_data(data, event)?;
+                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+                ensure_non_empty(event, "tab_id", &payload.tab_id)?;
+                for tab in &payload.tabs {
+                    validate_tab_wire(event, tab)?;
+                }
+                if payload.insert_index > payload.tabs.len()
+                    || payload
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.workspace_id != payload.workspace_id)
+                    || !payload.tabs.iter().any(|tab| tab.tab_id == payload.tab_id)
+                {
+                    return Err(malformed_event(
+                        event,
+                        "resulting tab order is inconsistent with the moved tab",
+                    ));
+                }
                 self.state
                     .tabs
                     .retain(|tab| tab.workspace_id != payload.workspace_id);
@@ -988,36 +1165,79 @@ impl SessionReplica {
                 let payload: TabIdEvent = decode_event_data(data, event)?;
                 ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
                 ensure_non_empty(event, "tab_id", &payload.tab_id)?;
+                let workspace = self
+                    .state
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| workspace.workspace_id == payload.workspace_id)
+                    .ok_or_else(|| malformed_event(event, "focused workspace does not exist"))?;
+                let tab = self
+                    .state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.tab_id == payload.tab_id)
+                    .ok_or_else(|| malformed_event(event, "focused tab does not exist"))?;
+                if tab.workspace_id != payload.workspace_id {
+                    return Err(malformed_event(
+                        event,
+                        "focused tab belongs to another workspace",
+                    ));
+                }
+                workspace.active_tab_id = payload.tab_id;
             }
             "pane_created" => {
                 let payload: PaneEvent = decode_event_data(data, event)?;
+                validate_pane_wire(event, &payload.pane)?;
+                if !self.state.tabs.iter().any(|tab| {
+                    tab.tab_id == payload.pane.tab_id
+                        && tab.workspace_id == payload.pane.workspace_id
+                }) {
+                    return Err(malformed_event(
+                        event,
+                        "created pane references a missing tab",
+                    ));
+                }
+                if self
+                    .state
+                    .panes
+                    .iter()
+                    .any(|pane| pane.pane_id == payload.pane.pane_id)
+                {
+                    return Err(malformed_event(event, "created pane already exists"));
+                }
                 self.pending_layouts.insert(payload.pane.tab_id.clone());
-                upsert_pane(&mut self.state.panes, payload.pane);
+                self.state.panes.push(payload.pane);
             }
             "pane_closed" => {
                 let payload: PaneClosedEvent = decode_event_data(data, event)?;
                 ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                if let Some(tab_id) = self
+                let pane = self
                     .state
                     .panes
                     .iter()
                     .find(|pane| pane.pane_id == payload.pane_id)
-                    .map(|pane| pane.tab_id.clone())
-                {
-                    self.pending_layouts.insert(tab_id);
+                    .ok_or_else(|| malformed_event(event, "closed pane does not exist"))?;
+                if pane.workspace_id != payload.workspace_id {
+                    return Err(malformed_event(
+                        event,
+                        "closed pane belongs to another workspace",
+                    ));
                 }
+                self.pending_layouts.insert(pane.tab_id.clone());
                 self.remove_pane(&payload.pane_id);
             }
             "pane_updated" => {
                 let payload: PaneEvent = decode_event_data(data, event)?;
-                if let Some(previous) = self
+                validate_pane_wire(event, &payload.pane)?;
+                let previous = self
                     .state
                     .panes
                     .iter()
                     .find(|pane| pane.pane_id == payload.pane.pane_id)
                     .cloned()
-                    && (previous.tab_id != payload.pane.tab_id
-                        || previous.workspace_id != payload.pane.workspace_id)
+                    .ok_or_else(|| malformed_event(event, "updated pane does not exist"))?;
+                if previous.tab_id != payload.pane.tab_id
+                    || previous.workspace_id != payload.pane.workspace_id
                 {
                     self.pending_layouts.insert(previous.tab_id);
                     self.pending_layouts.insert(payload.pane.tab_id.clone());
@@ -1027,13 +1247,13 @@ impl SessionReplica {
             "pane_focused" => {
                 let payload: PaneFocusedEvent = decode_event_data(data, event)?;
                 ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                if !self
-                    .state
-                    .panes
-                    .iter()
-                    .any(|pane| pane.pane_id == payload.pane_id)
-                {
-                    return Err(malformed_event(event, "focused pane does not exist"));
+                if !self.state.panes.iter().any(|pane| {
+                    pane.pane_id == payload.pane_id && pane.workspace_id == payload.workspace_id
+                }) {
+                    return Err(malformed_event(
+                        event,
+                        "focused pane does not exist in the stated workspace",
+                    ));
                 }
                 self.state.focused_pane_id = Some(payload.pane_id.clone());
                 if let Some(layout) = self.state.layouts.iter_mut().find(|layout| {
@@ -1048,6 +1268,7 @@ impl SessionReplica {
             "pane_moved" => {
                 let payload: PaneMovedEvent = decode_event_data(data, event)?;
                 self.apply_pane_moved(payload)?;
+                return Ok(true);
             }
             "pane_exited" => {
                 let payload: PaneClosedEvent = decode_event_data(data, event)?;
@@ -1062,6 +1283,15 @@ impl SessionReplica {
             }
             "layout_updated" => {
                 let payload: LayoutEvent = decode_event_data(data, event)?;
+                ensure_non_empty(event, "workspace_id", &payload.layout.workspace_id)?;
+                ensure_non_empty(event, "tab_id", &payload.layout.tab_id)?;
+                ensure_non_empty(event, "focused_pane_id", &payload.layout.focused_pane_id)?;
+                if !self.state.tabs.iter().any(|tab| {
+                    tab.tab_id == payload.layout.tab_id
+                        && tab.workspace_id == payload.layout.workspace_id
+                }) {
+                    return Err(malformed_event(event, "layout references a missing tab"));
+                }
                 let tab_id = payload.layout.tab_id.clone();
                 let focused_was_missing =
                     self.state.focused_pane_id.as_ref().is_none_or(|focused| {
@@ -1089,11 +1319,14 @@ impl SessionReplica {
     }
 
     fn apply_pane_moved(&mut self, payload: PaneMovedEvent) -> Result<(), SessionFetchError> {
+        ensure_non_empty("pane_moved", "previous_pane_id", &payload.previous_pane_id)?;
         ensure_non_empty(
             "pane_moved",
             "previous_workspace_id",
             &payload.previous_workspace_id,
         )?;
+        ensure_non_empty("pane_moved", "previous_tab_id", &payload.previous_tab_id)?;
+        validate_pane_wire("pane_moved", &payload.pane)?;
         if let Some(previous) = self
             .state
             .panes
@@ -1117,9 +1350,11 @@ impl SessionReplica {
         self.remove_pane(&payload.previous_pane_id);
 
         if let Some(workspace) = payload.created_workspace {
+            validate_workspace_wire("pane_moved", &workspace)?;
             upsert_workspace(&mut self.state.workspaces, workspace);
         }
         if let Some(tab) = payload.created_tab {
+            validate_tab_wire("pane_moved", &tab)?;
             self.pending_layouts.insert(tab.tab_id.clone());
             upsert_tab(&mut self.state.tabs, tab);
         }
@@ -1173,6 +1408,7 @@ impl SessionReplica {
             .retain(|agent| agent.workspace_id != workspace_id);
         self.pending_layouts
             .retain(|tab_id| !tab_ids.contains(tab_id));
+        self.pending_workspace_closures.remove(workspace_id);
         self.clear_missing_focus();
     }
 
@@ -1202,6 +1438,30 @@ impl SessionReplica {
         }
     }
 
+    fn validate_active_tabs(&self) -> Result<(), SessionFetchError> {
+        let tabs_by_id = self
+            .state
+            .tabs
+            .iter()
+            .map(|tab| (tab.tab_id.as_str(), tab))
+            .collect::<HashMap<_, _>>();
+        for workspace in &self.state.workspaces {
+            let Some(active_tab) = tabs_by_id.get(workspace.active_tab_id.as_str()) else {
+                return Err(SessionFetchError::Malformed(format!(
+                    "Herdr workspace {} references missing active tab {}",
+                    workspace.workspace_id, workspace.active_tab_id
+                )));
+            };
+            if active_tab.workspace_id != workspace.workspace_id {
+                return Err(SessionFetchError::Malformed(format!(
+                    "Herdr workspace {} references active tab {} from another workspace",
+                    workspace.workspace_id, workspace.active_tab_id
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<(), SessionFetchError> {
         let workspace_ids = unique_ids(
             "workspace",
@@ -1215,6 +1475,12 @@ impl SessionReplica {
             "pane",
             self.state.panes.iter().map(|pane| pane.pane_id.as_str()),
         )?;
+        let tabs_by_id = self
+            .state
+            .tabs
+            .iter()
+            .map(|tab| (tab.tab_id.as_str(), tab))
+            .collect::<HashMap<_, _>>();
         for tab in &self.state.tabs {
             if !workspace_ids.contains(tab.workspace_id.as_str()) {
                 return Err(SessionFetchError::Malformed(format!(
@@ -1238,6 +1504,15 @@ impl SessionReplica {
                     pane.pane_id
                 )));
             }
+            if tabs_by_id
+                .get(pane.tab_id.as_str())
+                .is_some_and(|tab| tab.workspace_id != pane.workspace_id)
+            {
+                return Err(SessionFetchError::Malformed(format!(
+                    "Herdr pane {} references a tab from another workspace",
+                    pane.pane_id
+                )));
+            }
         }
         let mut layout_tabs = HashSet::new();
         let mut laid_out_panes = HashSet::new();
@@ -1253,6 +1528,15 @@ impl SessionReplica {
             {
                 return Err(SessionFetchError::Malformed(format!(
                     "Herdr layout {} references missing workspace or tab",
+                    layout.tab_id
+                )));
+            }
+            if tabs_by_id
+                .get(layout.tab_id.as_str())
+                .is_some_and(|tab| tab.workspace_id != layout.workspace_id)
+            {
+                return Err(SessionFetchError::Malformed(format!(
+                    "Herdr layout {} belongs to the wrong workspace",
                     layout.tab_id
                 )));
             }
@@ -1286,6 +1570,22 @@ impl SessionReplica {
                     )));
                 }
             }
+        }
+        if let Some(missing_tab_id) = tab_ids
+            .iter()
+            .find(|tab_id| !layout_tabs.contains(**tab_id))
+        {
+            return Err(SessionFetchError::Malformed(format!(
+                "Herdr tab {missing_tab_id} has no layout"
+            )));
+        }
+        if let Some(missing_pane_id) = pane_ids
+            .iter()
+            .find(|pane_id| !laid_out_panes.contains(**pane_id))
+        {
+            return Err(SessionFetchError::Malformed(format!(
+                "Herdr pane {missing_pane_id} is absent from every layout"
+            )));
         }
         if let Some(focused) = self.state.focused_pane_id.as_deref()
             && !pane_ids.contains(focused)
@@ -1337,6 +1637,25 @@ fn ensure_non_empty(event: &str, field: &str, value: &str) -> Result<(), Session
     } else {
         Ok(())
     }
+}
+
+fn validate_workspace_wire(
+    event: &str,
+    workspace: &WorkspaceWire,
+) -> Result<(), SessionFetchError> {
+    ensure_non_empty(event, "workspace.workspace_id", &workspace.workspace_id)?;
+    ensure_non_empty(event, "workspace.active_tab_id", &workspace.active_tab_id)
+}
+
+fn validate_tab_wire(event: &str, tab: &TabWire) -> Result<(), SessionFetchError> {
+    ensure_non_empty(event, "tab.tab_id", &tab.tab_id)?;
+    ensure_non_empty(event, "tab.workspace_id", &tab.workspace_id)
+}
+
+fn validate_pane_wire(event: &str, pane: &PaneWire) -> Result<(), SessionFetchError> {
+    ensure_non_empty(event, "pane.pane_id", &pane.pane_id)?;
+    ensure_non_empty(event, "pane.workspace_id", &pane.workspace_id)?;
+    ensure_non_empty(event, "pane.tab_id", &pane.tab_id)
 }
 
 fn upsert_workspace(workspaces: &mut Vec<WorkspaceWire>, workspace: WorkspaceWire) {
@@ -1487,7 +1806,15 @@ struct WorkspaceRenamedEvent {
 }
 
 #[derive(Deserialize)]
-struct WorkspaceListEvent {
+struct WorkspaceMovedEvent {
+    workspace_id: String,
+    insert_index: usize,
+    workspaces: Vec<WorkspaceWire>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceReorderedEvent {
+    workspace_ids: Vec<String>,
     workspaces: Vec<WorkspaceWire>,
 }
 
@@ -1502,14 +1829,30 @@ struct WorkspaceIdEvent {
 }
 
 #[derive(Deserialize)]
-struct WorktreeWorkspaceEvent {
+struct WorktreeCreatedEvent {
     workspace: WorkspaceWire,
+    #[serde(rename = "worktree")]
+    _worktree: Value,
+}
+
+#[derive(Deserialize)]
+struct WorktreeOpenedEvent {
+    workspace: WorkspaceWire,
+    #[serde(rename = "worktree")]
+    _worktree: Value,
+    #[serde(rename = "already_open")]
+    _already_open: bool,
 }
 
 #[derive(Deserialize)]
 struct WorktreeRemovedEvent {
+    workspace_id: String,
     #[serde(default)]
     workspace: Option<WorkspaceWire>,
+    #[serde(rename = "worktree")]
+    _worktree: Value,
+    #[serde(rename = "forced")]
+    _forced: bool,
 }
 
 #[derive(Deserialize)]
@@ -1531,8 +1874,10 @@ struct TabRenamedEvent {
 }
 
 #[derive(Deserialize)]
-struct TabListEvent {
+struct TabMovedEvent {
     workspace_id: String,
+    tab_id: String,
+    insert_index: usize,
     tabs: Vec<TabWire>,
 }
 
@@ -1578,6 +1923,7 @@ struct LayoutEvent {
 mod tests {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -1618,7 +1964,8 @@ mod tests {
                 }],
                 "splits": []
             }],
-            "agents": []
+            "agents": [],
+            "lineage": []
         })
     }
 
@@ -1659,6 +2006,44 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert!(predicate(), "condition did not become true before deadline");
+    }
+
+    fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runtime>> {
+        Arc::new(Mutex::new(Runtime::new(
+            CoreOptions {
+                schema_version: SCHEMA_VERSION,
+                herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
+                herdr_bin_path: None,
+                remote_targets: Vec::new(),
+                app_state_path: state_path.to_string_lossy().into_owned(),
+            },
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: None,
+                remote_enabled: false,
+                chromux_enabled: false,
+                herdr_socket_path_override: None,
+            },
+        )))
+    }
+
+    fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> LiveContext {
+        LiveContext {
+            socket_path: socket_path.to_path_buf(),
+            herdr_bin: None,
+            runtime: Arc::downgrade(runtime),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+        }
+    }
+
+    fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
+        if socket_path.exists() {
+            std::fs::remove_file(socket_path).expect("remove socket");
+        }
+        if state_path.exists() {
+            std::fs::remove_file(state_path).expect("remove state");
+        }
+        std::fs::remove_dir(root).expect("remove socket directory");
     }
 
     #[test]
@@ -1712,6 +2097,74 @@ mod tests {
     }
 
     #[test]
+    fn workspace_close_cascade_clears_pending_layout_and_nested_state() {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let pane_closed = replica
+            .apply(event(
+                41,
+                "pane_closed",
+                json!({
+                    "type": "pane_closed",
+                    "pane_id": "w1:p1",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("pane close event");
+        assert!(!pane_closed.publish);
+
+        let workspace_closed = replica
+            .apply(event(
+                42,
+                "workspace_closed",
+                json!({
+                    "type": "workspace_closed",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("workspace close event");
+        assert!(workspace_closed.publish);
+        assert!(replica.ready_to_publish());
+
+        let projected = replica.project();
+        assert!(projected.workspaces.is_empty());
+        assert!(projected.tabs.is_empty());
+        assert!(projected.panes.is_empty());
+        assert!(projected.layouts.is_empty());
+        assert_eq!(projected.focused_pane_id, None);
+    }
+
+    #[test]
+    fn last_tab_close_waits_for_the_workspace_close_cascade() {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let tab_closed = replica
+            .apply(event(
+                41,
+                "tab_closed",
+                json!({
+                    "type": "tab_closed",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("tab close event");
+        assert!(!tab_closed.publish);
+
+        let workspace_closed = replica
+            .apply(event(
+                42,
+                "workspace_closed",
+                json!({
+                    "type": "workspace_closed",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("workspace close event");
+        assert!(workspace_closed.publish);
+        assert!(replica.ready_to_publish());
+        assert!(replica.project().workspaces.is_empty());
+    }
+
+    #[test]
     fn exact_duplicate_replay_is_idempotent_but_reused_sequence_is_rejected() {
         let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
         let focused = event(
@@ -1757,6 +2210,17 @@ mod tests {
             }
             SubscriptionLine::Event(_) => panic!("expected subscription error"),
         }
+    }
+
+    #[test]
+    fn subscription_failure_is_stale_only_when_a_projection_already_exists() {
+        let initial =
+            connect_failure_from_api(ApiError::Transport("socket closed".to_owned()), false, 40);
+        assert_eq!(initial.error.state(), "unreachable");
+
+        let reconnect =
+            connect_failure_from_api(ApiError::Transport("socket closed".to_owned()), true, 40);
+        assert_eq!(reconnect.error.state(), "stale");
     }
 
     #[test]
@@ -1814,6 +2278,100 @@ mod tests {
             "protocol_mismatch"
         );
         assert_eq!(replica.project().focused_pane_id, before.focused_pane_id);
+    }
+
+    #[test]
+    fn coordinator_resumes_from_the_last_event_without_fetching_another_snapshot() {
+        let root = Path::new("/tmp").join(format!(
+            "herdr-core-session-resume-contract-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let state_path = root.join("state.json");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
+        let resumed = Arc::new(AtomicBool::new(false));
+        let resumed_from_server = Arc::clone(&resumed);
+        let server = thread::spawn(move || {
+            let (mut snapshot_stream, snapshot_request) = accept_request(&listener);
+            assert_eq!(snapshot_request["method"], "session.snapshot");
+            write_result(
+                &mut snapshot_stream,
+                &snapshot_request,
+                json!({"type": "session_snapshot", "snapshot": snapshot()}),
+            );
+
+            let (mut first_subscription, first_subscribe_request) = accept_request(&listener);
+            assert_eq!(first_subscribe_request["method"], "events.subscribe");
+            assert_eq!(first_subscribe_request["params"]["after_sequence"], 40);
+            write_result(
+                &mut first_subscription,
+                &first_subscribe_request,
+                json!({
+                    "type": "subscription_started",
+                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                    "sequence": 40,
+                    "oldest_available_sequence": 1
+                }),
+            );
+            writeln!(
+                first_subscription,
+                "{}",
+                json!({
+                    "protocol": HERDR_PROTOCOL_REVISION,
+                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                    "sequence": 41,
+                    "event": "workspace_focused",
+                    "data": {"type": "workspace_focused", "workspace_id": "w1"}
+                })
+            )
+            .expect("write replayable event");
+            drop(first_subscription);
+
+            let (mut resumed_subscription, resumed_request) = accept_request(&listener);
+            assert_eq!(
+                resumed_request["method"], "events.subscribe",
+                "a clean disconnect must resume the cursor instead of fetching a snapshot"
+            );
+            assert_eq!(resumed_request["params"]["after_sequence"], 41);
+            write_result(
+                &mut resumed_subscription,
+                &resumed_request,
+                json!({
+                    "type": "subscription_started",
+                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                    "sequence": 41,
+                    "oldest_available_sequence": 1
+                }),
+            );
+            resumed_from_server.store(true, Ordering::Release);
+            let mut byte = [0_u8; 1];
+            assert_eq!(
+                resumed_subscription
+                    .read(&mut byte)
+                    .expect("wait for shutdown"),
+                0
+            );
+        });
+
+        let runtime = runtime_for_fixture(&socket_path, &state_path);
+        let context = context_for_fixture(&runtime, &socket_path);
+        let handle = spawn(context, None).expect("start session sync");
+        wait_until(Instant::now() + Duration::from_secs(3), || {
+            resumed.load(Ordering::Acquire)
+                && runtime
+                    .lock()
+                    .expect("runtime lock")
+                    .snapshot()
+                    .status
+                    .herdr
+                    .state
+                    == "connected"
+        });
+
+        drop(handle);
+        server.join().expect("fake server joins");
+        remove_fixture(&root, &socket_path, &state_path);
     }
 
     #[test]
@@ -1895,28 +2453,8 @@ mod tests {
             );
         });
 
-        let runtime = Arc::new(Mutex::new(Runtime::new(
-            CoreOptions {
-                schema_version: SCHEMA_VERSION,
-                herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
-                herdr_bin_path: None,
-                remote_targets: Vec::new(),
-                app_state_path: state_path.to_string_lossy().into_owned(),
-            },
-            crate::environment::EnvironmentReport {
-                statuses: Vec::new(),
-                home_path: None,
-                remote_enabled: false,
-                chromux_enabled: false,
-                herdr_socket_path_override: None,
-            },
-        )));
-        let context = LiveContext {
-            socket_path: socket_path.clone(),
-            herdr_bin: None,
-            runtime: Arc::downgrade(&runtime),
-            notifier: crate::ffi::ChangeNotifier::noop(),
-        };
+        let runtime = runtime_for_fixture(&socket_path, &state_path);
+        let context = context_for_fixture(&runtime, &socket_path);
         let handle = spawn(context, None).expect("start session sync");
         wait_until(Instant::now() + Duration::from_secs(3), || {
             let snapshot = runtime.lock().expect("runtime lock").snapshot().clone();
@@ -1930,10 +2468,6 @@ mod tests {
 
         drop(handle);
         server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        if state_path.exists() {
-            std::fs::remove_file(&state_path).expect("remove state");
-        }
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        remove_fixture(&root, &socket_path, &state_path);
     }
 }

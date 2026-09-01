@@ -46,7 +46,7 @@ unsafe impl Send for CallbackRegistration {}
 unsafe impl Sync for CallbackRegistration {}
 
 /// Thread-safe handle that fires the registered change callback. Cloned into
-/// live worker threads so PTY and poller output can wake the Swift shell.
+/// live worker threads so PTY and session-sync output can wake the Swift shell.
 #[derive(Clone)]
 pub struct ChangeNotifier {
     registration: Arc<Mutex<Option<CallbackRegistration>>>,
