@@ -190,6 +190,27 @@ struct PaneShortcutSettingsTests {
         #expect(terminal.scrollPosition == 1)
     }
 
+    /// A pane must hold more than SwiftTerm's default 500 lines. An agent TUI
+    /// repaints the whole screen every frame, so a shallow buffer is consumed in
+    /// seconds and scrolling up stops at a wall a short way from the bottom.
+    @MainActor
+    @Test func aPaneKeepsHistoryDeeperThanSwiftTermsDefault() {
+        let view = ImeTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 300),
+            font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+            options: HideTerminalOptions.terminal
+        )
+
+        for line in 1...2000 {
+            view.feed(text: "line-\(line)\r\n")
+        }
+
+        // Row 100 is long past the default 500-line window once 2000 lines have
+        // been fed, so it survives only because the pane was given real depth.
+        #expect(view.terminal.getScrollInvariantLine(row: 100) != nil)
+        #expect(HideTerminalOptions.scrollbackLines > TerminalOptions.default.scrollback)
+    }
+
     /// Suppressing mouse reporting is what lets an ordinary wheel move Hide's
     /// scrollback instead of being eaten by the program in the pane. It is only
     /// correct in the main buffer. A full-screen agent TUI switches to the

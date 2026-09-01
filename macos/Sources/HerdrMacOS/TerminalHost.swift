@@ -14,7 +14,8 @@ struct TerminalHost: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalView {
         let terminal = ImeTerminalView(
             frame: .zero,
-            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
+            options: HideTerminalOptions.terminal
         )
         terminal.terminalDelegate = context.coordinator
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)

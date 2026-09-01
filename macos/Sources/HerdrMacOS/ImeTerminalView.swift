@@ -92,6 +92,26 @@ enum ModifiedTerminalInputPolicy {
     }
 }
 
+/// Terminal construction values shared by the local and remote panes, so a
+/// pane behaves the same whichever transport backs it.
+enum HideTerminalOptions {
+    /// Lines of scrollback each pane keeps.
+    ///
+    /// SwiftTerm defaults to 500, which is a reasonable depth for a shell whose
+    /// output only grows. It is far too shallow here: a full-screen agent TUI
+    /// repaints the whole screen every frame, so a pane burns screen-height
+    /// lines per repaint and a few seconds of activity is enough to push the
+    /// conversation past the top. Scrolling up then hit a wall almost
+    /// immediately, while the same pane scrolled fine in the herdr TUI.
+    static let scrollbackLines = 10_000
+
+    static var terminal: TerminalOptions {
+        var options = TerminalOptions.default
+        options.scrollback = scrollbackLines
+        return options
+    }
+}
+
 /// SwiftTerm terminal view with deterministic IME composition handling.
 /// `interpretKeyEvents` is the IME entry point SwiftTerm routes key events
 /// through, so the composition state captured there brackets everything the
