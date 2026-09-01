@@ -437,23 +437,7 @@ private struct HideSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HideBrandHeader()
-            VStack(spacing: 5) {
-                HideActionButton(title: "New Workspace", systemImage: "plus.square", shortcut: "⌘⇧N") {
-                    model.openNewWorkspace()
-                }
-                HideActionButton(title: "New Agent", systemImage: "sparkles", shortcut: "⌘N") {
-                    model.openNewAgent()
-                }
-                HideActionButton(title: "Search", systemImage: "magnifyingglass", shortcut: "⌘K") {
-                    model.openSearch()
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 16)
-
-            Rectangle()
-                .fill(HideTheme.divider)
-                .frame(height: 1)
+            SidebarCommandBar()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -461,18 +445,18 @@ private struct HideSidebar: View {
                     // it is the only part the user has to act on.
                     let waiting = model.agentsNeedingAttention
                     if !waiting.isEmpty {
-                        HideSectionLabel(title: "NEEDS YOU", count: waiting.count)
+                        HideSectionLabel(title: "Needs You", count: waiting.count)
                         ForEach(waiting) { agent in
                             AgentNavigatorRow(agent: agent, showsWorkspace: true)
                         }
                     }
 
-                    HideSectionLabel(title: "WORKSPACES", count: model.workspaces.count)
+                    HideSectionLabel(title: "Projects", count: model.workspaces.count)
                     if model.workspaces.isEmpty {
                         EmptySidebarRow(
                             systemImage: "square.stack.3d.up",
-                            title: "No workspaces yet",
-                            detail: "Add a folder to create your first workspace."
+                            title: "No projects yet",
+                            detail: "Add a folder to create your first project."
                         )
                     } else {
                         ForEach(model.workspaces) { workspace in
@@ -483,34 +467,10 @@ private struct HideSidebar: View {
                 .padding(.bottom, 14)
             }
 
-            Rectangle()
-                .fill(HideTheme.divider)
-                .frame(height: 1)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HideSectionLabel(title: "DEVICES", count: nil)
-                ForEach(model.devices, id: \.id) { device in
-                    DeviceNavigatorRow(device: device)
-                }
-                HideWeeklyUsageSection(
-                    usages: model.core.snapshot?.navigator.providerUsage ?? []
-                )
-                Button {
-                    model.showSettings = true
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
-                        .hideFont(size: 12, weight: .medium)
-                        .foregroundStyle(HideTheme.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .frame(width: HideTheme.compactControlSize, height: HideTheme.compactControlSize)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 9)
-            .padding(.bottom, 10)
+            SidebarUtilityBar(
+                devices: model.devices,
+                usages: model.core.snapshot?.navigator.providerUsage ?? []
+            )
         }
         .background(HideTheme.sidebar)
         .overlay(alignment: .trailing) {
@@ -522,32 +482,213 @@ private struct HideSidebar: View {
     }
 }
 
-private struct HideWeeklyUsageSection: View {
+private struct SidebarCommandBar: View {
+    @EnvironmentObject private var model: ShellModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: model.openSearch) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass")
+                        .hideFont(size: 11, weight: .semibold)
+                    Text("Search")
+                        .hideFont(size: 11, weight: .medium)
+                    Spacer(minLength: 4)
+                    Text("⌘K")
+                        .hideFont(size: 9, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                }
+                .foregroundStyle(HideTheme.secondary)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, minHeight: 32)
+                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Search projects and agents")
+
+            SidebarIconButton(
+                systemImage: "folder.badge.plus",
+                help: "New project (⌘⇧N)",
+                accessibilityLabel: "New project",
+                action: model.openNewWorkspace
+            )
+            SidebarIconButton(
+                systemImage: "plus",
+                help: "New agent (⌘N)",
+                accessibilityLabel: "New agent",
+                action: model.openNewAgent
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+}
+
+private struct SidebarIconButton: View {
+    let systemImage: String
+    let help: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .hideFont(size: 11, weight: .semibold)
+                .foregroundStyle(HideTheme.secondary)
+                .frame(width: 32, height: 32)
+                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct SidebarUtilityBar: View {
+    @EnvironmentObject private var model: ShellModel
+    @State private var showingUsage = false
+
+    let devices: [CoreDeviceSnapshot]
+    let usages: [CoreProviderUsageSnapshot]
+
+    private var selectedDevice: CoreDeviceSnapshot? {
+        devices.first(where: { $0.id == model.selectedDeviceID }) ?? devices.first
+    }
+
+    private var highestUsage: Double? {
+        usages.compactMap(\.usedPercent).max()
+    }
+
+    private var usageColor: Color {
+        guard let highestUsage else { return HideTheme.muted }
+        if highestUsage >= 90 { return HideTheme.danger }
+        if highestUsage >= 70 { return HideTheme.warning }
+        return HideTheme.success
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Menu {
+                ForEach(devices) { device in
+                    Button {
+                        model.selectDevice(device)
+                    } label: {
+                        Label(
+                            device.agentCount > 0
+                                ? "\(device.label), \(device.agentCount) agents"
+                                : device.label,
+                            systemImage: device.id == model.selectedDeviceID ? "checkmark" : "circle"
+                        )
+                    }
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(selectedDevice.map(deviceStatusColor) ?? HideTheme.muted)
+                        .frame(width: 6, height: 6)
+                    Text(selectedDevice?.label ?? "No device")
+                        .hideFont(size: 10, weight: .medium)
+                        .lineLimit(1)
+                    if let agentCount = selectedDevice?.agentCount, agentCount > 0 {
+                        Text("\(agentCount)")
+                            .hideFont(size: 9, design: .monospaced)
+                            .foregroundStyle(HideTheme.muted)
+                    }
+                    Image(systemName: "chevron.up.chevron.down")
+                        .hideFont(size: 8, weight: .semibold)
+                        .foregroundStyle(HideTheme.muted)
+                }
+                .foregroundStyle(HideTheme.secondary)
+                .padding(.horizontal, 9)
+                .frame(height: 30)
+                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Choose device")
+
+            Spacer(minLength: 0)
+
+            Button {
+                showingUsage.toggle()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "gauge.with.dots.needle.33percent")
+                    if let highestUsage {
+                        Text("\(Int(highestUsage.rounded()))%")
+                            .hideFont(size: 9, weight: .semibold, design: .monospaced)
+                    }
+                }
+                .hideFont(size: 10, weight: .medium)
+                .foregroundStyle(usageColor)
+                .frame(minWidth: 30, minHeight: 30)
+                .padding(.horizontal, highestUsage == nil ? 0 : 4)
+            }
+            .buttonStyle(.plain)
+            .help("Weekly provider usage")
+            .accessibilityLabel("Weekly provider usage")
+            .popover(isPresented: $showingUsage, arrowEdge: .bottom) {
+                HideUsagePopover(usages: usages)
+            }
+
+            Button {
+                model.showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .hideFont(size: 11, weight: .semibold)
+                    .foregroundStyle(HideTheme.secondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help("Settings")
+            .accessibilityLabel("Settings")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(HideTheme.divider)
+                .frame(height: HideTheme.Layout.hairlineWidth)
+        }
+    }
+
+    private func deviceStatusColor(_ device: CoreDeviceSnapshot) -> Color {
+        device.state == "ready" || device.state == "available"
+            ? HideTheme.success
+            : HideTheme.warning
+    }
+}
+
+private struct HideUsagePopover: View {
     let usages: [CoreProviderUsageSnapshot]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Rectangle()
-                .fill(HideTheme.divider)
-                .frame(height: 1)
-
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 7) {
-                Text("WEEKLY USAGE")
-                    .hideFont(size: 10, weight: .bold)
-                    .tracking(1.2)
-                    .foregroundStyle(HideTheme.muted)
+                Text("Weekly Usage")
+                    .hideFont(size: 12, weight: .semibold)
+                    .foregroundStyle(HideTheme.primary)
                 Spacer()
-                Text("1W")
+                Text("7 days")
                     .hideFont(size: 9, weight: .semibold, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
             }
-            .padding(.horizontal, 7)
 
-            ForEach(usages) { usage in
-                HideWeeklyUsageRow(usage: usage)
+            if usages.isEmpty {
+                Text("Provider usage is not available yet.")
+                    .hideFont(size: 10)
+                    .foregroundStyle(HideTheme.secondary)
+            } else {
+                ForEach(usages) { usage in
+                    HideWeeklyUsageRow(usage: usage)
+                }
             }
         }
-        .padding(.top, 5)
+        .padding(14)
+        .frame(width: 250)
+        .background(HideTheme.panel)
+        .preferredColorScheme(.dark)
         .accessibilityIdentifier("hide-weekly-usage")
     }
 }
@@ -627,7 +768,6 @@ private struct HideWeeklyUsageRow: View {
             .frame(height: 3)
             .accessibilityHidden(true)
         }
-        .padding(.horizontal, 7)
         .help(helpText)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(usage.label)
@@ -642,16 +782,15 @@ private struct HideBrandHeader: View {
     var body: some View {
         HStack(spacing: 9) {
             Text("hide")
-                .hideFont(size: 22, weight: .bold, design: .rounded)
-                .tracking(-0.8)
+                .hideFont(size: 18, weight: .bold, design: .rounded)
+                .tracking(-0.6)
                 .foregroundStyle(HideTheme.primary)
             Circle()
                 .fill(model.herdrIsConnected ? HideTheme.success : HideTheme.warning)
-                .frame(width: 7, height: 7)
-                .shadow(color: (model.herdrIsConnected ? HideTheme.success : HideTheme.warning).opacity(0.7), radius: 5)
+                .frame(width: 6, height: 6)
             Spacer()
             Text(model.isRemoteContext ? model.remote.targetLabel : (model.core.runtimeSelection?.version ?? "offline"))
-                .hideFont(size: 10, weight: .medium, design: .monospaced)
+                .hideFont(size: 9, weight: .medium, design: .monospaced)
                 .foregroundStyle(HideTheme.muted)
             Button {
                 model.toggleLeftSidebar()
@@ -668,38 +807,9 @@ private struct HideBrandHeader: View {
             .accessibilityLabel("Hide left sidebar")
             .accessibilityIdentifier("hide-toggle-left-sidebar")
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 19)
-        .padding(.bottom, 18)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
         .accessibilityIdentifier("hide-brand")
-    }
-}
-
-private struct HideActionButton: View {
-    let title: String
-    let systemImage: String
-    let shortcut: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: systemImage)
-                    .hideFont(size: 12, weight: .semibold)
-                    .frame(width: 16)
-                Text(title)
-                    .hideFont(size: 12, weight: .medium)
-                Spacer()
-                Text(shortcut)
-                    .hideFont(size: 10, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-            }
-            .foregroundStyle(HideTheme.primary)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 9)
-            .background(HideTheme.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -710,19 +820,18 @@ private struct HideSectionLabel: View {
     var body: some View {
         HStack(spacing: 7) {
             Text(title)
-                .hideFont(size: 10, weight: .bold)
-                .tracking(1.2)
-                .foregroundStyle(HideTheme.muted)
+                .hideFont(size: 11, weight: .semibold)
+                .foregroundStyle(HideTheme.secondary)
             if let count {
                 Text("\(count)")
-                    .hideFont(size: 10, weight: .medium, design: .monospaced)
+                    .hideFont(size: 9, weight: .medium, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
             }
             Spacer()
         }
-        .padding(.horizontal, 17)
-        .padding(.top, 17)
-        .padding(.bottom, 7)
+        .padding(.horizontal, 14)
+        .padding(.top, 13)
+        .padding(.bottom, 6)
     }
 }
 
@@ -756,8 +865,20 @@ private struct WorkspaceNavigatorRow: View {
     @Environment(\.hideAccent) private var accent
     let workspace: CoreWorkspaceSnapshot
 
+    private var isFocusedWorkspace: Bool {
+        model.focusedWorkspace?.id == workspace.id
+    }
+
+    private var presentation: SidebarWorkspacePresentation {
+        SidebarWorkspacePresentation(workspace: workspace, agents: model.agents)
+    }
+
+    private var attentionAgentIDs: Set<String> {
+        Set(model.agentsNeedingAttention.map(\.id))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 7) {
                 Button {
                     model.toggleWorkspace(workspace)
@@ -769,18 +890,26 @@ private struct WorkspaceNavigatorRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .frame(width: HideTheme.compactControlSize, height: HideTheme.compactControlSize)
+                .frame(width: 22, height: 28)
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Image(systemName: workspace.isGit ? "folder.badge.gearshape" : "folder")
                     .hideFont(size: 12, weight: .semibold)
-                    .foregroundStyle(workspace.temporary ? HideTheme.warning : accent)
+                    .foregroundStyle(
+                        workspace.temporary
+                            ? HideTheme.warning
+                            : (isFocusedWorkspace ? accent : HideTheme.secondary)
+                    )
                     .frame(width: 16)
                 Text(workspace.label)
                     .hideFont(size: 12, weight: .semibold)
-                    .foregroundStyle(HideTheme.primary)
+                    .foregroundStyle(isFocusedWorkspace ? HideTheme.primary : HideTheme.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
+                Text(presentation.activityLabel)
+                    .hideFont(size: 9, design: .monospaced)
+                    .foregroundStyle(HideTheme.muted)
+                    .lineLimit(1)
                 Menu {
                     Button("New Agent") {
                         model.openNewAgent(checkoutID: workspace.checkouts.first?.id)
@@ -799,28 +928,55 @@ private struct WorkspaceNavigatorRow: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .frame(width: HideTheme.compactControlSize, height: HideTheme.compactControlSize)
+                .frame(width: 24, height: 28)
             }
-            .padding(.horizontal, 15)
-            .padding(.top, 7)
-            .padding(.bottom, 2)
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .frame(minHeight: 34)
 
             if workspace.expanded {
                 ForEach(workspace.checkouts) { checkout in
-                    CheckoutNavigatorRow(
-                        workspace: workspace,
-                        checkout: checkout,
-                        isFocused: model.focusedCheckout?.id == checkout.id
-                    )
-                    // The agents running on this branch, under the branch. Seeing
-                    // what a workspace is doing is the reason to open it.
-                    ForEach(model.agents(in: checkout)) { agent in
-                        AgentNavigatorRow(agent: agent, showsWorkspace: false)
-                    }
+                    checkoutGroup(checkout)
                 }
             }
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, 3)
+    }
+
+    private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
+        let isFocused = model.focusedCheckout?.id == checkout.id
+        let checkoutAgents = model.agents(in: checkout)
+        let visibleAgents = isFocused
+            ? checkoutAgents.filter { !attentionAgentIDs.contains($0.id) }
+            : []
+        let checkoutPresentation = SidebarCheckoutPresentation(
+            workspace: workspace,
+            checkout: checkout,
+            agents: model.agents
+        )
+
+        return VStack(alignment: .leading, spacing: 0) {
+            CheckoutNavigatorRow(
+                workspace: workspace,
+                checkout: checkout,
+                presentation: checkoutPresentation,
+                isFocused: isFocused
+            )
+            ForEach(visibleAgents) { agent in
+                AgentNavigatorRow(agent: agent, showsWorkspace: false)
+            }
+        }
+        .background(
+            isFocused ? HideTheme.elevated.opacity(0.72) : .clear,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+        )
+        .overlay {
+            if isFocused {
+                RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+                    .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+            }
+        }
+        .padding(.horizontal, 8)
     }
 }
 
@@ -829,16 +985,16 @@ private struct CheckoutNavigatorRow: View {
     @Environment(\.hideAccent) private var accent
     let workspace: CoreWorkspaceSnapshot
     let checkout: CoreCheckoutSnapshot
+    let presentation: SidebarCheckoutPresentation
     let isFocused: Bool
 
-    /// Panes, not tabs: a checkout row exists because panes are in it, and a
-    /// pane count is what tells the user how much is running there.
-    private var paneSummary: String {
-        let panes = checkout.tabs.reduce(0) { $0 + $1.panes.count }
-        switch panes {
-        case 0: return "no panes"
-        case 1: return "1 pane"
-        default: return "\(panes) panes"
+    private var activityColor: Color {
+        switch presentation.activity {
+        case .missing, .error: HideTheme.danger
+        case .needsAttention: HideTheme.warning
+        case .working: accent
+        case .idle: HideTheme.secondary
+        case .empty: HideTheme.muted
         }
     }
 
@@ -847,34 +1003,39 @@ private struct CheckoutNavigatorRow: View {
             model.selectCheckout(checkout)
         } label: {
             HStack(spacing: 7) {
+                Circle()
+                    .fill(activityColor)
+                    .frame(width: 6, height: 6)
                 Image(systemName: checkout.isWorktree ? "arrow.triangle.branch" : "rectangle.stack")
                     .hideFont(size: 10, weight: .semibold)
-                    .foregroundStyle(isFocused ? accent : HideTheme.secondary)
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(checkout.label)
-                        .hideFont(size: 11, weight: isFocused ? .semibold : .regular)
-                        .foregroundStyle(isFocused ? HideTheme.primary : HideTheme.secondary)
-                        .lineLimit(1)
-                    Text(paneSummary)
+                    .foregroundStyle(HideTheme.secondary)
+                    .frame(width: 14)
+                Text(checkout.label)
+                    .hideFont(size: 11, weight: isFocused ? .semibold : .regular)
+                    .foregroundStyle(isFocused ? HideTheme.primary : HideTheme.secondary)
+                    .lineLimit(1)
+                if presentation.isPrimary {
+                    SidebarBadge(label: "primary", color: HideTheme.secondary)
+                } else if checkout.temporary {
+                    SidebarBadge(label: "temporary", color: HideTheme.warning)
+                } else if !checkout.exists {
+                    SidebarBadge(label: "missing", color: HideTheme.danger)
+                }
+                Spacer(minLength: 0)
+                if let activityLabel = presentation.activityLabel {
+                    Text(activityLabel)
                         .hideFont(size: 9, design: .monospaced)
                         .foregroundStyle(HideTheme.muted)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 0)
-                if isFocused {
-                    Circle()
-                        .fill(accent)
-                        .frame(width: 5, height: 5)
-                }
             }
-            .padding(.leading, 37)
-            .padding(.trailing, 14)
-            .padding(.vertical, 6)
-            .background(isFocused ? accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.leading, 23)
+            .padding(.trailing, 9)
+            .frame(minHeight: 31)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path)
         .accessibilityIdentifier("hide-checkout-\(checkout.id)")
         .accessibilityLabel("\(workspace.repoName), \(checkout.label)")
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
@@ -887,6 +1048,24 @@ private struct CheckoutNavigatorRow: View {
                 }
             }
         }
+    }
+}
+
+private struct SidebarBadge: View {
+    let label: String
+    let color: Color
+
+    var body: some View {
+        Text(label)
+            .hideFont(size: 8, weight: .medium)
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .frame(height: 16)
+            .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
+            .overlay {
+                RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                    .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+            }
     }
 }
 
@@ -910,6 +1089,27 @@ private struct AgentNavigatorRow: View {
 
     private var isFocused: Bool {
         model.focusedPaneID == agent.paneID
+    }
+
+    private var providerLabel: String {
+        switch agent.agentKind {
+        case "claude": "Claude"
+        case "codex": "Codex"
+        default: agent.agentKind.capitalized
+        }
+    }
+
+    private var stateLabel: String {
+        agent.state.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var ambientLabel: String? {
+        guard let ambient = agent.ambient else { return nil }
+        var parts: [String] = []
+        if ambient.subagentsActive > 0 { parts.append("\(ambient.subagentsActive) sub") }
+        if ambient.backgroundRunning > 0 { parts.append("\(ambient.backgroundRunning) bg") }
+        if ambient.backgroundFailed > 0 { parts.append("\(ambient.backgroundFailed) failed") }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ")
     }
 
     var body: some View {
@@ -939,57 +1139,31 @@ private struct AgentNavigatorRow: View {
                         Text(agent.state.replacingOccurrences(of: "_", with: " "))
                             .hideFont(size: 9, weight: .medium)
                             .foregroundStyle(stateColor)
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(providerLabel)
+                            Text(stateLabel)
+                                .foregroundStyle(stateColor)
+                            if let ambientLabel {
+                                Text(ambientLabel)
+                            }
+                        }
+                        .hideFont(size: 8, weight: .medium)
+                        .foregroundStyle(HideTheme.muted)
+                        .lineLimit(1)
                     }
                 }
             }
-            .padding(.leading, showsWorkspace ? 15 : 52)
-            .padding(.trailing, 15)
-            .padding(.vertical, showsWorkspace ? 7 : 4)
-            .background(isFocused ? accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.leading, showsWorkspace ? 14 : 43)
+            .padding(.trailing, showsWorkspace ? 14 : 9)
+            .padding(.vertical, showsWorkspace ? 7 : 5)
+            .background(isFocused ? HideTheme.panel : .clear, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
         .accessibilityLabel("\(agent.workspaceLabel), \(agent.agentKind), \(agent.state)")
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
-    }
-}
-
-private struct DeviceNavigatorRow: View {
-    @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
-    let device: CoreDeviceSnapshot
-
-    private var isSelected: Bool { model.selectedDeviceID == device.id }
-
-    var body: some View {
-        Button {
-            model.selectDevice(device)
-        } label: {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(device.state == "ready" || device.state == "available" ? HideTheme.success : HideTheme.warning)
-                    .frame(width: 6, height: 6)
-                Text(device.label)
-                    .hideFont(size: 11, weight: isSelected ? .semibold : .medium)
-                    .foregroundStyle(isSelected ? HideTheme.primary : HideTheme.secondary)
-                Spacer()
-                if device.agentCount > 0 {
-                    Text("\(device.agentCount)")
-                        .hideFont(size: 9, design: .monospaced)
-                        .foregroundStyle(HideTheme.muted)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(isSelected ? accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        // Stable row identifiers keep repeated sidebar labels independently
-        // targetable by assistive technology and verification automation.
-        .accessibilityIdentifier("hide-device-\(device.id)")
-        .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }
 }
 
