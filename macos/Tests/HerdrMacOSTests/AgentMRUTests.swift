@@ -118,3 +118,59 @@ struct AgentMRUTests {
         #expect(focusedPaneID == "p1")
     }
 }
+
+@Suite("Tab MRU and switcher")
+struct TabMRUTests {
+    @Test func recencyIsScopedToTheCurrentProjectCheckout() {
+        var mru = TabMRU()
+
+        mru.observe(
+            contextID: "local:checkout-a",
+            focusedTabID: "tab-a2",
+            availableTabIDs: ["tab-a1", "tab-a2"]
+        )
+        #expect(mru.tabIDs == ["tab-a2", "tab-a1"])
+
+        mru.observe(
+            contextID: "local:checkout-b",
+            focusedTabID: "tab-b1",
+            availableTabIDs: ["tab-b1", "tab-b2"]
+        )
+        #expect(mru.tabIDs == ["tab-b1", "tab-b2"])
+        #expect(!mru.tabIDs.contains("tab-a2"))
+    }
+
+    @Test func removedTabsCannotRemainInTheCycleOrCommit() throws {
+        var mru = TabMRU()
+        mru.observe(
+            contextID: "local:checkout-a",
+            focusedTabID: "tab-a1",
+            availableTabIDs: ["tab-a1", "tab-a2", "tab-a3"]
+        )
+        mru.observe(
+            contextID: "local:checkout-a",
+            focusedTabID: "tab-a3",
+            availableTabIDs: ["tab-a1", "tab-a3"]
+        )
+        #expect(mru.tabIDs == ["tab-a3", "tab-a1"])
+
+        var cycle = try #require(TabSwitcherCycle(
+            originalTabID: "tab-a3",
+            tabIDs: mru.tabIDs
+        ))
+        #expect(cycle.selectedTabID == "tab-a1")
+        cycle.advance()
+        #expect(cycle.selectedTabID == "tab-a3")
+        #expect(cycle.committedTabID(availableTabIDs: ["tab-a1"]) == nil)
+    }
+
+    @Test func reverseTabSwitchingStartsAtTheLeastRecentTab() throws {
+        let cycle = try #require(TabSwitcherCycle(
+            originalTabID: "tab-1",
+            tabIDs: ["tab-1", "tab-2", "tab-3"],
+            direction: .backward
+        ))
+
+        #expect(cycle.selectedTabID == "tab-3")
+    }
+}
