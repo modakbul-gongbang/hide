@@ -451,6 +451,33 @@ enum AgentRootPaneArguments {
     }
 }
 
+enum HerdrLiveWorkspaceIdentity {
+    /// The checkout's workspace id belongs to Hide's catalog domain. The live
+    /// Herdr workspace id is encoded by every attached tab as `<workspace>:tN`.
+    /// Keep that domain crossing explicit so callers never accidentally pass a
+    /// catalog id to `herdr tab create --workspace`.
+    static func workspaceID(for tabs: [CoreTabSnapshot]) -> String? {
+        tabs.lazy
+            .compactMap(\.id)
+            .compactMap(workspaceID(fromTabID:))
+            .first
+    }
+
+    static func workspaceID(fromTabID tabID: String) -> String? {
+        guard let separator = tabID.lastIndex(of: ":") else { return nil }
+        let workspaceID = tabID[..<separator]
+        let tabComponent = tabID[tabID.index(after: separator)...]
+        guard !workspaceID.isEmpty,
+              tabComponent.first == "t",
+              tabComponent.dropFirst().allSatisfy(\.isNumber),
+              tabComponent.count > 1
+        else {
+            return nil
+        }
+        return String(workspaceID)
+    }
+}
+
 /// Starts an agent through the selected Herdr runtime. hide only supplies
 /// non-secret routing arguments; authentication remains entirely owned by the
 /// selected CLI and Herdr server.

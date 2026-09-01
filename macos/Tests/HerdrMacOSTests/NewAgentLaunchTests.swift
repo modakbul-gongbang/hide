@@ -104,6 +104,33 @@ struct NewAgentLaunchTests {
         )
     }
 
+    @Test func liveWorkspaceIdentityComesFromTheSelectedCheckoutsHerdrTab() {
+        let tab = CoreTabSnapshot(
+            id: "w3:t1",
+            workspaceID: "workspace:catalog-id",
+            checkoutID: "checkout-1",
+            label: "Tab 1",
+            empty: false,
+            panes: []
+        )
+
+        #expect(HerdrLiveWorkspaceIdentity.workspaceID(for: [tab]) == "w3")
+    }
+
+    @Test func checkoutWithoutALiveHerdrTabDoesNotInventAWorkspaceIdentity() {
+        let fileOnlyPlaceholder = CoreTabSnapshot(
+            id: nil,
+            workspaceID: "workspace:catalog-id",
+            checkoutID: "checkout-1",
+            label: nil,
+            empty: true,
+            panes: []
+        )
+
+        #expect(HerdrLiveWorkspaceIdentity.workspaceID(for: [fileOnlyPlaceholder]) == nil)
+        #expect(HerdrLiveWorkspaceIdentity.workspaceID(fromTabID: "w3:terminal") == nil)
+    }
+
     private func baseArguments(agent: String) -> [String] {
         [
             "agent", "start", "hide-\(agent)",

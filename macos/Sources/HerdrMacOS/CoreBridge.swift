@@ -1347,13 +1347,21 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func startAgent(agent: String, checkoutPath: String, bypassWarnings: Bool) {
+    func startAgent(
+        agent: String,
+        checkoutPath: String,
+        workspaceID: String?,
+        bypassWarnings: Bool
+    ) {
         guard let runtimeSelection else {
             bridgeError = "The verified bundled Herdr runtime is not available for this launch."
             return
         }
-        let workspaceID = herdrWorkspaceID(for: checkoutPath)
         let herdrPath = runtimeSelection.path
+        HideLaunchTrace.mark(
+            "agent.launch.requested",
+            detail: "kind=\(agent) workspace_id=\(workspaceID ?? "new")"
+        )
         Task { @MainActor [weak self] in
             let result = await Task.detached {
                 HerdrAgentLauncher.launch(
@@ -1365,6 +1373,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 )
             }.value
             guard let self else { return }
+            HideLaunchTrace.mark(
+                result.succeeded ? "agent.launch.ready" : "agent.launch.failed",
+                detail: result.message
+            )
             bridgeError = result.message
         }
     }
@@ -1709,33 +1721,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func environmentState(for key: String) -> String? {
         snapshot?.status.environment.first(where: { $0.key == key })?.state
-    }
-
-    /// The Herdr workspace already holding this checkout's repository, if any.
-    ///
-    /// Tab ids are Herdr-scoped (`w1C:t1`), so the space id is the prefix. An
-    /// agent started in a repository Herdr already has a space for belongs in
-    /// that space as another tab; creating a second space per launch is what
-    /// left eight empty duplicates behind.
-    private func herdrWorkspaceID(for checkoutPath: String) -> String? {
-        let normalizedCheckout = URL(fileURLWithPath: checkoutPath, isDirectory: true)
-            .standardizedFileURL
-            .path
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let workspace = snapshot?.navigator.workspaces.first(where: { workspace in
-            workspace.checkouts.contains { checkout in
-                checkout.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == normalizedCheckout
-            }
-        }) else {
-            return nil
-        }
-        return workspace.checkouts
-            .flatMap(\.tabs)
-            .compactMap(\.id)
-            .compactMap { tabID in
-                tabID.split(separator: ":").first.map(String.init)
-            }
-            .first
     }
 
     private func refreshSnapshot() {
