@@ -1094,6 +1094,16 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
+    /// Herdr owns the pane's history, so the wheel is forwarded to it rather
+    /// than moving a local buffer that the rendered stream never fills.
+    func scrollTerminal(paneID: String, direction: String, lines: Int) {
+        dispatch(kind: "terminal_scroll", payload: [
+            "pane_id": paneID,
+            "direction": direction,
+            "lines": lines,
+        ])
+    }
+
     func focusPane(_ paneID: String) {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
     }

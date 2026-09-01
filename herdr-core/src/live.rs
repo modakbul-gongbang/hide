@@ -942,6 +942,32 @@ pub fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
     Ok(line)
 }
 
+/// Asks Herdr to move the pane through its own host scrollback.
+///
+/// Hide receives a rendered stream: Herdr paints the pane at the geometry this
+/// client asked for, so no row ever scrolls off the client grid and a local
+/// scrollback stays empty however deep its buffer is. Herdr keeps the history
+/// instead, and scrolling is a request it answers with a fresh frame. This is
+/// the same path the Herdr TUI uses, which is why that client scrolls panes
+/// this one could not.
+pub fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, String> {
+    if !matches!(direction, "up" | "down") {
+        return Err(format!("terminal scroll direction is not up or down: {direction}"));
+    }
+    if lines == 0 {
+        return Err("terminal scroll needs at least one line".to_owned());
+    }
+    let mut line = serde_json::to_string(&json!({
+        "type": "terminal.scroll",
+        "direction": direction,
+        "lines": lines,
+        "source": "wheel",
+    }))
+    .map_err(|error| format!("terminal scroll could not be encoded: {error}"))?;
+    line.push('\n');
+    Ok(line)
+}
+
 pub fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
     if rows == 0 || cols == 0 {
         return Err("terminal dimensions must be positive".to_owned());
@@ -992,61 +1018,6 @@ fn terminal_session_arguments(
         "--rows".to_owned(),
         rows.to_string(),
     ]
-}
-
-/// How many rows of pane history to ask Herdr for when a session opens.
-pub const SCROLLBACK_BACKFILL_LINES: u16 = 2_000;
-
-/// Arguments that read a pane's history back from Herdr.
-///
-/// Herdr keeps the rows that scrolled off its own host PTY, and the attach
-/// stream never carries them: it repaints the pane in place, so nothing scrolls
-/// off the client grid and its scrollback stays empty however deep the buffer
-/// is. Reading them back is the only way a pane opens with history behind it.
-fn pane_scrollback_arguments(pane_id: &str, lines: u16) -> Vec<String> {
-    vec![
-        "pane".to_owned(),
-        "read".to_owned(),
-        pane_id.to_owned(),
-        "--source".to_owned(),
-        "recent-unwrapped".to_owned(),
-        "--lines".to_owned(),
-        lines.to_string(),
-        "--ansi".to_owned(),
-    ]
-}
-
-/// The rows to replay above the first frame: everything Herdr returned except
-/// the bottom `rows`, which the frame itself is about to paint. Replaying those
-/// too would push a duplicate copy of the visible screen into history.
-fn scrollback_backfill(read_output: &str, rows: u16) -> Option<Vec<u8>> {
-    let lines: Vec<&str> = read_output.lines().collect();
-    let keep = lines.len().checked_sub(usize::from(rows))?;
-    if keep == 0 {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    for line in &lines[..keep] {
-        bytes.extend_from_slice(line.as_bytes());
-        // Close whatever colour the row opened so it cannot bleed downward.
-        bytes.extend_from_slice(b"\x1b[0m\r\n");
-    }
-    Some(bytes)
-}
-
-/// Runs on the session spawn thread, never under the runtime mutex, because it
-/// shells out to Herdr.
-fn fetch_pane_scrollback(context: &LiveContext, pane_id: &str, rows: u16) -> Option<Vec<u8>> {
-    let herdr_bin = context.herdr_bin.as_ref()?;
-    let output = Command::new(herdr_bin)
-        .args(pane_scrollback_arguments(pane_id, SCROLLBACK_BACKFILL_LINES))
-        .env("HERDR_SOCKET_PATH", &context.socket_path)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    scrollback_backfill(&String::from_utf8_lossy(&output.stdout), rows)
 }
 
 /// One official Herdr terminal session process. Control is writable; observe
@@ -1228,6 +1199,19 @@ impl TerminalSession {
             .map_err(|_| "terminal control input channel is closed".to_owned())
     }
 
+    pub fn scroll(&self, direction: &str, lines: u16) -> Result<(), String> {
+        let Some(writer) = self.writer.as_ref() else {
+            return Err(format!(
+                "Pane {} is read-only because another client owns terminal control",
+                self.pane_id
+            ));
+        };
+        let line = terminal_scroll_line(direction, lines)?;
+        writer
+            .send(line)
+            .map_err(|_| "terminal control scroll channel is closed".to_owned())
+    }
+
     pub fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
         let Some(writer) = self.writer.as_ref() else {
             return Err(format!(
@@ -1356,10 +1340,6 @@ pub fn spawn_terminal_session(
         ))
         .spawn(move || {
             let started = Instant::now();
-            // Read history before the session opens, so the replay is already
-            // in hand when the session is registered and cannot interleave
-            // with the frames its reader starts delivering.
-            let backfill = fetch_pane_scrollback(&context, &pane_id, rows);
             let result = TerminalSession::spawn(&context, &pane_id, generation, mode, rows, cols);
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
@@ -1367,7 +1347,7 @@ pub fn spawn_terminal_session(
             };
             let changed = match runtime.lock() {
                 Ok(mut guard) => guard.ingest_terminal_session_spawn(
-                    generation, &pane_id, mode, result, elapsed_ms, &context, backfill,
+                    generation, &pane_id, mode, result, elapsed_ms, &context,
                 ),
                 Err(_) => return,
             };
@@ -1789,48 +1769,6 @@ mod tests {
         assert_eq!(error.state(), "socket_missing");
     }
 
-    #[test]
-    fn scrollback_replays_only_the_rows_above_the_first_frame() {
-        // Ten rows of history for an eight-row grid: the bottom eight are what
-        // the first frame paints, so only the two above it may be replayed.
-        let read_output = (1..=10)
-            .map(|row| format!("row-{row}"))
-            .collect::<Vec<_>>()
-            .join("\n");
 
-        let replay = scrollback_backfill(&read_output, 8).expect("two rows sit above the frame");
-        let text = String::from_utf8(replay).expect("replay is utf-8");
 
-        assert!(text.starts_with("row-1"));
-        assert!(text.contains("row-2"));
-        assert!(!text.contains("row-3"));
-        // Every replayed row closes its own colour so it cannot bleed downward.
-        assert_eq!(text.matches("\u{1b}[0m\r\n").count(), 2);
-    }
-
-    #[test]
-    fn a_pane_with_nothing_above_the_frame_replays_nothing() {
-        let read_output = (1..=8)
-            .map(|row| format!("row-{row}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(scrollback_backfill(&read_output, 8).is_none());
-        assert!(scrollback_backfill("", 8).is_none());
-        // A pane shorter than its own grid must not underflow into a replay.
-        assert!(scrollback_backfill("row-1\nrow-2", 8).is_none());
-    }
-
-    #[test]
-    fn scrollback_is_read_unwrapped_with_colour_from_the_named_pane() {
-        let arguments = pane_scrollback_arguments("w2X:pA", 2_000);
-
-        assert_eq!(
-            arguments,
-            vec![
-                "pane", "read", "w2X:pA", "--source", "recent-unwrapped", "--lines", "2000",
-                "--ansi",
-            ]
-        );
-    }
 }

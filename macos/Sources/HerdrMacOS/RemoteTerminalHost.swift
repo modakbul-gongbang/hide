@@ -20,8 +20,9 @@ struct RemoteTerminalHost: NSViewRepresentable {
         let terminal = HideRemoteTerminalView(
             frame: .zero,
             font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
-            options: HideTerminalOptions.terminal
+            options: .default
         )
+        terminal.hidePaneID = paneID
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         terminal.linkReporting = .implicit

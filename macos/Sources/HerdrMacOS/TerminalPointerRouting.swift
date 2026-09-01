@@ -57,6 +57,9 @@ final class TerminalPointerRoutingState {
 protocol HideTerminalPointerRouting: AnyObject {
     var pointerRouting: TerminalPointerRoutingState { get }
     var onPointerFocus: (() -> Void)? { get set }
+    /// The pane this view renders, so window-level routing can name it when it
+    /// forwards a gesture to the core.
+    var hidePaneID: String? { get set }
 
     func forwardMouseDown(_ event: NSEvent, selectingLocally: Bool)
     func forwardMouseDragged(_ event: NSEvent, selectingLocally: Bool)
@@ -131,6 +134,7 @@ extension TerminalView {
 final class HideRemoteTerminalView: LocalProcessTerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
+    var hidePaneID: String?
     var onOpenLink: (@MainActor @Sendable (String) -> Void)?
 
     override func interpretKeyEvents(_ eventArray: [NSEvent]) {

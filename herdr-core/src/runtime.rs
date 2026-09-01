@@ -258,6 +258,13 @@ struct PetShortcutPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct TerminalScrollPayload {
+    pane_id: String,
+    direction: String,
+    lines: u16,
+}
+
+#[derive(Debug, Deserialize)]
 struct TerminalResizePayload {
     pane_id: String,
     cols: u16,
@@ -295,6 +302,7 @@ enum ValidatedEvent {
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
+    TerminalScroll(TerminalScrollPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -2910,6 +2918,20 @@ impl Runtime {
                 }
                 false
             }
+            ValidatedEvent::TerminalScroll(payload) => {
+                // Herdr owns the pane's history, so the wheel is a request it
+                // answers with a fresh frame rather than a local buffer move.
+                // A pane another client controls is read-only, not broken, so
+                // it simply does not scroll - the same shape as resize.
+                if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
+                    && session.mode == TerminalSessionMode::Control
+                    && let Err(message) = session.scroll(&payload.direction, payload.lines)
+                {
+                    self.set_error("terminal.scroll_failed", message, true);
+                    return true;
+                }
+                false
+            }
             ValidatedEvent::UiStateUpdate(payload) => {
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
@@ -3131,7 +3153,6 @@ impl Runtime {
         result: Result<TerminalSession, String>,
         elapsed_ms: u128,
         context: &LiveContext,
-        backfill: Option<Vec<u8>>,
     ) -> bool {
         if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
@@ -3150,12 +3171,6 @@ impl Runtime {
         }
         match result {
             Ok(session) => {
-                // After the grid reset above and before the first frame: the
-                // rows Herdr kept from this pane's host PTY, which the attach
-                // stream itself never carries.
-                if let Some(bytes) = backfill {
-                    self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(&bytes));
-                }
                 self.terminal_sessions.insert(pane_id.to_owned(), session);
                 let reader_result = self
                     .terminal_sessions
@@ -3424,6 +3439,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
+        "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(ValidatedEvent::PetToggleVisible),

@@ -275,23 +275,45 @@ enum PaneScrollPolicy {
                 .contains(.option)
     }
 
-    /// Whether the wheel should move Hide's own scrollback instead of being
-    /// reported to the application running in the pane.
+    /// Whole terminal rows a wheel event moves the pane.
     ///
-    /// Only the main buffer has scrollback to move. Every full-screen agent TUI
-    /// runs in the alternate buffer, which has none, and suppressing mouse
-    /// reporting there makes SwiftTerm translate the wheel into cursor keys
-    /// instead: the transcript does not move and stray arrows land in the
-    /// agent's prompt. The application owns the wheel in that buffer, and
-    /// reporting it as mouse buttons is how a TUI scrolls its own viewport.
-    static func suppressesMouseReporting(isAlternateBuffer: Bool) -> Bool {
-        !isAlternateBuffer
+    /// Precise (trackpad) deltas are pixel values, so they accumulate across
+    /// events and keep their remainder; a classic wheel notch already arrives
+    /// in line units and must always move at least one row rather than
+    /// rounding away to nothing.
+    static func rows(
+        forDelta delta: CGFloat,
+        precise: Bool,
+        rowHeight: CGFloat,
+        accumulator: inout CGFloat
+    ) -> Int {
+        guard rowHeight > 0 else { return 0 }
+        guard precise else {
+            accumulator = 0
+            let rounded = Int(delta.rounded())
+            if rounded != 0 { return rounded }
+            return delta > 0 ? 1 : (delta < 0 ? -1 : 0)
+        }
+        accumulator += delta
+        let rows = Int(accumulator / rowHeight)
+        accumulator -= CGFloat(rows) * rowHeight
+        return rows
     }
 }
 
 @MainActor
 final class PaneCommandWindow: NSWindow {
     weak var paneCommandModel: ShellModel?
+    /// Pixel remainder carried between precise scroll events, so a slow
+    /// trackpad drag still adds up to whole rows instead of being discarded.
+    private var scrollAccumulator: CGFloat = 0
+
+    /// One terminal row in points, measured from the grid the view is showing.
+    private func rowHeight(of terminal: TerminalView) -> CGFloat {
+        let rows = CGFloat(terminal.terminal.rows)
+        guard rows > 0, terminal.bounds.height > 0 else { return 0 }
+        return terminal.bounds.height / rows
+    }
 
     override func sendEvent(_ event: NSEvent) {
         guard paneCommandModel != nil else {
@@ -299,16 +321,26 @@ final class PaneCommandWindow: NSWindow {
             return
         }
         if PaneScrollPolicy.routesToLocalScroll(event),
-           let terminal = terminalView(at: event.locationInWindow)
+           let terminal = terminalView(at: event.locationInWindow),
+           let paneID = (terminal as? any HideTerminalPointerRouting)?.hidePaneID,
+           let model = paneCommandModel
         {
-            if PaneScrollPolicy.suppressesMouseReporting(
-                isAlternateBuffer: terminal.terminal.isCurrentBufferAlternate
-            ) {
-                terminal.withMouseReportingDisabled {
-                    terminal.scrollWheel(with: event)
-                }
-            } else {
-                terminal.scrollWheel(with: event)
+            // Herdr renders this pane and keeps its history, so no row ever
+            // scrolls off the local grid and a local scrollback stays empty.
+            // Forward the wheel instead and let Herdr answer with a frame,
+            // which is the path its own TUI takes.
+            let rows = PaneScrollPolicy.rows(
+                forDelta: event.scrollingDeltaY,
+                precise: event.hasPreciseScrollingDeltas,
+                rowHeight: rowHeight(of: terminal),
+                accumulator: &scrollAccumulator
+            )
+            if rows != 0 {
+                model.core.scrollTerminal(
+                    paneID: paneID,
+                    direction: rows > 0 ? "up" : "down",
+                    lines: abs(rows)
+                )
             }
             return
         }
