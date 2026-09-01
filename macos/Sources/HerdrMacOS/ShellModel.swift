@@ -986,6 +986,7 @@ final class ShellModel: ObservableObject {
         core.startAgent(
             agent: selectedAgentKind,
             checkoutPath: checkout.path,
+            checkoutID: checkout.id,
             workspaceID: HerdrLiveWorkspaceIdentity.workspaceID(for: checkout.tabs),
             bypassWarnings: bypassWarnings
         )

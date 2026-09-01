@@ -344,6 +344,7 @@ enum AgentCLIAvailability {
 struct AgentLaunchResult: Sendable {
     let succeeded: Bool
     let message: String
+    let paneID: String?
 }
 
 struct TerminalLaunchResult: Sendable {
@@ -492,13 +493,15 @@ enum HerdrAgentLauncher {
         guard let provider = NewAgentProvider(rawValue: agent) else {
             return AgentLaunchResult(
                 succeeded: false,
-                message: "Hide supports only Claude and Codex agent launches."
+                message: "Hide supports only Claude and Codex agent launches.",
+                paneID: nil
             )
         }
         guard AgentCLIAvailability.isUsable(agent) else {
             return AgentLaunchResult(
                 succeeded: false,
-                message: "\(agent) is not installed on this Mac. Install it, then try again."
+                message: "\(agent) is not installed on this Mac. Install it, then try again.",
+                paneID: nil
             )
         }
 
@@ -513,7 +516,8 @@ enum HerdrAgentLauncher {
         } else {
             return AgentLaunchResult(
                 succeeded: false,
-                message: "Hide could not create a Herdr pane for this checkout. Check Herdr status and retry."
+                message: "Hide could not create a Herdr pane for this checkout. Check Herdr status and retry.",
+                paneID: nil
             )
         }
 
@@ -535,7 +539,11 @@ enum HerdrAgentLauncher {
             try process.run()
             process.waitUntilExit()
         } catch {
-            return AgentLaunchResult(succeeded: false, message: error.localizedDescription)
+            return AgentLaunchResult(
+                succeeded: false,
+                message: error.localizedDescription,
+                paneID: targetPaneID
+            )
         }
         guard process.terminationStatus == 0 else {
             let detail = String(decoding: errorPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -544,12 +552,14 @@ enum HerdrAgentLauncher {
                 succeeded: false,
                 message: detail.isEmpty
                     ? "Herdr could not start the \(agent) agent. Check the Herdr status and retry."
-                    : detail
+                    : detail,
+                paneID: targetPaneID
             )
         }
         return AgentLaunchResult(
             succeeded: true,
-            message: "Started \(agent) in \(URL(fileURLWithPath: checkoutPath).lastPathComponent)."
+            message: "Started \(agent) in \(URL(fileURLWithPath: checkoutPath).lastPathComponent).",
+            paneID: targetPaneID
         )
     }
 

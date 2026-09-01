@@ -1350,6 +1350,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func startAgent(
         agent: String,
         checkoutPath: String,
+        checkoutID: String,
         workspaceID: String?,
         bypassWarnings: Bool
     ) {
@@ -1377,6 +1378,16 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 result.succeeded ? "agent.launch.ready" : "agent.launch.failed",
                 detail: result.message
             )
+            if let paneID = result.paneID {
+                // Match the terminal-launch contract: the CLI-created root
+                // pane anchors this checkout until session sync publishes its
+                // authoritative layout. Keep the tab visible even when agent
+                // startup fails after Herdr has already created it.
+                persistUIState(
+                    selectedPaneID: paneID,
+                    focusedCheckoutID: checkoutID
+                )
+            }
             bridgeError = result.message
         }
     }
