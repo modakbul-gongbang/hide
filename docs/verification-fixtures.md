@@ -45,7 +45,7 @@ that the roam and sleep transitions depend on.
 
 ```sh
 macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
-HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS \
+HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/hide.app/Contents/MacOS/HerdrMacOS \
   --state-path /tmp/pet-state.json \
   --verification-window-receipt /tmp/pet-receipt.json
 ```

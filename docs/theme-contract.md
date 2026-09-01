@@ -68,7 +68,7 @@ Paths in `states` are relative to the theme directory.
 ## Where themes live at runtime
 
 The installed bundle carries `assets/pet-theme` as
-`HerdrIDE.app/Contents/Resources/pet-theme` (copied by
+`hide.app/Contents/Resources/pet-theme` (copied by
 `macos/scripts/build_dev_app.sh`). A build run straight from the checkout has
 no bundle, so the loader falls back to the repository copy, and
 `--pet-theme-root <dir>` overrides both for verification.

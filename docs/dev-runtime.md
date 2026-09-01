@@ -5,12 +5,12 @@ process. Read this before running or screenshotting the app.
 
 ## One instance, always
 
-`Herdr IDE` (bundle display name) and `HerdrMacOS` (executable inside the
+`hide` (bundle display name) and `HerdrMacOS` (executable inside the
 bundle) are the same app, not two. Several instances can be alive at once:
 
 - an installed copy, if one has been placed in `/Applications`
 - the assembled dev bundle at
-  `macos/build/assembled/HerdrIDE.app`, from `macos/scripts/build_dev_app.sh`
+  `macos/build/assembled/hide.app`, from `macos/scripts/build_dev_app.sh`
 - a bare `swift run` from the checkout
 
 When more than one runs, the pet's show/hide state, its saved position, the
@@ -68,7 +68,7 @@ The app accepts `herdr-ide://hide`, `herdr-ide://show`, and
 `Info.plist` (`CFBundleURLTypes`), which only the assembled bundle has.
 
 ```sh
-plutil -p "macos/build/assembled/HerdrIDE.app/Contents/Info.plist" | grep herdr-ide
+plutil -p "macos/build/assembled/hide.app/Contents/Info.plist" | grep herdr-ide
 open "herdr-ide://toggle"
 ```
 
@@ -91,7 +91,7 @@ ordinary event-sync path:
 
 ```sh
 macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
-HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/HerdrIDE.app/Contents/MacOS/HerdrMacOS
+HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/hide.app/Contents/MacOS/HerdrMacOS
 ```
 
 The scenario file is re-read on every snapshot or agent-list request, so

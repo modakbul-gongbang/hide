@@ -7,7 +7,7 @@ How the pet chooses its image, and how to add or replace art safely.
 All art lives in `assets/pet-theme/<theme-id>/assets/`, and
 `assets/pet-theme/<theme-id>/theme.json` maps a pose onto a file.
 `macos/scripts/build_dev_app.sh` copies the whole `assets/pet-theme` tree into
-`HerdrIDE.app/Contents/Resources/pet-theme`, so editing the source folder and
+`hide.app/Contents/Resources/pet-theme`, so editing the source folder and
 rebuilding the bundle is the entire deployment step.
 
 Nothing in the shell hardcodes a filename. `PetTheme.swift` resolves every
