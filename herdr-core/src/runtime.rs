@@ -1885,6 +1885,25 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        let previously_projected_pane = self
+            .snapshot
+            .terminal
+            .pane_id
+            .as_deref()
+            .filter(|pane_id| {
+                self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
+                    layout
+                        .pane_ids()
+                        .into_iter()
+                        .any(|layout_pane_id| layout_pane_id == *pane_id)
+                })
+            })
+            .map(str::to_owned);
+        let previously_projected_tab = self
+            .snapshot
+            .pane_layout
+            .as_ref()
+            .map(|layout| layout.tab_id.clone());
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -1908,7 +1927,7 @@ impl Runtime {
             .as_ref()
             .map(|payload| self.reconcile_session_catalog(payload, precomputed))
             .unwrap_or(false);
-        let (state, message, agents, layout) = match fetched {
+        let (state, message, agents, layout, selection_changed) = match fetched {
             Ok(payload) => {
                 self.consume_restore_hint(&payload);
                 let focused_checkout = self
@@ -1931,9 +1950,13 @@ impl Runtime {
                             .iter()
                             .flat_map(|tab| tab.panes.iter())
                             .map(|pane| pane.id.clone())
-                            .collect::<HashSet<_>>()
+                            .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
+                let focused_checkout_pane_set = focused_checkout_pane_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<HashSet<_>>();
                 let selected_pane_id = self
                     .snapshot
                     .terminal
@@ -1947,19 +1970,56 @@ impl Runtime {
                         .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
                 });
                 let selected_pane_missing = selected_pane_id.is_some() && !selected_still_exists;
+                let selected_was_projected =
+                    selected_pane_id.as_deref() == previously_projected_pane.as_deref();
+                let selected_left_focused_checkout =
+                    selected_pane_id.as_deref().is_some_and(|pane_id| {
+                        focused_checkout.is_some() && !focused_checkout_pane_set.contains(pane_id)
+                    });
+                // A rendered pane that leaves the selected checkout has
+                // completed an expected lifecycle transition. Retarget only
+                // inside that checkout, or leave it empty. A pane that was
+                // never rendered is still a pending or invalid selection and
+                // keeps the explicit projection error below.
+                let selected_pane_retired = selected_was_projected
+                    && (selected_pane_missing || selected_left_focused_checkout);
+                let replacement_pane_id = selected_pane_retired
+                    .then(|| {
+                        previously_projected_tab
+                            .as_deref()
+                            .and_then(|tab_id| {
+                                payload
+                                    .layouts
+                                    .iter()
+                                    .find(|layout| layout.tab_id == tab_id)
+                                    .map(|layout| layout.focused_pane_id.as_str())
+                            })
+                            .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
+                            .or_else(|| {
+                                payload
+                                    .focused_pane_id
+                                    .as_deref()
+                                    .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
+                            })
+                            .or_else(|| focused_checkout_pane_ids.first().map(String::as_str))
+                            .map(str::to_owned)
+                    })
+                    .flatten();
                 let explicit_checkout_missing =
                     self.snapshot.ui_state.focused_checkout_id.is_some()
                         && focused_checkout.is_none();
                 // Once the user or persisted state chooses a pane, a session
                 // snapshot that omits that workspace must not silently retarget
                 // commands to Herdr's unrelated globally focused workspace.
-                let target_pane_id = if selected_pane_missing || explicit_checkout_missing {
+                let target_pane_id = if selected_pane_retired {
+                    replacement_pane_id.as_deref()
+                } else if selected_pane_missing || explicit_checkout_missing {
                     None
                 } else if focused_checkout.is_some() {
                     selected_pane_id
                         .as_deref()
                         .filter(|pane_id| {
-                            selected_still_exists && focused_checkout_pane_ids.contains(*pane_id)
+                            selected_still_exists && focused_checkout_pane_set.contains(*pane_id)
                         })
                         .or_else(|| {
                             focused_checkout_pane_ids
@@ -1991,7 +2051,35 @@ impl Runtime {
                     && ((focused_checkout.is_some() && target_pane_id.is_none())
                         || (focused_checkout.is_none()
                             && self.snapshot.ui_state.focused_checkout_id.is_some()));
-                if selected_pane_missing || selected_pane_invalid_for_context {
+                let mut selection_changed = false;
+                if selected_pane_retired {
+                    let retired_pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
+                    self.clear_terminal_projection();
+                    self.snapshot.terminal.pane_id = replacement_pane_id.clone();
+                    self.snapshot.focused.pane_id = replacement_pane_id.clone();
+                    self.snapshot.ui_state.selected_pane_id = replacement_pane_id.clone();
+                    if self
+                        .snapshot
+                        .status
+                        .last_error
+                        .as_ref()
+                        .is_some_and(|error| error.kind == "pane.projection_unavailable")
+                    {
+                        self.snapshot.status.last_error = None;
+                    }
+                    let message = replacement_pane_id.as_deref().map_or_else(
+                        || {
+                            format!(
+                                "Retired pane {retired_pane_id}; the selected checkout is now empty"
+                            )
+                        },
+                        |replacement| {
+                            format!("Retired pane {retired_pane_id}; selected {replacement}")
+                        },
+                    );
+                    self.push_diagnostic("pane.selection_retired", message);
+                    selection_changed = true;
+                } else if selected_pane_missing || selected_pane_invalid_for_context {
                     let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
                     self.clear_terminal_projection();
                     self.set_error(
@@ -2008,7 +2096,13 @@ impl Runtime {
                 let projection = project_agents(payload);
                 excluded = projection.excluded;
                 match layout {
-                    Ok(layout) => ("connected", None, Some(projection.agents), layout),
+                    Ok(layout) => (
+                        "connected",
+                        None,
+                        Some(projection.agents),
+                        layout,
+                        selection_changed,
+                    ),
                     Err(projection_error) => (
                         "malformed",
                         Some(format!(
@@ -2016,10 +2110,17 @@ impl Runtime {
                         )),
                         None,
                         None,
+                        selection_changed,
                     ),
                 }
             }
-            Err(error) => (error.state(), Some(error.message().to_owned()), None, None),
+            Err(error) => (
+                error.state(),
+                Some(error.message().to_owned()),
+                None,
+                None,
+                false,
+            ),
         };
 
         // A single unreadable agent record excludes only itself; the
@@ -2042,7 +2143,7 @@ impl Runtime {
             );
         }
 
-        let mut changed = catalog_changed || !excluded.is_empty();
+        let mut changed = catalog_changed || selection_changed || !excluded.is_empty();
         if self.snapshot.status.herdr.state != state
             || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
         {
@@ -5767,6 +5868,153 @@ mod tests {
                 .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
             Some(("w3V", "w3V:t1"))
         );
+        assert!(runtime.snapshot().status.last_error.is_none());
+    }
+
+    #[test]
+    fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-closed-selected-pane";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let registration = WorkspaceRegistration {
+            id: workspace_id.clone(),
+            label: "Closed pane".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        };
+        let selected_workspace = workspace(
+            &workspace_id,
+            "Closed pane",
+            checkout_path,
+            vec![checkout(&workspace_id, &checkout_id, checkout_path, None)],
+        );
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.ui_state.selected_pane_id = Some("w-close:p1".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("w-close:p1".to_owned());
+        runtime.snapshot.focused.pane_id = Some("w-close:p1".to_owned());
+        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+            workspace_id: "w-close".to_owned(),
+            tab_id: "w-close:t1".to_owned(),
+            focused_pane_id: "w-close:p1".to_owned(),
+            zoomed: false,
+            root: PaneLayoutNodeSnapshot::Pane {
+                pane_id: "w-close:p1".to_owned(),
+            },
+        });
+        runtime.restore_hint_pending = false;
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "w-close:p2", "cwd": checkout_path}],
+            "focused_pane_id": "w-close:p2",
+            "layouts": [{
+                "workspace_id": "w-close",
+                "tab_id": "w-close:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w-close:p2",
+                "panes": [{
+                    "pane_id": "w-close:p2",
+                    "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                }],
+                "splits": []
+            }]
+        }))
+        .expect("remaining pane payload");
+
+        assert!(runtime.ingest_session_with_catalog(
+            Ok(payload),
+            Some(session_sync::PrecomputedCatalog {
+                registrations: vec![registration],
+                workspaces: vec![selected_workspace],
+            }),
+        ));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-close:p2")
+        );
+        assert_eq!(
+            runtime.snapshot().ui_state.selected_pane_id.as_deref(),
+            Some("w-close:p2")
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layout
+                .as_ref()
+                .map(|layout| layout.focused_pane_id.as_str()),
+            Some("w-close:p2")
+        );
+        assert!(runtime.snapshot().status.last_error.is_none());
+    }
+
+    #[test]
+    fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-last-closed-pane";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let registration = WorkspaceRegistration {
+            id: workspace_id.clone(),
+            label: "Last pane".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        };
+        let selected_workspace = workspace(
+            &workspace_id,
+            "Last pane",
+            checkout_path,
+            vec![checkout(&workspace_id, &checkout_id, checkout_path, None)],
+        );
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id);
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.ui_state.selected_pane_id = Some("w-last:p1".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("w-last:p1".to_owned());
+        runtime.snapshot.focused.pane_id = Some("w-last:p1".to_owned());
+        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+            workspace_id: "w-last".to_owned(),
+            tab_id: "w-last:t1".to_owned(),
+            focused_pane_id: "w-last:p1".to_owned(),
+            zoomed: false,
+            root: PaneLayoutNodeSnapshot::Pane {
+                pane_id: "w-last:p1".to_owned(),
+            },
+        });
+        runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+            pane_id: "w-last:p1".to_owned(),
+            closed: false,
+            exit_code: None,
+            ..TerminalPaneSnapshot::default()
+        }];
+        runtime.restore_hint_pending = false;
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [],
+            "layouts": []
+        }))
+        .expect("empty session payload");
+
+        assert!(runtime.ingest_session_with_catalog(
+            Ok(payload),
+            Some(session_sync::PrecomputedCatalog {
+                registrations: vec![registration],
+                workspaces: vec![selected_workspace],
+            }),
+        ));
+        assert_eq!(runtime.snapshot().terminal.pane_id, None);
+        assert_eq!(runtime.snapshot().focused.pane_id, None);
+        assert_eq!(runtime.snapshot().ui_state.selected_pane_id, None);
+        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().terminal.panes.is_empty());
         assert!(runtime.snapshot().status.last_error.is_none());
     }
 
