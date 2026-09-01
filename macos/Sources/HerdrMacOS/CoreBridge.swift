@@ -890,6 +890,27 @@ struct CoreLastError: Decodable {
     }
 }
 
+/// Blocks only topology events whose Rust handlers still address the local
+/// Herdr session directly. Terminal input, resize, and scroll are deliberately
+/// absent: the core routes those through the target-scoped terminal session
+/// selected by the pane ID for both local and remote panes.
+struct CoreDispatchRoutingPolicy {
+    private static let localTopologyEventKinds: Set<String> = [
+        "reconnect_pane",
+        "focus_pane",
+        "focus_checkout",
+        "focus_tab",
+        "create_tab",
+        "create_pane",
+        "toggle_zoom",
+        "close_pane",
+    ]
+
+    static func blocks(kind: String, whenDeviceIsRemote isRemote: Bool) -> Bool {
+        isRemote && localTopologyEventKinds.contains(kind)
+    }
+}
+
 @MainActor
 final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
@@ -925,23 +946,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
         static let local = CommandDevice(id: "local", label: "This Mac", isRemote: false)
     }
-
-    /// Events in this set ultimately write to the one local Herdr socket owned
-    /// by the core. Keeping the guard at the only FFI dispatch boundary makes
-    /// a future call site safe by default instead of relying on every caller
-    /// to remember a remote-context branch.
-    private static let localSessionEventKinds: Set<String> = [
-        "key",
-        "terminal_resize",
-        "reconnect_pane",
-        "focus_pane",
-        "focus_checkout",
-        "focus_tab",
-        "create_tab",
-        "create_pane",
-        "toggle_zoom",
-        "close_pane",
-    ]
 
     private struct TerminalRegistration {
         let id: UUID
@@ -1586,7 +1590,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func dispatch(kind: String, payload: [String: Any]) {
-        if commandDevice.isRemote, Self.localSessionEventKinds.contains(kind) {
+        if CoreDispatchRoutingPolicy.blocks(
+            kind: kind,
+            whenDeviceIsRemote: commandDevice.isRemote
+        ) {
             let message = "device.route_blocked: \(commandDevice.label) is selected. \(kind) was not sent to the local Herdr session."
             routingError = message
             bridgeError = message
