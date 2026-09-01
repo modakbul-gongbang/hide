@@ -411,209 +411,6 @@ struct RemoteWorkspaceSummary: Decodable, Identifiable, Sendable {
     }
 }
 
-private struct RemoteWorktreeWire: Decodable, Sendable {
-    let checkoutPath: String?
-
-    enum CodingKeys: String, CodingKey {
-        case checkoutPath = "checkout_path"
-    }
-}
-
-private struct RemoteWorkspaceWire: Decodable, Sendable {
-    let workspaceID: String
-    let label: String
-    let activeTabID: String?
-    let paneCount: Int
-    let tabCount: Int
-    let worktree: RemoteWorktreeWire?
-
-    enum CodingKeys: String, CodingKey {
-        case workspaceID = "workspace_id"
-        case label
-        case activeTabID = "active_tab_id"
-        case paneCount = "pane_count"
-        case tabCount = "tab_count"
-        case worktree
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        workspaceID = try container.decode(String.self, forKey: .workspaceID)
-        label = try container.decode(String.self, forKey: .label)
-        activeTabID = try container.decodeIfPresent(String.self, forKey: .activeTabID)
-        paneCount = try container.decodeIfPresent(Int.self, forKey: .paneCount) ?? 0
-        tabCount = try container.decodeIfPresent(Int.self, forKey: .tabCount) ?? 0
-        worktree = try container.decodeIfPresent(RemoteWorktreeWire.self, forKey: .worktree)
-    }
-}
-
-private struct RemoteTabWire: Decodable, Sendable {
-    let tabID: String
-    let workspaceID: String
-    let label: String
-    let paneCount: Int
-
-    enum CodingKeys: String, CodingKey {
-        case tabID = "tab_id"
-        case workspaceID = "workspace_id"
-        case label
-        case paneCount = "pane_count"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        tabID = try container.decode(String.self, forKey: .tabID)
-        workspaceID = try container.decode(String.self, forKey: .workspaceID)
-        label = try container.decodeIfPresent(String.self, forKey: .label) ?? "Tab"
-        paneCount = try container.decodeIfPresent(Int.self, forKey: .paneCount) ?? 0
-    }
-}
-
-private struct RemotePaneWire: Decodable, Sendable {
-    let paneID: String
-    let workspaceID: String
-    let tabID: String
-    let cwd: String
-    let terminalTitle: String?
-    let terminalTitleStripped: String?
-
-    enum CodingKeys: String, CodingKey {
-        case paneID = "pane_id"
-        case workspaceID = "workspace_id"
-        case tabID = "tab_id"
-        case cwd
-        case terminalTitle = "terminal_title"
-        case terminalTitleStripped = "terminal_title_stripped"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        paneID = try container.decode(String.self, forKey: .paneID)
-        workspaceID = try container.decode(String.self, forKey: .workspaceID)
-        tabID = try container.decode(String.self, forKey: .tabID)
-        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
-        terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
-        terminalTitleStripped = try container.decodeIfPresent(String.self, forKey: .terminalTitleStripped)
-    }
-}
-
-private struct RemoteLayoutRectWire: Decodable, Sendable {
-    let x: Double
-    let y: Double
-    let width: Double
-    let height: Double
-}
-
-private struct RemoteLayoutPaneWire: Decodable, Sendable {
-    let paneID: String
-    let rect: RemoteLayoutRectWire
-
-    enum CodingKeys: String, CodingKey {
-        case paneID = "pane_id"
-        case rect
-    }
-}
-
-private struct RemoteLayoutWire: Decodable, Sendable {
-    let workspaceID: String
-    let tabID: String
-    let focusedPaneID: String
-    let zoomed: Bool
-    let area: RemoteLayoutRectWire
-    let panes: [RemoteLayoutPaneWire]
-
-    enum CodingKeys: String, CodingKey {
-        case workspaceID = "workspace_id"
-        case tabID = "tab_id"
-        case focusedPaneID = "focused_pane_id"
-        case zoomed
-        case area
-        case panes
-    }
-}
-
-private struct RemoteAgentWire: Decodable, Sendable {
-    let agent: String
-    let agentStatus: String
-    let paneID: String
-    let workspaceID: String
-    let tokens: [String: String]
-
-    enum CodingKeys: String, CodingKey {
-        case agent
-        case agentStatus = "agent_status"
-        case paneID = "pane_id"
-        case workspaceID = "workspace_id"
-        case tokens
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        agent = try container.decodeIfPresent(String.self, forKey: .agent) ?? "agent"
-        agentStatus = try container.decodeIfPresent(String.self, forKey: .agentStatus) ?? "unknown"
-        paneID = try container.decode(String.self, forKey: .paneID)
-        workspaceID = try container.decode(String.self, forKey: .workspaceID)
-        tokens = try container.decodeIfPresent([String: String].self, forKey: .tokens) ?? [:]
-    }
-}
-
-fileprivate struct RemoteSnapshotWire: Decodable, Sendable {
-    let focusedWorkspaceID: String?
-    let focusedTabID: String?
-    let focusedPaneID: String?
-    let workspaces: [RemoteWorkspaceWire]
-    let tabs: [RemoteTabWire]
-    let panes: [RemotePaneWire]
-    let layouts: [RemoteLayoutWire]
-    let agents: [RemoteAgentWire]
-
-    enum CodingKeys: String, CodingKey {
-        case focusedWorkspaceID = "focused_workspace_id"
-        case focusedTabID = "focused_tab_id"
-        case focusedPaneID = "focused_pane_id"
-        case workspaces
-        case tabs
-        case panes
-        case layouts
-        case agents
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        focusedWorkspaceID = try container.decodeIfPresent(String.self, forKey: .focusedWorkspaceID)
-        focusedTabID = try container.decodeIfPresent(String.self, forKey: .focusedTabID)
-        focusedPaneID = try container.decodeIfPresent(String.self, forKey: .focusedPaneID)
-        workspaces = try container.decodeIfPresent([RemoteWorkspaceWire].self, forKey: .workspaces) ?? []
-        tabs = try container.decodeIfPresent([RemoteTabWire].self, forKey: .tabs) ?? []
-        panes = try container.decodeIfPresent([RemotePaneWire].self, forKey: .panes) ?? []
-        layouts = try container.decodeIfPresent([RemoteLayoutWire].self, forKey: .layouts) ?? []
-        agents = try container.decodeIfPresent([RemoteAgentWire].self, forKey: .agents) ?? []
-    }
-}
-
-private struct RemoteSnapshotEnvelope: Decodable, Sendable {
-    struct Result: Decodable, Sendable {
-        let snapshot: RemoteSnapshotWire
-    }
-
-    let result: Result
-}
-
-enum RemoteSnapshotProjection {
-    static func decode(
-        _ data: Data,
-        deviceID: String,
-        targetLabel: String
-    ) throws -> RemoteNavigationSnapshot {
-        let envelope = try JSONDecoder().decode(RemoteSnapshotEnvelope.self, from: data)
-        return RemoteNavigationSnapshot(
-            deviceID: deviceID,
-            targetLabel: targetLabel,
-            wire: envelope.result.snapshot
-        )
-    }
-}
-
 struct RemoteFileNode: Identifiable, Hashable, Sendable {
     let path: String
     let isDirectory: Bool
@@ -622,40 +419,37 @@ struct RemoteFileNode: Identifiable, Hashable, Sendable {
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
-struct RemotePaneLayoutFrame: Equatable, Sendable {
+struct RemotePaneLayoutFrame: Decodable, Equatable, Sendable {
     let paneID: String
     let x: Double
     let y: Double
     let width: Double
     let height: Double
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case x
+        case y
+        case width
+        case height
+    }
 }
 
-struct RemotePaneLayoutSnapshot: Equatable, Sendable {
+struct RemotePaneLayoutSnapshot: Decodable, Equatable, Sendable {
     let workspaceID: String
     let tabID: String
     let focusedPaneID: String
     let zoomed: Bool
     let frames: [RemotePaneLayoutFrame]
 
-    fileprivate init(wire: RemoteLayoutWire) {
-        workspaceID = wire.workspaceID
-        tabID = wire.tabID
-        focusedPaneID = wire.focusedPaneID
-        zoomed = wire.zoomed
-        guard wire.area.width > 0, wire.area.height > 0 else {
-            frames = []
-            return
-        }
-        frames = wire.panes.map { pane in
-            RemotePaneLayoutFrame(
-                paneID: pane.paneID,
-                x: (pane.rect.x - wire.area.x) / wire.area.width,
-                y: (pane.rect.y - wire.area.y) / wire.area.height,
-                width: pane.rect.width / wire.area.width,
-                height: pane.rect.height / wire.area.height
-            )
-        }
+    enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
+        case tabID = "tab_id"
+        case focusedPaneID = "focused_pane_id"
+        case zoomed
+        case frames
     }
+
 }
 
 struct RemoteNavigationSnapshot {
@@ -675,105 +469,17 @@ struct RemoteNavigationSnapshot {
         return paneLayouts.first(where: { $0.tabID == focusedTabID })
     }
 
-    fileprivate init(deviceID: String, targetLabel: String, wire: RemoteSnapshotWire) {
+    init(deviceID: String, targetLabel: String, core: CoreRemoteSessionSnapshot) {
         self.deviceID = deviceID
         self.targetLabel = targetLabel
-
-        let labelsByWorkspace = Dictionary(uniqueKeysWithValues: wire.workspaces.map {
-            ($0.workspaceID, $0.label)
-        })
-        var projectedWorkspaces: [CoreWorkspaceSnapshot] = []
-        for workspace in wire.workspaces {
-            let workspaceID = Self.workspaceID(deviceID: deviceID, remoteID: workspace.workspaceID)
-            let workspacePanes = wire.panes.filter { $0.workspaceID == workspace.workspaceID }
-            let workspaceTabs = wire.tabs.filter { $0.workspaceID == workspace.workspaceID }
-            let tabs = workspaceTabs.map { tab in
-                let panes = wire.panes
-                    .filter { $0.tabID == tab.tabID && $0.workspaceID == workspace.workspaceID }
-                    .map { pane in
-                        CorePaneSnapshot(
-                            id: pane.paneID,
-                            label: pane.terminalTitleStripped ?? pane.terminalTitle ?? pane.paneID,
-                            cwd: pane.cwd,
-                            state: "attached",
-                            summary: nil,
-                            activityAt: nil
-                        )
-                    }
-                return CoreTabSnapshot(
-                    id: tab.tabID,
-                    workspaceID: workspaceID,
-                    checkoutID: Self.checkoutID(deviceID: deviceID, remoteID: workspace.workspaceID),
-                    label: tab.label,
-                    empty: panes.isEmpty,
-                    panes: panes
-                )
-            }
-            let path = workspacePanes.first(where: { !$0.cwd.isEmpty })?.cwd
-                ?? workspace.worktree?.checkoutPath
-                ?? ""
-            let checkoutID = Self.checkoutID(deviceID: deviceID, remoteID: workspace.workspaceID)
-            let checkout = CoreCheckoutSnapshot(
-                id: checkoutID,
-                workspaceID: workspaceID,
-                label: workspace.label,
-                path: path,
-                branch: nil,
-                isWorktree: workspace.worktree != nil,
-                exists: true,
-                temporary: false,
-                tabs: tabs
-            )
-            projectedWorkspaces.append(CoreWorkspaceSnapshot(
-                id: workspaceID,
-                label: workspace.label,
-                path: path,
-                remoteTargetID: deviceID,
-                expanded: true,
-                deviceID: deviceID,
-                repoName: workspace.label,
-                isGit: workspace.worktree != nil,
-                defaultBranch: nil,
-                registered: true,
-                temporary: false,
-                checkouts: [checkout]
-            ))
-        }
-        workspaces = projectedWorkspaces.sorted { lhs, rhs in
-            lhs.label.localizedStandardCompare(rhs.label) == .orderedAscending
-        }
-        activeTabIDs = Dictionary(uniqueKeysWithValues: wire.workspaces.compactMap { workspace in
-            guard let activeTabID = workspace.activeTabID else { return nil }
-            return (
-                Self.workspaceID(deviceID: deviceID, remoteID: workspace.workspaceID),
-                activeTabID
-            )
-        })
-        agents = wire.agents.map { agent in
-            let tokens = agent.tokens
-            return SidebarAgent(
-                id: "remote:\(deviceID):\(agent.paneID)",
-                paneID: agent.paneID,
-                workspaceLabel: labelsByWorkspace[agent.workspaceID] ?? agent.workspaceID,
-                agentKind: agent.agent,
-                state: agent.agentStatus,
-                symbol: tokens["agent_\(agent.agent)"] ?? "?",
-                summary: tokens["summary"] ?? tokens["terminal_title"] ?? "Remote agent",
-                elapsed: tokens["elapsed"] ?? "",
-                sortRank: tokens["sort_rank"] ?? "99",
-                activity: tokens["summary"] ?? "",
-                ambient: nil
-            )
-        }
-        focusedWorkspaceID = wire.focusedWorkspaceID.map {
-            Self.workspaceID(deviceID: deviceID, remoteID: $0)
-        }
-        focusedCheckoutID = wire.focusedWorkspaceID.map {
-            Self.checkoutID(deviceID: deviceID, remoteID: $0)
-        }
-        focusedTabID = wire.focusedTabID
-        focusedPaneID = wire.focusedPaneID
-        paneLayouts = wire.layouts.map(RemotePaneLayoutSnapshot.init(wire:))
+        workspaces = core.workspaces
+        agents = core.agents
+        focusedWorkspaceID = core.focusedWorkspaceID
+        focusedCheckoutID = core.focusedCheckoutID
+        focusedTabID = core.focusedTabID
+        focusedPaneID = core.focusedPaneID
+        paneLayouts = core.paneLayouts
+        activeTabIDs = core.activeTabIDs
     }
 
     private init(
@@ -947,11 +653,6 @@ enum RemoteTerminalCommand: Sendable {
     }
 }
 
-private struct RemoteProbeResult: Sendable {
-    let version: ProcessReceipt
-    let snapshot: ProcessReceipt?
-}
-
 @MainActor
 final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var phase: RuntimePhase = .idle
@@ -967,9 +668,10 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var targetLabel = "mini"
     private(set) var sshAlias = "mini"
     private var refreshGeneration = UUID()
+    private var activeTargetID: String?
+    private var statusesByTarget: [String: CoreRemoteStatus] = [:]
     private var loadedFilePath: String?
     private var pendingTerminalPaths: Set<String> = []
-    var environmentStateProvider: ((String) -> String?)?
     var onActionFailure: ((String) -> Void)?
 
     var statusMessage: String {
@@ -982,6 +684,7 @@ final class RemoteRuntimeModel: ObservableObject {
 
     func clearNavigation() {
         refreshGeneration = UUID()
+        activeTargetID = nil
         isRefreshing = false
         navigation = nil
         workspaces = []
@@ -994,101 +697,52 @@ final class RemoteRuntimeModel: ObservableObject {
         message = "Remote mini has not been checked yet."
     }
 
+    func ingest(_ statuses: [CoreRemoteStatus]) {
+        statusesByTarget = Dictionary(uniqueKeysWithValues: statuses.map { ($0.targetID, $0) })
+        guard let activeTargetID,
+              let status = statusesByTarget[activeTargetID]
+        else { return }
+        apply(status)
+    }
+
     func refresh(targetID: String, label: String, sshAlias: String) {
-        let requestID = UUID()
-        refreshGeneration = requestID
+        refreshGeneration = UUID()
+        activeTargetID = targetID
         fileError = nil
         attachError = nil
         actionError = nil
-        isRefreshing = true
         targetLabel = label
         self.sshAlias = sshAlias
-        guard environmentStateProvider?("SSH_AUTH_SOCK") == "available" else {
-            finishRefreshFailure(
-                "SSH_AUTH_SOCK is unavailable. Remote features are disabled; launch from a shell with the agent socket exported.",
-                phaseIfEmpty: .unavailable,
-                logKind: "remote.refresh_unavailable"
-            )
-            checkedAt = ISO8601DateFormatter().string(from: Date())
-            return
-        }
-        if navigation == nil {
-            phase = .loading
-            message = "Connecting to \(label) and loading remote workspaces…"
+        if let status = statusesByTarget[targetID] {
+            apply(status)
         } else {
-            // Keep the last authoritative projection interactive while its
-            // replacement is fetched. Clearing it dismantles terminal hosts,
-            // kills their SSH children, and turns a refresh into a reconnect.
-            phase = .ready
-            message = "Refreshing \(label) while the current remote session stays attached…"
+            isRefreshing = true
+            phase = .loading
+            message = "Waiting for the Rust remote session coordinator to report \(label)…"
         }
-        Task {
-            let probe = await Task.detached { () -> RemoteProbeResult in
-                let version = SafeProcess.run(
-                    executable: "/usr/bin/ssh",
-                    arguments: [sshAlias, RemoteShellCommand.loginShell("herdr --version")]
+    }
+
+    private func apply(_ status: CoreRemoteStatus) {
+        isRefreshing = status.state == "not_connected"
+        checkedAt = ISO8601DateFormatter().string(from: Date())
+
+        if let session = status.session {
+            var projection = RemoteNavigationSnapshot(
+                deviceID: status.targetID,
+                targetLabel: targetLabel,
+                core: session
+            )
+            if let current = navigation,
+               current.deviceID == status.targetID,
+               let workspaceID = current.focusedWorkspaceID,
+               let checkoutID = current.focusedCheckoutID {
+                projection = projection.focused(
+                    workspaceID: workspaceID,
+                    checkoutID: checkoutID,
+                    tabID: current.focusedTabID,
+                    paneID: current.focusedPaneID
                 )
-                guard version.status == 0 else {
-                    return RemoteProbeResult(version: version, snapshot: nil)
-                }
-                return RemoteProbeResult(
-                    version: version,
-                    snapshot: SafeProcess.run(
-                        executable: "/usr/bin/ssh",
-                        arguments: [sshAlias, RemoteShellCommand.loginShell("herdr api snapshot")]
-                    )
-                )
-            }.value
-            guard refreshGeneration == requestID else { return }
-            isRefreshing = false
-            checkedAt = ISO8601DateFormatter().string(from: Date())
-            guard probe.version.status == 0 else {
-                finishRefreshFailure(
-                    remoteFailure(probe.version, label: label),
-                    phaseIfEmpty: .failed,
-                    logKind: "remote.refresh_failed"
-                )
-                return
             }
-            guard let remoteVersion = version(from: probe.version.stdout) else {
-                finishRefreshFailure(
-                    "The Herdr version response from \(label) was not readable. Retry after checking the remote installation.",
-                    phaseIfEmpty: .failed,
-                    logKind: "remote.refresh_failed"
-                )
-                return
-            }
-            if compare(remoteVersion, with: HideRuntimeEnvironment.bundledVersion) == .orderedAscending {
-                finishRefreshFailure(
-                    "Herdr \(remoteVersion) on \(label) is below hide's supported \(HideRuntimeEnvironment.bundledVersion). Upgrade the remote Herdr installation, then retry. Hide does not install or upgrade it.",
-                    phaseIfEmpty: .stale,
-                    logKind: "remote.stale"
-                )
-                return
-            }
-            guard let snapshot = probe.snapshot else {
-                finishRefreshFailure(
-                    "The remote snapshot from \(label) was not available. Retry after checking SSH and the remote Herdr service.",
-                    phaseIfEmpty: .failed,
-                    logKind: "remote.refresh_failed"
-                )
-                return
-            }
-            guard snapshot.status == 0,
-                  let envelope = try? JSONDecoder().decode(RemoteSnapshotEnvelope.self, from: snapshot.stdout)
-            else {
-                let failure = snapshot.status == 0
-                    ? "The remote snapshot from \(label) was malformed. Retry after checking the remote Herdr service."
-                    : remoteFailure(snapshot, label: label)
-                finishRefreshFailure(
-                    failure,
-                    phaseIfEmpty: .failed,
-                    logKind: "remote.refresh_failed"
-                )
-                return
-            }
-            let wire = envelope.result.snapshot
-            let projection = RemoteNavigationSnapshot(deviceID: targetID, targetLabel: label, wire: wire)
             navigation = projection
             workspaces = projection.workspaces.map { workspace in
                 RemoteWorkspaceSummary(
@@ -1098,29 +752,29 @@ final class RemoteRuntimeModel: ObservableObject {
                     activeTabID: workspace.checkouts.first?.tabs.first?.id
                 )
             }
+        }
+
+        switch status.state {
+        case "connected":
             phase = .ready
             actionError = nil
             message = workspaces.isEmpty
-                ? "\(label) is connected, but no remote workspace is open. Create one on \(label) and retry."
-                : "\(label) connected. Remote workspaces, file trees, and terminal panes are attached; inline editing stays disabled."
+                ? "\(targetLabel) is connected, but no remote workspace is open."
+                : "\(targetLabel) connected through the official Herdr Socket API."
             log(kind: "remote.ready")
+        case "not_connected":
+            phase = .loading
+            message = status.message ?? "Waiting for the first remote Herdr connection attempt."
+        case "stale":
+            phase = .stale
+            message = status.message ?? "The last remote session is visible while Herdr reconnects."
+        case "disabled", "socket_missing":
+            phase = .unavailable
+            message = status.message ?? "Remote Herdr is unavailable."
+        default:
+            phase = .failed
+            message = status.message ?? "Remote Herdr synchronization failed."
         }
-    }
-
-    private func finishRefreshFailure(
-        _ failure: String,
-        phaseIfEmpty: RuntimePhase,
-        logKind: String
-    ) {
-        isRefreshing = false
-        if navigation == nil {
-            phase = phaseIfEmpty
-        } else {
-            phase = .ready
-        }
-        actionError = failure
-        message = failure
-        log(kind: logKind)
     }
 
     func focus(
@@ -1259,7 +913,7 @@ final class RemoteRuntimeModel: ObservableObject {
             )
             return
         }
-        guard let targetID = navigation?.deviceID else {
+        guard navigation?.deviceID != nil else {
             if let pendingTerminalPath { pendingTerminalPaths.remove(pendingTerminalPath) }
             reportActionFailure(
                 "The selected remote device has no navigation snapshot. No command was sent to either device.",
@@ -1291,8 +945,7 @@ final class RemoteRuntimeModel: ObservableObject {
             actionError = nil
             log(kind: "remote.command_\(command.logKind)_ready")
             if command.requiresSnapshotRefresh {
-                message = "\(command.successMessage) Refreshing \(label)."
-                refresh(targetID: targetID, label: label, sshAlias: alias)
+                message = "\(command.successMessage) Waiting for the official session update from \(label)."
             } else {
                 message = command.successMessage
             }
@@ -1304,25 +957,6 @@ final class RemoteRuntimeModel: ObservableObject {
         message = failure
         onActionFailure?(failure)
         log(kind: "remote.\(kind)")
-    }
-
-    private func version(from data: Data) -> String? {
-        let line = String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return line.split(separator: " ").last.map(String.init)
-    }
-
-    private func compare(_ left: String, with right: String) -> ComparisonResult {
-        let leftParts = left.split(separator: ".").compactMap { Int($0) }
-        let rightParts = right.split(separator: ".").compactMap { Int($0) }
-        for index in 0 ..< max(leftParts.count, rightParts.count) {
-            let leftPart = index < leftParts.count ? leftParts[index] : 0
-            let rightPart = index < rightParts.count ? rightParts[index] : 0
-            if leftPart != rightPart {
-                return leftPart < rightPart ? .orderedAscending : .orderedDescending
-            }
-        }
-        return .orderedSame
     }
 
     private func remoteFailure(_ result: ProcessReceipt, label: String) -> String {

@@ -389,7 +389,10 @@ pub(crate) fn install(
     if let Ok(mut guard) = runtime.lock() {
         guard.set_live(context.clone());
     }
-    match crate::session_sync::spawn(context.clone(), home_path) {
+    match crate::session_sync::spawn(
+        crate::session_sync::SessionSyncContext::local(&context),
+        home_path,
+    ) {
         Ok(handle) => Some(handle),
         Err(message) => {
             eprintln!(

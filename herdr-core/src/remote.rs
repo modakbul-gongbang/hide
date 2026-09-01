@@ -1151,7 +1151,7 @@ pub struct RusshRemoteClient {
 
 #[derive(Clone)]
 pub(crate) struct RusshApiConnector {
-    client: RusshRemoteClient,
+    connection: Arc<RusshApiConnection>,
     socket_path: String,
 }
 
@@ -1159,9 +1159,82 @@ impl fmt::Debug for RusshApiConnector {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RusshApiConnector")
-            .field("host_id", &self.client.host.host_id)
+            .field("host_id", &self.connection.client.host.host_id)
             .field("socket_path", &self.socket_path)
             .finish()
+    }
+}
+
+struct RusshApiConnection {
+    client: RusshRemoteClient,
+    session: Mutex<Option<Handle<KnownHostHandler>>>,
+}
+
+impl RusshApiConnection {
+    fn open_stream(&self, socket_path: &str) -> Result<russh::ChannelStream<Msg>, ApiError> {
+        let mut session = self.session.lock().map_err(|_| {
+            ApiError::Transport("remote Herdr SSH session state is poisoned".to_owned())
+        })?;
+        if session.is_none() {
+            *session = Some(
+                self.client
+                    .runtime
+                    .block_on(
+                        self.client
+                            .connect(KnownHostHandler::new(&self.client.host, None)),
+                    )
+                    .map_err(|error| ApiError::Transport(error.to_string()))?,
+            );
+        }
+        let channel = self
+            .client
+            .runtime
+            .block_on(
+                session
+                    .as_ref()
+                    .expect("remote Herdr SSH session was initialized")
+                    .channel_open_direct_streamlocal(socket_path.to_owned()),
+            )
+            .map_err(|error| {
+                let stale = session.take();
+                if let Some(stale) = stale {
+                    let _ = self.client.runtime.block_on(stale.disconnect(
+                        Disconnect::ByApplication,
+                        "Herdr socket open failed",
+                        "en",
+                    ));
+                }
+                ApiError::Transport(format!(
+                    "remote Herdr socket open failed for {}: {error}",
+                    self.client.host.host_id
+                ))
+            })?;
+        Ok(channel.into_stream())
+    }
+}
+
+impl Drop for RusshApiConnection {
+    fn drop(&mut self) {
+        let session = match self.session.get_mut() {
+            Ok(session) => session.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        let Some(session) = session else { return };
+        if let Err(error) = self.client.runtime.block_on(session.disconnect(
+            Disconnect::ByApplication,
+            "Herdr socket connection complete",
+            "en",
+        )) {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "remote_herdr_api",
+                    "kind": "disconnect.failed",
+                    "target": self.client.host.host_id,
+                    "message": error.to_string(),
+                })
+            );
+        }
     }
 }
 
@@ -1177,12 +1250,11 @@ impl ConnectionShutdown for RusshApiShutdown {
 
 struct RusshApiStream {
     runtime: Arc<Runtime>,
-    session: Option<Handle<KnownHostHandler>>,
+    _connection: Arc<RusshApiConnection>,
     stream: Option<russh::ChannelStream<Msg>>,
     stopped: Arc<AtomicBool>,
     read_timeout: Mutex<Option<Duration>>,
     write_timeout: Mutex<Option<Duration>>,
-    target: String,
 }
 
 impl RusshApiStream {
@@ -1343,70 +1415,20 @@ impl Drop for RusshApiStream {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
         let stream = self.stream.take();
-        let Some(session) = self.session.take() else {
-            self.runtime.block_on(async { drop(stream) });
-            return;
-        };
-        let disconnect = self.runtime.block_on(async {
-            drop(stream);
-            session
-                .disconnect(
-                    Disconnect::ByApplication,
-                    "Herdr socket operation complete",
-                    "en",
-                )
-                .await
-        });
-        if let Err(error) = disconnect {
-            eprintln!(
-                "{}",
-                serde_json::json!({
-                    "component": "remote_herdr_api",
-                    "kind": "disconnect.failed",
-                    "target": self.target,
-                    "message": error.to_string(),
-                })
-            );
-        }
+        self.runtime.block_on(async { drop(stream) });
     }
 }
 
 impl ApiConnector for RusshApiConnector {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
-        let session = self
-            .client
-            .runtime
-            .block_on(
-                self.client
-                    .connect(KnownHostHandler::new(&self.client.host, None)),
-            )
-            .map_err(|error| ApiError::Transport(error.to_string()))?;
-        let channel = match self
-            .client
-            .runtime
-            .block_on(session.channel_open_direct_streamlocal(self.socket_path.clone()))
-        {
-            Ok(channel) => channel,
-            Err(error) => {
-                let _ = self.client.runtime.block_on(session.disconnect(
-                    Disconnect::ByApplication,
-                    "Herdr socket open failed",
-                    "en",
-                ));
-                return Err(ApiError::Transport(format!(
-                    "remote Herdr socket open failed for {}: {error}",
-                    self.client.host.host_id
-                )));
-            }
-        };
+        let stream = self.connection.open_stream(&self.socket_path)?;
         Ok(Box::new(RusshApiStream {
-            runtime: Arc::clone(&self.client.runtime),
-            session: Some(session),
-            stream: Some(channel.into_stream()),
+            runtime: Arc::clone(&self.connection.client.runtime),
+            _connection: Arc::clone(&self.connection),
+            stream: Some(stream),
             stopped: Arc::new(AtomicBool::new(false)),
             read_timeout: Mutex::new(None),
             write_timeout: Mutex::new(None),
-            target: self.client.host.host_id.clone(),
         }))
     }
 }
@@ -1466,7 +1488,10 @@ impl RusshRemoteClient {
             ));
         }
         Ok(RusshApiConnector {
-            client: self.clone(),
+            connection: Arc::new(RusshApiConnection {
+                client: self.clone(),
+                session: Mutex::new(None),
+            }),
             socket_path,
         })
     }
@@ -3451,10 +3476,39 @@ mod tests {
             SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
                 .expect("SSH alias resolves");
         let client = RusshRemoteClient::new(alias).expect("remote client initializes");
+        let connector = client
+            .herdr_api_connector(&socket_path)
+            .expect("remote Socket API connector initializes");
+        let result = crate::herdr_api::request_with_connector(
+            &connector,
+            "session.snapshot",
+            json!({}),
+            SSH_OPERATION_TIMEOUT,
+        )
+        .expect("official remote Socket API snapshot responds");
+        let snapshot = decode_remote_snapshot(&result, "remote-herdr-snapshot")
+            .expect("remote snapshot matches the official protocol");
+        let agents = crate::herdr_api::request_with_connector(
+            &connector,
+            "agent.list",
+            json!({}),
+            SSH_OPERATION_TIMEOUT,
+        )
+        .expect("a second channel reuses the authenticated SSH connection");
+        assert_eq!(agents["type"], "agent_list");
 
-        let snapshot = client
-            .fetch_herdr_snapshot(&socket_path)
-            .expect("official remote Socket API snapshot responds");
+        let subscription = crate::herdr_api::subscribe_with_connector(
+            &connector,
+            snapshot.event_sequence,
+            &["pane.updated"],
+            SSH_OPERATION_TIMEOUT,
+        )
+        .expect("official remote event subscription starts from the snapshot cursor");
+        assert_eq!(subscription.ack.host.host_id, snapshot.host.host_id);
+        assert_eq!(subscription.ack.host.session_id, snapshot.host.session_id);
+        let (reader, shutdown) = subscription.into_parts();
+        shutdown.shutdown();
+        drop(reader);
 
         assert_eq!(snapshot.protocol, REMOTE_PROTOCOL_REVISION);
         assert!(!snapshot.host.host_id.is_empty());

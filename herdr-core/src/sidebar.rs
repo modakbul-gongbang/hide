@@ -83,6 +83,8 @@ pub struct SessionAgentPayload {
     #[serde(default)]
     pub agent_status: Option<String>,
     #[serde(default)]
+    pub state_change_seq: Option<u64>,
+    #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
     /// Passed through verbatim; the strict shape check lives in
     /// [`parse_ambient`] so a broken record can never partially survive.
@@ -191,9 +193,18 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
     let sort_rank = token_string(&agent.tokens, "sort_rank")
         .filter(|value| value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()))
         .ok_or_else(|| format!("agent {pane_id} has an invalid sort_rank token"))?;
-    let activity = token_string(&agent.tokens, "activity")
-        .filter(|value| value.len() == 13 && value.bytes().all(|byte| byte.is_ascii_digit()))
-        .ok_or_else(|| format!("agent {pane_id} has an invalid activity token"))?;
+    let activity = match token_string(&agent.tokens, "activity") {
+        Some(value) if value.len() == 13 && value.bytes().all(|byte| byte.is_ascii_digit()) => {
+            value
+        }
+        Some(_) => return Err(format!("agent {pane_id} has an invalid activity token")),
+        None => agent
+            .state_change_seq
+            .map(|sequence| format!("{sequence:020}"))
+            .ok_or_else(|| {
+                format!("agent {pane_id} has neither an activity token nor state_change_seq")
+            })?,
+    };
     let state = authoritative_state(&agent);
     let ambient = match agent.ambient.as_ref() {
         Some(raw) => parse_ambient(raw)?,
@@ -435,6 +446,29 @@ mod tests {
         assert!(projection.excluded[0].reason.contains("sort_rank"));
         assert_eq!(projection.excluded[1].pane_id, None);
         assert!(projection.excluded[1].reason.contains("pane id"));
+    }
+
+    #[test]
+    fn official_state_change_sequence_replaces_only_a_missing_activity_token() {
+        let projection = project_agents(payload(json!([
+            {
+                "pane_id":"remote",
+                "state_change_seq":218,
+                "agent_status":"done",
+                "tokens":{"status_done":"●","sort_rank":"05","summary":"finished"}
+            },
+            {
+                "pane_id":"malformed",
+                "state_change_seq":219,
+                "tokens":{"status_idle":"○","sort_rank":"10","activity":"not-a-time"}
+            }
+        ])));
+
+        assert_eq!(projection.agents.len(), 1);
+        assert_eq!(projection.agents[0].pane_id, "remote");
+        assert_eq!(projection.agents[0].activity, "00000000000000000218");
+        assert_eq!(projection.excluded.len(), 1);
+        assert!(projection.excluded[0].reason.contains("invalid activity"));
     }
 
     #[test]

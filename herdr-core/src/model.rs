@@ -19,6 +19,7 @@ pub struct RemoteTarget {
     pub id: String,
     pub label: String,
     pub ssh_alias: String,
+    pub herdr_socket_path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -506,6 +507,37 @@ pub struct RemoteStatusSnapshot {
     pub state: String,
     pub message: Option<String>,
     pub last_checked_at_unix_ms: Option<u64>,
+    pub session: Option<RemoteSessionSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteSessionSnapshot {
+    pub workspaces: Vec<WorkspaceSnapshot>,
+    pub agents: Vec<SidebarAgentSnapshot>,
+    pub active_tab_ids: BTreeMap<String, String>,
+    pub focused_workspace_id: Option<String>,
+    pub focused_checkout_id: Option<String>,
+    pub focused_tab_id: Option<String>,
+    pub focused_pane_id: Option<String>,
+    pub pane_layouts: Vec<RemotePaneLayoutSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemotePaneLayoutSnapshot {
+    pub workspace_id: String,
+    pub tab_id: String,
+    pub focused_pane_id: String,
+    pub zoomed: bool,
+    pub frames: Vec<RemotePaneLayoutFrame>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemotePaneLayoutFrame {
+    pub pane_id: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -627,6 +659,7 @@ impl Snapshot {
                         state: "not_connected".to_owned(),
                         message: Some("Waiting for the first remote connection attempt".to_owned()),
                         last_checked_at_unix_ms: None,
+                        session: None,
                     })
                     .collect(),
                 chromux: ChromuxStatusSnapshot {

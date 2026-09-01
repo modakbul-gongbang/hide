@@ -726,6 +726,7 @@ struct CoreDiffSnapshot: Decodable {
 
 struct CoreStatusSnapshot: Decodable {
     let herdr: CoreHerdrStatus
+    let remote: [CoreRemoteStatus]
     let chromux: CoreChromuxStatus
     let environment: [CoreEnvironmentStatus]
     let diagnostics: [CoreDiagnostic]
@@ -733,10 +734,58 @@ struct CoreStatusSnapshot: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case herdr
+        case remote
         case chromux
         case environment
         case diagnostics
         case lastError = "last_error"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        herdr = try container.decode(CoreHerdrStatus.self, forKey: .herdr)
+        remote = try container.decodeIfPresent([CoreRemoteStatus].self, forKey: .remote) ?? []
+        chromux = try container.decode(CoreChromuxStatus.self, forKey: .chromux)
+        environment = try container.decodeIfPresent([CoreEnvironmentStatus].self, forKey: .environment) ?? []
+        diagnostics = try container.decodeIfPresent([CoreDiagnostic].self, forKey: .diagnostics) ?? []
+        lastError = try container.decodeIfPresent(CoreLastError.self, forKey: .lastError)
+    }
+}
+
+struct CoreRemoteStatus: Decodable, Identifiable {
+    var id: String { targetID }
+    let targetID: String
+    let state: String
+    let message: String?
+    let session: CoreRemoteSessionSnapshot?
+
+    enum CodingKeys: String, CodingKey {
+        case targetID = "target_id"
+        case state
+        case message
+        case session
+    }
+}
+
+struct CoreRemoteSessionSnapshot: Decodable {
+    let workspaces: [CoreWorkspaceSnapshot]
+    let agents: [SidebarAgent]
+    let activeTabIDs: [String: String]
+    let focusedWorkspaceID: String?
+    let focusedCheckoutID: String?
+    let focusedTabID: String?
+    let focusedPaneID: String?
+    let paneLayouts: [RemotePaneLayoutSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case workspaces
+        case agents
+        case activeTabIDs = "active_tab_ids"
+        case focusedWorkspaceID = "focused_workspace_id"
+        case focusedCheckoutID = "focused_checkout_id"
+        case focusedTabID = "focused_tab_id"
+        case focusedPaneID = "focused_pane_id"
+        case paneLayouts = "pane_layouts"
     }
 }
 
@@ -1008,6 +1057,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 "id": "mini",
                 "label": "Mac mini",
                 "ssh_alias": "mini",
+                "herdr_socket_path": "/Users/grab/.config/herdr/herdr.sock",
             ]],
             "app_state_path": statePath,
         ]

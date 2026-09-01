@@ -14,8 +14,8 @@ use crate::live::{
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
-    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, SCHEMA_VERSION, Snapshot, Surface,
-    TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION,
+    Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
@@ -933,6 +933,81 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
     ) -> bool {
         self.ingest_session_with_catalog(fetched, None)
+    }
+
+    /// Applies the authoritative session projection for one configured remote
+    /// Herdr target. The last valid session remains visible through a stale or
+    /// disconnected interval, while status always names the current failure.
+    pub fn ingest_remote_session(
+        &mut self,
+        target_id: &str,
+        fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
+    ) -> bool {
+        let Some(status) = self
+            .snapshot
+            .status
+            .remote
+            .iter_mut()
+            .find(|status| status.target_id == target_id)
+        else {
+            self.set_error(
+                "remote.target_unknown",
+                format!("Remote Herdr sync returned an unconfigured target {target_id}"),
+                false,
+            );
+            return true;
+        };
+
+        let mut changed = false;
+        match fetched {
+            Ok(session) => {
+                if status.state != "connected" || status.message.is_some() {
+                    status.state = "connected".to_owned();
+                    status.message = None;
+                    changed = true;
+                }
+                if status.session.as_ref() != Some(&session) {
+                    status.session = Some(session);
+                    changed = true;
+                }
+            }
+            Err(error) => {
+                if status.state != error.state()
+                    || status.message.as_deref() != Some(error.message())
+                {
+                    status.state = error.state().to_owned();
+                    status.message = Some(error.message().to_owned());
+                    changed = true;
+                }
+            }
+        }
+        status.last_checked_at_unix_ms = Some(unix_milliseconds());
+
+        let agent_count = status
+            .session
+            .as_ref()
+            .map(|session| session.agents.len())
+            .unwrap_or(0)
+            .min(u32::MAX as usize) as u32;
+        if let Some(device) = self
+            .snapshot
+            .navigator
+            .devices
+            .iter_mut()
+            .find(|device| device.id == target_id)
+        {
+            let device_state = if status.state == "connected" {
+                "ready"
+            } else {
+                "unavailable"
+            };
+            if device.state != device_state || device.agent_count != agent_count {
+                device.state = device_state.to_owned();
+                device.agent_count = agent_count;
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Reconciles the pane and checkout ids loaded from disk against the first
@@ -3394,8 +3469,17 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
         if target.id.trim().is_empty()
             || target.label.trim().is_empty()
             || target.ssh_alias.trim().is_empty()
+            || target.herdr_socket_path.trim().is_empty()
         {
             return Err("remote target fields must not be empty");
+        }
+        if !Path::new(&target.herdr_socket_path).is_absolute()
+            || target
+                .herdr_socket_path
+                .bytes()
+                .any(|byte| byte.is_ascii_control())
+        {
+            return Err("remote target herdr_socket_path must be absolute and single-line");
         }
     }
     for (index, target) in options.remote_targets.iter().enumerate() {

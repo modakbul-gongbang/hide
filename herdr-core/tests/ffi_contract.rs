@@ -27,9 +27,7 @@ fn options_with_state(state_path: &std::path::Path) -> Vec<u8> {
     serde_json::to_vec(&json!({
         "schema_version": 2,
         "herdr_socket_path": null,
-        "remote_targets": [
-            {"id": "mini", "label": "Mac mini", "ssh_alias": "mini"}
-        ],
+        "remote_targets": [],
         "app_state_path": state_path
     }))
     .expect("options serialize")
@@ -204,7 +202,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
     assert_eq!(snapshot["schema_version"], 2);
     // The default test options leave the herdr socket unconfigured.
     assert_eq!(snapshot["status"]["herdr"]["state"], "unconfigured");
-    assert_eq!(snapshot["status"]["remote"][0]["target_id"], "mini");
+    assert_eq!(snapshot["status"]["remote"], json!([]));
     assert_eq!(snapshot["status"]["chromux"]["profile"], "default");
     let environment = snapshot["status"]["environment"]
         .as_array()

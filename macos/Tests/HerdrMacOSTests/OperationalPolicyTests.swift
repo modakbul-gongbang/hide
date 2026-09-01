@@ -260,45 +260,53 @@ import Testing
     ))
 }
 
-@Test func remoteSnapshotProjectionCarriesContextAndPaneCwd() throws {
+@Test func coreRemoteSessionCarriesContextAndPaneCwd() throws {
     let data = Data("""
     {
-      "result": {
-        "snapshot": {
-          "focused_workspace_id": "w1",
-          "focused_tab_id": "w1:t1",
-          "focused_pane_id": "w1:p1",
-          "workspaces": [{
-            "workspace_id": "w1",
-            "label": "remote-repo",
-            "active_tab_id": "w1:t1",
-            "pane_count": 1,
-            "tab_count": 1
-          }],
+      "workspaces": [{
+        "id": "remote:device:mini:workspace:w1",
+        "label": "remote-repo",
+        "path": "/private/tmp/hide-remote-repo",
+        "remote_target_id": "device:mini",
+        "device_id": "device:mini",
+        "checkouts": [{
+          "id": "remote:device:mini:checkout:w1",
+          "workspace_id": "remote:device:mini:workspace:w1",
+          "label": "remote-repo",
+          "path": "/private/tmp/hide-remote-repo",
+          "is_worktree": false,
+          "exists": true,
+          "temporary": false,
           "tabs": [{
-            "tab_id": "w1:t1",
-            "workspace_id": "w1",
+            "id": "w1:t1",
+            "workspace_id": "remote:device:mini:workspace:w1",
+            "checkout_id": "remote:device:mini:checkout:w1",
             "label": "1",
-            "pane_count": 1
-          }],
-          "panes": [{
-            "pane_id": "w1:p1",
-            "workspace_id": "w1",
-            "tab_id": "w1:t1",
-            "cwd": "/private/tmp/hide-remote-repo",
-            "terminal_title": "remote-repo",
-            "terminal_title_stripped": "remote-repo"
-          }],
-          "agents": []
-        }
-      }
+            "empty": false,
+            "panes": [{
+              "id": "w1:p1",
+              "label": "remote-repo",
+              "cwd": "/private/tmp/hide-remote-repo",
+              "state": "attached"
+            }]
+          }]
+        }]
+      }],
+      "agents": [],
+      "active_tab_ids": {"remote:device:mini:workspace:w1": "w1:t1"},
+      "focused_workspace_id": "remote:device:mini:workspace:w1",
+      "focused_checkout_id": "remote:device:mini:checkout:w1",
+      "focused_tab_id": "w1:t1",
+      "focused_pane_id": "w1:p1",
+      "pane_layouts": []
     }
     """.utf8)
 
-    let projection = try RemoteSnapshotProjection.decode(
-        data,
+    let session = try JSONDecoder().decode(CoreRemoteSessionSnapshot.self, from: data)
+    let projection = RemoteNavigationSnapshot(
         deviceID: "device:mini",
-        targetLabel: "Mac mini"
+        targetLabel: "Mac mini",
+        core: session
     )
     let workspace = try #require(projection.workspaces.first)
     let checkout = try #require(workspace.checkouts.first)
@@ -321,8 +329,8 @@ import Testing
     #expect(RemoteShellCommand.quote("/tmp/remote checkout") == "'/tmp/remote checkout'")
     #expect(RemoteShellCommand.quote("it's safe") == "'it'\\''s safe'")
     #expect(
-        RemoteShellCommand.loginShell("herdr api snapshot")
-            == "zsh -ilc 'herdr api snapshot'"
+        RemoteShellCommand.loginShell("herdr pane focus w1:p1")
+            == "zsh -ilc 'herdr pane focus w1:p1'"
     )
     let attach = RemoteShellCommand.attach(paneID: "w1:p2")
     #expect(attach.contains("herdr pane attach 'w1:p2' 2>/dev/null"))

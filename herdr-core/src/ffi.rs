@@ -73,6 +73,7 @@ impl ChangeNotifier {
 #[repr(C)]
 pub struct HerdrCore {
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
+    _remote_session_sync: Vec<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
     callback: Arc<Mutex<Option<CallbackRegistration>>>,
     owner_thread: ThreadId,
@@ -139,6 +140,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         }
         let environment = environment::read_and_validate();
         let home_path = environment.home_path.clone();
+        let remote_enabled = environment.remote_enabled;
         if options.herdr_socket_path.is_some()
             && let Some(path) = environment.herdr_socket_path_override.as_ref()
         {
@@ -160,13 +162,68 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 },
                 socket_path,
                 options.herdr_bin_path.as_deref(),
-                home_path,
+                home_path.clone(),
             )
         } else {
             None
         };
+        let mut remote_session_sync = Vec::new();
+        if remote_enabled {
+            for target in &options.remote_targets {
+                let result = (|| {
+                    let home_path = home_path.as_ref().ok_or_else(|| {
+                        "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
+                    })?;
+                    let alias = crate::remote::SshAlias::from_config_file(
+                        &home_path.join(".ssh/config"),
+                        &target.ssh_alias,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let client = crate::remote::RusshRemoteClient::new(alias)
+                        .map_err(|error| error.to_string())?;
+                    let connector = client
+                        .herdr_api_connector(target.herdr_socket_path.clone())
+                        .map_err(|error| error.to_string())?;
+                    let context = crate::session_sync::SessionSyncContext::remote(
+                        target.id.clone(),
+                        target.label.clone(),
+                        Arc::new(connector),
+                        Arc::downgrade(&runtime),
+                        ChangeNotifier {
+                            registration: Arc::clone(&callback),
+                        },
+                    );
+                    crate::session_sync::spawn(context, None)
+                })();
+                match result {
+                    Ok(handle) => remote_session_sync.push(handle),
+                    Err(message) => {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({
+                                "component": "remote_session_sync",
+                                "kind": "coordinator.spawn_failed",
+                                "target": target.id,
+                                "message": message,
+                            })
+                        );
+                        let changed = lock_recover(&runtime).ingest_remote_session(
+                            &target.id,
+                            Err(crate::live::SessionFetchError::Unreachable(message)),
+                        );
+                        if changed {
+                            ChangeNotifier {
+                                registration: Arc::clone(&callback),
+                            }
+                            .notify();
+                        }
+                    }
+                }
+            }
+        }
         Box::into_raw(Box::new(HerdrCore {
             _session_sync: session_sync,
+            _remote_session_sync: remote_session_sync,
             runtime,
             callback,
             owner_thread: thread::current().id(),

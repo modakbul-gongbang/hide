@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -10,9 +12,13 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::herdr_api::{self, ApiError, HERDR_PROTOCOL_REVISION, HostScope};
+use crate::ffi::ChangeNotifier;
+use crate::herdr_api::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, HostScope};
 use crate::live::{LiveContext, SessionFetchError};
-use crate::model::{WorkspaceRegistration, WorkspaceSnapshot};
+use crate::model::{
+    CheckoutSnapshot, PaneSnapshot, RemotePaneLayoutFrame, RemotePaneLayoutSnapshot,
+    RemoteSessionSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
+};
 use crate::runtime::Runtime;
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPayload, SessionPanePayload, SessionSnapshotPayload,
@@ -58,6 +64,62 @@ const TOPOLOGY_SUBSCRIPTIONS: &[&str] = &[
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionSyncTarget {
+    Local { socket_path: PathBuf },
+    Remote { target_id: String, label: String },
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionSyncContext {
+    target: SessionSyncTarget,
+    api_connector: Arc<dyn ApiConnector>,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+}
+
+impl SessionSyncContext {
+    pub(crate) fn local(context: &LiveContext) -> Self {
+        Self {
+            target: SessionSyncTarget::Local {
+                socket_path: context.socket_path.clone(),
+            },
+            api_connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+        }
+    }
+
+    pub(crate) fn remote(
+        target_id: impl Into<String>,
+        label: impl Into<String>,
+        api_connector: Arc<dyn ApiConnector>,
+        runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
+    ) -> Self {
+        Self {
+            target: SessionSyncTarget::Remote {
+                target_id: target_id.into(),
+                label: label.into(),
+            },
+            api_connector,
+            runtime,
+            notifier,
+        }
+    }
+
+    fn log_target(&self) -> &str {
+        match &self.target {
+            SessionSyncTarget::Local { .. } => "local",
+            SessionSyncTarget::Remote { target_id, .. } => target_id,
+        }
+    }
+
+    fn is_local(&self) -> bool {
+        matches!(self.target, SessionSyncTarget::Local { .. })
+    }
 }
 
 struct CatalogCache {
@@ -120,7 +182,7 @@ impl ActiveSubscription {
 }
 
 pub(crate) fn spawn(
-    context: LiveContext,
+    context: SessionSyncContext,
     home_path: Option<std::path::PathBuf>,
 ) -> Result<SessionSyncHandle, String> {
     let (sender, receiver) = channel();
@@ -136,7 +198,7 @@ pub(crate) fn spawn(
 }
 
 fn run_coordinator(
-    context: LiveContext,
+    context: SessionSyncContext,
     home_path: Option<std::path::PathBuf>,
     receiver: Receiver<CoordinatorMessage>,
     sender: Sender<CoordinatorMessage>,
@@ -149,7 +211,9 @@ fn run_coordinator(
     let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
     let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
     let mut catalog_cache: Option<CatalogCache> = None;
-    let mut usage_reader = crate::usage::ProviderUsageReader::new(home_path);
+    let mut usage_reader = context
+        .is_local()
+        .then(|| crate::usage::ProviderUsageReader::new(home_path));
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -191,7 +255,7 @@ fn run_coordinator(
                     needs_bootstrap = false;
                 }
                 Err(failure) => {
-                    log_sync_failure("connect.failed", replica.as_ref(), &failure.error);
+                    log_sync_failure(&context, "connect.failed", replica.as_ref(), &failure.error);
                     needs_bootstrap |= failure.needs_bootstrap;
                     if !publish_failure(&context, failure.error) {
                         return;
@@ -218,7 +282,7 @@ fn run_coordinator(
                     }
                 }
                 Err(error) => {
-                    log_sync_failure("agent_refresh.failed", replica.as_ref(), &error);
+                    log_sync_failure(&context, "agent_refresh.failed", replica.as_ref(), &error);
                     stop_subscription(&mut subscription);
                     if !publish_failure(&context, stale_if_projected(replica.as_ref(), error)) {
                         return;
@@ -229,7 +293,9 @@ fn run_coordinator(
             }
         }
 
-        if let Some(provider_usage) = usage_reader.read_if_due()
+        if let Some(provider_usage) = usage_reader
+            .as_mut()
+            .and_then(crate::usage::ProviderUsageReader::read_if_due)
             && !publish_provider_usage(&context, provider_usage)
         {
             stop_subscription(&mut subscription);
@@ -264,7 +330,7 @@ fn run_coordinator(
                                 }
                             }
                             Err(error) => {
-                                log_sync_failure("event.rejected", Some(current), &error);
+                                log_sync_failure(&context, "event.rejected", Some(current), &error);
                                 stop_subscription(&mut subscription);
                                 needs_bootstrap = true;
                                 if !publish_failure(&context, error) {
@@ -283,6 +349,7 @@ fn run_coordinator(
                             json!({
                                 "component": "session_sync",
                                 "kind": "subscription.error",
+                                "target": context.log_target(),
                                 "code": code,
                                 "sequence": cursor,
                                 "message": message,
@@ -300,7 +367,12 @@ fn run_coordinator(
                         reconnect_delay = next_reconnect_delay(reconnect_delay);
                     }
                     Err(error) => {
-                        log_sync_failure("subscription.malformed", replica.as_ref(), &error);
+                        log_sync_failure(
+                            &context,
+                            "subscription.malformed",
+                            replica.as_ref(),
+                            &error,
+                        );
                         stop_subscription(&mut subscription);
                         needs_bootstrap = true;
                         if !publish_failure(&context, error) {
@@ -323,7 +395,12 @@ fn run_coordinator(
                 let error = SessionFetchError::Stale(format!(
                     "Herdr event stream disconnected after sequence {cursor}: {message}"
                 ));
-                log_sync_failure("subscription.disconnected", replica.as_ref(), &error);
+                log_sync_failure(
+                    &context,
+                    "subscription.disconnected",
+                    replica.as_ref(),
+                    &error,
+                );
                 if !publish_failure(&context, error) {
                     return;
                 }
@@ -340,7 +417,7 @@ fn run_coordinator(
 }
 
 fn connect_from_snapshot(
-    context: &LiveContext,
+    context: &SessionSyncContext,
     sender: &Sender<CoordinatorMessage>,
     generation: &mut u64,
     has_projection: bool,
@@ -354,7 +431,7 @@ fn connect_from_snapshot(
 }
 
 fn connect_from_cursor(
-    context: &LiveContext,
+    context: &SessionSyncContext,
     replica: &SessionReplica,
     sender: &Sender<CoordinatorMessage>,
     generation: &mut u64,
@@ -363,7 +440,7 @@ fn connect_from_cursor(
 }
 
 fn open_subscription(
-    context: &LiveContext,
+    context: &SessionSyncContext,
     replica: &SessionReplica,
     sender: &Sender<CoordinatorMessage>,
     generation: &mut u64,
@@ -454,11 +531,13 @@ fn stop_subscription(subscription: &mut Option<ActiveSubscription>) {
     }
 }
 
-fn fetch_replica(context: &LiveContext) -> Result<SessionReplica, SessionFetchError> {
-    if !context.socket_path.exists() {
+fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, SessionFetchError> {
+    if let SessionSyncTarget::Local { socket_path } = &context.target
+        && !socket_path.exists()
+    {
         return Err(SessionFetchError::SocketMissing(format!(
             "Herdr socket file does not exist at {}; the herdr server is not running",
-            context.socket_path.display()
+            socket_path.display()
         )));
     }
     let result = herdr_api::request_with_connector(
@@ -474,11 +553,13 @@ fn fetch_replica(context: &LiveContext) -> Result<SessionReplica, SessionFetchEr
     SessionReplica::from_snapshot(snapshot)
 }
 
-fn fetch_agents(context: &LiveContext) -> Result<Vec<WireAgent>, SessionFetchError> {
-    if !context.socket_path.exists() {
+fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<WireAgent>, SessionFetchError> {
+    if let SessionSyncTarget::Local { socket_path } = &context.target
+        && !socket_path.exists()
+    {
         return Err(SessionFetchError::SocketMissing(format!(
             "Herdr socket file does not exist at {}; the herdr server is not running",
-            context.socket_path.display()
+            socket_path.display()
         )));
     }
     let result = herdr_api::request_with_connector(
@@ -501,10 +582,43 @@ fn fetch_agents(context: &LiveContext) -> Result<Vec<WireAgent>, SessionFetchErr
 }
 
 fn publish_replica(
-    context: &LiveContext,
+    context: &SessionSyncContext,
     replica: &SessionReplica,
     catalog_cache: &mut Option<CatalogCache>,
 ) -> bool {
+    if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
+        let projection = replica.project_remote(target_id);
+        let (fetched, excluded) = match projection {
+            Ok((session, excluded)) => (Ok(session), excluded),
+            Err(error) => (Err(error), Vec::new()),
+        };
+        for exclusion in excluded {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "remote_session",
+                    "kind": "agent.excluded",
+                    "target": target_id,
+                    "pane_id": exclusion.pane_id,
+                    "source_index": exclusion.source_index,
+                    "message": exclusion.reason,
+                })
+            );
+        }
+        let Some(runtime) = context.runtime.upgrade() else {
+            return false;
+        };
+        let changed = match runtime.lock() {
+            Ok(mut guard) => guard.ingest_remote_session(target_id, fetched),
+            Err(_) => return false,
+        };
+        drop(runtime);
+        if changed {
+            context.notifier.notify();
+        }
+        return true;
+    }
+
     let payload = replica.project();
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
@@ -552,12 +666,17 @@ fn publish_replica(
     true
 }
 
-fn publish_failure(context: &LiveContext, error: SessionFetchError) -> bool {
+fn publish_failure(context: &SessionSyncContext, error: SessionFetchError) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_session_with_catalog(Err(error), None),
+        Ok(mut guard) => match &context.target {
+            SessionSyncTarget::Local { .. } => guard.ingest_session_with_catalog(Err(error), None),
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.ingest_remote_session(target_id, Err(error))
+            }
+        },
         Err(_) => return false,
     };
     drop(runtime);
@@ -568,7 +687,7 @@ fn publish_failure(context: &LiveContext, error: SessionFetchError) -> bool {
 }
 
 fn publish_provider_usage(
-    context: &LiveContext,
+    context: &SessionSyncContext,
     provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
 ) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
@@ -649,12 +768,18 @@ fn connect_failure_from_api(error: ApiError, has_projection: bool, cursor: u64) 
     }
 }
 
-fn log_sync_failure(kind: &str, replica: Option<&SessionReplica>, error: &SessionFetchError) {
+fn log_sync_failure(
+    context: &SessionSyncContext,
+    kind: &str,
+    replica: Option<&SessionReplica>,
+    error: &SessionFetchError,
+) {
     eprintln!(
         "{}",
         json!({
             "component": "session_sync",
             "kind": kind,
+            "target": context.log_target(),
             "state": error.state(),
             "sequence": replica.map(|current| current.cursor),
             "message": error.message(),
@@ -672,6 +797,17 @@ struct WorkspaceWire {
     workspace_id: String,
     label: String,
     active_tab_id: String,
+    #[serde(default)]
+    worktree: Option<WorkspaceWorktreeWire>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct WorkspaceWorktreeWire {
+    repo_key: String,
+    repo_name: String,
+    repo_root: String,
+    checkout_path: String,
+    is_linked_worktree: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -688,6 +824,10 @@ struct PaneWire {
     tab_id: String,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    terminal_title: Option<String>,
+    #[serde(default)]
+    terminal_title_stripped: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -703,6 +843,8 @@ struct WireAgent {
     agent: Option<String>,
     #[serde(default)]
     agent_status: Option<String>,
+    #[serde(default)]
+    state_change_seq: u64,
     #[serde(default)]
     tokens: BTreeMap<String, Value>,
     #[serde(default)]
@@ -749,6 +891,7 @@ impl ProjectionState {
                     cwd: agent.cwd.clone(),
                     agent: agent.agent.clone(),
                     agent_status: agent.agent_status.clone(),
+                    state_change_seq: Some(agent.state_change_seq),
                     tokens: agent.tokens.clone(),
                     ambient: agent.ambient.clone(),
                 }
@@ -877,6 +1020,208 @@ impl SessionReplica {
 
     fn project(&self) -> SessionSnapshotPayload {
         self.state.project()
+    }
+
+    fn project_remote(
+        &self,
+        target_id: &str,
+    ) -> Result<(RemoteSessionSnapshot, Vec<crate::sidebar::AgentExclusion>), SessionFetchError>
+    {
+        let agent_projection = crate::sidebar::project_agents(self.project());
+        let mut agents = agent_projection.agents;
+        for agent in &mut agents {
+            agent.id = format!("remote:{target_id}:{}", agent.pane_id);
+        }
+
+        let mut pane_layouts = Vec::with_capacity(self.state.layouts.len());
+        for layout in &self.state.layouts {
+            let area_width = f64::from(layout.area.width);
+            let area_height = f64::from(layout.area.height);
+            if area_width <= 0.0 || area_height <= 0.0 {
+                return Err(SessionFetchError::Malformed(format!(
+                    "remote Herdr layout {} has an empty area",
+                    layout.tab_id
+                )));
+            }
+            let mut frames = Vec::with_capacity(layout.panes.len());
+            for pane in &layout.panes {
+                let frame = RemotePaneLayoutFrame {
+                    pane_id: pane.pane_id.clone(),
+                    x: (f64::from(pane.rect.x) - f64::from(layout.area.x)) / area_width,
+                    y: (f64::from(pane.rect.y) - f64::from(layout.area.y)) / area_height,
+                    width: f64::from(pane.rect.width) / area_width,
+                    height: f64::from(pane.rect.height) / area_height,
+                };
+                if frame.x < 0.0
+                    || frame.y < 0.0
+                    || frame.width <= 0.0
+                    || frame.height <= 0.0
+                    || frame.x + frame.width > 1.0
+                    || frame.y + frame.height > 1.0
+                {
+                    return Err(SessionFetchError::Malformed(format!(
+                        "remote Herdr layout {} contains an out-of-bounds pane {}",
+                        layout.tab_id, pane.pane_id
+                    )));
+                }
+                frames.push(frame);
+            }
+            pane_layouts.push(RemotePaneLayoutSnapshot {
+                workspace_id: remote_workspace_id(target_id, &layout.workspace_id),
+                tab_id: layout.tab_id.clone(),
+                focused_pane_id: layout.focused_pane_id.clone(),
+                zoomed: layout.zoomed,
+                frames,
+            });
+        }
+
+        let mut workspaces = self
+            .state
+            .workspaces
+            .iter()
+            .map(|workspace| {
+                let workspace_id = remote_workspace_id(target_id, &workspace.workspace_id);
+                let checkout_id = remote_checkout_id(target_id, &workspace.workspace_id);
+                let workspace_panes = self
+                    .state
+                    .panes
+                    .iter()
+                    .filter(|pane| pane.workspace_id == workspace.workspace_id)
+                    .collect::<Vec<_>>();
+                let pane_path = workspace_panes
+                    .iter()
+                    .find_map(|pane| pane.cwd.as_deref().filter(|cwd| !cwd.trim().is_empty()))
+                    .map(str::to_owned);
+                let path = workspace
+                    .worktree
+                    .as_ref()
+                    .map(|worktree| worktree.checkout_path.clone())
+                    .or(pane_path)
+                    .unwrap_or_default();
+                let repo_name = workspace
+                    .worktree
+                    .as_ref()
+                    .map(|worktree| worktree.repo_name.clone())
+                    .unwrap_or_else(|| workspace.label.clone());
+                let tabs = self
+                    .state
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.workspace_id == workspace.workspace_id)
+                    .map(|tab| {
+                        let panes = workspace_panes
+                            .iter()
+                            .filter(|pane| pane.tab_id == tab.tab_id)
+                            .map(|pane| {
+                                let agent =
+                                    agents.iter().find(|agent| agent.pane_id == pane.pane_id);
+                                PaneSnapshot {
+                                    id: pane.pane_id.clone(),
+                                    label: pane
+                                        .terminal_title_stripped
+                                        .as_deref()
+                                        .or(pane.terminal_title.as_deref())
+                                        .filter(|title| !title.trim().is_empty())
+                                        .unwrap_or(&pane.pane_id)
+                                        .to_owned(),
+                                    cwd: pane.cwd.clone().unwrap_or_else(|| path.clone()),
+                                    state: agent
+                                        .map(|agent| agent.state.clone())
+                                        .unwrap_or_else(|| "attached".to_owned()),
+                                    summary: agent.map(|agent| agent.summary.clone()),
+                                    activity_at_unix_ms: self
+                                        .state
+                                        .agents
+                                        .iter()
+                                        .find(|source| source.pane_id == pane.pane_id)
+                                        .and_then(|source| source.tokens.get("activity"))
+                                        .and_then(Value::as_str)
+                                        .and_then(|activity| activity.parse().ok()),
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        TabSnapshot {
+                            id: Some(tab.tab_id.clone()),
+                            workspace_id: Some(workspace_id.clone()),
+                            checkout_id: Some(checkout_id.clone()),
+                            label: Some(tab.label.clone()),
+                            empty: panes.is_empty(),
+                            panes,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                WorkspaceSnapshot {
+                    id: workspace_id.clone(),
+                    label: workspace.label.clone(),
+                    path: path.clone(),
+                    remote_target_id: Some(target_id.to_owned()),
+                    expanded: true,
+                    device_id: target_id.to_owned(),
+                    repo_name,
+                    is_git: workspace.worktree.is_some(),
+                    default_branch: None,
+                    registered: true,
+                    temporary: false,
+                    checkouts: vec![CheckoutSnapshot {
+                        id: checkout_id,
+                        workspace_id,
+                        label: workspace.label.clone(),
+                        path: path.clone(),
+                        branch: None,
+                        is_worktree: workspace
+                            .worktree
+                            .as_ref()
+                            .is_some_and(|worktree| worktree.is_linked_worktree),
+                        exists: !path.is_empty(),
+                        temporary: false,
+                        tabs,
+                    }],
+                }
+            })
+            .collect::<Vec<_>>();
+        workspaces.sort_by(|left, right| {
+            left.label
+                .to_lowercase()
+                .cmp(&right.label.to_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        let active_tab_ids = self
+            .state
+            .workspaces
+            .iter()
+            .map(|workspace| {
+                (
+                    remote_workspace_id(target_id, &workspace.workspace_id),
+                    workspace.active_tab_id.clone(),
+                )
+            })
+            .collect();
+
+        let focused = self
+            .state
+            .focused_pane_id
+            .as_deref()
+            .and_then(|pane_id| self.state.panes.iter().find(|pane| pane.pane_id == pane_id));
+        let focused_workspace_id =
+            focused.map(|pane| remote_workspace_id(target_id, &pane.workspace_id));
+        let focused_checkout_id =
+            focused.map(|pane| remote_checkout_id(target_id, &pane.workspace_id));
+        let focused_tab_id = focused.map(|pane| pane.tab_id.clone());
+
+        Ok((
+            RemoteSessionSnapshot {
+                workspaces,
+                agents,
+                active_tab_ids,
+                focused_workspace_id,
+                focused_checkout_id,
+                focused_tab_id,
+                focused_pane_id: self.state.focused_pane_id.clone(),
+                pane_layouts,
+            },
+            agent_projection.excluded,
+        ))
     }
 
     fn ready_to_publish(&self) -> bool {
@@ -1464,6 +1809,23 @@ impl SessionReplica {
     }
 
     fn validate(&self) -> Result<(), SessionFetchError> {
+        for workspace in &self.state.workspaces {
+            if let Some(worktree) = &workspace.worktree {
+                for (field, value) in [
+                    ("repo_key", worktree.repo_key.as_str()),
+                    ("repo_name", worktree.repo_name.as_str()),
+                    ("repo_root", worktree.repo_root.as_str()),
+                    ("checkout_path", worktree.checkout_path.as_str()),
+                ] {
+                    if value.trim().is_empty() {
+                        return Err(SessionFetchError::Malformed(format!(
+                            "Herdr workspace {} has an empty worktree {field}",
+                            workspace.workspace_id
+                        )));
+                    }
+                }
+            }
+        }
         let workspace_ids = unique_ids(
             "workspace",
             self.state
@@ -1612,6 +1974,14 @@ fn validate_protocol(snapshot: &Value) -> Result<(), SessionFetchError> {
     Ok(())
 }
 
+fn remote_workspace_id(target_id: &str, workspace_id: &str) -> String {
+    format!("remote:{target_id}:workspace:{workspace_id}")
+}
+
+fn remote_checkout_id(target_id: &str, workspace_id: &str) -> String {
+    format!("remote:{target_id}:checkout:{workspace_id}")
+}
+
 fn unique_ids<'a>(
     kind: &str,
     ids: impl Iterator<Item = &'a str>,
@@ -1645,7 +2015,18 @@ fn validate_workspace_wire(
     workspace: &WorkspaceWire,
 ) -> Result<(), SessionFetchError> {
     ensure_non_empty(event, "workspace.workspace_id", &workspace.workspace_id)?;
-    ensure_non_empty(event, "workspace.active_tab_id", &workspace.active_tab_id)
+    ensure_non_empty(event, "workspace.active_tab_id", &workspace.active_tab_id)?;
+    if let Some(worktree) = &workspace.worktree {
+        ensure_non_empty(event, "workspace.worktree.repo_key", &worktree.repo_key)?;
+        ensure_non_empty(event, "workspace.worktree.repo_name", &worktree.repo_name)?;
+        ensure_non_empty(event, "workspace.worktree.repo_root", &worktree.repo_root)?;
+        ensure_non_empty(
+            event,
+            "workspace.worktree.checkout_path",
+            &worktree.checkout_path,
+        )?;
+    }
+    Ok(())
 }
 
 fn validate_tab_wire(event: &str, tab: &TabWire) -> Result<(), SessionFetchError> {
@@ -2029,14 +2410,18 @@ mod tests {
         )))
     }
 
-    fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> LiveContext {
-        LiveContext {
+    fn context_for_fixture(
+        runtime: &Arc<Mutex<Runtime>>,
+        socket_path: &Path,
+    ) -> SessionSyncContext {
+        let live = LiveContext {
             socket_path: socket_path.to_path_buf(),
             herdr_bin: None,
             runtime: Arc::downgrade(runtime),
             notifier: crate::ffi::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr_api::UnixSocketConnector::new(socket_path)),
-        }
+        };
+        SessionSyncContext::local(&live)
     }
 
     fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
@@ -2097,6 +2482,143 @@ mod tests {
         assert!(updated.publish);
         assert_eq!(replica.project().panes.len(), 2);
         assert_eq!(replica.project().layouts[0].panes.len(), 2);
+    }
+
+    #[test]
+    fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
+        let replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+
+        let (projected, excluded) = replica.project_remote("mini").expect("remote projection");
+
+        assert!(excluded.is_empty());
+        assert_eq!(projected.workspaces.len(), 1);
+        assert_eq!(projected.workspaces[0].id, "remote:mini:workspace:w1");
+        assert_eq!(
+            projected.workspaces[0].checkouts[0].id,
+            "remote:mini:checkout:w1"
+        );
+        assert_eq!(
+            projected.focused_workspace_id.as_deref(),
+            Some("remote:mini:workspace:w1")
+        );
+        assert_eq!(projected.focused_tab_id.as_deref(), Some("w1:t1"));
+        assert_eq!(projected.focused_pane_id.as_deref(), Some("w1:p1"));
+        assert_eq!(projected.pane_layouts[0].frames[0].x, 0.0);
+        assert_eq!(projected.pane_layouts[0].frames[0].width, 1.0);
+        assert!(projected.workspaces[0].checkouts[0].exists);
+        assert_eq!(
+            projected
+                .active_tab_ids
+                .get("remote:mini:workspace:w1")
+                .map(String::as_str),
+            Some("w1:t1")
+        );
+    }
+
+    #[test]
+    fn remote_projection_preserves_official_worktree_metadata() {
+        let mut value = snapshot();
+        value["workspaces"][0]["worktree"] = json!({
+            "repo_key": "/tmp/repo/.git",
+            "repo_name": "repo",
+            "repo_root": "/tmp/repo",
+            "checkout_path": "/tmp/repo-linked",
+            "is_linked_worktree": true
+        });
+        value["panes"][0]["cwd"] = json!("/tmp/repo-linked/subdirectory");
+        let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+
+        let (projected, _) = replica.project_remote("mini").expect("remote projection");
+        let workspace = &projected.workspaces[0];
+        let checkout = &workspace.checkouts[0];
+
+        assert_eq!(workspace.path, "/tmp/repo-linked");
+        assert_eq!(workspace.repo_name, "repo");
+        assert!(workspace.is_git);
+        assert_eq!(checkout.path, "/tmp/repo-linked");
+        assert!(checkout.is_worktree);
+    }
+
+    #[test]
+    fn remote_projection_rejects_an_empty_layout_area() {
+        let mut value = snapshot();
+        value["layouts"][0]["area"]["width"] = json!(0);
+        let replica = SessionReplica::from_snapshot(&value).expect("snapshot shape");
+
+        let error = replica
+            .project_remote("mini")
+            .expect_err("empty layout area must be visible");
+
+        assert_eq!(error.state(), "malformed");
+        assert!(error.message().contains("empty area"));
+    }
+
+    #[test]
+    #[ignore = "requires HERDR_TEST_SSH_ALIAS and HERDR_TEST_SOCKET_PATH"]
+    fn official_remote_session_coordinator_probe() {
+        let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
+            .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
+        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
+            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
+        let home = std::env::var_os("HOME").expect("HOME is configured");
+        let alias = crate::remote::SshAlias::from_config_file(
+            &PathBuf::from(home).join(".ssh/config"),
+            &alias_name,
+        )
+        .expect("SSH alias resolves");
+        let client =
+            crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
+        let connector = client
+            .herdr_api_connector(&socket_path)
+            .expect("remote connector initializes");
+        let state_path = PathBuf::from("/tmp/herdr-core-remote-coordinator-probe-state.json");
+        let runtime = Arc::new(Mutex::new(Runtime::new(
+            CoreOptions {
+                schema_version: SCHEMA_VERSION,
+                herdr_socket_path: None,
+                herdr_bin_path: None,
+                remote_targets: vec![crate::model::RemoteTarget {
+                    id: "mini".to_owned(),
+                    label: "Mac mini".to_owned(),
+                    ssh_alias: alias_name,
+                    herdr_socket_path: socket_path,
+                }],
+                app_state_path: state_path.to_string_lossy().into_owned(),
+            },
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: None,
+                remote_enabled: true,
+                chromux_enabled: false,
+                herdr_socket_path_override: None,
+            },
+        )));
+        let context = SessionSyncContext::remote(
+            "mini",
+            "Mac mini",
+            Arc::new(connector),
+            Arc::downgrade(&runtime),
+            crate::ffi::ChangeNotifier::noop(),
+        );
+        let handle = spawn(context, None).expect("remote coordinator starts");
+
+        wait_until(Instant::now() + Duration::from_secs(5), || {
+            runtime.lock().ok().is_some_and(|runtime| {
+                let status = &runtime.snapshot().status.remote[0];
+                status.state == "connected" && status.session.is_some()
+            })
+        });
+        let runtime = runtime.lock().expect("runtime lock");
+        let status = &runtime.snapshot().status.remote[0];
+        assert_eq!(status.state, "connected");
+        let session = status.session.as_ref().expect("remote session projected");
+        assert!(!session.agents.is_empty());
+        assert_eq!(
+            runtime.snapshot().navigator.devices[1].agent_count as usize,
+            session.agents.len()
+        );
+        drop(runtime);
+        drop(handle);
     }
 
     #[test]

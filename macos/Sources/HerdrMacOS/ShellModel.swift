@@ -143,9 +143,11 @@ final class ShellModel: ObservableObject {
         paneShortcuts = shortcutResolution.bindings
         shortcutDiagnostic = shortcutResolution.diagnostic ?? Self.uiStateDiagnostic(core.snapshot)
         observeAgentFocus(in: core.snapshot)
+        remote.ingest(core.snapshot?.status.remote ?? [])
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             self.observeAgentFocus(in: snapshot)
+            self.remote.ingest(snapshot?.status.remote ?? [])
             self.objectWillChange.send()
         }
         browserSubscription = browser.objectWillChange.sink { [weak self] _ in
@@ -155,9 +157,6 @@ final class ShellModel: ObservableObject {
             self?.objectWillChange.send()
         }
         browser.environmentStateProvider = { [weak core] key in
-            core?.environmentState(for: key)
-        }
-        remote.environmentStateProvider = { [weak core] key in
             core?.environmentState(for: key)
         }
         remote.onActionFailure = { [weak self] message in
