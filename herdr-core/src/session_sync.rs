@@ -2,9 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
-use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -100,13 +97,13 @@ enum CoordinatorMessage {
 
 struct ActiveSubscription {
     generation: u64,
-    shutdown: UnixStream,
+    shutdown: Box<dyn herdr_api::ConnectionShutdown>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl ActiveSubscription {
     fn stop(mut self) {
-        let _ = self.shutdown.shutdown(Shutdown::Both);
+        self.shutdown.shutdown();
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
         {
@@ -207,7 +204,7 @@ fn run_coordinator(
 
         if subscription.is_some() && Instant::now() >= next_agent_refresh {
             next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
-            match fetch_agents(&context.socket_path) {
+            match fetch_agents(&context) {
                 Ok(agents) => {
                     let current = replica
                         .as_mut()
@@ -348,7 +345,7 @@ fn connect_from_snapshot(
     generation: &mut u64,
     has_projection: bool,
 ) -> Result<(SessionReplica, ActiveSubscription), ConnectFailure> {
-    let replica = fetch_replica(&context.socket_path).map_err(|error| ConnectFailure {
+    let replica = fetch_replica(context).map_err(|error| ConnectFailure {
         error,
         needs_bootstrap: true,
     })?;
@@ -372,8 +369,8 @@ fn open_subscription(
     generation: &mut u64,
     has_projection: bool,
 ) -> Result<ActiveSubscription, ConnectFailure> {
-    let subscription = herdr_api::subscribe(
-        &context.socket_path,
+    let subscription = herdr_api::subscribe_with_connector(
+        context.api_connector.as_ref(),
         replica.cursor,
         TOPOLOGY_SUBSCRIPTIONS,
         SYNC_REQUEST_TIMEOUT,
@@ -457,15 +454,15 @@ fn stop_subscription(subscription: &mut Option<ActiveSubscription>) {
     }
 }
 
-fn fetch_replica(socket_path: &Path) -> Result<SessionReplica, SessionFetchError> {
-    if !socket_path.exists() {
+fn fetch_replica(context: &LiveContext) -> Result<SessionReplica, SessionFetchError> {
+    if !context.socket_path.exists() {
         return Err(SessionFetchError::SocketMissing(format!(
             "Herdr socket file does not exist at {}; the herdr server is not running",
-            socket_path.display()
+            context.socket_path.display()
         )));
     }
-    let result = herdr_api::request_with_timeout(
-        socket_path,
+    let result = herdr_api::request_with_connector(
+        context.api_connector.as_ref(),
         "session.snapshot",
         json!({}),
         SYNC_REQUEST_TIMEOUT,
@@ -477,16 +474,20 @@ fn fetch_replica(socket_path: &Path) -> Result<SessionReplica, SessionFetchError
     SessionReplica::from_snapshot(snapshot)
 }
 
-fn fetch_agents(socket_path: &Path) -> Result<Vec<WireAgent>, SessionFetchError> {
-    if !socket_path.exists() {
+fn fetch_agents(context: &LiveContext) -> Result<Vec<WireAgent>, SessionFetchError> {
+    if !context.socket_path.exists() {
         return Err(SessionFetchError::SocketMissing(format!(
             "Herdr socket file does not exist at {}; the herdr server is not running",
-            socket_path.display()
+            context.socket_path.display()
         )));
     }
-    let result =
-        herdr_api::request_with_timeout(socket_path, "agent.list", json!({}), SYNC_REQUEST_TIMEOUT)
-            .map_err(session_error_from_api)?;
+    let result = herdr_api::request_with_connector(
+        context.api_connector.as_ref(),
+        "agent.list",
+        json!({}),
+        SYNC_REQUEST_TIMEOUT,
+    )
+    .map_err(session_error_from_api)?;
     let response: AgentListResult = serde_json::from_value(result).map_err(|error| {
         SessionFetchError::Malformed(format!("agent.list response is malformed: {error}"))
     })?;
@@ -1922,7 +1923,8 @@ struct LayoutEvent {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
-    use std::os::unix::net::UnixListener;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -2033,6 +2035,7 @@ mod tests {
             herdr_bin: None,
             runtime: Arc::downgrade(runtime),
             notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr_api::UnixSocketConnector::new(socket_path)),
         }
     }
 

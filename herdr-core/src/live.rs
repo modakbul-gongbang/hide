@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::ffi::ChangeNotifier;
 #[cfg(test)]
 use crate::herdr_api::HERDR_PROTOCOL_REVISION;
-use crate::herdr_api::request;
+use crate::herdr_api::{ApiConnector, UnixSocketConnector, request};
 use crate::model::{
     PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
     WorkspaceSnapshot,
@@ -35,6 +35,7 @@ pub struct LiveContext {
     pub herdr_bin: Option<PathBuf>,
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
+    pub(crate) api_connector: Arc<dyn ApiConnector>,
 }
 
 pub struct WorkspaceCreationOutcome {
@@ -383,6 +384,7 @@ pub(crate) fn install(
         herdr_bin: herdr_bin.map(PathBuf::from),
         runtime: Arc::downgrade(runtime),
         notifier: notifier.clone(),
+        api_connector: Arc::new(UnixSocketConnector::new(socket_path)),
     };
     if let Ok(mut guard) = runtime.lock() {
         guard.set_live(context.clone());

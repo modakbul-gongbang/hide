@@ -9,12 +9,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use russh::client::{self, Handle, Handler, Msg};
@@ -26,14 +26,15 @@ use russh::{Channel, ChannelMsg, ChannelOpenFailure, Disconnect, Pty};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileType as SftpFileType, OpenFlags};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tokio::io::AsyncWriteExt;
+use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
 };
+use crate::herdr_api::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
@@ -609,7 +610,7 @@ pub fn decode_remote_snapshot(
         })?;
     let workspace_ids = string_ids(snapshot, "workspaces", "workspace_id", operation_id)?;
     let pane_ids = string_ids(snapshot, "panes", "pane_id", operation_id)?;
-    let agent_ids = string_ids(snapshot, "agents", "agent_instance_id", operation_id)?;
+    let agent_ids = optional_string_ids(snapshot, "agents", "agent_instance_id", operation_id)?;
     Ok(RemoteSnapshotEnvelope {
         host,
         protocol,
@@ -661,6 +662,56 @@ fn string_ids(
         .iter()
         .map(|value| required_string(value, id_key, operation_id))
         .collect::<RemoteResult<Vec<_>>>()?;
+    ids.sort();
+    if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(remote_error(
+            operation_id,
+            "herdr",
+            RemoteStage::Protocol,
+            format!("{array_key} contains duplicate {id_key}"),
+            false,
+            true,
+        ));
+    }
+    Ok(ids)
+}
+
+fn optional_string_ids(
+    value: &Value,
+    array_key: &str,
+    id_key: &str,
+    operation_id: &str,
+) -> RemoteResult<Vec<String>> {
+    let Some(values) = value.get(array_key) else {
+        return Ok(Vec::new());
+    };
+    let values = values.as_array().ok_or_else(|| {
+        remote_error(
+            operation_id,
+            "herdr",
+            RemoteStage::Protocol,
+            format!("{array_key} is not an array"),
+            false,
+            true,
+        )
+    })?;
+    let mut ids = Vec::new();
+    for value in values {
+        match value.get(id_key) {
+            None | Some(Value::Null) => {}
+            Some(Value::String(id)) if !id.is_empty() => ids.push(id.clone()),
+            Some(_) => {
+                return Err(remote_error(
+                    operation_id,
+                    "herdr",
+                    RemoteStage::Protocol,
+                    format!("{array_key}.{id_key} must be a non-empty string or null"),
+                    false,
+                    true,
+                ));
+            }
+        }
+    }
     ids.sort();
     if ids.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err(remote_error(
@@ -1043,31 +1094,24 @@ pub fn require_terminal_surface(surface: &RemoteSurface) -> RemoteResult<&Remote
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RemoteReadCommand {
-    HerdrVersion,
-    HerdrSnapshot,
     GitStatus { root: String },
 }
 
 impl RemoteReadCommand {
     fn operation_id(&self) -> &'static str {
         match self {
-            Self::HerdrVersion => "remote-herdr-version",
-            Self::HerdrSnapshot => "remote-herdr-snapshot",
             Self::GitStatus { .. } => "remote-git-status",
         }
     }
 
     fn stage(&self) -> RemoteStage {
         match self {
-            Self::HerdrVersion | Self::HerdrSnapshot => RemoteStage::Herdr,
             Self::GitStatus { .. } => RemoteStage::Git,
         }
     }
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
-            Self::HerdrVersion => Ok("herdr --version".to_owned()),
-            Self::HerdrSnapshot => Ok("herdr api snapshot".to_owned()),
             Self::GitStatus { root } => {
                 if !root.starts_with('/')
                     || root
@@ -1103,6 +1147,268 @@ pub struct RemoteCommandOutput {
 pub struct RusshRemoteClient {
     host: SshAlias,
     runtime: Arc<Runtime>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RusshApiConnector {
+    client: RusshRemoteClient,
+    socket_path: String,
+}
+
+impl fmt::Debug for RusshApiConnector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RusshApiConnector")
+            .field("host_id", &self.client.host.host_id)
+            .field("socket_path", &self.socket_path)
+            .finish()
+    }
+}
+
+struct RusshApiShutdown {
+    stopped: Arc<AtomicBool>,
+}
+
+impl ConnectionShutdown for RusshApiShutdown {
+    fn shutdown(&self) {
+        self.stopped.store(true, Ordering::Release);
+    }
+}
+
+struct RusshApiStream {
+    runtime: Arc<Runtime>,
+    session: Option<Handle<KnownHostHandler>>,
+    stream: Option<russh::ChannelStream<Msg>>,
+    stopped: Arc<AtomicBool>,
+    read_timeout: Mutex<Option<Duration>>,
+    write_timeout: Mutex<Option<Duration>>,
+    target: String,
+}
+
+impl RusshApiStream {
+    fn timeout(slot: &Mutex<Option<Duration>>, operation: &str) -> io::Result<Option<Duration>> {
+        slot.lock().map(|timeout| *timeout).map_err(|_| {
+            io::Error::other(format!(
+                "remote Herdr {operation} timeout state is poisoned"
+            ))
+        })
+    }
+
+    fn stream(&mut self) -> io::Result<&mut russh::ChannelStream<Msg>> {
+        self.stream.as_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "remote Herdr socket stream is closed",
+            )
+        })
+    }
+}
+
+impl Read for RusshApiStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let deadline =
+            Self::timeout(&self.read_timeout, "read")?.map(|value| Instant::now() + value);
+        loop {
+            if self.stopped.load(Ordering::Acquire) {
+                return Ok(0);
+            }
+            let wait = match deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "remote Herdr socket read timed out",
+                        ));
+                    }
+                    remaining.min(Duration::from_millis(100))
+                }
+                None => Duration::from_millis(100),
+            };
+            let runtime = Arc::clone(&self.runtime);
+            let stream = self.stream()?;
+            match runtime.block_on(async { tokio::time::timeout(wait, stream.read(buffer)).await })
+            {
+                Ok(result) => return result,
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+impl Write for RusshApiStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "remote Herdr socket stream is closed",
+            ));
+        }
+        let timeout = Self::timeout(&self.write_timeout, "write")?.unwrap_or(SSH_OPERATION_TIMEOUT);
+        let runtime = Arc::clone(&self.runtime);
+        let stream = self.stream()?;
+        runtime
+            .block_on(async { tokio::time::timeout(timeout, stream.write(buffer)).await })
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "remote Herdr socket write timed out",
+                )
+            })?
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let timeout = Self::timeout(&self.write_timeout, "write")?.unwrap_or(SSH_OPERATION_TIMEOUT);
+        let runtime = Arc::clone(&self.runtime);
+        let stream = self.stream()?;
+        runtime
+            .block_on(async { tokio::time::timeout(timeout, stream.flush()).await })
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "remote Herdr socket flush timed out",
+                )
+            })?
+    }
+}
+
+impl ApiStream for RusshApiStream {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
+        *self.read_timeout.lock().map_err(|_| {
+            ApiError::Transport("remote Herdr read timeout state is poisoned".to_owned())
+        })? = timeout;
+        Ok(())
+    }
+
+    fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
+        *self.write_timeout.lock().map_err(|_| {
+            ApiError::Transport("remote Herdr write timeout state is poisoned".to_owned())
+        })? = timeout;
+        Ok(())
+    }
+
+    fn read_line_with_timeout(&mut self, timeout: Duration) -> Result<String, ApiError> {
+        let previous = Self::timeout(&self.read_timeout, "read")
+            .map_err(|error| ApiError::Transport(error.to_string()))?;
+        let deadline = Instant::now() + timeout;
+        let mut bytes = Vec::new();
+        let result = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break Err(ApiError::Transport(
+                    "subscription acknowledgement timed out".to_owned(),
+                ));
+            }
+            self.set_read_timeout(Some(remaining))?;
+            let mut byte = [0_u8; 1];
+            match self.read(&mut byte) {
+                Ok(0) => {
+                    break Err(ApiError::Transport(
+                        "subscription acknowledgement reached EOF".to_owned(),
+                    ));
+                }
+                Ok(_) => {
+                    bytes.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break String::from_utf8(bytes).map_err(|error| {
+                            ApiError::Malformed(format!(
+                                "subscription acknowledgement was not UTF-8: {error}"
+                            ))
+                        });
+                    }
+                    if bytes.len() > 64 * 1024 {
+                        break Err(ApiError::Malformed(
+                            "subscription acknowledgement exceeds 64 KiB".to_owned(),
+                        ));
+                    }
+                }
+                Err(error) => break Err(ApiError::Transport(error.to_string())),
+            }
+        };
+        self.set_read_timeout(previous)?;
+        result
+    }
+
+    fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError> {
+        Ok(Box::new(RusshApiShutdown {
+            stopped: Arc::clone(&self.stopped),
+        }))
+    }
+}
+
+impl Drop for RusshApiStream {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        let stream = self.stream.take();
+        let Some(session) = self.session.take() else {
+            self.runtime.block_on(async { drop(stream) });
+            return;
+        };
+        let disconnect = self.runtime.block_on(async {
+            drop(stream);
+            session
+                .disconnect(
+                    Disconnect::ByApplication,
+                    "Herdr socket operation complete",
+                    "en",
+                )
+                .await
+        });
+        if let Err(error) = disconnect {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "remote_herdr_api",
+                    "kind": "disconnect.failed",
+                    "target": self.target,
+                    "message": error.to_string(),
+                })
+            );
+        }
+    }
+}
+
+impl ApiConnector for RusshApiConnector {
+    fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
+        let session = self
+            .client
+            .runtime
+            .block_on(
+                self.client
+                    .connect(KnownHostHandler::new(&self.client.host, None)),
+            )
+            .map_err(|error| ApiError::Transport(error.to_string()))?;
+        let channel = match self
+            .client
+            .runtime
+            .block_on(session.channel_open_direct_streamlocal(self.socket_path.clone()))
+        {
+            Ok(channel) => channel,
+            Err(error) => {
+                let _ = self.client.runtime.block_on(session.disconnect(
+                    Disconnect::ByApplication,
+                    "Herdr socket open failed",
+                    "en",
+                ));
+                return Err(ApiError::Transport(format!(
+                    "remote Herdr socket open failed for {}: {error}",
+                    self.client.host.host_id
+                )));
+            }
+        };
+        Ok(Box::new(RusshApiStream {
+            runtime: Arc::clone(&self.client.runtime),
+            session: Some(session),
+            stream: Some(channel.into_stream()),
+            stopped: Arc::new(AtomicBool::new(false)),
+            read_timeout: Mutex::new(None),
+            write_timeout: Mutex::new(None),
+            target: self.client.host.host_id.clone(),
+        }))
+    }
 }
 
 impl fmt::Debug for RusshRemoteClient {
@@ -1142,9 +1448,33 @@ impl RusshRemoteClient {
         &self.host
     }
 
+    pub(crate) fn herdr_api_connector(
+        &self,
+        socket_path: impl Into<String>,
+    ) -> RemoteResult<RusshApiConnector> {
+        let socket_path = socket_path.into();
+        if !Path::new(&socket_path).is_absolute()
+            || socket_path.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err(remote_error(
+                "remote-herdr-socket",
+                &self.host.host_id,
+                RemoteStage::Herdr,
+                "remote Herdr socket path must be absolute and single-line",
+                false,
+                true,
+            ));
+        }
+        Ok(RusshApiConnector {
+            client: self.clone(),
+            socket_path,
+        })
+    }
+
     pub fn staged_capability_test(
         &self,
         operation_id: &str,
+        herdr_socket_path: &str,
         probe_tunnel: bool,
     ) -> CapabilityReport {
         let mut report = CapabilityReport::new(operation_id, self.host.identity());
@@ -1186,51 +1516,36 @@ impl RusshRemoteClient {
             }
         }
 
-        match self.exec_read_only(RemoteReadCommand::HerdrVersion) {
-            Ok(output) if output.exit_status == 0 => {
-                report.pass(RemoteStage::Herdr, output.stdout.trim());
-                match self.fetch_herdr_snapshot() {
-                    Ok(snapshot) => report.pass(
-                        RemoteStage::Protocol,
-                        format!(
-                            "Herdr protocol={} event_sequence={}",
-                            snapshot.protocol, snapshot.event_sequence
-                        ),
+        match self.fetch_herdr_snapshot(herdr_socket_path) {
+            Ok(snapshot) => {
+                report.pass(
+                    RemoteStage::Herdr,
+                    "official Herdr Socket API snapshot responded",
+                );
+                report.pass(
+                    RemoteStage::Protocol,
+                    format!(
+                        "Herdr protocol={} event_sequence={}",
+                        snapshot.protocol, snapshot.event_sequence
                     ),
-                    Err(error) => {
-                        report.fail(
-                            error.stage(),
-                            error.to_string(),
-                            error.diagnostic().retryable,
-                            error.diagnostic().action_required,
-                        );
-                        if error.stage() != RemoteStage::Protocol {
-                            report.fail(
-                                RemoteStage::Protocol,
-                                error.to_string(),
-                                error.diagnostic().retryable,
-                                error.diagnostic().action_required,
-                            );
-                        }
-                    }
+                );
+            }
+            Err(error) => {
+                report.fail(
+                    error.stage(),
+                    error.to_string(),
+                    error.diagnostic().retryable,
+                    error.diagnostic().action_required,
+                );
+                if error.stage() != RemoteStage::Protocol {
+                    report.fail(
+                        RemoteStage::Protocol,
+                        error.to_string(),
+                        error.diagnostic().retryable,
+                        error.diagnostic().action_required,
+                    );
                 }
             }
-            Ok(output) => report.fail(
-                RemoteStage::Herdr,
-                format!(
-                    "exit={} stderr={}",
-                    output.exit_status,
-                    redact_output(&output.stderr)
-                ),
-                true,
-                false,
-            ),
-            Err(error) => report.fail(
-                error.stage(),
-                error.to_string(),
-                error.diagnostic().retryable,
-                error.diagnostic().action_required,
-            ),
         }
 
         match self.probe_pty() {
@@ -1441,38 +1756,36 @@ impl RusshRemoteClient {
         }
     }
 
-    pub fn fetch_herdr_snapshot(&self) -> RemoteResult<RemoteSnapshotEnvelope> {
-        let value = self.fetch_herdr_snapshot_value()?;
+    pub fn fetch_herdr_snapshot(&self, socket_path: &str) -> RemoteResult<RemoteSnapshotEnvelope> {
+        let value = self.fetch_herdr_snapshot_value(socket_path)?;
         decode_remote_snapshot(&value, "remote-herdr-snapshot")
     }
 
     /// Returns the transport JSON value from the remote Herdr snapshot call.
     /// The caller may decode the full server layout payload at the projection boundary;
     /// raw values must not be copied into diagnostics or logs.
-    pub fn fetch_herdr_snapshot_value(&self) -> RemoteResult<Value> {
-        let output = self.exec_read_only(RemoteReadCommand::HerdrSnapshot)?;
-        if output.exit_status != 0 {
-            return Err(remote_error(
-                "remote-herdr-snapshot",
-                &self.host.host_id,
-                RemoteStage::Herdr,
-                format!(
-                    "exit={} stderr={}",
-                    output.exit_status,
-                    redact_output(&output.stderr)
-                ),
-                true,
-                false,
-            ));
-        }
-        serde_json::from_str(&output.stdout).map_err(|error| {
+    pub fn fetch_herdr_snapshot_value(&self, socket_path: &str) -> RemoteResult<Value> {
+        let connector = self.herdr_api_connector(socket_path)?;
+        crate::herdr_api::request_with_connector(
+            &connector,
+            "session.snapshot",
+            json!({}),
+            SSH_OPERATION_TIMEOUT,
+        )
+        .map_err(|error| {
+            let (stage, retryable, action_required) = match &error {
+                ApiError::Malformed(_) => (RemoteStage::Protocol, false, true),
+                ApiError::Transport(_) | ApiError::Remote { .. } => {
+                    (RemoteStage::Herdr, true, false)
+                }
+            };
             remote_error(
                 "remote-herdr-snapshot",
                 &self.host.host_id,
-                RemoteStage::Protocol,
+                stage,
                 error,
-                false,
-                true,
+                retryable,
+                action_required,
             )
         })
     }
@@ -3127,6 +3440,28 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires HERDR_TEST_SSH_ALIAS and HERDR_TEST_SOCKET_PATH"]
+    fn official_remote_socket_snapshot_probe() {
+        let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
+            .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
+        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
+            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
+        let home = std::env::var_os("HOME").expect("HOME is configured");
+        let alias =
+            SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
+                .expect("SSH alias resolves");
+        let client = RusshRemoteClient::new(alias).expect("remote client initializes");
+
+        let snapshot = client
+            .fetch_herdr_snapshot(&socket_path)
+            .expect("official remote Socket API snapshot responds");
+
+        assert_eq!(snapshot.protocol, REMOTE_PROTOCOL_REVISION);
+        assert!(!snapshot.host.host_id.is_empty());
+        assert!(!snapshot.host.session_id.is_empty());
+    }
+
+    #[test]
     fn alias_import_ignores_wildcard_and_negated_entries() {
         let aliases = import_ssh_aliases_from_str(
             "Host *\n  User default\nHost mini staging\n  HostName 127.0.0.1\nHost !staging\n  User nobody\nHost *.internal\n  HostName ignored\n",
@@ -3210,7 +3545,11 @@ mod tests {
                 "event_sequence": 9,
                 "workspaces": [{"workspace_id": "w1"}],
                 "panes": [{"pane_id": "p1"}],
-                "agents": [{"agent_instance_id": "a1"}]
+                "agents": [
+                    {"agent_instance_id": "a1"},
+                    {"agent_instance_id": null},
+                    {"pane_id": "p2"}
+                ]
             }}
         });
         let envelope = decode_remote_snapshot(&value, "op").unwrap();

@@ -1,9 +1,10 @@
-//! Typed transport for Herdr's local newline-delimited JSON socket API.
+//! Typed transport for Herdr's newline-delimited JSON socket API.
 
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,134 @@ use serde_json::{Value, json};
 pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
 
 const API_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(crate) trait ConnectionShutdown: Send {
+    fn shutdown(&self);
+}
+
+pub(crate) trait ApiStream: Read + Write + Send {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError>;
+
+    fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError>;
+
+    fn read_line_with_timeout(&mut self, timeout: Duration) -> Result<String, ApiError>;
+
+    fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError>;
+}
+
+pub(crate) trait ApiConnector: Send + Sync {
+    fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UnixSocketConnector {
+    socket_path: PathBuf,
+}
+
+impl UnixSocketConnector {
+    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+        Self {
+            socket_path: socket_path.into(),
+        }
+    }
+}
+
+impl ApiConnector for UnixSocketConnector {
+    fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
+        let stream = UnixStream::connect(&self.socket_path).map_err(|error| {
+            ApiError::Transport(format!(
+                "connect failed for {}: {error}",
+                self.socket_path.display()
+            ))
+        })?;
+        Ok(Box::new(stream))
+    }
+}
+
+struct UnixStreamShutdown(UnixStream);
+
+impl ConnectionShutdown for UnixStreamShutdown {
+    fn shutdown(&self) {
+        let _ = self.0.shutdown(Shutdown::Both);
+    }
+}
+
+impl ApiStream for UnixStream {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
+        UnixStream::set_read_timeout(self, timeout)
+            .map_err(|error| ApiError::Transport(format!("read timeout could not be set: {error}")))
+    }
+
+    fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
+        UnixStream::set_write_timeout(self, timeout).map_err(|error| {
+            ApiError::Transport(format!("write timeout could not be set: {error}"))
+        })
+    }
+
+    fn read_line_with_timeout(&mut self, timeout: Duration) -> Result<String, ApiError> {
+        self.set_nonblocking(true).map_err(|error| {
+            ApiError::Transport(format!(
+                "subscription could not enter nonblocking mode: {error}"
+            ))
+        })?;
+        let deadline = std::time::Instant::now() + timeout;
+        let mut bytes = Vec::new();
+        loop {
+            let mut byte = [0_u8; 1];
+            match self.read(&mut byte) {
+                Ok(0) => {
+                    return Err(ApiError::Transport(
+                        "subscription acknowledgement reached EOF".to_owned(),
+                    ));
+                }
+                Ok(_) => {
+                    bytes.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                    if bytes.len() > 64 * 1024 {
+                        return Err(ApiError::Malformed(
+                            "subscription acknowledgement exceeds 64 KiB".to_owned(),
+                        ));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(ApiError::Transport(
+                            "subscription acknowledgement timed out".to_owned(),
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => {
+                    return Err(ApiError::Transport(format!(
+                        "subscription acknowledgement could not be read: {error}"
+                    )));
+                }
+            }
+        }
+        self.set_nonblocking(false).map_err(|error| {
+            ApiError::Transport(format!(
+                "subscription could not enter blocking mode: {error}"
+            ))
+        })?;
+        String::from_utf8(bytes).map_err(|error| {
+            ApiError::Malformed(format!(
+                "subscription acknowledgement was not UTF-8: {error}"
+            ))
+        })
+    }
+
+    fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError> {
+        self.try_clone()
+            .map(|stream| Box::new(UnixStreamShutdown(stream)) as Box<dyn ConnectionShutdown>)
+            .map_err(|error| {
+                ApiError::Transport(format!(
+                    "subscription shutdown handle could not be cloned: {error}"
+                ))
+            })
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct HostScope {
@@ -72,13 +201,13 @@ pub(crate) struct SubscriptionStarted {
 
 pub(crate) struct Subscription {
     pub ack: SubscriptionStarted,
-    reader: BufReader<UnixStream>,
-    shutdown: UnixStream,
+    reader: BufReader<Box<dyn ApiStream>>,
+    shutdown: Box<dyn ConnectionShutdown>,
 }
 
 impl Subscription {
-    pub fn into_parts(self) -> (BufReader<UnixStream>, UnixStream) {
-        (self.reader, self.shutdown)
+    pub fn into_parts(self) -> (Box<dyn BufRead + Send>, Box<dyn ConnectionShutdown>) {
+        (Box::new(self.reader), self.shutdown)
     }
 }
 
@@ -93,27 +222,59 @@ pub(crate) fn request_with_timeout(
     params: Value,
     timeout: Duration,
 ) -> Result<Value, ApiError> {
-    let mut stream = connect(socket_path, timeout)?;
+    request_with_connector(
+        &UnixSocketConnector::new(socket_path),
+        method,
+        params,
+        timeout,
+    )
+}
+
+pub(crate) fn request_with_connector(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, ApiError> {
+    let mut stream = connector.connect()?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     let request_id = format!("herdr-core:{method}");
-    write_request(&mut stream, &request_id, method, params)?;
+    write_request(stream.as_mut(), &request_id, method, params)?;
     let response = read_response(&mut BufReader::new(stream))?;
     response_result(response, &request_id)
 }
 
+#[cfg(test)]
 pub(crate) fn subscribe(
     socket_path: &Path,
     after_sequence: u64,
     subscriptions: &[&str],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
-    let mut stream = connect_subscription(socket_path, timeout)?;
+    subscribe_with_connector(
+        &UnixSocketConnector::new(socket_path),
+        after_sequence,
+        subscriptions,
+        timeout,
+    )
+}
+
+pub(crate) fn subscribe_with_connector(
+    connector: &dyn ApiConnector,
+    after_sequence: u64,
+    subscriptions: &[&str],
+    timeout: Duration,
+) -> Result<Subscription, ApiError> {
+    let mut stream = connector.connect()?;
+    stream.set_write_timeout(Some(timeout))?;
     let request_id = "herdr-core:events.subscribe";
     let filters = subscriptions
         .iter()
         .map(|event_type| json!({"type": event_type}))
         .collect::<Vec<_>>();
     write_request(
-        &mut stream,
+        stream.as_mut(),
         request_id,
         "events.subscribe",
         json!({
@@ -122,7 +283,7 @@ pub(crate) fn subscribe(
         }),
     )?;
 
-    let response = read_subscription_response(&mut stream, timeout)?;
+    let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
     let result = response_result(response, request_id)?;
     let ack: SubscriptionStarted = serde_json::from_value(result).map_err(|error| {
         ApiError::Malformed(format!(
@@ -135,17 +296,8 @@ pub(crate) fn subscribe(
             ack.kind
         )));
     }
-    stream.set_nonblocking(false).map_err(|error| {
-        ApiError::Transport(format!(
-            "subscription could not enter blocking mode: {error}"
-        ))
-    })?;
+    let shutdown = stream.shutdown_handle()?;
     let reader = BufReader::new(stream);
-    let shutdown = reader.get_ref().try_clone().map_err(|error| {
-        ApiError::Transport(format!(
-            "subscription shutdown handle could not be cloned: {error}"
-        ))
-    })?;
     Ok(Subscription {
         ack,
         reader,
@@ -153,37 +305,8 @@ pub(crate) fn subscribe(
     })
 }
 
-fn connect(socket_path: &Path, timeout: Duration) -> Result<UnixStream, ApiError> {
-    let stream = UnixStream::connect(socket_path).map_err(|error| {
-        ApiError::Transport(format!(
-            "connect failed for {}: {error}",
-            socket_path.display()
-        ))
-    })?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| ApiError::Transport(format!("read timeout could not be set: {error}")))?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| ApiError::Transport(format!("write timeout could not be set: {error}")))?;
-    Ok(stream)
-}
-
-fn connect_subscription(socket_path: &Path, timeout: Duration) -> Result<UnixStream, ApiError> {
-    let stream = UnixStream::connect(socket_path).map_err(|error| {
-        ApiError::Transport(format!(
-            "connect failed for {}: {error}",
-            socket_path.display()
-        ))
-    })?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| ApiError::Transport(format!("write timeout could not be set: {error}")))?;
-    Ok(stream)
-}
-
 fn write_request(
-    stream: &mut UnixStream,
+    stream: &mut dyn ApiStream,
     request_id: &str,
     method: &str,
     params: Value,
@@ -201,7 +324,7 @@ fn write_request(
         .map_err(|error| ApiError::Transport(format!("request could not be written: {error}")))
 }
 
-fn read_response(reader: &mut BufReader<UnixStream>) -> Result<ResponseEnvelope, ApiError> {
+fn read_response(reader: &mut dyn BufRead) -> Result<ResponseEnvelope, ApiError> {
     let mut line = String::new();
     reader
         .read_line(&mut line)
@@ -209,61 +332,6 @@ fn read_response(reader: &mut BufReader<UnixStream>) -> Result<ResponseEnvelope,
     if line.trim().is_empty() {
         return Err(ApiError::Transport("response was empty".to_owned()));
     }
-    decode_response(&line)
-}
-
-/// Reads exactly through the acknowledgement newline so replay bytes already
-/// queued behind it remain available to the long-lived buffered reader.
-fn read_subscription_response(
-    stream: &mut UnixStream,
-    timeout: Duration,
-) -> Result<ResponseEnvelope, ApiError> {
-    stream.set_nonblocking(true).map_err(|error| {
-        ApiError::Transport(format!(
-            "subscription could not enter nonblocking mode: {error}"
-        ))
-    })?;
-    let deadline = std::time::Instant::now() + timeout;
-    let mut bytes = Vec::new();
-    loop {
-        let mut byte = [0_u8; 1];
-        match stream.read(&mut byte) {
-            Ok(0) => {
-                return Err(ApiError::Transport(
-                    "subscription acknowledgement reached EOF".to_owned(),
-                ));
-            }
-            Ok(_) => {
-                bytes.push(byte[0]);
-                if byte[0] == b'\n' {
-                    break;
-                }
-                if bytes.len() > 64 * 1024 {
-                    return Err(ApiError::Malformed(
-                        "subscription acknowledgement exceeds 64 KiB".to_owned(),
-                    ));
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if std::time::Instant::now() >= deadline {
-                    return Err(ApiError::Transport(
-                        "subscription acknowledgement timed out".to_owned(),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(error) => {
-                return Err(ApiError::Transport(format!(
-                    "subscription acknowledgement could not be read: {error}"
-                )));
-            }
-        }
-    }
-    let line = String::from_utf8(bytes).map_err(|error| {
-        ApiError::Malformed(format!(
-            "subscription acknowledgement was not UTF-8: {error}"
-        ))
-    })?;
     decode_response(&line)
 }
 
@@ -296,9 +364,105 @@ fn response_result(response: ResponseEnvelope, request_id: &str) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::os::unix::net::UnixListener;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
+
+    struct FixtureShutdown;
+
+    impl ConnectionShutdown for FixtureShutdown {
+        fn shutdown(&self) {}
+    }
+
+    struct FixtureStream {
+        incoming: Cursor<Vec<u8>>,
+        outgoing: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Read for FixtureStream {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.incoming.read(buffer)
+        }
+    }
+
+    impl Write for FixtureStream {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.outgoing.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl ApiStream for FixtureStream {
+        fn set_read_timeout(&self, _timeout: Option<Duration>) -> Result<(), ApiError> {
+            Ok(())
+        }
+
+        fn set_write_timeout(&self, _timeout: Option<Duration>) -> Result<(), ApiError> {
+            Ok(())
+        }
+
+        fn read_line_with_timeout(&mut self, _timeout: Duration) -> Result<String, ApiError> {
+            let mut line = String::new();
+            BufReader::new(self)
+                .read_line(&mut line)
+                .map_err(|error| ApiError::Transport(error.to_string()))?;
+            Ok(line)
+        }
+
+        fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError> {
+            Ok(Box::new(FixtureShutdown))
+        }
+    }
+
+    struct FixtureConnector {
+        incoming: Vec<u8>,
+        outgoing: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl ApiConnector for FixtureConnector {
+        fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
+            Ok(Box::new(FixtureStream {
+                incoming: Cursor::new(self.incoming.clone()),
+                outgoing: Arc::clone(&self.outgoing),
+            }))
+        }
+    }
+
+    #[test]
+    fn request_codec_accepts_a_transport_neutral_stream() {
+        let outgoing = Arc::new(Mutex::new(Vec::new()));
+        let connector = FixtureConnector {
+            incoming: format!(
+                "{}\n",
+                json!({
+                    "id": "herdr-core:pane.focus",
+                    "result": {"type": "pane_focused", "pane_id": "w1:p2"}
+                })
+            )
+            .into_bytes(),
+            outgoing: Arc::clone(&outgoing),
+        };
+
+        let result = request_with_connector(
+            &connector,
+            "pane.focus",
+            json!({"pane_id": "w1:p2"}),
+            Duration::from_secs(1),
+        )
+        .expect("request succeeds over fixture transport");
+
+        assert_eq!(result["pane_id"], "w1:p2");
+        let written = String::from_utf8(outgoing.lock().unwrap().clone()).unwrap();
+        let request: Value = serde_json::from_str(written.trim()).unwrap();
+        assert_eq!(request["method"], "pane.focus");
+        assert_eq!(request["params"], json!({"pane_id": "w1:p2"}));
+    }
 
     #[test]
     fn request_rejects_a_response_for_another_request() {
