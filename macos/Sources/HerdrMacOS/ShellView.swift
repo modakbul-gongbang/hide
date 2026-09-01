@@ -636,7 +636,10 @@ private struct PaneResizeHandle: View {
             // and places the content inside, so a gesture attached after it
             // answers across the whole canvas rather than on this strip.
             .contentShape(Rectangle())
-            .overlay { PaneResizeCursorArea(cursor: isVertical ? .resizeLeftRight : .resizeUpDown) }
+            // Behind the strip, not over it: SwiftUI hit-tests overlay content
+            // first, and an `NSViewRepresentable` there swallowed the hover and
+            // the drag before either reached the handle.
+            .background { PaneResizeCursorArea(cursor: isVertical ? .resizeLeftRight : .resizeUpDown) }
             .onHover { isHovering = $0 }
             .gesture(dragGesture)
             .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
