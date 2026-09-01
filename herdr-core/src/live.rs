@@ -1,8 +1,7 @@
-//! Live herdr integration: session snapshot polling over the local API socket
-//! and pane byte transport through Herdr's terminal session NDJSON bridge.
+//! Live Herdr commands and pane byte transport. Session state synchronization
+//! lives in `session_sync` and uses the sequenced socket event stream.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Sender, channel};
@@ -16,23 +15,18 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
+#[cfg(test)]
+use crate::herdr_api::HERDR_PROTOCOL_REVISION;
+use crate::herdr_api::request;
 use crate::model::{
     PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
     WorkspaceSnapshot,
 };
 use crate::runtime::Runtime;
 use crate::sidebar::{
-    SessionAgentPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
-    SessionPanePayload, SessionSnapshotPayload, SessionTabPayload,
+    SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
 use crate::workspace;
-
-/// Herdr API protocol revision this core speaks. A mismatch is a hard,
-/// explicit failure instead of a partially working sidebar.
-pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
-
-const API_TIMEOUT: Duration = Duration::from_secs(5);
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Everything a terminal session spawn needs from the live configuration.
 #[derive(Clone)]
@@ -41,14 +35,6 @@ pub struct LiveContext {
     pub herdr_bin: Option<PathBuf>,
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
-}
-
-/// A workspace catalog the poller built outside the runtime lock, together
-/// with the registrations it was built from so the runtime can detect and
-/// discard a stale one.
-pub struct PrecomputedCatalog {
-    pub registrations: Vec<WorkspaceRegistration>,
-    pub workspaces: Vec<WorkspaceSnapshot>,
 }
 
 pub struct WorkspaceCreationOutcome {
@@ -115,20 +101,6 @@ pub fn spawn_workspace_creation(
         })
         .map(|_| ())
         .map_err(|error| format!("workspace creation worker could not be started: {error}"))
-}
-
-/// How long a catalog built from unchanged inputs keeps being reused before
-/// git is consulted again. Git topology changes made outside the app (a new
-/// worktree, a branch switch) surface within this window; changes made
-/// through the app rebuild inline in their own event handlers.
-const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
-
-/// The poller's memo of the last catalog build and the inputs it came from.
-struct CatalogCache {
-    registrations: Vec<WorkspaceRegistration>,
-    spaces: Vec<workspace::SessionSpace>,
-    workspaces: Vec<WorkspaceSnapshot>,
-    built_at: Instant,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -415,6 +387,9 @@ pub enum SessionFetchError {
     Unreachable(String),
     /// The server answered with an incompatible protocol revision.
     Protocol(String),
+    /// A previously valid projection is retained while the event stream
+    /// reconnects or performs an explicit snapshot resynchronization.
+    Stale(String),
     /// The server answered but the payload did not match the expected shape.
     Malformed(String),
 }
@@ -425,6 +400,7 @@ impl SessionFetchError {
             Self::SocketMissing(_) => "socket_missing",
             Self::Unreachable(_) => "unreachable",
             Self::Protocol(_) => "protocol_mismatch",
+            Self::Stale(_) => "stale",
             Self::Malformed(_) => "malformed",
         }
     }
@@ -434,19 +410,20 @@ impl SessionFetchError {
             Self::SocketMissing(message)
             | Self::Unreachable(message)
             | Self::Protocol(message)
+            | Self::Stale(message)
             | Self::Malformed(message) => message,
         }
     }
 }
 
-/// Installs the live context on the runtime and starts the session poller.
-pub fn install(
+/// Installs live command context and starts event-driven session sync.
+pub(crate) fn install(
     runtime: &Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     socket_path: &str,
     herdr_bin: Option<&str>,
     home_path: Option<PathBuf>,
-) {
+) -> Option<crate::session_sync::SessionSyncHandle> {
     let context = LiveContext {
         socket_path: PathBuf::from(socket_path),
         herdr_bin: herdr_bin.map(PathBuf::from),
@@ -456,88 +433,25 @@ pub fn install(
     if let Ok(mut guard) = runtime.lock() {
         guard.set_live(context.clone());
     }
-    spawn_session_poller(context, home_path);
-}
-
-fn spawn_session_poller(context: LiveContext, home_path: Option<PathBuf>) {
-    let result = thread::Builder::new()
-        .name("herdr-core-session-poller".to_owned())
-        .spawn(move || {
-            let mut catalog_cache: Option<CatalogCache> = None;
-            let mut usage_reader = crate::usage::ProviderUsageReader::new(home_path);
-            loop {
-                let fetched = fetch_session(&context.socket_path);
-                let provider_usage = usage_reader.read_if_due();
-                // The catalog shells out to git per workspace and pane cwd,
-                // so it is built here, outside the runtime lock; holding the
-                // lock through those subprocesses stalls every shell snapshot
-                // read behind them. It is also cached: git only runs again
-                // when the inputs change or the refresh window lapses, not on
-                // every poll tick.
-                let precomputed = match &fetched {
-                    Ok(payload) => {
-                        let Some(runtime) = context.runtime.upgrade() else {
-                            return;
-                        };
-                        let registrations = match runtime.lock() {
-                            Ok(guard) => guard.snapshot().ui_state.workspace_registrations.clone(),
-                            Err(_) => return,
-                        };
-                        drop(runtime);
-                        let spaces = Runtime::session_spaces(payload);
-                        let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
-                            cache.registrations == registrations
-                                && cache.spaces == spaces
-                                && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
-                        });
-                        if !cache_is_fresh {
-                            let workspaces = workspace::build_catalog(&registrations, &spaces);
-                            catalog_cache = Some(CatalogCache {
-                                registrations: registrations.clone(),
-                                spaces,
-                                workspaces,
-                                built_at: Instant::now(),
-                            });
-                        }
-                        let cache = catalog_cache
-                            .as_ref()
-                            .expect("catalog cache is filled on a miss");
-                        Some(PrecomputedCatalog {
-                            registrations,
-                            workspaces: cache.workspaces.clone(),
-                        })
-                    }
-                    Err(_) => None,
-                };
-                let Some(runtime) = context.runtime.upgrade() else {
-                    return;
-                };
-                let changed = match runtime.lock() {
-                    Ok(mut guard) => {
-                        let mut changed = guard.ingest_session_with_catalog(fetched, precomputed);
-                        if let Some(provider_usage) = provider_usage {
-                            changed |= guard.ingest_provider_usage(provider_usage);
-                        }
-                        changed
-                    }
-                    Err(_) => return,
-                };
-                drop(runtime);
-                if changed {
-                    context.notifier.notify();
-                }
-                thread::sleep(POLL_INTERVAL);
+    match crate::session_sync::spawn(context.clone(), home_path) {
+        Ok(handle) => Some(handle),
+        Err(message) => {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "session_sync",
+                    "kind": "coordinator.spawn_failed",
+                    "message": message,
+                })
+            );
+            let changed = runtime.lock().ok().is_some_and(|mut guard| {
+                guard.ingest_session(Err(SessionFetchError::Unreachable(message)))
+            });
+            if changed {
+                context.notifier.notify();
             }
-        });
-    if let Err(error) = result {
-        eprintln!(
-            "{}",
-            json!({
-                "component": "live",
-                "kind": "poller.spawn_failed",
-                "message": error.to_string(),
-            })
-        );
+            None
+        }
     }
 }
 
@@ -560,119 +474,7 @@ pub fn fetch_session(socket_path: &Path) -> Result<SessionSnapshotPayload, Sessi
 /// passed through verbatim so the unseen-vs-acknowledged state rules
 /// (INV-herdr-unseen-token) stay owned by the sidebar projection.
 pub fn project_session(snapshot: &Value) -> Result<SessionSnapshotPayload, SessionFetchError> {
-    let protocol = snapshot
-        .get("protocol")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| SessionFetchError::Malformed("snapshot is missing protocol".to_owned()))?;
-    if protocol != HERDR_PROTOCOL_REVISION {
-        return Err(SessionFetchError::Protocol(format!(
-            "Herdr protocol revision {protocol} does not match required {HERDR_PROTOCOL_REVISION}"
-        )));
-    }
-
-    let workspace_labels: std::collections::BTreeMap<&str, &str> = snapshot
-        .get("workspaces")
-        .and_then(Value::as_array)
-        .map(|workspaces| {
-            workspaces
-                .iter()
-                .filter_map(|workspace| {
-                    Some((
-                        workspace.get("workspace_id")?.as_str()?,
-                        workspace.get("label")?.as_str()?,
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let agents = snapshot
-        .get("agents")
-        .and_then(Value::as_array)
-        .ok_or_else(|| SessionFetchError::Malformed("snapshot is missing agents".to_owned()))?
-        .iter()
-        .filter_map(|agent| {
-            let pane_id = agent.get("pane_id")?.as_str()?.to_owned();
-            let workspace_id = agent.get("workspace_id").and_then(Value::as_str);
-            Some(SessionAgentPayload {
-                id: Some(pane_id.clone()),
-                pane_id: Some(pane_id),
-                workspace_label: workspace_id
-                    .and_then(|id| workspace_labels.get(id).copied())
-                    .or(workspace_id)
-                    .map(str::to_owned),
-                cwd: agent.get("cwd").and_then(Value::as_str).map(str::to_owned),
-                agent: agent
-                    .get("agent")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                agent_status: agent
-                    .get("agent_status")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                tokens: agent
-                    .get("tokens")
-                    .and_then(Value::as_object)
-                    .map(|tokens| tokens.clone().into_iter().collect())
-                    .unwrap_or_default(),
-                ambient: agent.get("ambient").cloned(),
-            })
-        })
-        .collect();
-
-    let layouts =
-        serde_json::from_value(snapshot.get("layouts").cloned().ok_or_else(|| {
-            SessionFetchError::Malformed("snapshot is missing layouts".to_owned())
-        })?)
-        .map_err(|error| {
-            SessionFetchError::Malformed(format!("snapshot layouts are malformed: {error}"))
-        })?;
-    let tabs = match snapshot.get("tabs") {
-        Some(value) => {
-            serde_json::from_value::<Vec<SessionTabPayload>>(value.clone()).map_err(|error| {
-                SessionFetchError::Malformed(format!("snapshot tabs are malformed: {error}"))
-            })?
-        }
-        None => Vec::new(),
-    };
-    let focused_pane_id = snapshot
-        .get("focused_pane_id")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let panes = snapshot
-        .get("panes")
-        .and_then(Value::as_array)
-        .map(|panes| {
-            panes
-                .iter()
-                .filter_map(|pane| {
-                    Some(SessionPanePayload {
-                        pane_id: pane.get("pane_id")?.as_str()?.to_owned(),
-                        cwd: pane.get("cwd").and_then(Value::as_str).map(str::to_owned),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let workspaces = workspace_labels
-        .iter()
-        .map(
-            |(workspace_id, label)| crate::sidebar::SessionWorkspacePayload {
-                workspace_id: (*workspace_id).to_owned(),
-                label: (*label).to_owned(),
-            },
-        )
-        .collect();
-
-    Ok(SessionSnapshotPayload {
-        focused_pane_id,
-        tabs,
-        layouts,
-        agents,
-        panes,
-        workspaces,
-    })
+    crate::session_sync::project_snapshot(snapshot)
 }
 
 pub fn project_layout_for_pane(
@@ -808,53 +610,6 @@ fn split_areas(
     }
 }
 
-fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|error| format!("connect failed for {}: {error}", socket_path.display()))?;
-    stream
-        .set_read_timeout(Some(API_TIMEOUT))
-        .map_err(|error| format!("read timeout could not be set: {error}"))?;
-    stream
-        .set_write_timeout(Some(API_TIMEOUT))
-        .map_err(|error| format!("write timeout could not be set: {error}"))?;
-    let envelope = json!({
-        "id": format!("herdr-core:{method}"),
-        "method": method,
-        "params": params,
-    });
-    let mut request_line = serde_json::to_vec(&envelope)
-        .map_err(|error| format!("request could not be encoded: {error}"))?;
-    request_line.push(b'\n');
-    stream
-        .write_all(&request_line)
-        .map_err(|error| format!("request could not be written: {error}"))?;
-
-    let mut line = String::new();
-    BufReader::new(stream)
-        .read_line(&mut line)
-        .map_err(|error| format!("response could not be read: {error}"))?;
-    if line.trim().is_empty() {
-        return Err("response was empty".to_owned());
-    }
-    let response: Value = serde_json::from_str(&line)
-        .map_err(|error| format!("response was not valid JSON: {error}"))?;
-    if let Some(error) = response.get("error") {
-        let code = error
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("herdr request failed");
-        return Err(format!("{method} failed with {code}: {message}"));
-    }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| format!("{method} response is missing result"))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalSessionMode {
     Control,
@@ -952,7 +707,9 @@ pub fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
 /// this one could not.
 pub fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, String> {
     if !matches!(direction, "up" | "down") {
-        return Err(format!("terminal scroll direction is not up or down: {direction}"));
+        return Err(format!(
+            "terminal scroll direction is not up or down: {direction}"
+        ));
     }
     if lines == 0 {
         return Err("terminal scroll needs at least one line".to_owned());
@@ -1768,7 +1525,4 @@ mod tests {
             fetch_session(Path::new("/nonexistent/herdr-core-test.sock")).expect_err("must fail");
         assert_eq!(error.state(), "socket_missing");
     }
-
-
-
 }

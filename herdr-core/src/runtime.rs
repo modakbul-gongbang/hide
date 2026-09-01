@@ -18,7 +18,7 @@ use crate::model::{
     TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
-use crate::{chromux, environment, files, live, persistence, pet, workspace};
+use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
 const PET_WAKING_MS: u64 = 1_200;
@@ -679,7 +679,7 @@ impl Runtime {
     fn reconcile_session_catalog(
         &mut self,
         payload: &SessionSnapshotPayload,
-        precomputed: Option<live::PrecomputedCatalog>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
         self.last_session_spaces = Self::session_spaces(payload);
         // The catalog shells out to git, so the poller builds it before
@@ -991,7 +991,7 @@ impl Runtime {
     pub fn ingest_session_with_catalog(
         &mut self,
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
-        precomputed: Option<live::PrecomputedCatalog>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
@@ -4071,7 +4071,7 @@ mod tests {
             }]
         }))
         .expect("worktree pane payload");
-        let catalog = live::PrecomputedCatalog {
+        let catalog = session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
             workspaces: workspace::build_catalog(&[], &spaces),
         };
@@ -4160,7 +4160,7 @@ mod tests {
             ]
         }))
         .expect("two workspace layout payload");
-        let catalog = live::PrecomputedCatalog {
+        let catalog = session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
             workspaces: workspace::build_catalog(&[], &spaces),
         };
@@ -4362,7 +4362,7 @@ mod tests {
             ]
         }))
         .expect("overlapping cwd session payload");
-        let catalog = live::PrecomputedCatalog {
+        let catalog = session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![selected_workspace],
         };
@@ -4442,7 +4442,7 @@ mod tests {
             }]
         }))
         .expect("missing selected pane payload");
-        let catalog = live::PrecomputedCatalog {
+        let catalog = session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![selected_workspace],
         };
@@ -4492,7 +4492,7 @@ mod tests {
 
         assert!(runtime.ingest_session_with_catalog(
             Ok(payload),
-            Some(live::PrecomputedCatalog {
+            Some(session_sync::PrecomputedCatalog {
                 registrations: Vec::new(),
                 workspaces: Vec::new(),
             }),
@@ -4556,7 +4556,7 @@ mod tests {
 
         assert!(runtime.ingest_session_with_catalog(
             Ok(payload),
-            Some(live::PrecomputedCatalog {
+            Some(session_sync::PrecomputedCatalog {
                 registrations: Vec::new(),
                 workspaces: Vec::new(),
             }),

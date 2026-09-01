@@ -35,13 +35,6 @@ impl ApiError {
             Self::Transport(_) | Self::Malformed(_) => None,
         }
     }
-
-    pub fn message(&self) -> &str {
-        match self {
-            Self::Transport(message) | Self::Malformed(message) => message,
-            Self::Remote { message, .. } => message,
-        }
-    }
 }
 
 impl fmt::Display for ApiError {
@@ -143,14 +136,11 @@ pub(crate) fn subscribe(
             ack.kind
         )));
     }
-    reader
-        .get_ref()
-        .set_read_timeout(None)
-        .map_err(|error| {
-            ApiError::Transport(format!(
-                "subscription read timeout could not be cleared: {error}"
-            ))
-        })?;
+    reader.get_ref().set_read_timeout(None).map_err(|error| {
+        ApiError::Transport(format!(
+            "subscription read timeout could not be cleared: {error}"
+        ))
+    })?;
     let shutdown = reader.get_ref().try_clone().map_err(|error| {
         ApiError::Transport(format!(
             "subscription shutdown handle could not be cloned: {error}"
@@ -170,12 +160,12 @@ fn connect(socket_path: &Path, timeout: Duration) -> Result<UnixStream, ApiError
             socket_path.display()
         ))
     })?;
-    stream.set_read_timeout(Some(timeout)).map_err(|error| {
-        ApiError::Transport(format!("read timeout could not be set: {error}"))
-    })?;
-    stream.set_write_timeout(Some(timeout)).map_err(|error| {
-        ApiError::Transport(format!("write timeout could not be set: {error}"))
-    })?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| ApiError::Transport(format!("read timeout could not be set: {error}")))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| ApiError::Transport(format!("write timeout could not be set: {error}")))?;
     Ok(stream)
 }
 
@@ -193,9 +183,9 @@ fn write_request(
     let mut request_line = serde_json::to_vec(&envelope)
         .map_err(|error| ApiError::Malformed(format!("request could not be encoded: {error}")))?;
     request_line.push(b'\n');
-    stream.write_all(&request_line).map_err(|error| {
-        ApiError::Transport(format!("request could not be written: {error}"))
-    })
+    stream
+        .write_all(&request_line)
+        .map_err(|error| ApiError::Transport(format!("request could not be written: {error}")))
 }
 
 fn read_response(reader: &mut BufReader<UnixStream>) -> Result<ResponseEnvelope, ApiError> {
@@ -240,10 +230,8 @@ mod tests {
 
     #[test]
     fn request_rejects_a_response_for_another_request() {
-        let root = Path::new("/tmp").join(format!(
-            "herdr-core-api-id-contract-{}",
-            std::process::id()
-        ));
+        let root =
+            Path::new("/tmp").join(format!("herdr-core-api-id-contract-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create socket directory");
         let socket_path = root.join("herdr.sock");
         let listener = UnixListener::bind(&socket_path).expect("bind fake socket");

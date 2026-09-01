@@ -65,6 +65,7 @@ impl ChangeNotifier {
 
 #[repr(C)]
 pub struct HerdrCore {
+    _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
     callback: Arc<Mutex<Option<CallbackRegistration>>>,
     owner_thread: ThreadId,
@@ -144,7 +145,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 registration: Arc::clone(&callback),
             },
         );
-        if let Some(socket_path) = options.herdr_socket_path.as_deref() {
+        let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,
                 ChangeNotifier {
@@ -153,9 +154,12 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 socket_path,
                 options.herdr_bin_path.as_deref(),
                 home_path,
-            );
-        }
+            )
+        } else {
+            None
+        };
         Box::into_raw(Box::new(HerdrCore {
+            _session_sync: session_sync,
             runtime,
             callback,
             owner_thread: thread::current().id(),
