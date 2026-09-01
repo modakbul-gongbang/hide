@@ -920,6 +920,25 @@ pub fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, Strin
     Ok(line)
 }
 
+/// Sends the viewport move and a same-size repaint request as one ordered
+/// terminal-session write.
+///
+/// Herdr 0.8.2 updates its host scrollback for `terminal.scroll`, but does not
+/// publish a new attach frame until another repaint-producing request arrives.
+/// A same-size resize is part of the official terminal-session protocol and
+/// preserves the host scroll offset, so every wheel request gets the frame the
+/// client asked Herdr to render.
+pub fn terminal_scroll_request_lines(
+    direction: &str,
+    lines: u16,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
+    let mut request = terminal_scroll_line(direction, lines)?;
+    request.push_str(&terminal_resize_line(rows, cols)?);
+    Ok(request)
+}
+
 pub fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
     if rows == 0 || cols == 0 {
         return Err("terminal dimensions must be positive".to_owned());
@@ -1251,17 +1270,17 @@ impl TerminalSession {
             .map_err(|_| "terminal control input channel is closed".to_owned())
     }
 
-    pub fn scroll(&self, direction: &str, lines: u16) -> Result<(), String> {
+    pub fn scroll(&self, direction: &str, lines: u16, rows: u16, cols: u16) -> Result<(), String> {
         let Some(writer) = self.writer.as_ref() else {
             return Err(format!(
                 "Pane {} is read-only because another client owns terminal control",
                 self.pane_id
             ));
         };
-        let line = terminal_scroll_line(direction, lines)?;
+        let request = terminal_scroll_request_lines(direction, lines, rows, cols)?;
         writer
-            .send(TerminalWriterCommand::Line(line))
-            .map_err(|_| "terminal control scroll channel is closed".to_owned())
+            .send(TerminalWriterCommand::Line(request))
+            .map_err(|_| "terminal control scroll repaint channel is closed".to_owned())
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
@@ -1588,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn official_terminal_control_boundary_encodes_input_resize_and_release() {
+    fn official_terminal_control_boundary_encodes_input_scroll_resize_and_release() {
         let input: Value = serde_json::from_str(
             terminal_input_line(b"hello\n")
                 .expect("input line")
@@ -1609,6 +1628,25 @@ mod tests {
         assert_eq!(resize["rows"], 30);
         assert_eq!(resize["cell_width_px"], 0);
         assert_eq!(resize["cell_height_px"], 0);
+
+        let scroll_request =
+            terminal_scroll_request_lines("up", 12, 30, 100).expect("scroll repaint request");
+        let mut scroll_lines = scroll_request.lines();
+        let scroll: Value =
+            serde_json::from_str(scroll_lines.next().expect("scroll line")).expect("scroll JSON");
+        assert_eq!(
+            scroll,
+            json!({
+                "type": "terminal.scroll",
+                "direction": "up",
+                "lines": 12,
+                "source": "wheel",
+            })
+        );
+        let repaint: Value =
+            serde_json::from_str(scroll_lines.next().expect("repaint line")).expect("repaint JSON");
+        assert_eq!(repaint, resize);
+        assert_eq!(scroll_lines.next(), None);
 
         let release: Value =
             serde_json::from_str(terminal_release_line().trim_end()).expect("release JSON");

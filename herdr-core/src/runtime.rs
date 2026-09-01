@@ -3816,9 +3816,15 @@ impl Runtime {
                 // answers with a fresh frame rather than a local buffer move.
                 // A pane another client controls is read-only, not broken, so
                 // it simply does not scroll - the same shape as resize.
+                let (rows, cols) = self
+                    .terminal_sizes
+                    .get(&payload.pane_id)
+                    .copied()
+                    .unwrap_or((24, 80));
                 if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
                     && session.mode == TerminalSessionMode::Control
-                    && let Err(message) = session.scroll(&payload.direction, payload.lines)
+                    && let Err(message) =
+                        session.scroll(&payload.direction, payload.lines, rows, cols)
                 {
                     self.set_error("terminal.scroll_failed", message, true);
                     return true;

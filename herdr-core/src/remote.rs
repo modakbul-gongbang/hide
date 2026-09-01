@@ -3875,10 +3875,15 @@ mod tests {
         let (reader, writer, shutdown) = process.into_parts();
         let mut writer = writer.expect("control session exposes a writer");
         let (progress_sender, progress_receiver) = channel();
+        let (history_sender, history_receiver) = channel();
         let (closed_sender, closed_receiver) = channel();
-        let marker = "HERDR_IDE_REMOTE_TERMINAL_OK";
+        let tail_marker = "HERDR_IDE_SCROLL_080";
+        let history_marker = "HERDR_IDE_SCROLL_001";
+        let scroll_requested = Arc::new(AtomicBool::new(false));
+        let reader_scroll_requested = Arc::clone(&scroll_requested);
         let reader_thread = std::thread::spawn(move || {
-            let mut marker_seen = false;
+            let mut tail_marker_seen = false;
+            let mut history_marker_seen_after_scroll = false;
             let mut resized_frame_seen = false;
             for line in BufReader::new(reader).lines() {
                 let line = match line {
@@ -3896,13 +3901,24 @@ mod tests {
                         ..
                     }) => {
                         resized_frame_seen |= width == 100 && height == 30;
-                        marker_seen |= String::from_utf8_lossy(&bytes).contains(marker);
-                        if marker_seen && resized_frame_seen {
+                        let frame = String::from_utf8_lossy(&bytes);
+                        tail_marker_seen |= frame.contains(tail_marker);
+                        history_marker_seen_after_scroll |= reader_scroll_requested
+                            .load(Ordering::Acquire)
+                            && frame.contains(history_marker);
+                        if tail_marker_seen && resized_frame_seen {
                             let _ = progress_sender.send(());
+                        }
+                        if history_marker_seen_after_scroll {
+                            let _ = history_sender.send(());
                         }
                     }
                     Ok(crate::live::TerminalSessionEvent::Closed { .. }) => {
-                        let _ = closed_sender.send(Ok((marker_seen, resized_frame_seen)));
+                        let _ = closed_sender.send(Ok((
+                            tail_marker_seen,
+                            resized_frame_seen,
+                            history_marker_seen_after_scroll,
+                        )));
                         return;
                     }
                     Err(error) => {
@@ -3911,7 +3927,11 @@ mod tests {
                     }
                 }
             }
-            let _ = closed_sender.send(Ok((marker_seen, resized_frame_seen)));
+            let _ = closed_sender.send(Ok((
+                tail_marker_seen,
+                resized_frame_seen,
+                history_marker_seen_after_scroll,
+            )));
         });
 
         writer
@@ -3923,22 +3943,29 @@ mod tests {
             .expect("resize request writes");
         writer
             .write_all(
-                crate::live::terminal_scroll_line("up", 2)
-                    .unwrap()
-                    .as_bytes(),
-            )
-            .expect("scroll request writes");
-        writer
-            .write_all(
-                crate::live::terminal_input_line(format!("printf '{marker}\\n'\r").as_bytes())
-                    .unwrap()
-                    .as_bytes(),
+                crate::live::terminal_input_line(
+                    b"for i in {1..80}; do printf 'HERDR_IDE_SCROLL_%03d\\n' $i; done\r",
+                )
+                .unwrap()
+                .as_bytes(),
             )
             .expect("terminal input writes");
         writer.flush().expect("structured requests flush");
         progress_receiver
             .recv_timeout(Duration::from_secs(15))
-            .expect("remote terminal frame reports the input marker and resized grid");
+            .expect("remote terminal frame reports the tail marker and resized grid");
+        scroll_requested.store(true, Ordering::Release);
+        writer
+            .write_all(
+                crate::live::terminal_scroll_request_lines("up", 1_000, 30, 100)
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .expect("scroll repaint request writes");
+        writer.flush().expect("scroll repaint requests flush");
+        history_receiver
+            .recv_timeout(Duration::from_secs(15))
+            .expect("remote terminal scroll returns a frame from Herdr-owned history");
         writer
             .write_all(crate::live::terminal_release_line().as_bytes())
             .expect("release request writes");
@@ -3950,7 +3977,7 @@ mod tests {
             .expect("remote terminal reader remains valid");
         shutdown();
         reader_thread.join().expect("reader thread joins");
-        assert_eq!(observed, (true, true));
+        assert_eq!(observed, (true, true, true));
     }
 
     #[test]
