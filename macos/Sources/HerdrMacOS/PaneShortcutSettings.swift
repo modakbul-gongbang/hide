@@ -241,6 +241,15 @@ enum PaneKeyEventPolicy {
         .command, .control, .option, .shift,
     ]
 
+    /// Cmd+E is an app-level navigation command. Intercepting it before the
+    /// responder chain prevents a focused file editor from claiming macOS's
+    /// default "Use Selection for Find" equivalent instead.
+    static func isSidebarViewToggle(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 14
+            && event.modifierFlags.intersection(chordModifiers) == .command
+    }
+
     static func isAgentSwitcherAdvance(_ event: NSEvent) -> Bool {
         event.type == .keyDown
             && event.keyCode == 48

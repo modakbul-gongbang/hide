@@ -68,6 +68,12 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
+            if PaneKeyEventPolicy.isSidebarViewToggle(event) {
+                MainActor.assumeIsolated {
+                    self.model.toggleSidebarContent()
+                }
+                return nil
+            }
             // The reverse chord is checked first: it is the forward chord plus
             // Shift, so testing forward first would swallow it.
             if PaneKeyEventPolicy.isTabSwitcherRetreat(event) {
@@ -236,6 +242,11 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             )
             self.model.core.startRuntimeInitialization()
         }
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        model.cancelAgentSwitcher()
+        model.cancelTabSwitcher()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

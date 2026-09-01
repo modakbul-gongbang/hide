@@ -167,6 +167,24 @@ struct PaneShortcutSettingsTests {
         #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(commandOptionTab))
     }
 
+    @Test func commandEIsReservedForSidebarNavigationAcrossFocusedEditors() {
+        let commandE = keyEvent(
+            characters: "e",
+            keyCode: 14,
+            modifiers: [.command, .capsLock]
+        )
+        let commandShiftE = keyEvent(
+            characters: "E",
+            keyCode: 14,
+            modifiers: [.command, .shift]
+        )
+        let commandF = keyEvent(characters: "f", keyCode: 3, modifiers: [.command])
+
+        #expect(PaneKeyEventPolicy.isSidebarViewToggle(commandE))
+        #expect(!PaneKeyEventPolicy.isSidebarViewToggle(commandShiftE))
+        #expect(!PaneKeyEventPolicy.isSidebarViewToggle(commandF))
+    }
+
     @Test func theTwoSwitcherChordsNeverMatchTheSameEvent() {
         // The reverse chord is the forward chord plus Shift, so an event must
         // answer to exactly one of them or the monitor would swallow Shift+Tab

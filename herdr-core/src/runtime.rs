@@ -6510,6 +6510,101 @@ mod tests {
     }
 
     #[test]
+    fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-foreign-stale-projection";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let registration = WorkspaceRegistration {
+            id: workspace_id.clone(),
+            label: "Focused checkout".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        };
+        let previous_workspace = workspace(
+            &workspace_id,
+            "Focused checkout",
+            checkout_path,
+            vec![checkout(
+                &workspace_id,
+                &checkout_id,
+                checkout_path,
+                Some(pane("w-focused:p1", checkout_path)),
+            )],
+        );
+        let current_workspace = workspace(
+            &workspace_id,
+            "Focused checkout",
+            checkout_path,
+            vec![checkout(
+                &workspace_id,
+                &checkout_id,
+                checkout_path,
+                Some(pane("w-focused:p2", checkout_path)),
+            )],
+        );
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.snapshot.navigator.workspaces = vec![previous_workspace];
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.ui_state.selected_pane_id = Some("w-foreign:p1".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("w-foreign:p1".to_owned());
+        runtime.snapshot.focused.pane_id = Some("w-foreign:p1".to_owned());
+        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+            workspace_id: "w-foreign".to_owned(),
+            tab_id: "w-foreign:t1".to_owned(),
+            focused_pane_id: "w-foreign:p1".to_owned(),
+            zoomed: false,
+            root: PaneLayoutNodeSnapshot::Pane {
+                pane_id: "w-foreign:p1".to_owned(),
+            },
+        });
+        runtime.restore_hint_pending = false;
+
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "w-focused:p2", "cwd": checkout_path}],
+            "focused_pane_id": "w-focused:p2",
+            "layouts": [{
+                "workspace_id": "w-focused",
+                "tab_id": "w-focused:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w-focused:p2",
+                "panes": [{
+                    "pane_id": "w-focused:p2",
+                    "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                }],
+                "splits": []
+            }]
+        }))
+        .expect("focused checkout payload");
+
+        assert!(runtime.ingest_session_with_catalog(
+            Ok(payload),
+            Some(session_sync::PrecomputedCatalog {
+                registrations: vec![registration],
+                workspaces: vec![current_workspace],
+            }),
+        ));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-foreign:p1")
+        );
+        assert!(runtime.snapshot().pane_layout.is_none());
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("pane.projection_unavailable")
+        );
+    }
+
+    #[test]
     fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
         let mut runtime = runtime();
         let checkout_path = "/tmp/hide-missing-selected-pane";
