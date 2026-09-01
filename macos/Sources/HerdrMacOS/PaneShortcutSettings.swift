@@ -24,7 +24,7 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
         case .splitRight: PaneShortcut(key: "d", modifiers: [.command])
         case .splitDown: PaneShortcut(key: "d", modifiers: [.command, .shift])
         case .toggleZoom: PaneShortcut(key: "return", modifiers: [.command, .option])
-        case .closePane: PaneShortcut(key: "w", modifiers: [.command])
+        case .closePane: PaneShortcut(key: "w", modifiers: [.command, .shift])
         }
     }
 }
@@ -153,6 +153,7 @@ enum PaneShortcutPolicy {
         "command+2",
         "command+3",
         "command+s",
+        "command+w",
     ])
 
     static var defaults: [PaneCommand: PaneShortcut] {
@@ -229,6 +230,12 @@ enum PaneShortcutPolicy {
     }
 }
 
+enum UnifiedTabShortcutPolicy {
+    static func isClose(_ event: NSEvent) -> Bool {
+        PaneShortcut(key: "w", modifiers: [.command]).matches(event)
+    }
+}
+
 enum PaneKeyEventPolicy {
     private static let chordModifiers: NSEvent.ModifierFlags = [
         .command, .control, .option, .shift,
@@ -254,7 +261,9 @@ enum PaneMenuPolicy {
     static func reserveCloseShortcut(in menu: NSMenu) -> Bool {
         for item in menu.items {
             let modifiers = item.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask)
-            if item.keyEquivalent.lowercased() == "w", modifiers == .command {
+            if item.title == "Close Window",
+               item.keyEquivalent.lowercased() == "w",
+               modifiers == .command {
                 item.keyEquivalent = ""
                 item.keyEquivalentModifierMask = []
                 return true
@@ -393,16 +402,18 @@ final class PaneCommandWindow: NSWindow {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if UnifiedTabShortcutPolicy.isClose(event), let model = paneCommandModel {
+            if model.performCloseShortcut() == .closeWindow {
+                performClose(nil)
+            }
+            return true
+        }
         if let model = paneCommandModel,
            let command = PaneShortcutPolicy.command(
                for: event,
                bindings: model.paneShortcuts
             ) {
-            if command == .closePane {
-                model.performCloseShortcut()
-            } else {
-                model.performPaneCommand(command)
-            }
+            model.performPaneCommand(command)
             return true
         }
         return super.performKeyEquivalent(with: event)

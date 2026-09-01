@@ -44,13 +44,9 @@ import Testing
         "revision": 9,
         "rest": null,
         "editor": {
-            "path": null,
-            "language": null,
-            "contents_utf8": null,
-            "opened_modified_at_unix_ms": null,
-            "dirty": false,
-            "conflict": null,
-            "diff": null
+            "tabs": [],
+            "active_tab_id": null,
+            "document": null
         },
         "input_generation": 0,
         "terminal_sequence": 600,

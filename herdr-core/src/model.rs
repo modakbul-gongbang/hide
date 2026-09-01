@@ -343,8 +343,24 @@ pub struct TerminalPaneSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorSnapshot {
-    pub viewer_visible: bool,
-    pub path: Option<String>,
+    pub tabs: Vec<FileTabSnapshot>,
+    pub active_tab_id: Option<String>,
+    pub document: Option<EditorDocumentSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FileTabSnapshot {
+    pub id: String,
+    pub workspace_id: String,
+    pub checkout_id: String,
+    pub path: String,
+    pub label: String,
+    pub dirty: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EditorDocumentSnapshot {
+    pub path: String,
     pub language: Option<String>,
     pub contents_utf8: Option<String>,
     pub opened_modified_at_unix_ms: Option<u64>,
@@ -654,15 +670,9 @@ impl Snapshot {
                 panes: Vec::new(),
             },
             editor: EditorSnapshot {
-                viewer_visible: false,
-                path: None,
-                language: None,
-                contents_utf8: None,
-                opened_modified_at_unix_ms: None,
-                dirty: false,
-                readonly_reason: None,
-                conflict: None,
-                diff: None,
+                tabs: Vec::new(),
+                active_tab_id: None,
+                document: None,
             },
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {

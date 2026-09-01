@@ -13,10 +13,6 @@ let package = Package(
     dependencies: [
         .package(path: "Vendor/SwiftTerm"),
         .package(path: "Vendor/Highlightr"),
-        .package(
-            url: "https://github.com/gonzalezreal/swift-markdown-ui.git",
-            exact: "2.4.1"
-        ),
     ],
     targets: [
         .systemLibrary(
@@ -29,7 +25,6 @@ let package = Package(
                 "CHerdrCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "Highlightr", package: "Highlightr"),
-                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
             ],
             path: "Sources/HerdrMacOS",
             resources: [

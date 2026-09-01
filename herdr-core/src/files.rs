@@ -4,11 +4,11 @@ use std::path::Path;
 use std::process::Command;
 use std::time::UNIX_EPOCH;
 
-use crate::model::{DiffSnapshot, EditorConflictSnapshot, EditorSnapshot};
+use crate::model::{DiffSnapshot, EditorConflictSnapshot, EditorDocumentSnapshot};
 
 const MAX_EDITABLE_BYTES: u64 = 2 * 1024 * 1024;
 
-pub fn open(path: &Path) -> Result<EditorSnapshot, String> {
+pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
     let metadata =
         fs::metadata(path).map_err(|_| "The selected file could not be read".to_owned())?;
     if !metadata.is_file() {
@@ -37,9 +37,8 @@ pub fn open(path: &Path) -> Result<EditorSnapshot, String> {
         }
     };
 
-    Ok(EditorSnapshot {
-        viewer_visible: true,
-        path: Some(path.to_string_lossy().into_owned()),
+    Ok(EditorDocumentSnapshot {
+        path: path.to_string_lossy().into_owned(),
         language,
         contents_utf8,
         opened_modified_at_unix_ms: Some(modified),
@@ -50,12 +49,9 @@ pub fn open(path: &Path) -> Result<EditorSnapshot, String> {
     })
 }
 
-pub fn update_draft(editor: &mut EditorSnapshot, contents: String) -> Result<(), String> {
+pub fn update_draft(editor: &mut EditorDocumentSnapshot, contents: String) -> Result<(), String> {
     if editor.readonly_reason.is_some() {
         return Err("The current file is read-only; the draft was not changed".to_owned());
-    }
-    if editor.path.is_none() {
-        return Err("No file is open".to_owned());
     }
     editor.dirty = editor.contents_utf8.as_deref() != Some(contents.as_str());
     editor.contents_utf8 = Some(contents);
@@ -63,12 +59,12 @@ pub fn update_draft(editor: &mut EditorSnapshot, contents: String) -> Result<(),
 }
 
 pub fn save(
-    editor: &mut EditorSnapshot,
+    editor: &mut EditorDocumentSnapshot,
     path: &Path,
     contents: String,
     expected_modified_at_unix_ms: Option<u64>,
 ) -> Result<(), String> {
-    if editor.path.as_deref() != Some(path.to_string_lossy().as_ref()) {
+    if editor.path != path.to_string_lossy() {
         return Err("The save target does not match the open document".to_owned());
     }
     if editor.readonly_reason.is_some() {
@@ -131,12 +127,9 @@ pub fn save(
     Ok(())
 }
 
-pub fn reload(editor: &mut EditorSnapshot) -> Result<(), String> {
-    let path = editor
-        .path
-        .as_deref()
-        .ok_or_else(|| "No file is open".to_owned())?;
-    *editor = open(Path::new(path))?;
+pub fn reload(editor: &mut EditorDocumentSnapshot) -> Result<(), String> {
+    let path = editor.path.clone();
+    *editor = open(Path::new(&path))?;
     Ok(())
 }
 
@@ -217,9 +210,8 @@ mod tests {
 
     #[test]
     fn draft_updates_keep_unsaved_contents_in_memory() {
-        let mut editor = EditorSnapshot {
-            viewer_visible: true,
-            path: Some("/tmp/existing.txt".to_owned()),
+        let mut editor = EditorDocumentSnapshot {
+            path: "/tmp/existing.txt".to_owned(),
             language: Some("txt".to_owned()),
             contents_utf8: Some("old".to_owned()),
             opened_modified_at_unix_ms: Some(1),

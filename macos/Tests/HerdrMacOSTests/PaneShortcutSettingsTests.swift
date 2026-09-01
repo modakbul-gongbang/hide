@@ -12,7 +12,7 @@ struct PaneShortcutSettingsTests {
         #expect(resolution.bindings[.splitRight]?.canonical == "command+d")
         #expect(resolution.bindings[.splitDown]?.canonical == "command+shift+d")
         #expect(resolution.bindings[.toggleZoom]?.canonical == "command+option+return")
-        #expect(resolution.bindings[.closePane]?.canonical == "command+w")
+        #expect(resolution.bindings[.closePane]?.canonical == "command+shift+w")
     }
 
     @Test func corruptReservedOrConflictingStoredBindingsFallBackAsOneSafeSet() {
@@ -73,7 +73,7 @@ struct PaneShortcutSettingsTests {
             ("d", 2, [.command], .splitRight),
             ("D", 2, [.command, .shift], .splitDown),
             ("\r", 36, [.command, .option], .toggleZoom),
-            ("w", 13, [.command], .closePane),
+            ("W", 13, [.command, .shift], .closePane),
         ]
 
         for (characters, keyCode, modifiers, expected) in cases {
@@ -86,9 +86,53 @@ struct PaneShortcutSettingsTests {
         let capsLockClose = keyEvent(
             characters: "W",
             keyCode: 13,
-            modifiers: [.command, .capsLock]
+            modifiers: [.command, .shift, .capsLock]
         )
         #expect(PaneShortcutPolicy.command(for: capsLockClose, bindings: bindings) == .closePane)
+    }
+
+    @Test func commandWIsReservedForUnifiedTabClose() {
+        let closeTab = keyEvent(characters: "w", keyCode: 13, modifiers: [.command])
+        let closePane = keyEvent(characters: "W", keyCode: 13, modifiers: [.command, .shift])
+
+        #expect(UnifiedTabShortcutPolicy.isClose(closeTab))
+        #expect(!UnifiedTabShortcutPolicy.isClose(closePane))
+        #expect(PaneShortcutPolicy.command(for: closeTab, bindings: PaneShortcutPolicy.defaults) == nil)
+        #expect(PaneShortcutPolicy.command(for: closePane, bindings: PaneShortcutPolicy.defaults) == .closePane)
+    }
+
+    @Test func closeShortcutConsumesTheLastTabBeforeAllowingWindowClose() {
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: true,
+            hasActiveFileTab: true,
+            hasActiveHerdrTab: true,
+            tabCount: 2
+        ) == .closeFile)
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: true,
+            hasActiveFileTab: false,
+            hasActiveHerdrTab: true,
+            tabCount: 1
+        ) == .closeHerdr)
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: true,
+            hasActiveFileTab: false,
+            hasActiveHerdrTab: false,
+            tabCount: 0
+        ) == .closeWindow)
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: false,
+            hasActiveFileTab: false,
+            hasActiveHerdrTab: false,
+            tabCount: 0
+        ) == .closeWindow)
+    }
+
+    @Test func herdrTabLabelsUseStableTabNumbersWithoutOverwritingCustomNames() {
+        #expect(HerdrTabLabelPresentation.displayLabel(rawLabel: "1", fallbackIndex: 4) == "Tab 1")
+        #expect(HerdrTabLabelPresentation.displayLabel(rawLabel: nil, fallbackIndex: 1) == "Tab 2")
+        #expect(HerdrTabLabelPresentation.displayLabel(rawLabel: "Review", fallbackIndex: 0) == "Review")
+        #expect(HerdrTabLabelPresentation.nextLabel(rawLabels: ["1", "Tab 2", "Review"]) == "Tab 3")
     }
 
     @Test func nativeCloseWindowMenuReleasesCommandWForPaneRouting() {

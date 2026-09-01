@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+enum WorkspaceOutlineOpenPolicy {
+    static func shouldOpenSelection(
+        isProgrammaticRestore: Bool,
+        isDirectory: Bool,
+        isPlaceholder: Bool
+    ) -> Bool {
+        !isProgrammaticRestore && !isDirectory && !isPlaceholder
+    }
+}
+
 struct WorkspaceDirectoryEntry: Equatable, Sendable {
     let url: URL
     let isDirectory: Bool
@@ -200,6 +210,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private var selectedPath: String?
         private var fontScale: CGFloat = 1
         private var suppressExpansionPersistence = false
+        private var isRestoringSelection = false
 
         init(openFile: @escaping (URL) -> Void, updateExpandedPaths: @escaping ([String]) -> Void) {
             self.openFile = openFile
@@ -284,7 +295,11 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         func outlineViewSelectionDidChange(_ notification: Notification) {
             guard let outline, outline.selectedRow >= 0,
                   let node = outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode,
-                  !node.isDirectory, !node.isPlaceholder
+                  WorkspaceOutlineOpenPolicy.shouldOpenSelection(
+                      isProgrammaticRestore: isRestoringSelection,
+                      isDirectory: node.isDirectory,
+                      isPlaceholder: node.isPlaceholder
+                  )
             else { return }
             openFile(node.url)
         }
@@ -444,7 +459,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                let node = visibleNode(path: selectedPath, from: rootNode),
                outline.row(forItem: node) >= 0
             {
+                isRestoringSelection = true
                 outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: node)), byExtendingSelection: false)
+                isRestoringSelection = false
             }
             suppressExpansionPersistence = false
         }

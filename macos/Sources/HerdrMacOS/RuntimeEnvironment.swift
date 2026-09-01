@@ -586,22 +586,24 @@ enum HerdrAgentLauncher {
 /// The command creates a dedicated Herdr workspace rooted at the checkout;
 /// herdr-core then reconciles that pane back onto the selected checkout by its
 /// returned pane ID, with cwd remaining the catalog identity fallback.
-/// The operation is intentionally no-focus so selecting a row in Hide does not
-/// steal focus from an unrelated Herdr session.
+/// Checkout selection keeps the operation no-focus, while the explicit New
+/// Tab command requests focus for the root pane it creates.
 enum HerdrTerminalLauncher {
     static func launch(
         herdrPath: String,
         checkoutPath: String,
-        checkoutLabel: String
+        checkoutLabel: String,
+        focus: Bool
     ) -> TerminalLaunchResult {
+        var arguments = [
+            "workspace", "create",
+            "--cwd", checkoutPath,
+            "--label", "hide \(checkoutLabel)",
+        ]
+        arguments.append(focus ? "--focus" : "--no-focus")
         let result = run(
             herdrPath: herdrPath,
-            arguments: [
-                "workspace", "create",
-                "--cwd", checkoutPath,
-                "--label", "hide \(checkoutLabel)",
-                "--no-focus",
-            ]
+            arguments: arguments
         )
         guard result.status == 0 else {
             let detail = String(decoding: result.error, as: UTF8.self)

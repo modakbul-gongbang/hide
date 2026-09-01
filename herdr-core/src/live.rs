@@ -261,6 +261,9 @@ pub enum RemoteControlAction {
         cwd: String,
         label: String,
     },
+    CloseTab {
+        tab_id: String,
+    },
 }
 
 impl RemoteControlAction {
@@ -270,6 +273,7 @@ impl RemoteControlAction {
             Self::FocusWorkspace { .. } => "workspace.focus",
             Self::FocusTab { .. } => "tab.focus",
             Self::CreateTab { .. } => "tab.create",
+            Self::CloseTab { .. } => "tab.close",
         }
     }
 }
@@ -369,6 +373,10 @@ fn execute_remote_control(
                 .map(str::to_owned)
                 .ok_or_else(|| "tab.create response is missing root_pane.pane_id".to_owned())?;
             (Some(tab_id), Some(pane_id))
+        }
+        RemoteControlAction::CloseTab { tab_id } => {
+            control_request(connector, "tab.close", json!({"tab_id": tab_id}))?;
+            (None, None)
         }
     };
     Ok(RemoteControlOutcome::Acknowledged {
@@ -541,6 +549,9 @@ pub fn spawn_remote_control(
         RemoteControlAction::CreateTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-create")
         }
+        RemoteControlAction::CloseTab { .. } => {
+            format!("herdr-core-remote-{target_id}-tab-close")
+        }
     };
     thread::Builder::new()
         .name(worker_name)
@@ -568,6 +579,38 @@ pub fn spawn_remote_control(
         })
         .map(|_| ())
         .map_err(|error| format!("remote control worker could not be started: {error}"))
+}
+
+pub fn spawn_local_control(
+    context: LiveContext,
+    action: RemoteControlAction,
+) -> Result<(), String> {
+    let worker_name = match &action {
+        RemoteControlAction::FocusTab { .. } => "herdr-core-tab-focus",
+        RemoteControlAction::CreateTab { .. } => "herdr-core-tab-create",
+        RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
+        _ => return Err(format!("{} is not a local tab action", action.kind())),
+    };
+    thread::Builder::new()
+        .name(worker_name.to_owned())
+        .spawn(move || {
+            let started = Instant::now();
+            let result = execute_remote_control(context.api_connector.as_ref(), &action);
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_local_control_result(action, result, elapsed_ms),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("local tab control worker could not be started: {error}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1780,6 +1823,11 @@ mod tests {
                         "root_pane": {"pane_id": "w1:p3"}
                     }),
                 ),
+                (
+                    "tab.close",
+                    json!({"tab_id": "w1:t3"}),
+                    json!({"type": "ok"}),
+                ),
             ];
             for (method, params, result) in expected {
                 let (mut stream, _) = listener.accept().expect("accept request");
@@ -1807,6 +1855,9 @@ mod tests {
                 cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
                 label: "New tab".to_owned(),
             },
+            RemoteControlAction::CloseTab {
+                tab_id: "w1:t3".to_owned(),
+            },
         ];
         let mut outcomes = actions
             .iter()
@@ -1831,6 +1882,13 @@ mod tests {
                 created_tab_id: Some(tab_id),
                 created_pane_id: Some(pane_id),
             }) if tab_id == "w1:t3" && pane_id == "w1:p3"
+        ));
+        assert!(matches!(
+            outcomes.next(),
+            Some(RemoteControlOutcome::Acknowledged {
+                created_tab_id: None,
+                created_pane_id: None,
+            })
         ));
         server.join().expect("fake server joins");
         std::fs::remove_file(&socket_path).expect("remove socket");

@@ -1,11 +1,9 @@
 import AppKit
-import MarkdownUI
 import SwiftUI
 
 struct WorkbenchViewerOverlay: View {
     @EnvironmentObject private var model: ShellModel
     @State private var draft = ""
-    @State private var markdownMode = "Preview"
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
     private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
@@ -15,10 +13,6 @@ struct WorkbenchViewerOverlay: View {
         Group {
             if let selectedURL {
                 VStack(spacing: 0) {
-                    editorToolbar(for: selectedURL)
-                    Rectangle()
-                        .fill(HideTheme.divider)
-                        .frame(height: 1)
                     editorContent(for: selectedURL)
                     if let conflict = editor?.conflict {
                         conflictBar(conflict)
@@ -35,11 +29,6 @@ struct WorkbenchViewerOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
-        .background {
-            WorkbenchViewerEscapeMonitor {
-                model.closeFileViewer()
-            }
-        }
         .accessibilityIdentifier("workbench-viewer-overlay")
         .task(id: editor?.path) {
             draft = editor?.contentsUTF8 ?? ""
@@ -58,14 +47,6 @@ struct WorkbenchViewerOverlay: View {
     private func editorContent(for url: URL) -> some View {
         if isImage(url) {
             imagePreview(url)
-        } else if url.pathExtension.lowercased() == "md", markdownMode == "Preview" {
-            ScrollView {
-                Markdown(draft)
-                    .markdownTheme(.gitHub)
-                    .textSelection(.enabled)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         } else if editor?.contentsUTF8 != nil {
             HighlightedCodeEditor(
                 text: $draft,
@@ -78,51 +59,6 @@ struct WorkbenchViewerOverlay: View {
                 message: editor?.readonlyReason ?? "This file type cannot be shown as text."
             )
         }
-    }
-
-    private func editorToolbar(for url: URL) -> some View {
-        HStack(spacing: 10) {
-            SetiFileIconView(url: url, size: 13)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(url.lastPathComponent)
-                    .hideFont(size: 12, weight: .semibold)
-                    .foregroundStyle(HideTheme.primary)
-                Text(url.deletingLastPathComponent().path)
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            if url.pathExtension.lowercased() == "md" {
-                Picker("Markdown mode", selection: $markdownMode) {
-                    Text("Preview").tag("Preview")
-                    Text("Edit").tag("Edit")
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 140)
-            }
-            if let diff = editor?.diff,
-               !diff.addedLines.isEmpty || !diff.removedLines.isEmpty {
-                Label("+\(diff.addedLines.count) -\(diff.removedLines.count)", systemImage: "arrow.left.arrow.right")
-                    .hideFont(size: 10, design: .monospaced)
-                    .foregroundStyle(HideTheme.secondary)
-            }
-            Spacer(minLength: 12)
-            Button {
-                model.closeFileViewer()
-            } label: {
-                Image(systemName: "xmark")
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(HideTheme.secondary)
-            .help("Close viewer (Esc or Cmd-W)")
-            .accessibilityLabel("Close file viewer")
-            .accessibilityIdentifier("workbench-viewer-close")
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 46)
-        .background(HideTheme.panel)
     }
 
     private func imagePreview(_ url: URL) -> some View {
@@ -192,64 +128,6 @@ struct WorkbenchViewerOverlay: View {
         case "html", "htm": "html"
         case "css", "scss", "sass", "less": "css"
         default: nil
-        }
-    }
-}
-
-struct WorkbenchViewerEscapeMonitor: NSViewRepresentable {
-    let onEscape: () -> Void
-
-    static func handles(_ event: NSEvent) -> Bool {
-        event.type == .keyDown && event.keyCode == 53
-    }
-
-    func makeNSView(context: Context) -> MonitorView {
-        let view = MonitorView()
-        view.onEscape = onEscape
-        view.startMonitoring()
-        return view
-    }
-
-    func updateNSView(_ nsView: MonitorView, context: Context) {
-        nsView.onEscape = onEscape
-        nsView.startMonitoring()
-    }
-
-    static func dismantleNSView(_ nsView: MonitorView, coordinator: ()) {
-        nsView.stopMonitoring()
-    }
-
-    final class MonitorView: NSView {
-        var onEscape: (() -> Void)?
-
-        private final class Lifecycle: @unchecked Sendable {
-            var monitor: Any?
-
-            func remove() {
-                if let monitor {
-                    NSEvent.removeMonitor(monitor)
-                    self.monitor = nil
-                }
-            }
-
-            deinit {
-                remove()
-            }
-        }
-
-        private let lifecycle = Lifecycle()
-
-        func startMonitoring() {
-            guard lifecycle.monitor == nil else { return }
-            lifecycle.monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-                guard let self, WorkbenchViewerEscapeMonitor.handles(event) else { return event }
-                onEscape?()
-                return nil
-            }
-        }
-
-        func stopMonitoring() {
-            lifecycle.remove()
         }
     }
 }

@@ -192,7 +192,7 @@ struct WorkspaceFileSearchSheet: View {
 
     private func open(_ match: WorkspaceFileSearchMatch?) {
         guard let root, let match else { return }
-        model.core.openFile(root.appendingPathComponent(match.relativePath))
+        model.openFile(root.appendingPathComponent(match.relativePath))
         dismiss()
     }
 }
