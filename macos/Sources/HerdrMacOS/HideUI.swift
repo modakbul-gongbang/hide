@@ -516,7 +516,7 @@ private struct SidebarCommandBar: View {
                 systemImage: "plus",
                 help: "New agent (⌘N)",
                 accessibilityLabel: "New agent",
-                action: model.openNewAgent
+                action: { model.openNewAgent() }
             )
         }
         .padding(.horizontal, 12)
@@ -1014,12 +1014,12 @@ private struct CheckoutNavigatorRow: View {
                     .hideFont(size: 11, weight: isFocused ? .semibold : .regular)
                     .foregroundStyle(isFocused ? HideTheme.primary : HideTheme.secondary)
                     .lineLimit(1)
-                if presentation.isPrimary {
-                    SidebarBadge(label: "primary", color: HideTheme.secondary)
+                if !checkout.exists {
+                    SidebarBadge(label: "missing", color: HideTheme.danger)
                 } else if checkout.temporary {
                     SidebarBadge(label: "temporary", color: HideTheme.warning)
-                } else if !checkout.exists {
-                    SidebarBadge(label: "missing", color: HideTheme.danger)
+                } else if presentation.isPrimary {
+                    SidebarBadge(label: "primary", color: HideTheme.secondary)
                 }
                 Spacer(minLength: 0)
                 if let activityLabel = presentation.activityLabel {
