@@ -1,7 +1,7 @@
 //! Typed transport for Herdr's local newline-delimited JSON socket API.
 
 use std::fmt;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -106,7 +106,7 @@ pub(crate) fn subscribe(
     subscriptions: &[&str],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
-    let mut stream = connect(socket_path, timeout)?;
+    let mut stream = connect_subscription(socket_path, timeout)?;
     let request_id = "herdr-core:events.subscribe";
     let filters = subscriptions
         .iter()
@@ -122,8 +122,7 @@ pub(crate) fn subscribe(
         }),
     )?;
 
-    let mut reader = BufReader::new(stream);
-    let response = read_response(&mut reader)?;
+    let response = read_subscription_response(&mut stream, timeout)?;
     let result = response_result(response, request_id)?;
     let ack: SubscriptionStarted = serde_json::from_value(result).map_err(|error| {
         ApiError::Malformed(format!(
@@ -136,11 +135,12 @@ pub(crate) fn subscribe(
             ack.kind
         )));
     }
-    reader.get_ref().set_read_timeout(None).map_err(|error| {
+    stream.set_nonblocking(false).map_err(|error| {
         ApiError::Transport(format!(
-            "subscription read timeout could not be cleared: {error}"
+            "subscription could not enter blocking mode: {error}"
         ))
     })?;
+    let reader = BufReader::new(stream);
     let shutdown = reader.get_ref().try_clone().map_err(|error| {
         ApiError::Transport(format!(
             "subscription shutdown handle could not be cloned: {error}"
@@ -163,6 +163,19 @@ fn connect(socket_path: &Path, timeout: Duration) -> Result<UnixStream, ApiError
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|error| ApiError::Transport(format!("read timeout could not be set: {error}")))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| ApiError::Transport(format!("write timeout could not be set: {error}")))?;
+    Ok(stream)
+}
+
+fn connect_subscription(socket_path: &Path, timeout: Duration) -> Result<UnixStream, ApiError> {
+    let stream = UnixStream::connect(socket_path).map_err(|error| {
+        ApiError::Transport(format!(
+            "connect failed for {}: {error}",
+            socket_path.display()
+        ))
+    })?;
     stream
         .set_write_timeout(Some(timeout))
         .map_err(|error| ApiError::Transport(format!("write timeout could not be set: {error}")))?;
@@ -196,7 +209,66 @@ fn read_response(reader: &mut BufReader<UnixStream>) -> Result<ResponseEnvelope,
     if line.trim().is_empty() {
         return Err(ApiError::Transport("response was empty".to_owned()));
     }
-    serde_json::from_str(&line)
+    decode_response(&line)
+}
+
+/// Reads exactly through the acknowledgement newline so replay bytes already
+/// queued behind it remain available to the long-lived buffered reader.
+fn read_subscription_response(
+    stream: &mut UnixStream,
+    timeout: Duration,
+) -> Result<ResponseEnvelope, ApiError> {
+    stream.set_nonblocking(true).map_err(|error| {
+        ApiError::Transport(format!(
+            "subscription could not enter nonblocking mode: {error}"
+        ))
+    })?;
+    let deadline = std::time::Instant::now() + timeout;
+    let mut bytes = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        match stream.read(&mut byte) {
+            Ok(0) => {
+                return Err(ApiError::Transport(
+                    "subscription acknowledgement reached EOF".to_owned(),
+                ));
+            }
+            Ok(_) => {
+                bytes.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if bytes.len() > 64 * 1024 {
+                    return Err(ApiError::Malformed(
+                        "subscription acknowledgement exceeds 64 KiB".to_owned(),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(ApiError::Transport(
+                        "subscription acknowledgement timed out".to_owned(),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) => {
+                return Err(ApiError::Transport(format!(
+                    "subscription acknowledgement could not be read: {error}"
+                )));
+            }
+        }
+    }
+    let line = String::from_utf8(bytes).map_err(|error| {
+        ApiError::Malformed(format!(
+            "subscription acknowledgement was not UTF-8: {error}"
+        ))
+    })?;
+    decode_response(&line)
+}
+
+fn decode_response(line: &str) -> Result<ResponseEnvelope, ApiError> {
+    serde_json::from_str(line)
         .map_err(|error| ApiError::Malformed(format!("response was not valid JSON: {error}")))
 }
 
@@ -253,6 +325,76 @@ mod tests {
         )
         .expect_err("mismatched id must fail");
         assert!(matches!(error, ApiError::Malformed(_)));
+
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn subscribe_keeps_replay_buffered_after_the_acknowledgement() {
+        let root = Path::new("/tmp").join(format!(
+            "herdr-core-api-subscribe-contract-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut request_line)
+                .expect("read request");
+            let request: Value = serde_json::from_str(&request_line).expect("request JSON");
+            assert_eq!(request["method"], "events.subscribe");
+            assert_eq!(request["params"]["after_sequence"], 40);
+            assert_eq!(
+                request["params"]["subscriptions"],
+                json!([{"type": "pane.focused"}])
+            );
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "id": "herdr-core:events.subscribe",
+                    "result": {
+                        "type": "subscription_started",
+                        "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                        "sequence": 41,
+                        "oldest_available_sequence": 1
+                    }
+                })
+            )
+            .expect("write ack");
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "protocol": HERDR_PROTOCOL_REVISION,
+                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                    "sequence": 41,
+                    "event": "pane_focused",
+                    "data": {
+                        "type": "pane_focused",
+                        "workspace_id": "w1",
+                        "pane_id": "w1:p1"
+                    }
+                })
+            )
+            .expect("write replay");
+        });
+
+        let subscription = subscribe(&socket_path, 40, &["pane.focused"], Duration::from_secs(1))
+            .expect("subscribe");
+        assert_eq!(subscription.ack.sequence, 41);
+        let (mut reader, shutdown) = subscription.into_parts();
+        let mut replay = String::new();
+        reader.read_line(&mut replay).expect("read replay");
+        let replay: Value = serde_json::from_str(&replay).expect("replay JSON");
+        assert_eq!(replay["sequence"], 41);
+        assert_eq!(replay["event"], "pane_focused");
+        drop(shutdown);
 
         server.join().expect("fake server joins");
         std::fs::remove_file(&socket_path).expect("remove socket");

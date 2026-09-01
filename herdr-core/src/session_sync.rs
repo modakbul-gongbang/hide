@@ -1576,7 +1576,12 @@ struct LayoutEvent {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+    use crate::model::{CoreOptions, SCHEMA_VERSION};
 
     fn snapshot() -> Value {
         json!({
@@ -1629,6 +1634,31 @@ mod tests {
             SubscriptionLine::Event(event) => event,
             SubscriptionLine::Error { .. } => unreachable!(),
         }
+    }
+
+    fn accept_request(listener: &UnixListener) -> (UnixStream, Value) {
+        let (stream, _) = listener.accept().expect("accept request");
+        let mut line = String::new();
+        std::io::BufReader::new(stream.try_clone().expect("clone request stream"))
+            .read_line(&mut line)
+            .expect("read request");
+        let request = serde_json::from_str(&line).expect("request JSON");
+        (stream, request)
+    }
+
+    fn write_result(stream: &mut UnixStream, request: &Value, result: Value) {
+        writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
+            .expect("write response");
+    }
+
+    fn wait_until(deadline: Instant, mut predicate: impl FnMut() -> bool) {
+        while Instant::now() < deadline {
+            if predicate() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(predicate(), "condition did not become true before deadline");
     }
 
     #[test]
@@ -1784,5 +1814,126 @@ mod tests {
             "protocol_mismatch"
         );
         assert_eq!(replica.project().focused_pane_id, before.focused_pane_id);
+    }
+
+    #[test]
+    fn coordinator_recovers_event_gap_with_one_fresh_snapshot_and_stops_its_reader() {
+        let root = Path::new("/tmp").join(format!(
+            "herdr-core-session-gap-contract-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let state_path = root.join("state.json");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
+        let server = thread::spawn(move || {
+            let (mut first_snapshot_stream, first_snapshot_request) = accept_request(&listener);
+            assert_eq!(first_snapshot_request["method"], "session.snapshot");
+            write_result(
+                &mut first_snapshot_stream,
+                &first_snapshot_request,
+                json!({"type": "session_snapshot", "snapshot": snapshot()}),
+            );
+
+            let (mut first_subscription, first_subscribe_request) = accept_request(&listener);
+            assert_eq!(first_subscribe_request["method"], "events.subscribe");
+            assert_eq!(first_subscribe_request["params"]["after_sequence"], 40);
+            write_result(
+                &mut first_subscription,
+                &first_subscribe_request,
+                json!({
+                    "type": "subscription_started",
+                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                    "sequence": 40,
+                    "oldest_available_sequence": 1
+                }),
+            );
+            writeln!(
+                first_subscription,
+                "{}",
+                json!({
+                    "id": "herdr-core:events.subscribe",
+                    "error": {
+                        "code": "event_gap",
+                        "message": "fetch session.snapshot and resubscribe"
+                    }
+                })
+            )
+            .expect("write event gap");
+            drop(first_subscription);
+
+            let (mut second_snapshot_stream, second_snapshot_request) = accept_request(&listener);
+            assert_eq!(second_snapshot_request["method"], "session.snapshot");
+            let mut recovered = snapshot();
+            recovered["event_sequence"] = json!(50);
+            recovered["workspaces"][0]["label"] = json!("recovered");
+            write_result(
+                &mut second_snapshot_stream,
+                &second_snapshot_request,
+                json!({"type": "session_snapshot", "snapshot": recovered}),
+            );
+
+            let (mut final_subscription, final_subscribe_request) = accept_request(&listener);
+            assert_eq!(final_subscribe_request["method"], "events.subscribe");
+            assert_eq!(final_subscribe_request["params"]["after_sequence"], 50);
+            write_result(
+                &mut final_subscription,
+                &final_subscribe_request,
+                json!({
+                    "type": "subscription_started",
+                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                    "sequence": 50,
+                    "oldest_available_sequence": 1
+                }),
+            );
+            let mut byte = [0_u8; 1];
+            assert_eq!(
+                final_subscription
+                    .read(&mut byte)
+                    .expect("wait for shutdown"),
+                0
+            );
+        });
+
+        let runtime = Arc::new(Mutex::new(Runtime::new(
+            CoreOptions {
+                schema_version: SCHEMA_VERSION,
+                herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
+                herdr_bin_path: None,
+                remote_targets: Vec::new(),
+                app_state_path: state_path.to_string_lossy().into_owned(),
+            },
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: None,
+                remote_enabled: false,
+                chromux_enabled: false,
+                herdr_socket_path_override: None,
+            },
+        )));
+        let context = LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: Arc::downgrade(&runtime),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+        };
+        let handle = spawn(context, None).expect("start session sync");
+        wait_until(Instant::now() + Duration::from_secs(3), || {
+            let snapshot = runtime.lock().expect("runtime lock").snapshot().clone();
+            snapshot.status.herdr.state == "connected"
+                && snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.label == "recovered")
+        });
+
+        drop(handle);
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        if state_path.exists() {
+            std::fs::remove_file(&state_path).expect("remove state");
+        }
+        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 }

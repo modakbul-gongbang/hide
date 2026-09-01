@@ -61,6 +61,13 @@ impl ChangeNotifier {
             }));
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn noop() -> Self {
+        Self {
+            registration: Arc::new(Mutex::new(None)),
+        }
+    }
 }
 
 #[repr(C)]
