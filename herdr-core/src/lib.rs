@@ -13,6 +13,7 @@ pub mod remote;
 pub mod remote_files;
 mod runtime;
 mod sidebar;
+mod usage;
 pub mod version;
 pub mod workspace;
 

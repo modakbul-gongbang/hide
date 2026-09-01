@@ -214,6 +214,7 @@ struct CoreNavigatorSnapshot: Decodable {
     let devices: [CoreDeviceSnapshot]
     let workspaces: [CoreWorkspaceSnapshot]
     let agents: [SidebarAgent]
+    let providerUsage: [CoreProviderUsageSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case rootPath = "root_path"
@@ -223,6 +224,7 @@ struct CoreNavigatorSnapshot: Decodable {
         case devices
         case workspaces
         case agents
+        case providerUsage = "provider_usage"
     }
 
     init(from decoder: Decoder) throws {
@@ -234,6 +236,33 @@ struct CoreNavigatorSnapshot: Decodable {
         devices = try container.decodeIfPresent([CoreDeviceSnapshot].self, forKey: .devices) ?? []
         workspaces = try container.decodeIfPresent([CoreWorkspaceSnapshot].self, forKey: .workspaces) ?? []
         agents = try container.decodeIfPresent([SidebarAgent].self, forKey: .agents) ?? []
+        providerUsage = try container.decodeIfPresent(
+            [CoreProviderUsageSnapshot].self,
+            forKey: .providerUsage
+        ) ?? []
+    }
+}
+
+struct CoreProviderUsageSnapshot: Decodable, Identifiable {
+    var id: String { provider }
+    let provider: String
+    let label: String
+    let windowMinutes: UInt64
+    let state: String
+    let usedPercent: Double?
+    let resetsAtUnixSeconds: UInt64?
+    let message: String?
+    let lastCheckedAtUnixMilliseconds: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case label
+        case windowMinutes = "window_minutes"
+        case state
+        case usedPercent = "used_percent"
+        case resetsAtUnixSeconds = "resets_at_unix_seconds"
+        case message
+        case lastCheckedAtUnixMilliseconds = "last_checked_at_unix_ms"
     }
 }
 

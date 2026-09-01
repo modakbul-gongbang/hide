@@ -445,6 +445,7 @@ pub fn install(
     notifier: ChangeNotifier,
     socket_path: &str,
     herdr_bin: Option<&str>,
+    home_path: Option<PathBuf>,
 ) {
     let context = LiveContext {
         socket_path: PathBuf::from(socket_path),
@@ -455,16 +456,18 @@ pub fn install(
     if let Ok(mut guard) = runtime.lock() {
         guard.set_live(context.clone());
     }
-    spawn_session_poller(context);
+    spawn_session_poller(context, home_path);
 }
 
-fn spawn_session_poller(context: LiveContext) {
+fn spawn_session_poller(context: LiveContext, home_path: Option<PathBuf>) {
     let result = thread::Builder::new()
         .name("herdr-core-session-poller".to_owned())
         .spawn(move || {
             let mut catalog_cache: Option<CatalogCache> = None;
+            let mut usage_reader = crate::usage::ProviderUsageReader::new(home_path);
             loop {
                 let fetched = fetch_session(&context.socket_path);
+                let provider_usage = usage_reader.read_if_due();
                 // The catalog shells out to git per workspace and pane cwd,
                 // so it is built here, outside the runtime lock; holding the
                 // lock through those subprocesses stalls every shell snapshot
@@ -510,7 +513,13 @@ fn spawn_session_poller(context: LiveContext) {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_session_with_catalog(fetched, precomputed),
+                    Ok(mut guard) => {
+                        let mut changed = guard.ingest_session_with_catalog(fetched, precomputed);
+                        if let Some(provider_usage) = provider_usage {
+                            changed |= guard.ingest_provider_usage(provider_usage);
+                        }
+                        changed
+                    }
                     Err(_) => return,
                 };
                 drop(runtime);

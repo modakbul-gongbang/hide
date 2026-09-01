@@ -87,6 +87,56 @@ pub struct NavigatorSnapshot {
     pub devices: Vec<DeviceSnapshot>,
     pub workspaces: Vec<WorkspaceSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
+    pub provider_usage: Vec<ProviderUsageSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderUsageSnapshot {
+    pub provider: String,
+    pub label: String,
+    pub window_minutes: u64,
+    pub state: String,
+    pub used_percent: Option<f64>,
+    pub resets_at_unix_seconds: Option<u64>,
+    pub message: Option<String>,
+    pub last_checked_at_unix_ms: Option<u64>,
+}
+
+impl ProviderUsageSnapshot {
+    pub fn initial_rows() -> Vec<Self> {
+        vec![
+            Self::unavailable(
+                "claude",
+                "Claude Code",
+                "Claude Code weekly usage has not been checked yet",
+                0,
+            ),
+            Self::unavailable(
+                "codex",
+                "Codex",
+                "Codex weekly usage has not been checked yet",
+                0,
+            ),
+        ]
+    }
+
+    pub fn unavailable(
+        provider: impl Into<String>,
+        label: impl Into<String>,
+        message: impl Into<String>,
+        checked_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            label: label.into(),
+            window_minutes: 10_080,
+            state: "unavailable".to_owned(),
+            used_percent: None,
+            resets_at_unix_seconds: None,
+            message: Some(message.into()),
+            last_checked_at_unix_ms: (checked_at_unix_ms > 0).then_some(checked_at_unix_ms),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -506,6 +556,7 @@ impl Snapshot {
                 }],
                 workspaces: Vec::new(),
                 agents: Vec::new(),
+                provider_usage: ProviderUsageSnapshot::initial_rows(),
             },
             overlay: OverlaySnapshot {
                 kind: None,

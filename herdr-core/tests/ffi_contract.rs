@@ -214,9 +214,19 @@ fn snapshot_exposes_the_production_schema_and_status() {
             .iter()
             .map(|entry| entry["key"].as_str().expect("environment key"))
             .collect::<Vec<_>>(),
-        ["SSH_AUTH_SOCK", "PATH", "HERDR_SOCKET_PATH"]
+        ["HOME", "SSH_AUTH_SOCK", "PATH", "HERDR_SOCKET_PATH"]
     );
     assert!(environment.iter().all(|entry| entry.get("value").is_none()));
+    let provider_usage = snapshot["navigator"]["provider_usage"]
+        .as_array()
+        .expect("provider usage rows");
+    assert_eq!(provider_usage.len(), 2);
+    assert_eq!(provider_usage[0]["provider"], "claude");
+    assert_eq!(provider_usage[0]["window_minutes"], 10_080);
+    assert_eq!(provider_usage[0]["state"], "unavailable");
+    assert_eq!(provider_usage[1]["provider"], "codex");
+    assert_eq!(provider_usage[1]["window_minutes"], 10_080);
+    assert_eq!(provider_usage[1]["state"], "unavailable");
     assert!(snapshot["status"]["last_error"].is_null());
     assert!(snapshot.get("spike").is_none());
 

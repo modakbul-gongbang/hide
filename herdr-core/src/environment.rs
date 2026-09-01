@@ -12,10 +12,17 @@ pub struct EnvironmentVariableSpec {
 }
 
 pub const PATH_KEY: &str = "PATH";
+pub const HOME_KEY: &str = "HOME";
 pub const SSH_AUTH_SOCK_KEY: &str = "SSH_AUTH_SOCK";
 pub const HERDR_SOCKET_PATH_KEY: &str = "HERDR_SOCKET_PATH";
 
-pub const REGISTRY: [EnvironmentVariableSpec; 3] = [
+pub const REGISTRY: [EnvironmentVariableSpec; 4] = [
+    EnvironmentVariableSpec {
+        key: HOME_KEY,
+        required: false,
+        format: "absolute home-directory path",
+        absent_behavior: "Provider usage and home-relative integrations are unavailable",
+    },
     EnvironmentVariableSpec {
         key: SSH_AUTH_SOCK_KEY,
         required: false,
@@ -39,6 +46,7 @@ pub const REGISTRY: [EnvironmentVariableSpec; 3] = [
 #[derive(Clone, Debug)]
 pub struct EnvironmentReport {
     pub statuses: Vec<EnvironmentStatusSnapshot>,
+    pub home_path: Option<PathBuf>,
     pub remote_enabled: bool,
     pub chromux_enabled: bool,
     pub herdr_socket_path_override: Option<String>,
@@ -49,24 +57,42 @@ pub fn read_and_validate() -> EnvironmentReport {
 }
 
 fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentReport {
-    let chromux_path = std::env::var_os("HOME")
+    let home = read(HOME_KEY);
+    let chromux_path = home
+        .as_ref()
         .map(PathBuf::from)
         .map(|home| home.join("Library/pnpm/chromux"));
-    validate_with_chromux_path(&mut read, chromux_path.as_deref())
+    validate_with_chromux_path(&mut read, home, chromux_path.as_deref())
 }
 
 fn validate_with_chromux_path(
     mut read: impl FnMut(&str) -> Option<OsString>,
+    home: Option<OsString>,
     chromux_path: Option<&Path>,
 ) -> EnvironmentReport {
     let mut statuses = Vec::with_capacity(REGISTRY.len());
     let mut remote_enabled = true;
     let mut chromux_enabled = true;
     let mut herdr_socket_path_override = None;
+    let mut home_path = None;
 
     for spec in REGISTRY {
         let value = read(spec.key);
         let (state, message) = match spec.key {
+            HOME_KEY => match home.as_ref() {
+                None => (
+                    "absent",
+                    "Home directory is unavailable; provider usage and home-relative integrations are disabled",
+                ),
+                Some(value) if value.is_empty() || !Path::new(value).is_absolute() => (
+                    "invalid",
+                    "Home directory configuration is invalid; provider usage and home-relative integrations are disabled",
+                ),
+                Some(value) => {
+                    home_path = Some(PathBuf::from(value));
+                    ("available", "Home directory configuration is available")
+                }
+            },
             SSH_AUTH_SOCK_KEY => match value {
                 None => {
                     remote_enabled = false;
@@ -129,6 +155,7 @@ fn validate_with_chromux_path(
 
     EnvironmentReport {
         statuses,
+        home_path,
         remote_enabled,
         chromux_enabled,
         herdr_socket_path_override,
@@ -149,8 +176,8 @@ mod tests {
 
     #[test]
     fn registry_is_enumerable_and_does_not_expose_values() {
-        assert_eq!(REGISTRY.len(), 3);
-        assert_eq!(REGISTRY[0].key, "SSH_AUTH_SOCK");
+        assert_eq!(REGISTRY.len(), 4);
+        assert_eq!(REGISTRY[0].key, "HOME");
         let secret_like_value = OsString::from("/private/tmp/private-agent.sock");
         let chromux_path = Path::new("/private/tmp/hide-environment-test/Library/pnpm/chromux");
         let report = validate_with_chromux_path(
@@ -161,6 +188,7 @@ mod tests {
                 )),
                 _ => None,
             },
+            Some(OsString::from("/private/tmp/hide-environment-test")),
             Some(chromux_path),
         );
         let encoded = serde_json::to_string(&report.statuses).unwrap();
@@ -175,10 +203,11 @@ mod tests {
         let report = validate_with(|_| None);
         assert!(!report.remote_enabled);
         assert!(!report.chromux_enabled);
-        assert_eq!(report.statuses[0].state, "absent");
-        assert!(!report.statuses[0].required);
-        assert!(report.statuses[0].message.contains("remote features"));
-        assert_eq!(report.statuses[2].state, "default");
+        assert_eq!(report.statuses[1].state, "absent");
+        assert!(!report.statuses[1].required);
+        assert!(report.statuses[1].message.contains("remote features"));
+        assert_eq!(report.statuses[3].state, "default");
+        assert!(report.home_path.is_none());
         assert!(report.herdr_socket_path_override.is_none());
     }
 
@@ -209,7 +238,7 @@ mod tests {
             report.herdr_socket_path_override.as_deref(),
             Some("/private/tmp/herdr.sock")
         );
-        assert_eq!(report.statuses[1].state, "invalid");
-        assert_eq!(report.statuses[2].state, "available");
+        assert_eq!(report.statuses[2].state, "invalid");
+        assert_eq!(report.statuses[3].state, "available");
     }
 }

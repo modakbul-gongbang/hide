@@ -492,6 +492,9 @@ private struct HideSidebar: View {
                 ForEach(model.devices, id: \.id) { device in
                     DeviceNavigatorRow(device: device)
                 }
+                HideWeeklyUsageSection(
+                    usages: model.core.snapshot?.navigator.providerUsage ?? []
+                )
                 Button {
                     model.showSettings = true
                 } label: {
@@ -516,6 +519,120 @@ private struct HideSidebar: View {
                 .frame(width: 1)
         }
         .accessibilityIdentifier("hide-sidebar")
+    }
+}
+
+private struct HideWeeklyUsageSection: View {
+    let usages: [CoreProviderUsageSnapshot]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Rectangle()
+                .fill(HideTheme.divider)
+                .frame(height: 1)
+
+            HStack(spacing: 7) {
+                Text("WEEKLY USAGE")
+                    .hideFont(size: 10, weight: .bold)
+                    .tracking(1.2)
+                    .foregroundStyle(HideTheme.muted)
+                Spacer()
+                Text("1W")
+                    .hideFont(size: 9, weight: .semibold, design: .monospaced)
+                    .foregroundStyle(HideTheme.muted)
+            }
+            .padding(.horizontal, 7)
+
+            ForEach(usages) { usage in
+                HideWeeklyUsageRow(usage: usage)
+            }
+        }
+        .padding(.top, 5)
+        .accessibilityIdentifier("hide-weekly-usage")
+    }
+}
+
+private struct HideWeeklyUsageRow: View {
+    let usage: CoreProviderUsageSnapshot
+
+    private var clampedProgress: Double {
+        min(max(usage.usedPercent ?? 0, 0), 100) / 100
+    }
+
+    private var usageColor: Color {
+        guard let percent = usage.usedPercent, usage.state == "available" else {
+            return HideTheme.muted
+        }
+        if percent >= 90 { return HideTheme.danger }
+        if percent >= 70 { return HideTheme.warning }
+        return HideTheme.success
+    }
+
+    private var valueLabel: String {
+        guard let percent = usage.usedPercent, usage.state == "available" else {
+            return "Unavailable"
+        }
+        return "\(Int(percent.rounded()))%"
+    }
+
+    private var helpText: String {
+        if let message = usage.message {
+            return message
+        }
+        guard let reset = usage.resetsAtUnixSeconds else {
+            return "1-week plan usage"
+        }
+        let date = Date(timeIntervalSince1970: TimeInterval(reset))
+        return "Resets \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                Group {
+                    if let mark = AgentMark.image(for: usage.provider) {
+                        Image(nsImage: mark)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .padding(2)
+                    } else {
+                        Text(usage.label.prefix(1))
+                            .hideFont(size: 9, weight: .bold, design: .rounded)
+                            .foregroundStyle(HideTheme.secondary)
+                    }
+                }
+                .frame(width: 16, height: 16)
+                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: 4))
+
+                Text(usage.label)
+                    .hideFont(size: 11, weight: .medium)
+                    .foregroundStyle(HideTheme.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(valueLabel)
+                    .hideFont(size: 10, weight: .semibold, design: .monospaced)
+                    .foregroundStyle(usage.state == "available" ? usageColor : HideTheme.muted)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(HideTheme.divider)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(usageColor)
+                        .frame(width: geometry.size.width * clampedProgress)
+                }
+            }
+            .frame(height: 3)
+            .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 7)
+        .help(helpText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(usage.label)
+        .accessibilityValue(valueLabel)
+        .accessibilityIdentifier("hide-weekly-usage-\(usage.provider)")
     }
 }
 

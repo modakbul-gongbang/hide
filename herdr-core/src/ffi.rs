@@ -130,6 +130,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
             return ptr::null_mut();
         }
         let environment = environment::read_and_validate();
+        let home_path = environment.home_path.clone();
         if options.herdr_socket_path.is_some()
             && let Some(path) = environment.herdr_socket_path_override.as_ref()
         {
@@ -151,6 +152,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 },
                 socket_path,
                 options.herdr_bin_path.as_deref(),
+                home_path,
             );
         }
         Box::into_raw(Box::new(HerdrCore {

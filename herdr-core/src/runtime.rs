@@ -1168,6 +1168,20 @@ impl Runtime {
         changed | self.refresh_pet()
     }
 
+    /// Applies provider usage that the live poller read outside the runtime
+    /// mutex. The two fixed rows are revisioned with the rest snapshot, so an
+    /// unchanged refresh produces no shell work.
+    pub fn ingest_provider_usage(
+        &mut self,
+        provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
+    ) -> bool {
+        if self.snapshot.navigator.provider_usage == provider_usage {
+            return false;
+        }
+        self.snapshot.navigator.provider_usage = provider_usage;
+        true
+    }
+
     /// Recomputes the pet's pose, badge row, and attention queue from the
     /// current agent list and connection state. Idempotent: the same inputs
     /// produce the same snapshot and report no change.
@@ -3689,6 +3703,7 @@ mod tests {
                 remote_enabled: false,
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
+                home_path: None,
             },
         )
     }
