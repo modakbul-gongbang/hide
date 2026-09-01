@@ -378,7 +378,8 @@ enum PaneGridPresentation {
             divider = PaneGridDivider(
                 paneID: paneID,
                 axis: .vertical,
-                frame: PaneGridFrame(x: firstFrame.x + firstFrame.width, y: frame.y, width: 0, height: frame.height)
+                frame: PaneGridFrame(x: firstFrame.x + firstFrame.width, y: frame.y, width: 0, height: frame.height),
+                span: frame.width
             )
         } else {
             firstFrame = PaneGridFrame(x: frame.x, y: frame.y, width: frame.width, height: frame.height * ratio)
@@ -386,7 +387,8 @@ enum PaneGridPresentation {
             divider = PaneGridDivider(
                 paneID: paneID,
                 axis: .horizontal,
-                frame: PaneGridFrame(x: frame.x, y: firstFrame.y + firstFrame.height, width: frame.width, height: 0)
+                frame: PaneGridFrame(x: frame.x, y: firstFrame.y + firstFrame.height, width: frame.width, height: 0),
+                span: frame.height
             )
         }
         return [divider]
@@ -469,6 +471,11 @@ struct PaneGridDivider: Equatable, Identifiable {
     let paneID: String
     let axis: Axis
     let frame: PaneGridFrame
+    /// The width (vertical) or height (horizontal) of the split this divider
+    /// belongs to, as a fraction of the canvas. Herdr measures a resize
+    /// `amount` against the split's own rectangle, so a divider nested inside
+    /// half the canvas travels twice as far per unit as the canvas would say.
+    let span: Double
 
     /// Deliberately free of the frame: a divider keeps its identity while it
     /// moves. Deriving the id from the position recreated the handle on every
@@ -672,10 +679,11 @@ private struct PaneResizeHandle: View {
     /// it is released.
     private func applyStep(travelling translation: CGSize) {
         let travel = isVertical ? translation.width : translation.height
+        let canvasSpan = isVertical ? canvasSize.width : canvasSize.height
         guard let step = PaneResizeDragPolicy.step(
             travel: travel,
             appliedTravel: appliedTravel,
-            span: isVertical ? canvasSize.width : canvasSize.height,
+            span: canvasSpan * CGFloat(divider.span),
             isVertical: isVertical
         ) else { return }
         appliedTravel = travel

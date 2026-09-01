@@ -54,6 +54,22 @@ struct PaneGridPresentationTests {
         #expect(dividers[1].frame.y == 0.6)
     }
 
+    @Test func aDividerReportsTheSplitItResizesRatherThanTheWholeCanvas() throws {
+        // Herdr measures a resize `amount` against the split's own rectangle.
+        // The outer divider owns the full width; the inner one lives in the
+        // 0.4-wide first column and in half the height, so a drag measured
+        // against the canvas would move it at a fraction of the pointer.
+        let data = Data(
+            #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p1","zoomed":false,"root":{"type":"split","direction":"right","ratio":0.4,"first":{"type":"split","direction":"down","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p2"},"second":{"type":"pane","pane_id":"w1:p3"}}},"second":{"type":"pane","pane_id":"w1:p4"}}}"#.utf8
+        )
+        let layout = try JSONDecoder().decode(CorePaneLayoutSnapshot.self, from: data)
+
+        let dividers = PaneGridPresentation.dividers(layout: layout)
+
+        #expect(dividers.map(\.span) == [1, 1, 0.4])
+        #expect(dividers[2].axis == .vertical)
+    }
+
     @Test func aDividerKeepsItsIdentityWhileTheSplitItDragsMoves() throws {
         // `ForEach` recreates a row whose id changed, which during a drag tears
         // down the gesture mid-flight: the split moved once and then froze.
