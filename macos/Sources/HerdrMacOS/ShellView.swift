@@ -195,6 +195,7 @@ private struct AgentRow: View {
         case "error": .red
         case "question": .yellow
         case "approval": .orange
+        case "blocked": .orange
         case "working": .blue
         case "unseen_completion": .green
         case "idle": .secondary

@@ -103,6 +103,7 @@ pub struct SessionPanePayload {
 enum AgentState {
     Question,
     Approval,
+    Blocked,
     Error,
     Working,
     UnseenCompletion,
@@ -115,6 +116,7 @@ impl AgentState {
         match self {
             Self::Question => "question",
             Self::Approval => "approval",
+            Self::Blocked => "blocked",
             Self::Error => "error",
             Self::Working => "working",
             Self::UnseenCompletion => "unseen_completion",
@@ -127,6 +129,7 @@ impl AgentState {
         match self {
             Self::Question => "?",
             Self::Approval => "!",
+            Self::Blocked => "●",
             Self::Error => "×",
             Self::Working | Self::UnseenCompletion => "●",
             Self::Idle => "○",
@@ -190,21 +193,8 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
     let pane_id = non_empty(agent.pane_id.as_deref().or(agent.id.as_deref()))
         .map(str::to_owned)
         .ok_or_else(|| "session agent is missing a pane id".to_owned())?;
-    let sort_rank = token_string(&agent.tokens, "sort_rank")
-        .filter(|value| value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()))
-        .ok_or_else(|| format!("agent {pane_id} has an invalid sort_rank token"))?;
-    let activity = match token_string(&agent.tokens, "activity") {
-        Some(value) if value.len() == 13 && value.bytes().all(|byte| byte.is_ascii_digit()) => {
-            value
-        }
-        Some(_) => return Err(format!("agent {pane_id} has an invalid activity token")),
-        None => agent
-            .state_change_seq
-            .map(|sequence| format!("{sequence:020}"))
-            .ok_or_else(|| {
-                format!("agent {pane_id} has neither an activity token nor state_change_seq")
-            })?,
-    };
+    let sort_rank = projected_sort_rank(&agent.tokens, &pane_id)?;
+    let activity = projected_activity(&agent, &pane_id)?;
     let state = authoritative_state(&agent);
     let ambient = match agent.ambient.as_ref() {
         Some(raw) => parse_ambient(raw)?,
@@ -287,17 +277,65 @@ fn authoritative_state(agent: &SessionAgentPayload) -> AgentState {
         AgentState::Approval
     } else if present_token(tokens, "status_done_new") {
         AgentState::UnseenCompletion
+    } else if agent.agent_status.as_deref() == Some("blocked") {
+        AgentState::Blocked
     } else if present_token(tokens, "status_working")
         || agent.agent_status.as_deref() == Some("working")
     {
         AgentState::Working
-    } else if present_token(tokens, "status_idle")
-        || matches!(agent.agent_status.as_deref(), Some("idle" | "done"))
+    } else if agent.agent_status.as_deref() == Some("done") {
+        AgentState::UnseenCompletion
+    } else if present_token(tokens, "status_idle") || agent.agent_status.as_deref() == Some("idle")
     {
         AgentState::Idle
     } else {
         AgentState::Unknown
     }
+}
+
+/// Optional presentation tokens come from plugins, not from the Socket API
+/// contract. An agent without one remains visible after explicitly ranked
+/// agents, while a present malformed token is still rejected and reported.
+fn projected_sort_rank(tokens: &BTreeMap<String, Value>, pane_id: &str) -> Result<String, String> {
+    match tokens.get("sort_rank") {
+        None => Ok("99".to_owned()),
+        Some(Value::String(value)) => {
+            let value = value.trim();
+            if value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()) {
+                Ok(value.to_owned())
+            } else {
+                Err(format!("agent {pane_id} has an invalid sort_rank token"))
+            }
+        }
+        Some(_) => Err(format!("agent {pane_id} has an invalid sort_rank token")),
+    }
+}
+
+fn projected_activity(agent: &SessionAgentPayload, pane_id: &str) -> Result<String, String> {
+    match agent.tokens.get("activity") {
+        None => agent
+            .state_change_seq
+            .map(|sequence| format!("{sequence:020}"))
+            .ok_or_else(|| {
+                format!("agent {pane_id} has neither an activity token nor state_change_seq")
+            }),
+        Some(Value::String(value)) => {
+            let value = value.trim();
+            if value.len() == 13 && value.bytes().all(|byte| byte.is_ascii_digit()) {
+                Ok(value.to_owned())
+            } else {
+                Err(format!("agent {pane_id} has an invalid activity token"))
+            }
+        }
+        Some(_) => Err(format!("agent {pane_id} has an invalid activity token")),
+    }
+}
+
+pub(crate) fn requires_close_confirmation(state: &str) -> bool {
+    matches!(
+        state,
+        "working" | "blocked" | "question" | "approval" | "error" | "unseen_completion"
+    )
 }
 
 fn unseen_token(tokens: &BTreeMap<String, Value>, name: &str) -> bool {
@@ -469,6 +507,49 @@ mod tests {
         assert_eq!(projection.agents[0].activity, "00000000000000000218");
         assert_eq!(projection.excluded.len(), 1);
         assert!(projection.excluded[0].reason.contains("invalid activity"));
+    }
+
+    #[test]
+    fn official_statuses_project_without_optional_plugin_tokens() {
+        let projection = project_agents(payload(json!([
+            {"pane_id":"working","agent_status":"working","state_change_seq":1},
+            {"pane_id":"blocked","agent_status":"blocked","state_change_seq":2},
+            {"pane_id":"done","agent_status":"done","state_change_seq":3},
+            {"pane_id":"idle","agent_status":"idle","state_change_seq":4},
+            {"pane_id":"unknown","agent_status":"unknown","state_change_seq":5}
+        ])));
+
+        assert!(projection.excluded.is_empty());
+        let states = projection
+            .agents
+            .iter()
+            .map(|agent| {
+                (
+                    agent.pane_id.as_str(),
+                    (agent.state.as_str(), agent.symbol.as_str()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(states["working"], ("working", "●"));
+        assert_eq!(states["blocked"], ("blocked", "●"));
+        assert_eq!(states["done"], ("unseen_completion", "●"));
+        assert_eq!(states["idle"], ("idle", "○"));
+        assert_eq!(states["unknown"], ("unknown", "~"));
+        assert!(
+            projection
+                .agents
+                .iter()
+                .all(|agent| agent.sort_rank == "99")
+        );
+        assert_eq!(
+            projection
+                .agents
+                .iter()
+                .find(|agent| agent.pane_id == "working")
+                .expect("working agent")
+                .activity,
+            "00000000000000000001"
+        );
     }
 
     #[test]

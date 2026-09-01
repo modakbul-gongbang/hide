@@ -1139,10 +1139,7 @@ impl Runtime {
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
                     && session.agents.iter().any(|agent| {
                         agent.pane_id == pane_id
-                            && matches!(
-                                agent.state.as_str(),
-                                "working" | "question" | "approval" | "error" | "unseen_completion"
-                            )
+                            && crate::sidebar::requires_close_confirmation(&agent.state)
                     });
             if needs_confirmation && !payload.request.confirmed() {
                 self.set_error(
@@ -3641,10 +3638,7 @@ impl Runtime {
             ValidatedEvent::ClosePane(payload) => {
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     agent.pane_id == payload.pane_id
-                        && matches!(
-                            agent.state.as_str(),
-                            "working" | "question" | "approval" | "error" | "unseen_completion"
-                        )
+                        && crate::sidebar::requires_close_confirmation(&agent.state)
                 });
                 if requires_confirmation && !payload.confirmed {
                     self.set_error(

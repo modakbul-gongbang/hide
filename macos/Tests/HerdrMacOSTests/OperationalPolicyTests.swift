@@ -441,7 +441,7 @@ import Testing
 }
 
 @Test func everyAttentionPaneStateRequiresCloseConfirmation() {
-    for state in ["question", "approval", "error", "unseen_completion"] {
+    for state in ["blocked", "question", "approval", "error", "unseen_completion"] {
         let target = DestructiveTarget(
             id: "herdr-ide-verify-\(state)",
             label: "Verification",

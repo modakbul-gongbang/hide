@@ -16,6 +16,7 @@ struct PetDashboardProjectionTests {
             agent("p3", state: "idle"),
             agent("p4", state: "error"),
             agent("p5", state: "question"),
+            agent("p6", state: "blocked"),
         ]
         let projection = PetDashboardProjector.project(
             agents: agents,
@@ -25,16 +26,16 @@ struct PetDashboardProjectionTests {
         )
 
         #expect(projection.counts == PetDashboardCounts(
-            total: 5,
+            total: 6,
             working: 1,
             done: 1,
-            idle: 2,
+            idle: 3,
             error: 1,
             disconnected: 0
         ))
         #expect(projection.groups.map(\.id) == ["w1", "unassigned-agents"])
         #expect(projection.groups[0].agents.map(\.paneID) == ["p1", "p2", "p3", "p4"])
-        #expect(projection.groups[1].agents.map(\.paneID) == ["p5"])
+        #expect(projection.groups[1].agents.map(\.paneID) == ["p5", "p6"])
         #expect(projection.groups[0].agents[0].ambient == ambient)
         #expect(projection.groups[0].agents[1].ambient == nil)
         #expect(projection.groups[0].agents[1].status == "unseen_completion")
@@ -42,6 +43,8 @@ struct PetDashboardProjectionTests {
         #expect(projection.groups[1].agents[0].status == "question")
         #expect(projection.groups[0].agents[3].unseen)
         #expect(projection.groups[1].agents[0].unseen)
+        #expect(projection.groups[1].agents[1].status == "blocked")
+        #expect(projection.groups[1].agents[1].unseen)
 
         let rowFields = Set(Mirror(reflecting: projection.groups[0].agents[0]).children.compactMap(\.label))
         #expect(rowFields == [

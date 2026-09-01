@@ -7,8 +7,12 @@ enum SidebarGrouping {
     /// States in which an agent has stopped and is waiting on the user.
     /// Matches the vocabulary the core publishes in `sidebar.rs`.
     static let attentionStates: Set<String> = [
-        "question", "approval", "error", "unseen_completion",
+        "blocked", "question", "approval", "error", "unseen_completion",
     ]
+
+    static func requiresCloseConfirmation(_ state: String) -> Bool {
+        state == "working" || attentionStates.contains(state)
+    }
 
     /// Agents that are blocked on the user.
     ///

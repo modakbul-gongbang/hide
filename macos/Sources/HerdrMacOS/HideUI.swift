@@ -375,7 +375,7 @@ private struct PetDashboardAgentRow: View {
         case "working": HideTheme.accent
         case "done", "unseen_completion": HideTheme.success
         case "error": HideTheme.danger
-        case "question", "approval": HideTheme.warning
+        case "blocked", "question", "approval": HideTheme.warning
         case "disconnected": HideTheme.warning
         default: HideTheme.secondary
         }
@@ -1084,7 +1084,7 @@ private struct AgentNavigatorRow: View {
     private var stateColor: Color {
         switch agent.state {
         case "working": accent
-        case "question", "approval": HideTheme.warning
+        case "blocked", "question", "approval": HideTheme.warning
         case "error": HideTheme.danger
         case "done", "unseen_completion": HideTheme.success
         default: HideTheme.secondary

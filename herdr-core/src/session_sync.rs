@@ -2515,7 +2515,7 @@ mod tests {
             "agent": "codex",
             "agent_status": "working",
             "state_change_seq": 1,
-            "tokens": {"status_working": "working", "sort_rank": "05"}
+            "tokens": {}
         }]);
         let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
@@ -2549,6 +2549,8 @@ mod tests {
             "remote:mini:pane:w1:p1"
         );
         assert_eq!(projected.agents[0].pane_id, "remote:mini:pane:w1:p1");
+        assert_eq!(projected.agents[0].state, "working");
+        assert_eq!(projected.agents[0].sort_rank, "99");
         assert_eq!(projected.pane_layouts[0].frames[0].x, 0.0);
         assert_eq!(projected.pane_layouts[0].frames[0].width, 1.0);
         assert!(projected.workspaces[0].checkouts[0].exists);

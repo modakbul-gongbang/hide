@@ -778,15 +778,9 @@ struct ConsequenceNotice: Equatable, Identifiable, Sendable {
 }
 
 enum ConsequencePolicy {
-    /// The pane states that make a close destructive. `close_pane` in the core
-    /// requires `confirmed: true` for exactly this set, so the two must agree.
-    private static let attentionStates: Set<String> = [
-        "working", "question", "approval", "error", "unseen_completion",
-    ]
-
     static func notice(kind: DestructiveTargetKind, targets: [DestructiveTarget]) -> ConsequenceNotice {
         let risky = targets.filter { target in
-            attentionStates.contains(target.state)
+            SidebarGrouping.requiresCloseConfirmation(target.state)
         }
         switch kind {
         case .pane:
@@ -813,7 +807,7 @@ enum ConsequencePolicy {
     }
 
     private static func aggregate(_ title: String, _ consequence: String, _ targets: [DestructiveTarget]) -> ConsequenceNotice {
-        let affected = targets.filter { attentionStates.contains($0.state) }
+        let affected = targets.filter { SidebarGrouping.requiresCloseConfirmation($0.state) }
         return ConsequenceNotice(
             title: title,
             consequence: consequence,

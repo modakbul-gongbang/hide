@@ -183,7 +183,7 @@ pub fn summarize(agents: &[SidebarAgentSnapshot], connected: bool) -> PetSummary
         }
         match agent.state.as_str() {
             "error" => summary.error += 1,
-            "question" | "approval" => summary.attention += 1,
+            "question" | "approval" | "blocked" => summary.attention += 1,
             "working" => summary.working += 1,
             "unseen_completion" => summary.done += 1,
             _ => summary.idle += 1,
@@ -214,7 +214,10 @@ pub fn ambient_totals(agents: &[SidebarAgentSnapshot], connected: bool) -> Ambie
 
 /// Whether this agent is one the user has not looked at yet.
 pub fn is_unseen(agent: &SidebarAgentSnapshot) -> bool {
-    matches!(agent.state.as_str(), "question" | "approval" | "error")
+    matches!(
+        agent.state.as_str(),
+        "question" | "approval" | "blocked" | "error"
+    )
 }
 
 /// The unseen panes in click order: the pane whose unseen state was observed
@@ -353,18 +356,19 @@ mod tests {
             agent("a", "error"),
             agent("b", "question"),
             agent("c", "approval"),
-            agent("d", "working"),
-            agent("e", "unseen_completion"),
-            agent("f", "idle"),
-            agent("g", "unknown"),
+            agent("d", "blocked"),
+            agent("e", "working"),
+            agent("f", "unseen_completion"),
+            agent("g", "idle"),
+            agent("h", "unknown"),
         ];
         let summary = summarize(&agents, true);
         assert_eq!(summary.error, 1);
-        assert_eq!(summary.attention, 2);
+        assert_eq!(summary.attention, 3);
         assert_eq!(summary.working, 1);
         assert_eq!(summary.done, 1);
         assert_eq!(summary.idle, 2);
-        assert_eq!(summary.urgent_count(), 3);
+        assert_eq!(summary.urgent_count(), 4);
         assert_eq!(summary.top_status(), "error");
         assert_eq!(summary.total(), agents.len());
     }

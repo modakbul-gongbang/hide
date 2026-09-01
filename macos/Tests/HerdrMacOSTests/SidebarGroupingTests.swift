@@ -42,11 +42,15 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
         agent(id: "d", paneID: "w1:p4", state: "approval"),
         agent(id: "e", paneID: "w1:p5", state: "error"),
         agent(id: "f", paneID: "w1:p6", state: "unseen_completion"),
+        agent(id: "g", paneID: "w1:p7", state: "blocked"),
     ]
 
     // A working or idle agent is visible in its space and is asking the user
     // for nothing, so it never reaches the attention list.
-    #expect(SidebarGrouping.needingAttention(agents).map(\.id) == ["c", "d", "e", "f"])
+    #expect(SidebarGrouping.needingAttention(agents).map(\.id) == ["c", "d", "e", "f", "g"])
+    #expect(SidebarGrouping.requiresCloseConfirmation("working"))
+    #expect(SidebarGrouping.requiresCloseConfirmation("blocked"))
+    #expect(!SidebarGrouping.requiresCloseConfirmation("idle"))
 }
 
 @Test func nothingBlockedLeavesTheAttentionListEmpty() {

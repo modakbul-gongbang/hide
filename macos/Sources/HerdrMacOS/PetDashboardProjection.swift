@@ -118,6 +118,6 @@ enum PetDashboardProjector {
     }
 
     private static func isUnseen(_ state: String) -> Bool {
-        ["question", "approval", "error", "unseen_completion"].contains(state)
+        SidebarGrouping.attentionStates.contains(state)
     }
 }

@@ -464,6 +464,53 @@ fn a_broken_agent_record_excludes_only_itself_and_reports_the_exclusion() {
 }
 
 #[test]
+fn official_agent_statuses_survive_without_optional_plugin_tokens() {
+    let core = create();
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
+            "agents": [
+                {"pane_id":"working","workspace_label":"Fixture","agent":"codex",
+                 "agent_status":"working","state_change_seq":1},
+                {"pane_id":"blocked","workspace_label":"Fixture","agent":"codex",
+                 "agent_status":"blocked","state_change_seq":2},
+                {"pane_id":"done","workspace_label":"Fixture","agent":"codex",
+                 "agent_status":"done","state_change_seq":3}
+            ],
+            "layouts": [single_pane_layout("w1", "working")]
+        }}),
+    );
+
+    let projected = snapshot(core);
+    let agents = projected["navigator"]["agents"]
+        .as_array()
+        .expect("agents array");
+    assert_eq!(agents.len(), 3);
+    let state_for = |pane_id: &str| {
+        agents
+            .iter()
+            .find(|agent| agent["pane_id"] == pane_id)
+            .and_then(|agent| agent["state"].as_str())
+            .expect("projected agent state")
+    };
+    assert_eq!(state_for("working"), "working");
+    assert_eq!(state_for("blocked"), "blocked");
+    assert_eq!(state_for("done"), "unseen_completion");
+    assert_eq!(projected["pet"]["badges"]["working"], 1);
+    assert_eq!(projected["pet"]["badges"]["attention"], 1);
+    assert_eq!(projected["pet"]["badges"]["done"], 1);
+    assert!(
+        projected["status"]["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .iter()
+            .all(|entry| entry["kind"] != "agent.excluded")
+    );
+
+    herdr_core_destroy(core);
+}
+
+#[test]
 fn session_snapshot_exposes_authoritative_recursive_layout_and_per_pane_state() {
     let core = create();
     dispatch(
