@@ -25,6 +25,24 @@ The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls stat
 A background session poller (`live.rs`) polls the herdr server socket once per second and ingests the result; per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
 Everything the shell renders comes from that one snapshot pull; the shell holds no authority.
 
+## Herdr API Contract
+
+Before changing any Herdr integration, read both official references for the Herdr version this repository ships or targets:
+
+- [CLI reference](https://herdr.dev/docs/cli-reference/)
+- [Socket API](https://herdr.dev/docs/socket-api/)
+
+This repository uses both layers, and they are not separate backends: the Herdr CLI is a wrapper over the same local socket API.
+The local live runtime is primarily a raw socket client: `herdr-core/src/live.rs` sends newline-delimited JSON methods such as `session.snapshot`, `pane.layout`, `pane.focus`, and `pane.resize` over the Unix socket.
+CLI wrappers are used where Herdr owns higher-level or streaming behavior, including terminal control/observe sessions, selected pane operations, remote SSH snapshot/attach commands, and contract diagnostics.
+
+Follow the official layer boundary when adding behavior:
+
+- Use CLI wrappers for shell scripts, simple orchestration, human debugging, and portable plugin commands.
+- Use the raw socket API only for custom-client request/response control or long-lived event subscriptions.
+- Do not guess method names, parameters, response fields, or protocol compatibility from existing call sites alone.
+  Check the target binary with `herdr --version` and `herdr api schema --json`, then compare it with `contracts/herdr-api.schema.json` through `scripts/check-herdr-contract.sh` before relying on new behavior.
+
 ## Performance Guide
 
 These rules exist because each one was violated and diagnosed in a real incident (2026-08-30 typing-lag session: main thread spent 47% of wall time waiting on the runtime mutex).
