@@ -358,6 +358,11 @@ struct ShellCommands: Commands {
             }
             .keyboardShortcut("b", modifiers: .command)
 
+            Button("Toggle Sidebar View") {
+                model.toggleSidebarContent()
+            }
+            .keyboardShortcut("e", modifiers: .command)
+
             Button("Toggle Workbench") {
                 model.toggleRightWorkbench()
             }

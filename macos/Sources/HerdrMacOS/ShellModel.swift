@@ -19,6 +19,31 @@ enum ShellSurface: String, CaseIterable, Hashable {
     }
 }
 
+enum SidebarContent: String, CaseIterable, Hashable, Identifiable {
+    case projects
+    case agents
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .projects: "Projects"
+        case .agents: "Agents"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .projects: "square.stack.3d.up"
+        case .agents: "person.2"
+        }
+    }
+
+    var alternate: SidebarContent {
+        self == .projects ? .agents : .projects
+    }
+}
+
 enum PaneSplitDirection: String, Decodable, Equatable, Sendable {
     case right
     case down
@@ -97,6 +122,7 @@ enum HerdrStatusPresentation {
 @MainActor
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
+    @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
     @Published var showNewWorkspace = false
@@ -895,6 +921,17 @@ final class ShellModel: ObservableObject {
 
     func toggleLeftSidebar() {
         core.persistUIState(leftSidebarVisible: !leftSidebarVisible)
+    }
+
+    func showSidebarContent(_ content: SidebarContent) {
+        sidebarContent = content
+        if !leftSidebarVisible {
+            core.persistUIState(leftSidebarVisible: true)
+        }
+    }
+
+    func toggleSidebarContent() {
+        showSidebarContent(sidebarContent.alternate)
     }
 
     func toggleRightWorkbench() {

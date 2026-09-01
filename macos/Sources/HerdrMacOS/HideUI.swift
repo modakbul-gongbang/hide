@@ -441,31 +441,16 @@ private struct HideSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HideBrandHeader()
+            SidebarContentPicker()
             SidebarCommandBar()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // What is blocked comes before where things live, because
-                    // it is the only part the user has to act on.
-                    let waiting = model.agentsNeedingAttention
-                    if !waiting.isEmpty {
-                        HideSectionLabel(title: "Needs You", count: waiting.count)
-                        ForEach(waiting) { agent in
-                            AgentNavigatorRow(agent: agent, showsWorkspace: true)
-                        }
-                    }
-
-                    HideSectionLabel(title: "Projects", count: model.workspaces.count)
-                    if model.workspaces.isEmpty {
-                        EmptySidebarRow(
-                            systemImage: "square.stack.3d.up",
-                            title: "No projects yet",
-                            detail: "Add a folder to create your first project."
-                        )
-                    } else {
-                        ForEach(model.workspaces) { workspace in
-                            WorkspaceNavigatorRow(workspace: workspace)
-                        }
+                    switch model.sidebarContent {
+                    case .projects:
+                        projectsContent
+                    case .agents:
+                        agentsContent
                     }
                 }
                 .padding(.bottom, 14)
@@ -483,6 +468,91 @@ private struct HideSidebar: View {
                 .frame(width: 1)
         }
         .accessibilityIdentifier("hide-sidebar")
+    }
+
+    @ViewBuilder
+    private var projectsContent: some View {
+        // What is blocked comes before where things live, because it is the
+        // only part the user has to act on.
+        let waiting = model.agentsNeedingAttention
+        if !waiting.isEmpty {
+            HideSectionLabel(title: "Needs You", count: waiting.count)
+            ForEach(waiting) { agent in
+                AgentNavigatorRow(agent: agent, showsWorkspace: true)
+            }
+        }
+
+        HideSectionLabel(title: "Projects", count: model.workspaces.count)
+        if model.workspaces.isEmpty {
+            EmptySidebarRow(
+                systemImage: "square.stack.3d.up",
+                title: "No projects yet",
+                detail: "Add a folder to create your first project."
+            )
+        } else {
+            ForEach(model.workspaces) { workspace in
+                WorkspaceNavigatorRow(workspace: workspace)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var agentsContent: some View {
+        HideSectionLabel(title: "Agents", count: model.agents.count)
+        if model.agents.isEmpty {
+            EmptySidebarRow(
+                systemImage: "person.2",
+                title: "No agents running",
+                detail: "Start an agent from a project to see it here."
+            )
+        } else {
+            // The runtime already applies agent-context-labels sort_rank
+            // ascending and activity descending. Preserve that projection.
+            ForEach(model.agents) { agent in
+                AgentNavigatorRow(agent: agent, showsWorkspace: true)
+            }
+        }
+    }
+}
+
+private struct SidebarContentPicker: View {
+    @EnvironmentObject private var model: ShellModel
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(SidebarContent.allCases) { content in
+                Button {
+                    model.showSidebarContent(content)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: content.systemImage)
+                            .hideFont(size: 10, weight: .semibold)
+                        Text(content.title)
+                            .hideFont(size: 10, weight: .semibold)
+                    }
+                    .foregroundStyle(
+                        model.sidebarContent == content ? HideTheme.primary : HideTheme.muted
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 26)
+                    .background(
+                        model.sidebarContent == content ? HideTheme.elevated : Color.clear,
+                        in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Show \(content.title) (⌘E)")
+                .accessibilityIdentifier("hide-sidebar-view-\(content.rawValue)")
+            }
+        }
+        .padding(3)
+        .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
+        .overlay {
+            RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+                .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .accessibilityIdentifier("hide-sidebar-view-switcher")
     }
 }
 

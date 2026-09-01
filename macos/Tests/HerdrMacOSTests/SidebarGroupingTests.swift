@@ -3,6 +3,11 @@ import Testing
 
 @testable import HerdrMacOS
 
+@Test func sidebarContentAlternatesBetweenProjectsAndAgents() {
+    #expect(SidebarContent.projects.alternate == .agents)
+    #expect(SidebarContent.agents.alternate == .projects)
+}
+
 private func agent(id: String, paneID: String, state: String) -> SidebarAgent {
     SidebarAgent(
         id: id,
