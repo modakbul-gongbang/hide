@@ -54,6 +54,41 @@ struct PaneGridPresentationTests {
         #expect(dividers[1].frame.y == 0.6)
     }
 
+    @Test func aDividerKeepsItsIdentityWhileTheSplitItDragsMoves() throws {
+        // `ForEach` recreates a row whose id changed, which during a drag tears
+        // down the gesture mid-flight: the split moved once and then froze.
+        // The id must therefore survive the ratio it is dragging.
+        func dividers(ratio: String) throws -> [PaneGridDivider] {
+            let data = Data(
+                #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p1","zoomed":false,"root":{"type":"split","direction":"right","ratio":RATIO,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"pane","pane_id":"w1:p2"}}}"#
+                    .replacingOccurrences(of: "RATIO", with: ratio).utf8
+            )
+            return PaneGridPresentation.dividers(
+                layout: try JSONDecoder().decode(CorePaneLayoutSnapshot.self, from: data)
+            )
+        }
+
+        let before = try dividers(ratio: "0.5")
+        let after = try dividers(ratio: "0.62")
+
+        #expect(before.map(\.id) == after.map(\.id))
+        #expect(before[0].frame.x != after[0].frame.x)
+    }
+
+    @Test func everyDividerInANestedLayoutCarriesItsOwnIdentity() throws {
+        // Dropping the frame from the id is only safe while what remains still
+        // separates the dividers of one layout.
+        let data = Data(
+            #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p1","zoomed":false,"root":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"split","direction":"down","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"pane","pane_id":"w1:p2"}},"second":{"type":"split","direction":"down","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p3"},"second":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p4"},"second":{"type":"pane","pane_id":"w1:p5"}}}}}"#.utf8
+        )
+        let layout = try JSONDecoder().decode(CorePaneLayoutSnapshot.self, from: data)
+
+        let dividers = PaneGridPresentation.dividers(layout: layout)
+
+        #expect(dividers.count == 4)
+        #expect(Set(dividers.map(\.id)).count == dividers.count)
+    }
+
     @Test func zoomRetainsEveryPaneViewInsteadOfRecreatingHiddenTerminals() throws {
         let data = Data(
             #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p2","zoomed":true,"root":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"pane","pane_id":"w1:p2"}}}"#.utf8

@@ -470,7 +470,10 @@ struct PaneGridDivider: Equatable, Identifiable {
     let axis: Axis
     let frame: PaneGridFrame
 
-    var id: String { "\(paneID)-\(axis == .vertical ? "v" : "h")-\(frame.x)-\(frame.y)" }
+    /// Deliberately free of the frame: a divider keeps its identity while it
+    /// moves. Deriving the id from the position recreated the handle on every
+    /// resize step, which tore down the drag gesture that asked for it.
+    var id: String { "\(paneID)-\(axis == .vertical ? "v" : "h")" }
 }
 
 /// The single pane placement surface used by local and remote terminals.
@@ -496,7 +499,7 @@ struct HideTerminalGrid<Content: View>: View {
                 ForEach(items, id: \.paneID) { item in
                     let frame = item.visualFrame
                     content(item)
-                        .padding(4)
+                        .padding(HideTheme.spacingXS)
                         .frame(
                             width: geometry.size.width * CGFloat(frame.width),
                             height: geometry.size.height * CGFloat(frame.height)
@@ -516,10 +519,15 @@ struct HideTerminalGrid<Content: View>: View {
                 transaction.animation = nil
             }
         }
-        .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+/// The drag has to be measured against something that does not move. A handle
+/// travels with the split it is resizing, so a gesture in the default local
+/// space reports a translation that cancels itself out as soon as the first
+/// step lands.
+private let paneLayoutDragSpace = "pane-layout-canvas"
 
 struct PaneLayoutCanvas<Content: View>: View {
     let items: [PaneGridItem]
@@ -541,18 +549,23 @@ struct PaneLayoutCanvas<Content: View>: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                HideTerminalGrid(items: items, content: content)
+        ZStack {
+            HideTerminalGrid(items: items, content: content)
+            GeometryReader { geometry in
                 ForEach(dividers) { divider in
                     PaneResizeHandle(
                         divider: divider,
                         canvasSize: geometry.size,
+                        dragSpace: paneLayoutDragSpace,
                         onResize: onResize
                     )
                 }
             }
         }
+        // One inset for both layers: the handles land on the gaps the grid
+        // draws only while they measure the same rectangle.
+        .padding(HideTheme.spacingSM)
+        .coordinateSpace(name: paneLayoutDragSpace)
     }
 }
 
@@ -587,6 +600,7 @@ enum PaneResizeDragPolicy {
 private struct PaneResizeHandle: View {
     let divider: PaneGridDivider
     let canvasSize: CGSize
+    let dragSpace: String
     let onResize: (String, PaneResizeDirection, Double) -> Void
 
     @State private var isHovering = false
@@ -615,7 +629,8 @@ private struct PaneResizeHandle: View {
             // and places the content inside, so a gesture attached after it
             // answers across the whole canvas rather than on this strip.
             .contentShape(Rectangle())
-            .onHover(perform: hover)
+            .overlay { PaneResizeCursorArea(cursor: isVertical ? .resizeLeftRight : .resizeUpDown) }
+            .onHover { isHovering = $0 }
             .gesture(dragGesture)
             .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
             .accessibilityLabel(isVertical ? "Resize pane width" : "Resize pane height")
@@ -640,7 +655,7 @@ private struct PaneResizeHandle: View {
     }
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: HideTheme.spacingXXS)
+        DragGesture(minimumDistance: HideTheme.spacingXXS, coordinateSpace: .named(dragSpace))
             .onChanged { value in
                 isDragging = true
                 applyStep(travelling: value.translation)
@@ -649,7 +664,6 @@ private struct PaneResizeHandle: View {
                 applyStep(travelling: value.translation)
                 isDragging = false
                 appliedTravel = 0
-                if !isHovering { setCursor(active: false) }
             }
     }
 
@@ -667,22 +681,39 @@ private struct PaneResizeHandle: View {
         appliedTravel = travel
         onResize(divider.paneID, step.direction, step.amount)
     }
+}
 
-    private func hover(_ hovering: Bool) {
-        isHovering = hovering
-        // A drag that wandered off the strip still owns the cursor; leave it.
-        guard !isDragging else { return }
-        setCursor(active: hovering)
+/// The resize cursor, claimed through AppKit rather than `NSCursor.push()`.
+///
+/// The strip lies over SwiftTerm, whose `resetCursorRects` claims the I-beam
+/// across its whole bounds. AppKit resolves those rects as the pointer moves,
+/// so a cursor pushed from `.onHover` was overwritten on the next mouse-moved
+/// and the pointer flickered between the arrows and the I-beam. A cursor rect
+/// on a view above the terminal wins that resolution instead of racing it.
+private struct PaneResizeCursorArea: NSViewRepresentable {
+    let cursor: NSCursor
+
+    func makeNSView(context: Context) -> CursorArea {
+        let view = CursorArea()
+        view.cursor = cursor
+        return view
     }
 
-    /// `push`/`pop` rather than `set`, because the pointer leaving a view does
-    /// not restore the cursor on its own and every other surface would keep the
-    /// resize arrows.
-    private func setCursor(active: Bool) {
-        if active {
-            (isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
-        } else {
-            NSCursor.pop()
+    func updateNSView(_ view: CursorArea, context: Context) {
+        guard view.cursor != cursor else { return }
+        view.cursor = cursor
+        view.window?.invalidateCursorRects(for: view)
+    }
+
+    final class CursorArea: NSView {
+        var cursor: NSCursor = .arrow
+
+        /// Transparent to the mouse: the drag belongs to the SwiftUI gesture
+        /// above it, and cursor rects are resolved without hit testing.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: cursor)
         }
     }
 }
