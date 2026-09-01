@@ -2040,6 +2040,28 @@ impl Runtime {
             .pane_layout
             .as_ref()
             .map(|layout| layout.tab_id.clone());
+        let previously_projected_in_focused_checkout =
+            previously_projected_pane.as_deref().is_some_and(|pane_id| {
+                self.snapshot
+                    .navigator
+                    .focused_checkout_id
+                    .as_deref()
+                    .and_then(|checkout_id| {
+                        self.snapshot
+                            .navigator
+                            .workspaces
+                            .iter()
+                            .flat_map(|workspace| workspace.checkouts.iter())
+                            .find(|checkout| checkout.id == checkout_id)
+                    })
+                    .is_some_and(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| tab.panes.iter())
+                            .any(|pane| pane.id == pane_id)
+                    })
+            });
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -2106,8 +2128,8 @@ impl Runtime {
                         .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
                 });
                 let selected_pane_missing = selected_pane_id.is_some() && !selected_still_exists;
-                let selected_was_projected =
-                    selected_pane_id.as_deref() == previously_projected_pane.as_deref();
+                let selected_was_projected = previously_projected_in_focused_checkout
+                    && selected_pane_id.as_deref() == previously_projected_pane.as_deref();
                 let selected_left_focused_checkout =
                     selected_pane_id.as_deref().is_some_and(|pane_id| {
                         focused_checkout.is_some() && !focused_checkout_pane_set.contains(pane_id)
@@ -6330,14 +6352,25 @@ mod tests {
             path: checkout_path.to_owned(),
             device_id: "local".to_owned(),
         };
-        let selected_workspace = workspace(
+        let previous_workspace = workspace(
+            &workspace_id,
+            "Closed pane",
+            checkout_path,
+            vec![checkout(
+                &workspace_id,
+                &checkout_id,
+                checkout_path,
+                Some(pane("w-close:p1", checkout_path)),
+            )],
+        );
+        let current_workspace = workspace(
             &workspace_id,
             "Closed pane",
             checkout_path,
             vec![checkout(&workspace_id, &checkout_id, checkout_path, None)],
         );
         runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
-        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.workspaces = vec![previous_workspace];
         runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
@@ -6378,7 +6411,7 @@ mod tests {
             Ok(payload),
             Some(session_sync::PrecomputedCatalog {
                 registrations: vec![registration],
-                workspaces: vec![selected_workspace],
+                workspaces: vec![current_workspace],
             }),
         ));
         assert_eq!(
@@ -6412,14 +6445,25 @@ mod tests {
             path: checkout_path.to_owned(),
             device_id: "local".to_owned(),
         };
-        let selected_workspace = workspace(
+        let previous_workspace = workspace(
+            &workspace_id,
+            "Last pane",
+            checkout_path,
+            vec![checkout(
+                &workspace_id,
+                &checkout_id,
+                checkout_path,
+                Some(pane("w-last:p1", checkout_path)),
+            )],
+        );
+        let current_workspace = workspace(
             &workspace_id,
             "Last pane",
             checkout_path,
             vec![checkout(&workspace_id, &checkout_id, checkout_path, None)],
         );
         runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
-        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.workspaces = vec![previous_workspace];
         runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id);
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
@@ -6454,7 +6498,7 @@ mod tests {
             Ok(payload),
             Some(session_sync::PrecomputedCatalog {
                 registrations: vec![registration],
-                workspaces: vec![selected_workspace],
+                workspaces: vec![current_workspace],
             }),
         ));
         assert_eq!(runtime.snapshot().terminal.pane_id, None);
