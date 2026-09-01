@@ -240,6 +240,18 @@ fn remote_workspace_source_id<'a>(target_id: &str, projected_id: &'a str) -> Opt
         .filter(|workspace_id| !workspace_id.trim().is_empty())
 }
 
+fn remote_tab_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
+    projected_id
+        .strip_prefix(&format!("remote:{target_id}:tab:"))
+        .filter(|tab_id| !tab_id.trim().is_empty())
+}
+
+fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
+    projected_id
+        .strip_prefix(&format!("remote:{target_id}:pane:"))
+        .filter(|pane_id| !pane_id.trim().is_empty())
+}
+
 fn remote_tab_creation_key(
     target_id: &str,
     action: &RemoteControlAction,
@@ -767,6 +779,7 @@ impl Runtime {
             );
             return true;
         };
+        let mut source_pane_id = None;
         if let Some(pane_id) = payload.request.pane_id().map(str::to_owned) {
             if pane_id.trim().is_empty() {
                 self.set_error(
@@ -788,6 +801,15 @@ impl Runtime {
                 self.set_error(
                     "remote.control.pane_not_found",
                     format!("Pane {pane_id} does not belong to remote target {target_id}"),
+                    false,
+                );
+                return true;
+            }
+            source_pane_id = remote_pane_source_id(&target_id, &pane_id).map(str::to_owned);
+            if source_pane_id.is_none() {
+                self.set_error(
+                    "remote.control.invalid_pane_scope",
+                    format!("Pane {pane_id} is not scoped to remote target {target_id}"),
                     false,
                 );
                 return true;
@@ -814,23 +836,27 @@ impl Runtime {
         }
 
         let action = match payload.request {
-            RemoteControlRequest::FocusPane { pane_id } => {
-                RemoteControlAction::Pane(PaneControlAction::Focus { pane_id })
+            RemoteControlRequest::FocusPane { .. } => {
+                RemoteControlAction::Pane(PaneControlAction::Focus {
+                    pane_id: source_pane_id.expect("remote pane source id was validated"),
+                })
             }
-            RemoteControlRequest::SplitPane {
-                pane_id,
-                direction,
-                cwd,
-            } => RemoteControlAction::Pane(PaneControlAction::Split {
-                pane_id,
-                direction,
-                cwd,
-            }),
-            RemoteControlRequest::TogglePaneZoom { pane_id } => {
-                RemoteControlAction::Pane(PaneControlAction::ToggleZoom { pane_id })
+            RemoteControlRequest::SplitPane { direction, cwd, .. } => {
+                RemoteControlAction::Pane(PaneControlAction::Split {
+                    pane_id: source_pane_id.expect("remote pane source id was validated"),
+                    direction,
+                    cwd,
+                })
             }
-            RemoteControlRequest::ClosePane { pane_id, .. } => {
-                RemoteControlAction::Pane(PaneControlAction::Close { pane_id })
+            RemoteControlRequest::TogglePaneZoom { .. } => {
+                RemoteControlAction::Pane(PaneControlAction::ToggleZoom {
+                    pane_id: source_pane_id.expect("remote pane source id was validated"),
+                })
+            }
+            RemoteControlRequest::ClosePane { .. } => {
+                RemoteControlAction::Pane(PaneControlAction::Close {
+                    pane_id: source_pane_id.expect("remote pane source id was validated"),
+                })
             }
             RemoteControlRequest::FocusWorkspace { workspace_id } => {
                 let Some(source_id) = session
@@ -871,7 +897,17 @@ impl Runtime {
                     );
                     return true;
                 }
-                RemoteControlAction::FocusTab { tab_id }
+                let Some(source_id) = remote_tab_source_id(&target_id, &tab_id) else {
+                    self.set_error(
+                        "remote.control.invalid_tab_scope",
+                        format!("Tab {tab_id} is not scoped to remote target {target_id}"),
+                        false,
+                    );
+                    return true;
+                };
+                RemoteControlAction::FocusTab {
+                    tab_id: source_id.to_owned(),
+                }
             }
             RemoteControlRequest::CreateTab {
                 workspace_id,

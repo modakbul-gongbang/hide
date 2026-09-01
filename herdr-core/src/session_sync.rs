@@ -1029,9 +1029,6 @@ impl SessionReplica {
     {
         let agent_projection = crate::sidebar::project_agents(self.project());
         let mut agents = agent_projection.agents;
-        for agent in &mut agents {
-            agent.id = format!("remote:{target_id}:{}", agent.pane_id);
-        }
 
         let mut pane_layouts = Vec::with_capacity(self.state.layouts.len());
         for layout in &self.state.layouts {
@@ -1068,10 +1065,16 @@ impl SessionReplica {
             }
             pane_layouts.push(RemotePaneLayoutSnapshot {
                 workspace_id: remote_workspace_id(target_id, &layout.workspace_id),
-                tab_id: layout.tab_id.clone(),
-                focused_pane_id: layout.focused_pane_id.clone(),
+                tab_id: remote_tab_id(target_id, &layout.tab_id),
+                focused_pane_id: remote_pane_id(target_id, &layout.focused_pane_id),
                 zoomed: layout.zoomed,
-                frames,
+                frames: frames
+                    .into_iter()
+                    .map(|mut frame| {
+                        frame.pane_id = remote_pane_id(target_id, &frame.pane_id);
+                        frame
+                    })
+                    .collect(),
             });
         }
 
@@ -1116,7 +1119,7 @@ impl SessionReplica {
                                 let agent =
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
-                                    id: pane.pane_id.clone(),
+                                    id: remote_pane_id(target_id, &pane.pane_id),
                                     label: pane
                                         .terminal_title_stripped
                                         .as_deref()
@@ -1141,7 +1144,7 @@ impl SessionReplica {
                             })
                             .collect::<Vec<_>>();
                         TabSnapshot {
-                            id: Some(tab.tab_id.clone()),
+                            id: Some(remote_tab_id(target_id, &tab.tab_id)),
                             workspace_id: Some(workspace_id.clone()),
                             checkout_id: Some(checkout_id.clone()),
                             label: Some(tab.label.clone()),
@@ -1186,6 +1189,12 @@ impl SessionReplica {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
+        for agent in &mut agents {
+            let source_pane_id = agent.pane_id.clone();
+            agent.id = format!("remote:{target_id}:agent:{source_pane_id}");
+            agent.pane_id = remote_pane_id(target_id, &source_pane_id);
+        }
+
         let active_tab_ids = self
             .state
             .workspaces
@@ -1193,7 +1202,7 @@ impl SessionReplica {
             .map(|workspace| {
                 (
                     remote_workspace_id(target_id, &workspace.workspace_id),
-                    workspace.active_tab_id.clone(),
+                    remote_tab_id(target_id, &workspace.active_tab_id),
                 )
             })
             .collect();
@@ -1207,7 +1216,7 @@ impl SessionReplica {
             focused.map(|pane| remote_workspace_id(target_id, &pane.workspace_id));
         let focused_checkout_id =
             focused.map(|pane| remote_checkout_id(target_id, &pane.workspace_id));
-        let focused_tab_id = focused.map(|pane| pane.tab_id.clone());
+        let focused_tab_id = focused.map(|pane| remote_tab_id(target_id, &pane.tab_id));
 
         Ok((
             RemoteSessionSnapshot {
@@ -1217,7 +1226,11 @@ impl SessionReplica {
                 focused_workspace_id,
                 focused_checkout_id,
                 focused_tab_id,
-                focused_pane_id: self.state.focused_pane_id.clone(),
+                focused_pane_id: self
+                    .state
+                    .focused_pane_id
+                    .as_deref()
+                    .map(|pane_id| remote_pane_id(target_id, pane_id)),
                 pane_layouts,
             },
             agent_projection.excluded,
@@ -1982,6 +1995,14 @@ fn remote_checkout_id(target_id: &str, workspace_id: &str) -> String {
     format!("remote:{target_id}:checkout:{workspace_id}")
 }
 
+fn remote_tab_id(target_id: &str, tab_id: &str) -> String {
+    format!("remote:{target_id}:tab:{tab_id}")
+}
+
+fn remote_pane_id(target_id: &str, pane_id: &str) -> String {
+    format!("remote:{target_id}:pane:{pane_id}")
+}
+
 fn unique_ids<'a>(
     kind: &str,
     ids: impl Iterator<Item = &'a str>,
@@ -2486,7 +2507,17 @@ mod tests {
 
     #[test]
     fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
-        let replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let mut value = snapshot();
+        value["agents"] = json!([{
+            "pane_id": "w1:p1",
+            "workspace_id": "w1",
+            "tab_id": "w1:t1",
+            "agent": "codex",
+            "agent_status": "working",
+            "state_change_seq": 1,
+            "tokens": {"status_working": "working", "sort_rank": "05"}
+        }]);
+        let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
         let (projected, excluded) = replica.project_remote("mini").expect("remote projection");
 
@@ -2501,8 +2532,23 @@ mod tests {
             projected.focused_workspace_id.as_deref(),
             Some("remote:mini:workspace:w1")
         );
-        assert_eq!(projected.focused_tab_id.as_deref(), Some("w1:t1"));
-        assert_eq!(projected.focused_pane_id.as_deref(), Some("w1:p1"));
+        assert_eq!(
+            projected.focused_tab_id.as_deref(),
+            Some("remote:mini:tab:w1:t1")
+        );
+        assert_eq!(
+            projected.focused_pane_id.as_deref(),
+            Some("remote:mini:pane:w1:p1")
+        );
+        assert_eq!(
+            projected.workspaces[0].checkouts[0].tabs[0].id.as_deref(),
+            Some("remote:mini:tab:w1:t1")
+        );
+        assert_eq!(
+            projected.workspaces[0].checkouts[0].tabs[0].panes[0].id,
+            "remote:mini:pane:w1:p1"
+        );
+        assert_eq!(projected.agents[0].pane_id, "remote:mini:pane:w1:p1");
         assert_eq!(projected.pane_layouts[0].frames[0].x, 0.0);
         assert_eq!(projected.pane_layouts[0].frames[0].width, 1.0);
         assert!(projected.workspaces[0].checkouts[0].exists);
@@ -2511,7 +2557,21 @@ mod tests {
                 .active_tab_ids
                 .get("remote:mini:workspace:w1")
                 .map(String::as_str),
-            Some("w1:t1")
+            Some("remote:mini:tab:w1:t1")
+        );
+
+        let (other_target, _) = replica.project_remote("build-mini").expect("other target");
+        assert_ne!(
+            projected.focused_tab_id, other_target.focused_tab_id,
+            "the same remote tab id must not collide across targets"
+        );
+        assert_ne!(
+            projected.focused_pane_id, other_target.focused_pane_id,
+            "the same remote pane id must not collide across targets"
+        );
+        assert_ne!(
+            projected.agents[0].pane_id, other_target.agents[0].pane_id,
+            "agent routing follows the target-scoped pane identity"
         );
     }
 
