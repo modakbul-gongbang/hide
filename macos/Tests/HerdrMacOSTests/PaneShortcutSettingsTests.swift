@@ -227,6 +227,41 @@ struct PaneShortcutSettingsTests {
         #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(forward))
     }
 
+    @Test func tabKeyUpFallbackCommitsOnlyAfterTheGlobalControlFlagClears() {
+        // Accessibility synthesis can leave Control on the Tab keyUp event
+        // while the actual global modifier state is already released.
+        let tabKeyUp = keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.control]
+        )
+        #expect(PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
+            tabKeyUp,
+            currentModifiers: []
+        ))
+        #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
+            tabKeyUp,
+            currentModifiers: [.control]
+        ))
+
+        let tabKeyDown = keyEvent(characters: "\t", keyCode: 48, modifiers: [.control])
+        let anotherKeyUp = keyEvent(
+            type: .keyUp,
+            characters: "a",
+            keyCode: 0,
+            modifiers: []
+        )
+        #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
+            tabKeyDown,
+            currentModifiers: []
+        ))
+        #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
+            anotherKeyUp,
+            currentModifiers: []
+        ))
+    }
+
     @Test func ordinaryScrollRoutesLocallyWhileOptionScrollKeepsTerminalMouseReporting() {
         let ordinary = scrollEvent(deltaY: 3, modifiers: [.capsLock])
         let option = scrollEvent(deltaY: 3, modifiers: [.option, .capsLock])
@@ -318,12 +353,13 @@ struct PaneShortcutSettingsTests {
     }
 
     private func keyEvent(
+        type: NSEvent.EventType = .keyDown,
         characters: String,
         keyCode: UInt16,
         modifiers: NSEvent.ModifierFlags
     ) -> NSEvent {
         NSEvent.keyEvent(
-            with: .keyDown,
+            with: type,
             location: .zero,
             modifierFlags: modifiers,
             timestamp: 0,

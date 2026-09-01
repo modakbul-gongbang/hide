@@ -66,7 +66,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: content)
         window.center()
         mainWindow = window
-        paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             // The reverse chord is checked first: it is the forward chord plus
             // Shift, so testing forward first would swallow it.
@@ -99,6 +99,27 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                     agent: self.model.agentSwitcherCycle != nil,
                     tab: self.model.tabSwitcherCycle != nil
                 )
+            }
+            if event.type == .keyUp,
+               event.keyCode == 48,
+               activeSwitchers.tab
+            {
+                // A real Control release arrives as flagsChanged below. Some
+                // accessibility synthesizers omit that event, so re-check the
+                // authoritative global flags after their chord finishes.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    guard let self, self.model.tabSwitcherCycle != nil else { return }
+                    let globalModifiers = NSEvent.ModifierFlags(
+                        rawValue: UInt(CGEventSource.flagsState(.combinedSessionState).rawValue)
+                    )
+                    if PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
+                        event,
+                        currentModifiers: globalModifiers
+                    ) {
+                        self.model.commitTabSwitcher()
+                    }
+                }
+                return nil
             }
             if event.type == .keyDown,
                event.keyCode == 53,

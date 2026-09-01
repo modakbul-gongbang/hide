@@ -269,6 +269,19 @@ enum PaneKeyEventPolicy {
             && event.keyCode == 48
             && event.modifierFlags.intersection(chordModifiers) == [.control, .shift]
     }
+
+    /// Accessibility synthesizers can emit the Tab key pair with Control in
+    /// each event but omit the later Control flagsChanged event. The global
+    /// modifier state is authoritative for that release fallback. A physical
+    /// user holding Control keeps the switcher open and continues cycling.
+    static func shouldCommitTabSwitcherAfterKeyUp(
+        _ event: NSEvent,
+        currentModifiers: NSEvent.ModifierFlags
+    ) -> Bool {
+        event.type == .keyUp
+            && event.keyCode == 48
+            && !currentModifiers.contains(.control)
+    }
 }
 
 enum PaneMenuPolicy {
