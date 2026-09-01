@@ -37,6 +37,9 @@ enum HideTheme {
     enum Layout {
         static let hairlineWidth: CGFloat = 1
         static let resizeHandleThickness: CGFloat = 2
+        /// The strip that answers the pointer. Wider than the 2pt marker it
+        /// draws, because a divider has to be easy to grab, not easy to see.
+        static let resizeHandleGrabWidth: CGFloat = 20
         static let panelCollapseControlSize: CGFloat = 18
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292

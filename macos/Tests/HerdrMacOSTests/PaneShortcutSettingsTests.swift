@@ -379,3 +379,58 @@ struct TerminalViewLookupTests {
         #expect(found === pane)
     }
 }
+
+@Suite("Pane divider drag")
+struct PaneResizeDragPolicyTests {
+    @Test func aDragMovesTheSplitByEachStepRatherThanItsWholeTravel() {
+        // Two steps of the same drag: the second must report only the travel
+        // since the first, or the split would move 30pt after covering 20.
+        let first = PaneResizeDragPolicy.step(
+            travel: 10, appliedTravel: 0, span: 1_000, isVertical: true
+        )
+        let second = PaneResizeDragPolicy.step(
+            travel: 20, appliedTravel: 10, span: 1_000, isVertical: true
+        )
+
+        #expect(first?.amount == 0.01)
+        #expect(second?.amount == 0.01)
+        #expect(first?.direction == .right)
+        #expect(second?.direction == .right)
+    }
+
+    @Test func aMoveTooSmallToSeeIsNotSent() {
+        #expect(
+            PaneResizeDragPolicy.step(
+                travel: 2, appliedTravel: 0, span: 1_000, isVertical: true
+            ) == nil
+        )
+    }
+
+    @Test func directionFollowsTheAxisAndTheSignOfTheStep() {
+        #expect(
+            PaneResizeDragPolicy.step(
+                travel: -10, appliedTravel: 0, span: 1_000, isVertical: true
+            )?.direction == .left
+        )
+        #expect(
+            PaneResizeDragPolicy.step(
+                travel: 10, appliedTravel: 0, span: 1_000, isVertical: false
+            )?.direction == .down
+        )
+        #expect(
+            PaneResizeDragPolicy.step(
+                travel: -10, appliedTravel: 0, span: 1_000, isVertical: false
+            )?.direction == .up
+        )
+    }
+
+    @Test func aZeroSpanCannotDivideAndStillReportsAStep() {
+        // Guards the max(span, 1) floor: a canvas measured before layout must
+        // not produce a division by zero.
+        #expect(
+            PaneResizeDragPolicy.step(
+                travel: 10, appliedTravel: 0, span: 0, isVertical: true
+            )?.amount == 0.5
+        )
+    }
+}

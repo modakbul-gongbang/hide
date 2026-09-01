@@ -557,6 +557,31 @@ struct PaneLayoutCanvas<Content: View>: View {
 /// The grab strip between two panes. It is transparent so it does not draw a
 /// line the layout never asked for, which also means nothing tells the pointer
 /// it can resize here - hence the hover paint and the resize cursor.
+/// Turns an in-flight divider drag into the next resize step.
+///
+/// Each step reports only the travel since the one before it: the split moves
+/// while the pointer does, so sending the whole translation every time would
+/// compound it into a runaway resize.
+enum PaneResizeDragPolicy {
+    /// Below this fraction of the canvas a step is not worth a round trip -
+    /// it is a move the eye cannot see.
+    static let minimumStep = 0.005
+
+    static func step(
+        travel: CGFloat,
+        appliedTravel: CGFloat,
+        span: CGFloat,
+        isVertical: Bool
+    ) -> (direction: PaneResizeDirection, amount: Double)? {
+        let delta = Double((travel - appliedTravel) / max(span, 1))
+        guard abs(delta) >= minimumStep else { return nil }
+        let direction: PaneResizeDirection = isVertical
+            ? (delta > 0 ? .right : .left)
+            : (delta > 0 ? .down : .up)
+        return (direction, min(abs(delta), 0.5))
+    }
+}
+
 private struct PaneResizeHandle: View {
     let divider: PaneGridDivider
     let canvasSize: CGSize
@@ -564,16 +589,18 @@ private struct PaneResizeHandle: View {
 
     @State private var isHovering = false
     @State private var isDragging = false
+    /// How far the drag had travelled when the last step was sent.
+    @State private var appliedTravel: CGFloat = 0
 
     private var isVertical: Bool { divider.axis == .vertical }
     private var isActive: Bool { isHovering || isDragging }
 
     private var handleWidth: CGFloat {
-        isVertical ? HideTheme.spacingMD : canvasSize.width * CGFloat(divider.frame.width)
+        isVertical ? HideTheme.Layout.resizeHandleGrabWidth : canvasSize.width * CGFloat(divider.frame.width)
     }
 
     private var handleHeight: CGFloat {
-        isVertical ? canvasSize.height * CGFloat(divider.frame.height) : HideTheme.spacingMD
+        isVertical ? canvasSize.height * CGFloat(divider.frame.height) : HideTheme.Layout.resizeHandleGrabWidth
     }
 
     var body: some View {
@@ -612,19 +639,31 @@ private struct PaneResizeHandle: View {
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: HideTheme.spacingXXS)
-            .onChanged { _ in isDragging = true }
-            .onEnded { value in
-                isDragging = false
-                if !isHovering { setCursor(active: false) }
-                let span = isVertical ? canvasSize.width : canvasSize.height
-                let travel = isVertical ? value.translation.width : value.translation.height
-                let delta = Double(travel / max(span, 1))
-                guard abs(delta) >= 0.001 else { return }
-                let direction: PaneResizeDirection = isVertical
-                    ? (delta > 0 ? .right : .left)
-                    : (delta > 0 ? .down : .up)
-                onResize(divider.paneID, direction, min(abs(delta), 0.5))
+            .onChanged { value in
+                isDragging = true
+                applyStep(travelling: value.translation)
             }
+            .onEnded { value in
+                applyStep(travelling: value.translation)
+                isDragging = false
+                appliedTravel = 0
+                if !isHovering { setCursor(active: false) }
+            }
+    }
+
+    /// Moves the split by however far the pointer has come since the last step
+    /// that was applied, so the panes follow the drag instead of jumping when
+    /// it is released.
+    private func applyStep(travelling translation: CGSize) {
+        let travel = isVertical ? translation.width : translation.height
+        guard let step = PaneResizeDragPolicy.step(
+            travel: travel,
+            appliedTravel: appliedTravel,
+            span: isVertical ? canvasSize.width : canvasSize.height,
+            isVertical: isVertical
+        ) else { return }
+        appliedTravel = travel
+        onResize(divider.paneID, step.direction, step.amount)
     }
 
     private func hover(_ hovering: Bool) {
