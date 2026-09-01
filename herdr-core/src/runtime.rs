@@ -2841,6 +2841,20 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
+                if matches!(action, RemoteControlAction::CreateTab { .. })
+                    && let Some(pane_id) = created_pane_id.as_ref()
+                {
+                    // tab.create returns the authoritative root pane before
+                    // the ordered event projection catches up. Preserve that
+                    // focus intent so the next snapshot cannot retain the old
+                    // tab merely because its pane still exists.
+                    self.snapshot.terminal.pane_id = Some(pane_id.clone());
+                    self.snapshot.focused.surface = Surface::Terminal;
+                    self.snapshot.focused.pane_id = Some(pane_id.clone());
+                    self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
+                    self.deactivate_file_tab();
+                    self.persist_current_ui_state();
+                }
                 self.push_diagnostic(
                     "tab.control.ready",
                     format!(
@@ -3218,13 +3232,10 @@ impl Runtime {
                 return true;
             }
         };
-        if self.snapshot.ui_state.workspace_registrations == outcome.base_registrations {
+        let catalog_inputs_match =
+            self.snapshot.ui_state.workspace_registrations == outcome.base_registrations;
+        if catalog_inputs_match {
             self.snapshot.ui_state.workspace_registrations = outcome.registrations;
-            self.snapshot.navigator.workspaces = outcome.workspaces;
-            Self::apply_workspace_expansion(
-                &mut self.snapshot.navigator.workspaces,
-                &self.snapshot.ui_state.collapsed_workspace_ids,
-            );
         } else if !self
             .snapshot
             .ui_state
@@ -3243,18 +3254,36 @@ impl Runtime {
         }
         self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
         self.reconcile_remote_terminal_selection();
-        if let Some(checkout_id) = self
-            .snapshot
-            .navigator
+        let target_checkout = outcome
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == outcome.registration.id)
-            .and_then(|workspace| workspace.checkouts.first())
-            .map(|checkout| checkout.id.clone())
-        {
-            self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.path == outcome.registration.path);
+        if let Some(checkout) = target_checkout {
+            self.snapshot.navigator.focused_checkout_id = Some(checkout.id.clone());
+            self.snapshot.ui_state.focused_checkout_id = Some(checkout.id.clone());
         }
-        self.resync_navigator_focus();
+        let target_pane_id = outcome.created_pane_id.clone().or_else(|| {
+            target_checkout
+                .and_then(|checkout| checkout.tabs.first())
+                .and_then(|tab| tab.panes.first())
+                .map(|pane| pane.id.clone())
+        });
+        if catalog_inputs_match {
+            self.reset_terminal_projection(target_pane_id);
+            self.ingest_session_with_catalog(
+                Ok(outcome.session),
+                Some(session_sync::PrecomputedCatalog {
+                    registrations: self.snapshot.ui_state.workspace_registrations.clone(),
+                    workspaces: outcome.workspaces,
+                }),
+            );
+        } else {
+            self.push_diagnostic(
+                "workspace.session.refresh_pending",
+                "Workspace creation completed after registrations changed; session sync will publish the authoritative catalog",
+            );
+        }
         self.persist_current_ui_state();
         let git_init_failed = outcome.git_init_error.is_some();
         if let Some(message) = outcome.git_init_error.as_ref() {
@@ -3508,7 +3537,6 @@ impl Runtime {
                         payload.label,
                         payload.initialize_git,
                         self.snapshot.ui_state.workspace_registrations.clone(),
-                        self.last_session_spaces.clone(),
                     );
                     if let Err(message) = result {
                         self.workspace_creations_in_flight.remove(&path);
@@ -3521,63 +3549,10 @@ impl Runtime {
                     }
                     return true;
                 }
-                let registration = match workspace::registration(
-                    &payload.path,
-                    &payload.label,
-                    workspace::LOCAL_DEVICE_ID,
-                ) {
-                    Ok(registration) => registration,
-                    Err(message) => {
-                        self.set_error("workspace.invalid", message, false);
-                        return true;
-                    }
-                };
-                let path = Path::new(&registration.path);
-                if !path.exists() {
-                    self.set_error(
-                        "workspace.path_missing",
-                        format!("Workspace path does not exist: {}", registration.path),
-                        false,
-                    );
-                    return true;
-                }
-                if payload.initialize_git
-                    && let Err(message) = workspace::initialize_git(path)
-                {
-                    self.set_error("workspace.git_init_failed", message, true);
-                }
-                if !self
-                    .snapshot
-                    .ui_state
-                    .workspace_registrations
-                    .iter()
-                    .any(|existing| existing.id == registration.id)
-                {
-                    self.snapshot
-                        .ui_state
-                        .workspace_registrations
-                        .push(registration.clone());
-                }
-                self.rebuild_catalog();
-                self.snapshot.navigator.focused_device_id =
-                    Some(workspace::LOCAL_DEVICE_ID.to_owned());
-                self.reconcile_remote_terminal_selection();
-                if let Some(checkout_id) = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .find(|workspace| workspace.id == registration.id)
-                    .and_then(|workspace| workspace.checkouts.first())
-                    .map(|checkout| checkout.id.clone())
-                {
-                    self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
-                }
-                self.resync_navigator_focus();
-                self.persist_current_ui_state();
-                self.push_diagnostic(
-                    "workspace.registered",
-                    format!("Registered workspace {}", registration.path),
+                self.set_error(
+                    "workspace.control_unavailable",
+                    "Workspace creation requires a live Herdr connection so its initial tab and pane can be created",
+                    true,
                 );
                 true
             }
@@ -5189,6 +5164,34 @@ mod tests {
     }
 
     #[test]
+    fn local_tab_creation_acknowledgement_preserves_the_created_pane_focus() {
+        let mut runtime = runtime();
+        runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
+        runtime.snapshot.focused.pane_id = Some("w1:p1".to_owned());
+        runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
+
+        assert!(runtime.ingest_local_control_result(
+            RemoteControlAction::CreateTab {
+                workspace_id: "w1".to_owned(),
+                cwd: "/tmp/project".to_owned(),
+                label: "2".to_owned(),
+            },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some("w1:t2".to_owned()),
+                created_pane_id: Some("w1:p2".to_owned()),
+            }),
+            4,
+        ));
+
+        assert_eq!(runtime.snapshot.terminal.pane_id.as_deref(), Some("w1:p2"));
+        assert_eq!(runtime.snapshot.focused.pane_id.as_deref(), Some("w1:p2"));
+        assert_eq!(
+            runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+            Some("w1:p2")
+        );
+    }
+
+    #[test]
     fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         let mut runtime = runtime();
         runtime.suppress_terminal_session_workers = true;
@@ -5620,17 +5623,25 @@ mod tests {
             .workspace_creations_in_flight
             .insert(partial_path.to_owned());
 
-        assert!(runtime.ingest_workspace_creation(
-            partial_path,
-            Ok(live::WorkspaceCreationOutcome {
-                registration: registration.clone(),
-                base_registrations: Vec::new(),
-                registrations: vec![registration.clone()],
-                workspaces: Vec::new(),
-                git_init_error: Some("git init failed explicitly".to_owned()),
-            }),
-            7,
-        ));
+        assert!(
+            runtime.ingest_workspace_creation(
+                partial_path,
+                Ok(live::WorkspaceCreationOutcome {
+                    registration: registration.clone(),
+                    base_registrations: Vec::new(),
+                    registrations: vec![registration.clone()],
+                    workspaces: Vec::new(),
+                    session: serde_json::from_value(serde_json::json!({
+                        "agents": [],
+                        "layouts": [],
+                    }))
+                    .expect("empty session payload"),
+                    created_pane_id: None,
+                    git_init_error: Some("git init failed explicitly".to_owned()),
+                }),
+                7,
+            )
+        );
         assert!(!runtime.workspace_creations_in_flight.contains(partial_path));
         assert_eq!(
             runtime.snapshot.ui_state.workspace_registrations,

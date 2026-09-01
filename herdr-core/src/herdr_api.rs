@@ -4,7 +4,9 @@ use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,7 @@ use serde_json::{Value, json};
 /// explicit failure instead of a partially working sidebar.
 pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
 
+#[cfg(test)]
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) trait ConnectionShutdown: Send {
@@ -211,11 +214,13 @@ impl Subscription {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
     request_with_timeout(socket_path, method, params, API_TIMEOUT)
         .map_err(|error| format!("{method} failed: {error}"))
 }
 
+#[cfg(test)]
 pub(crate) fn request_with_timeout(
     socket_path: &Path,
     method: &str,

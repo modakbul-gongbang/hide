@@ -15,9 +15,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
+use crate::herdr_api::{ApiConnector, UnixSocketConnector, request_with_connector};
 #[cfg(test)]
-use crate::herdr_api::HERDR_PROTOCOL_REVISION;
-use crate::herdr_api::{ApiConnector, UnixSocketConnector, request, request_with_connector};
+use crate::herdr_api::{HERDR_PROTOCOL_REVISION, request};
 use crate::model::{
     PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
     WorkspaceSnapshot,
@@ -102,7 +102,14 @@ pub struct WorkspaceCreationOutcome {
     pub base_registrations: Vec<WorkspaceRegistration>,
     pub registrations: Vec<WorkspaceRegistration>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+    pub session: SessionSnapshotPayload,
+    pub created_pane_id: Option<String>,
     pub git_init_error: Option<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CreatedWorkspace {
+    pane_id: String,
 }
 
 pub fn spawn_workspace_creation(
@@ -111,7 +118,6 @@ pub fn spawn_workspace_creation(
     label: String,
     initialize_git: bool,
     base_registrations: Vec<WorkspaceRegistration>,
-    spaces: Vec<workspace::SessionSpace>,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-workspace-create".to_owned())
@@ -137,12 +143,48 @@ pub fn spawn_workspace_creation(
                     {
                         registrations.push(registration.clone());
                     }
+                    let before = fetch_session_with_connector(context.api_connector.as_ref())
+                        .map_err(|error| {
+                            format!(
+                                "session.snapshot before workspace creation failed: {}",
+                                error.message()
+                            )
+                        })?;
+                    let before_spaces = Runtime::session_spaces(&before);
+                    let before_catalog = workspace::build_catalog(&registrations, &before_spaces);
+                    let needs_herdr_workspace = before_catalog
+                        .iter()
+                        .any(|workspace| workspace.id == registration.id);
+                    let created = needs_herdr_workspace
+                        .then(|| {
+                            create_herdr_workspace(
+                                context.api_connector.as_ref(),
+                                &registration.path,
+                                &registration.label,
+                            )
+                        })
+                        .transpose()?;
+                    let session = if created.is_some() {
+                        fetch_session_with_connector(context.api_connector.as_ref()).map_err(
+                            |error| {
+                                format!(
+                                    "session.snapshot after workspace creation failed: {}",
+                                    error.message()
+                                )
+                            },
+                        )?
+                    } else {
+                        before
+                    };
+                    let spaces = Runtime::session_spaces(&session);
                     let workspaces = workspace::build_catalog(&registrations, &spaces);
                     Ok(WorkspaceCreationOutcome {
                         registration,
                         base_registrations,
                         registrations,
                         workspaces,
+                        session,
+                        created_pane_id: created.map(|created| created.pane_id),
                         git_init_error,
                     })
                 });
@@ -161,6 +203,29 @@ pub fn spawn_workspace_creation(
         })
         .map(|_| ())
         .map_err(|error| format!("workspace creation worker could not be started: {error}"))
+}
+
+fn create_herdr_workspace(
+    connector: &dyn ApiConnector,
+    cwd: &str,
+    label: &str,
+) -> Result<CreatedWorkspace, String> {
+    let result = control_request(
+        connector,
+        "workspace.create",
+        json!({
+            "cwd": cwd,
+            "focus": true,
+            "label": label,
+        }),
+    )?;
+    let pane_id = result
+        .pointer("/root_pane/pane_id")
+        .and_then(Value::as_str)
+        .filter(|pane_id| !pane_id.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "workspace.create response is missing root_pane.pane_id".to_owned())?;
+    Ok(CreatedWorkspace { pane_id })
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -700,8 +765,19 @@ pub fn fetch_session(socket_path: &Path) -> Result<SessionSnapshotPayload, Sessi
             socket_path.display()
         )));
     }
-    let result = request(socket_path, "session.snapshot", json!({}))
-        .map_err(SessionFetchError::Unreachable)?;
+    fetch_session_with_connector(&UnixSocketConnector::new(socket_path))
+}
+
+fn fetch_session_with_connector(
+    connector: &dyn ApiConnector,
+) -> Result<SessionSnapshotPayload, SessionFetchError> {
+    let result = request_with_connector(
+        connector,
+        "session.snapshot",
+        json!({}),
+        Duration::from_secs(5),
+    )
+    .map_err(|error| SessionFetchError::Unreachable(error.to_string()))?;
     let snapshot = result
         .get("snapshot")
         .ok_or_else(|| SessionFetchError::Malformed("response is missing snapshot".to_owned()))?;
@@ -1715,6 +1791,65 @@ mod tests {
                 .iter()
                 .all(|argument| argument != "--takeover")
         );
+    }
+
+    #[test]
+    fn workspace_creation_uses_the_official_focused_root_pane_contract() {
+        let root = std::path::PathBuf::from("/tmp").join(format!(
+            "herdr-core-workspace-create-contract-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut line)
+                .expect("read request");
+            let request: Value = serde_json::from_str(&line).expect("request JSON");
+            assert_eq!(request["method"], "workspace.create");
+            assert_eq!(
+                request["params"],
+                json!({
+                    "cwd": "/tmp/herdr-ide-verify-workspace",
+                    "focus": true,
+                    "label": "Verify workspace",
+                })
+            );
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "id": request["id"],
+                    "result": {
+                        "type": "workspace_created",
+                        "workspace": {"workspace_id": "w1"},
+                        "tab": {"tab_id": "w1:t1"},
+                        "root_pane": {"pane_id": "w1:p1"},
+                    }
+                })
+            )
+            .expect("write response");
+        });
+
+        let created = create_herdr_workspace(
+            &UnixSocketConnector::new(&socket_path),
+            "/tmp/herdr-ide-verify-workspace",
+            "Verify workspace",
+        )
+        .expect("workspace create request");
+        assert_eq!(
+            created,
+            CreatedWorkspace {
+                pane_id: "w1:p1".to_owned()
+            }
+        );
+
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]
