@@ -74,6 +74,64 @@ enum CheckoutStartState {
     case failed(String)
 }
 
+enum CloseShortcutDisposition: Equatable {
+    case handled
+    case closeWindow
+}
+
+enum CloseShortcutAction: Equatable {
+    case closeFile
+    case closeHerdr
+    case closeWindow
+    case blocked
+}
+
+enum CloseShortcutPolicy {
+    static func action(
+        hasWorkspace: Bool,
+        hasActiveFileTab: Bool,
+        hasActiveHerdrTab: Bool,
+        tabCount: Int
+    ) -> CloseShortcutAction {
+        if hasActiveFileTab { return .closeFile }
+        if !hasWorkspace { return .closeWindow }
+        if hasActiveHerdrTab { return .closeHerdr }
+        return tabCount == 0 ? .closeWindow : .blocked
+    }
+}
+
+enum HerdrTabLabelPresentation {
+    static func displayLabel(rawLabel: String?, fallbackIndex: Int) -> String {
+        let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if let number = Int(label) { return "Tab \(number)" }
+        return label.isEmpty ? "Tab \(fallbackIndex + 1)" : label
+    }
+
+    static func nextLabel(rawLabels: [String?]) -> String {
+        let used = Set(rawLabels.compactMap { rawLabel -> Int? in
+            let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if let number = Int(label) { return number }
+            guard label.lowercased().hasPrefix("tab ") else { return nil }
+            return Int(label.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines))
+        })
+        let number = (1...).first(where: { !used.contains($0) }) ?? (rawLabels.count + 1)
+        return "Tab \(number)"
+    }
+}
+
+enum ShellTabKind {
+    case herdr(CoreTabSnapshot)
+    case file(CoreFileTabSnapshot)
+}
+
+struct ShellTabItem: Identifiable {
+    let id: String
+    let label: String
+    let dirty: Bool
+    let active: Bool
+    let kind: ShellTabKind
+}
+
 enum TerminalLayoutPolicy {
     static func belongs(
         layout: CorePaneLayoutSnapshot,
@@ -150,6 +208,7 @@ final class ShellModel: ObservableObject {
     private var browserSubscription: AnyCancellable?
     private var remoteSubscription: AnyCancellable?
     private var pendingPaneCloseTarget: PaneCloseTarget?
+    private var pendingTabCloseTarget: TabCloseTarget?
     private var lastRemoteDevice: CoreDeviceSnapshot?
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
@@ -250,6 +309,36 @@ final class ShellModel: ObservableObject {
 
     var focusedTabs: [CoreTabSnapshot] {
         focusedCheckout?.tabs ?? []
+    }
+
+    var unifiedTabs: [ShellTabItem] {
+        guard let checkout = focusedCheckout else { return [] }
+        let activeFileID = isRemoteContext ? nil : core.snapshot?.editor.activeTabID
+        let herdrItems = focusedTabs.enumerated().map { index, tab in
+            return ShellTabItem(
+                id: "herdr:\(tab.stableID)",
+                label: HerdrTabLabelPresentation.displayLabel(
+                    rawLabel: tab.label,
+                    fallbackIndex: index
+                ),
+                dirty: false,
+                active: activeFileID == nil && tab.id == focusedTab?.id,
+                kind: .herdr(tab)
+            )
+        }
+        guard !isRemoteContext else { return herdrItems }
+        let fileItems = (core.snapshot?.editor.tabs ?? [])
+            .filter { $0.workspaceID == checkout.workspaceID && $0.checkoutID == checkout.id }
+            .map { tab in
+                ShellTabItem(
+                    id: "file:\(tab.id)",
+                    label: tab.label,
+                    dirty: tab.dirty,
+                    active: tab.id == activeFileID,
+                    kind: .file(tab)
+                )
+            }
+        return herdrItems + fileItems
     }
 
     var focusedTab: CoreTabSnapshot? {
@@ -466,7 +555,7 @@ final class ShellModel: ObservableObject {
                 checkoutRoot: checkoutRoot
             ) {
             case .file(let url):
-                core.openFile(url)
+                openFile(url)
                 focus(.workbench)
                 interactionNotice = nil
                 HideLaunchTrace.mark("terminal.link.opened", detail: "workbench_file")
@@ -561,7 +650,7 @@ final class ShellModel: ObservableObject {
         case .focusExisting:
             checkoutStartState = .idle
         case .startTerminal:
-            startTerminal(for: checkout)
+            startTerminal(for: checkout, focusHerdr: false)
         }
     }
 
@@ -746,9 +835,13 @@ final class ShellModel: ObservableObject {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
         }
+        guard let checkout = focusedCheckout else {
+            interactionNotice = "Select a checkout before adding a tab."
+            return
+        }
+        let label = nextHerdrTabLabel
         if isRemoteContext {
-            guard let checkout = focusedCheckout,
-                  let targetID = remote.navigation?.deviceID
+            guard let targetID = remote.navigation?.deviceID
             else {
                 interactionNotice = "The selected remote workspace has no routable checkout context. No tab was created."
                 return
@@ -757,11 +850,19 @@ final class ShellModel: ObservableObject {
                 targetID: targetID,
                 workspaceID: checkout.workspaceID,
                 cwd: checkout.path,
-                label: "New tab"
+                label: label
             )
             return
         }
-        core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
+        if focusedTabs.isEmpty {
+            startTerminal(for: checkout, focusHerdr: true)
+        } else {
+            core.createTab(workspaceID: workspace.id, checkoutID: checkout.id, label: label)
+        }
+    }
+
+    private var nextHerdrTabLabel: String {
+        HerdrTabLabelPresentation.nextLabel(rawLabels: focusedTabs.map(\.label))
     }
 
     func focusTab(_ tab: CoreTabSnapshot) {
@@ -792,6 +893,30 @@ final class ShellModel: ObservableObject {
             )
         }
         focus(.terminal)
+    }
+
+    func openFile(_ url: URL) {
+        guard !isRemoteContext,
+              let workspace = focusedWorkspace,
+              let checkout = focusedCheckout
+        else {
+            interactionNotice = "Select a local workspace before opening a file."
+            return
+        }
+        core.openFile(url, workspaceID: workspace.id, checkoutID: checkout.id)
+        interactionNotice = nil
+    }
+
+    func focusFileTab(_ tab: CoreFileTabSnapshot) {
+        guard !isRemoteContext else {
+            interactionNotice = "Remote file tabs are not available in the current read-only contract."
+            return
+        }
+        core.focusFileTab(tab.id)
+    }
+
+    func closeFileTab(_ tab: CoreFileTabSnapshot) {
+        core.closeFileTab(tab.id)
     }
 
     func startAgent(bypassWarnings: Bool) {
@@ -857,7 +982,7 @@ final class ShellModel: ObservableObject {
         remote.refresh(targetID: device.id, label: device.label)
     }
 
-    private func startTerminal(for checkout: CoreCheckoutSnapshot) {
+    private func startTerminal(for checkout: CoreCheckoutSnapshot, focusHerdr: Bool) {
         guard pendingCheckoutStarts.insert(checkout.id).inserted else {
             checkoutStartState = .starting
             interactionNotice = "A terminal is already starting for this checkout."
@@ -878,15 +1003,15 @@ final class ShellModel: ObservableObject {
                 HerdrTerminalLauncher.launch(
                     herdrPath: runtime.path,
                     checkoutPath: checkoutPath,
-                    checkoutLabel: checkoutLabel
+                    checkoutLabel: checkoutLabel,
+                    focus: focusHerdr
                 )
             }.value
             guard let self else { return }
             pendingCheckoutStarts.remove(checkoutID)
             if result.succeeded, let paneID = result.paneID {
-                // Keep Herdr's global focus untouched. The returned pane is
-                // the local projection anchor until session sync supplies its
-                // authoritative layout.
+                // The returned pane is the local projection anchor until
+                // session sync supplies its authoritative layout.
                 core.persistUIState(
                     selectedPaneID: paneID,
                     focusedCheckoutID: checkoutID
@@ -967,6 +1092,17 @@ final class ShellModel: ObservableObject {
         }
     }
 
+    private enum TabCloseTarget {
+        case local(tabID: String)
+        case remote(targetID: String, tabID: String)
+
+        var tabID: String {
+            switch self {
+            case .local(let tabID), .remote(_, let tabID): tabID
+            }
+        }
+    }
+
     private var paneCommandRoute: PaneCommandRoute {
         guard let device = activeRemoteDevice else { return .local }
         guard remote.phase == .ready else {
@@ -995,18 +1131,100 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    func closeFileViewer() {
-        core.flushPendingFileSave()
-        core.setFileViewerVisible(false)
+    func performCloseShortcut() -> CloseShortcutDisposition {
+        let activeFile = core.snapshot?.editor.activeTabID.flatMap { activeID in
+            core.snapshot?.editor.tabs.first(where: { $0.id == activeID })
+        }
+        switch CloseShortcutPolicy.action(
+            hasWorkspace: focusedWorkspace != nil,
+            hasActiveFileTab: activeFile != nil,
+            hasActiveHerdrTab: focusedTab?.id != nil,
+            tabCount: unifiedTabs.count
+        ) {
+        case .closeFile:
+            guard let tab = activeFile else {
+                interactionNotice = "The active file tab could not be resolved. No window was closed."
+                return .handled
+            }
+            HideLaunchTrace.mark("tab.close_shortcut.file", detail: tab.id)
+            closeFileTab(tab)
+            return .handled
+        case .closeWindow:
+            HideLaunchTrace.mark(
+                "tab.close_shortcut.window",
+                detail: focusedWorkspace == nil ? "no_workspace" : "workspace_without_tabs"
+            )
+            return .closeWindow
+        case .closeHerdr:
+            guard let tab = focusedTab, let tabID = tab.id else {
+                interactionNotice = "The active Herdr tab could not be resolved. No window was closed."
+                return .handled
+            }
+            HideLaunchTrace.mark("tab.close_shortcut.herdr", detail: tabID)
+            requestTabClose(tab)
+            return .handled
+        case .blocked:
+            interactionNotice = "The selected workspace has tabs but none is active. No window was closed."
+            HideLaunchTrace.mark("tab.close_shortcut.blocked", detail: "tabs_without_active_tab")
+            return .handled
+        }
     }
 
-    func performCloseShortcut() {
-        if core.snapshot?.editor.viewerVisible == true {
-            HideLaunchTrace.mark("pane.close_shortcut.viewer")
-            closeFileViewer()
+    func focusUnifiedTab(_ item: ShellTabItem) {
+        switch item.kind {
+        case .herdr(let tab): focusTab(tab)
+        case .file(let tab): focusFileTab(tab)
+        }
+    }
+
+    func closeUnifiedTab(_ item: ShellTabItem) {
+        switch item.kind {
+        case .herdr(let tab): requestTabClose(tab)
+        case .file(let tab): closeFileTab(tab)
+        }
+    }
+
+    private func requestTabClose(_ tab: CoreTabSnapshot) {
+        guard let tabID = tab.id else {
+            interactionNotice = "The selected Herdr tab has no identity. No tab was closed."
+            return
+        }
+        let target: TabCloseTarget
+        if isRemoteContext {
+            guard let targetID = remote.navigation?.deviceID else {
+                interactionNotice = "The selected remote tab has no target identity. No tab was closed."
+                return
+            }
+            target = .remote(targetID: targetID, tabID: tabID)
         } else {
-            HideLaunchTrace.mark("pane.close_shortcut.pane")
-            performPaneCommand(.closePane)
+            target = .local(tabID: tabID)
+        }
+        let paneIDs = Set(tab.panes.map(\.id))
+        let affectedAgents = agents.filter { paneIDs.contains($0.paneID) }
+        let destructiveTargets = affectedAgents.isEmpty
+            ? [DestructiveTarget(
+                id: tabID,
+                label: tab.label ?? tabID,
+                state: "idle",
+                summary: "No working or attention state is reported for this tab."
+            )]
+            : affectedAgents.map {
+                DestructiveTarget(
+                    id: $0.paneID,
+                    label: $0.workspaceLabel,
+                    state: $0.state,
+                    summary: $0.summary
+                )
+            }
+        let notice = ConsequencePolicy.notice(kind: .tab, targets: destructiveTargets)
+        consequenceResult = nil
+        if notice.requiresConfirmation {
+            pendingTabCloseTarget = target
+            consequenceNotice = notice
+        } else {
+            pendingTabCloseTarget = nil
+            executeTabClose(target, confirmed: false)
+            consequenceResult = "Close requested for tab \(tab.label ?? tabID)."
         }
     }
 
@@ -1112,6 +1330,7 @@ final class ShellModel: ObservableObject {
 
     func previewConsequence(_ kind: DestructiveTargetKind) {
         pendingPaneCloseTarget = nil
+        pendingTabCloseTarget = nil
         let agents = core.snapshot?.navigator.agents ?? []
         let targets = agents.map {
             DestructiveTarget(id: $0.paneID, label: $0.workspaceLabel, state: $0.state, summary: $0.summary)
@@ -1122,7 +1341,11 @@ final class ShellModel: ObservableObject {
 
     func confirmConsequencePreview() {
         guard let consequenceNotice else { return }
-        if let target = pendingPaneCloseTarget {
+        if let target = pendingTabCloseTarget {
+            executeTabClose(target, confirmed: true)
+            consequenceResult = "Confirmed close requested for tab \(target.tabID)."
+            pendingTabCloseTarget = nil
+        } else if let target = pendingPaneCloseTarget {
             let paneID = target.paneID
             executePaneClose(target, confirmed: true)
             consequenceResult = "Confirmed close requested for pane \(paneID)."
@@ -1138,6 +1361,7 @@ final class ShellModel: ObservableObject {
     func cancelConsequencePreview() {
         consequenceResult = "Cancelled before any process or checkout was affected."
         pendingPaneCloseTarget = nil
+        pendingTabCloseTarget = nil
         consequenceNotice = nil
     }
 
@@ -1151,6 +1375,15 @@ final class ShellModel: ObservableObject {
                 return
             }
             core.closeRemotePane(targetID: targetID, paneID: paneID, confirmed: confirmed)
+        }
+    }
+
+    private func executeTabClose(_ target: TabCloseTarget, confirmed: Bool) {
+        switch target {
+        case .local(let tabID):
+            core.closeTab(tabID, confirmed: confirmed)
+        case .remote(let targetID, let tabID):
+            core.closeRemoteTab(targetID: targetID, tabID: tabID, confirmed: confirmed)
         }
     }
 

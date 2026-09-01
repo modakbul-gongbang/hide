@@ -594,8 +594,46 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
 }
 
 struct CoreEditorSnapshot: Decodable {
-    let viewerVisible: Bool?
-    let path: String?
+    let tabs: [CoreFileTabSnapshot]
+    let activeTabID: String?
+    let document: CoreEditorDocumentSnapshot?
+
+    var path: String? { document?.path }
+    var language: String? { document?.language }
+    var contentsUTF8: String? { document?.contentsUTF8 }
+    var openedModifiedAt: UInt64? { document?.openedModifiedAt }
+    var dirty: Bool { document?.dirty ?? false }
+    var readonlyReason: String? { document?.readonlyReason }
+    var conflict: CoreEditorConflict? { document?.conflict }
+    var diff: CoreDiffSnapshot? { document?.diff }
+
+    enum CodingKeys: String, CodingKey {
+        case tabs
+        case activeTabID = "active_tab_id"
+        case document
+    }
+}
+
+struct CoreFileTabSnapshot: Decodable, Identifiable, Equatable {
+    let id: String
+    let workspaceID: String
+    let checkoutID: String
+    let path: String
+    let label: String
+    let dirty: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workspaceID = "workspace_id"
+        case checkoutID = "checkout_id"
+        case path
+        case label
+        case dirty
+    }
+}
+
+struct CoreEditorDocumentSnapshot: Decodable {
+    let path: String
     let language: String?
     let contentsUTF8: String?
     let openedModifiedAt: UInt64?
@@ -605,7 +643,6 @@ struct CoreEditorSnapshot: Decodable {
     let diff: CoreDiffSnapshot?
 
     enum CodingKeys: String, CodingKey {
-        case viewerVisible = "viewer_visible"
         case path
         case language
         case contentsUTF8 = "contents_utf8"
@@ -1295,11 +1332,18 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "test_device", payload: ["device_id": deviceID])
     }
 
-    func createTab(workspaceID: String, checkoutID: String? = nil, label: String = "New tab") {
+    func createTab(workspaceID: String, checkoutID: String? = nil, label: String = "Tab 1") {
         dispatch(kind: "create_tab", payload: [
             "workspace_id": workspaceID,
             "checkout_id": checkoutID.map { $0 as Any } ?? NSNull(),
             "label": label,
+        ])
+    }
+
+    func closeTab(_ tabID: String, confirmed: Bool) {
+        dispatch(kind: "close_tab", payload: [
+            "tab_id": tabID,
+            "confirmed": confirmed,
         ])
     }
 
@@ -1466,6 +1510,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
     }
 
+    func closeRemoteTab(targetID: String, tabID: String, confirmed: Bool) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "close_tab",
+            extra: [
+                "tab_id": tabID,
+                "confirmed": confirmed,
+            ]
+        )
+    }
+
     private func dispatchRemoteControl(
         targetID: String,
         action: String,
@@ -1496,9 +1551,23 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func openFile(_ url: URL) {
-        dispatch(kind: "file_open", payload: ["path": url.path])
-        persistUIState(selectedPath: url.path)
+    func openFile(_ url: URL, workspaceID: String, checkoutID: String) {
+        dispatch(kind: "file_open", payload: [
+            "path": url.path,
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID,
+        ])
+    }
+
+    func focusFileTab(_ tabID: String) {
+        dispatch(kind: "file_focus", payload: ["tab_id": tabID])
+    }
+
+    func closeFileTab(_ tabID: String) {
+        if snapshot?.editor.activeTabID == tabID {
+            flushPendingFileSave()
+        }
+        dispatch(kind: "file_close", payload: ["tab_id": tabID])
     }
 
     func updateDraft(_ contents: String) {
@@ -1506,8 +1575,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func saveFile(_ contents: String) {
-        guard let editor = snapshot?.editor, let path = editor.path else { return }
+        guard let editor = snapshot?.editor,
+              let tabID = editor.activeTabID,
+              let path = editor.path
+        else { return }
         dispatch(kind: "file_save", payload: [
+            "tab_id": tabID,
             "path": path,
             "contents_utf8": contents,
             "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
@@ -1540,10 +1613,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func resolveConflict(_ action: String) {
         dispatch(kind: "file_conflict", payload: ["action": action])
-    }
-
-    func setFileViewerVisible(_ visible: Bool) {
-        dispatch(kind: "file_viewer_visibility", payload: ["visible": visible])
     }
 
     func persistUIState(

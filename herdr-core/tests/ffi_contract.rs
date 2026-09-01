@@ -101,6 +101,18 @@ fn create() -> *mut HerdrCore {
     core
 }
 
+fn create_file_test(name: &str) -> (*mut HerdrCore, PathBuf) {
+    let state_path = std::env::temp_dir().join(format!(
+        "herdr-core-{name}-{}-state.json",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&state_path);
+    let options = options_with_state(&state_path);
+    let core = herdr_core_create(options.as_ptr(), options.len());
+    assert!(!core.is_null());
+    (core, state_path)
+}
+
 fn dispatch(core: *mut HerdrCore, event: Value) {
     let bytes = serde_json::to_vec(&event).expect("event serialize");
     herdr_core_dispatch(core, bytes.as_ptr(), bytes.len());
@@ -165,6 +177,28 @@ fn wait_for_snapshot(
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn install_file_context(core: *mut HerdrCore, root: &std::path::Path) -> (String, String) {
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
+            "agents": [],
+            "workspaces": [{"workspace_id": "w-files", "label": "Files"}],
+            "tabs": [{"workspace_id": "w-files", "tab_id": "w-files:t1", "label": "1"}],
+            "panes": [{"pane_id": "files-pane", "cwd": root}],
+            "layouts": [single_pane_layout("w-files", "files-pane")]
+        }}),
+    );
+    let current = snapshot(core);
+    let workspace = &current["navigator"]["workspaces"][0];
+    (
+        workspace["id"].as_str().expect("workspace id").to_owned(),
+        workspace["checkouts"][0]["id"]
+            .as_str()
+            .expect("checkout id")
+            .to_owned(),
+    )
 }
 
 #[test]
@@ -1068,31 +1102,37 @@ fn terminal_bytes_round_trip_through_the_json_boundary_without_transcoding() {
 
 #[test]
 fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
-    let core = create();
+    let (core, state_path) = create_file_test("file-save");
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../macos/VerificationFixtures/Sample.swift");
     let before = std::fs::read(&path).expect("read committed fixture");
+    let (workspace_id, checkout_id) =
+        install_file_context(core, path.parent().expect("fixture parent"));
     dispatch(
         core,
         json!({
             "schema_version": 2,
             "kind": "file_open",
-            "payload": {"path": path}
+            "payload": {"path": path, "workspace_id": workspace_id, "checkout_id": checkout_id}
         }),
     );
     let opened = snapshot(core);
-    assert_eq!(opened["editor"]["language"], "swift");
-    assert_eq!(opened["editor"]["dirty"], false);
-    let contents = opened["editor"]["contents_utf8"]
+    assert_eq!(opened["editor"]["document"]["language"], "swift");
+    assert_eq!(opened["editor"]["document"]["dirty"], false);
+    let contents = opened["editor"]["document"]["contents_utf8"]
         .as_str()
         .expect("UTF-8 fixture");
-    let modified = opened["editor"]["opened_modified_at_unix_ms"].clone();
+    let tab_id = opened["editor"]["active_tab_id"]
+        .as_str()
+        .expect("active file tab");
+    let modified = opened["editor"]["document"]["opened_modified_at_unix_ms"].clone();
     dispatch(
         core,
         json!({
             "schema_version": 2,
             "kind": "file_save",
             "payload": {
+                "tab_id": tab_id,
                 "path": path,
                 "contents_utf8": contents,
                 "expected_modified_at_unix_ms": modified
@@ -1100,64 +1140,67 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
         }),
     );
     let saved = wait_for_snapshot(core, Duration::from_secs(2), |current| {
-        current["editor"]["dirty"] == false
+        current["editor"]["document"]["dirty"] == false
     });
-    assert_eq!(saved["editor"]["dirty"], false);
+    assert_eq!(saved["editor"]["document"]["dirty"], false);
     assert!(saved["status"]["last_error"].is_null());
     assert_eq!(std::fs::read(&path).expect("reread fixture"), before);
     herdr_core_destroy(core);
+    let _ = fs::remove_file(state_path);
 }
 
 #[test]
-fn closing_and_reopening_the_same_file_preserves_its_unsaved_draft() {
-    let core = create();
+fn file_tabs_deduplicate_and_closing_active_restores_the_previous_file() {
+    let (core, state_path) = create_file_test("file-tabs");
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../macos/VerificationFixtures/Sample.swift");
-    dispatch(
-        core,
-        json!({
-            "schema_version": 2,
-            "kind": "file_open",
-            "payload": {"path": path}
-        }),
+    let second_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let (workspace_id, checkout_id) =
+        install_file_context(core, path.parent().expect("fixture parent"));
+    let open = |path: &PathBuf| {
+        dispatch(
+            core,
+            json!({
+                "schema_version": 2,
+                "kind": "file_open",
+                "payload": {
+                    "path": path,
+                    "workspace_id": workspace_id.clone(),
+                    "checkout_id": checkout_id.clone()
+                }
+            }),
+        );
+    };
+    open(&path);
+    open(&path);
+    assert_eq!(
+        snapshot(core)["editor"]["tabs"].as_array().map(Vec::len),
+        Some(1)
     );
-    assert_eq!(snapshot(core)["editor"]["viewer_visible"], true);
 
-    let draft = "// unsaved workbench draft\n";
+    open(&second_path);
+    let second = snapshot(core);
+    assert_eq!(second["editor"]["tabs"].as_array().map(Vec::len), Some(2));
+    let second_tab_id = second["editor"]["active_tab_id"]
+        .as_str()
+        .expect("second tab active")
+        .to_owned();
     dispatch(
         core,
         json!({
             "schema_version": 2,
-            "kind": "file_draft",
-            "payload": {"contents_utf8": draft}
+            "kind": "file_close",
+            "payload": {"tab_id": second_tab_id}
         }),
     );
-    dispatch(
-        core,
-        json!({
-            "schema_version": 2,
-            "kind": "file_viewer_visibility",
-            "payload": {"visible": false}
-        }),
+    let restored = snapshot(core);
+    assert_eq!(restored["editor"]["tabs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        restored["editor"]["document"]["path"],
+        path.to_string_lossy().as_ref()
     );
-    let closed = snapshot(core);
-    assert_eq!(closed["editor"]["viewer_visible"], false);
-    assert_eq!(closed["editor"]["dirty"], true);
-    assert_eq!(closed["editor"]["contents_utf8"], draft);
-
-    dispatch(
-        core,
-        json!({
-            "schema_version": 2,
-            "kind": "file_open",
-            "payload": {"path": path}
-        }),
-    );
-    let reopened = snapshot(core);
-    assert_eq!(reopened["editor"]["viewer_visible"], true);
-    assert_eq!(reopened["editor"]["dirty"], true);
-    assert_eq!(reopened["editor"]["contents_utf8"], draft);
     herdr_core_destroy(core);
+    let _ = fs::remove_file(state_path);
 }
 
 #[test]

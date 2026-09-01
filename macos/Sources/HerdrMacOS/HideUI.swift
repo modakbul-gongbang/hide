@@ -1280,7 +1280,7 @@ private struct HideMainView: View {
             ZStack {
                 HideTerminalSurface()
                 if !model.isRemoteContext,
-                   model.core.snapshot?.editor.viewerVisible == true {
+                   model.core.snapshot?.editor.activeTabID != nil {
                     WorkbenchViewerOverlay()
                 }
             }
@@ -1357,34 +1357,89 @@ private struct HideTerminalHeader: View {
             .padding(.horizontal, 18)
             .frame(height: 54)
 
-            if !model.focusedTabs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 3) {
-                        ForEach(model.focusedTabs, id: \.stableID) { tab in
-                            Button {
-                                model.focusTab(tab)
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(tab.empty ? HideTheme.muted : accent)
-                                        .frame(width: 5, height: 5)
-                                    Text(tab.label ?? "Tab")
-                                        .hideFont(size: 10, weight: .medium)
-                                        .foregroundStyle(HideTheme.secondary)
+            if model.focusedWorkspace != nil {
+                HStack(spacing: 0) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            ForEach(model.unifiedTabs) { tab in
+                                HStack(spacing: 0) {
+                                    Button {
+                                        model.focusUnifiedTab(tab)
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: tabIcon(tab))
+                                                .font(.system(size: 10, weight: .medium))
+                                            Text(tab.label)
+                                                .hideFont(size: 10, weight: tab.active ? .semibold : .medium)
+                                                .lineLimit(1)
+                                            if tab.dirty {
+                                                Circle()
+                                                    .fill(HideTheme.secondary)
+                                                    .frame(width: 5, height: 5)
+                                            }
+                                        }
+                                        .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
+                                        .padding(.leading, 11)
+                                        .padding(.trailing, 7)
+                                        .frame(height: 32)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button {
+                                        model.closeUnifiedTab(tab)
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 8, weight: .semibold))
+                                            .frame(width: 20, height: 20)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(tab.active ? HideTheme.secondary : HideTheme.muted)
+                                    .help("Close \(tab.label) (⌘W)")
+                                    .accessibilityLabel("Close \(tab.label)")
                                 }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(HideTheme.elevated.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+                                .padding(.trailing, 4)
+                                .background(tab.active ? HideTheme.elevated : HideTheme.panel)
+                                .overlay(alignment: .trailing) {
+                                    Rectangle()
+                                        .fill(HideTheme.divider)
+                                        .frame(width: 1)
+                                }
+                                .accessibilityIdentifier("hide-tab-\(tab.id)")
                             }
-                            .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 8)
+                    Button {
+                        model.addTab()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(HideTheme.secondary)
+                    .help("New Tab (⌘T)")
+                    .accessibilityLabel("New Herdr tab")
+                    .accessibilityIdentifier("hide-new-tab")
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 32)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(HideTheme.divider)
+                        .frame(height: 1)
                 }
             }
         }
         .background(HideTheme.panel)
+    }
+
+    private func tabIcon(_ tab: ShellTabItem) -> String {
+        switch tab.kind {
+        case .herdr: "rectangle.split.2x1"
+        case .file: "doc.text"
+        }
     }
 }
 

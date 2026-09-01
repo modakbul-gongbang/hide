@@ -103,16 +103,15 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil
             }
-            let bindings = MainActor.assumeIsolated { self.model.paneShortcuts }
-            let isCloseShortcut = PaneShortcutPolicy.command(
-                for: event,
-                bindings: bindings
-            ) == .closePane
-            guard isCloseShortcut else { return event }
-            MainActor.assumeIsolated {
-                self.model.performCloseShortcut()
+            if UnifiedTabShortcutPolicy.isClose(event) {
+                MainActor.assumeIsolated {
+                    if self.model.performCloseShortcut() == .closeWindow {
+                        self.mainWindow?.performClose(nil)
+                    }
+                }
+                return nil
             }
-            return nil
+            return event
         }
         presentMainWindow(window, source: "launch")
         petWindowController = PetWindowController(mainWindow: window, model: model)
@@ -314,6 +313,11 @@ struct ShellCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
+            Button("New Tab") {
+                model.addTab()
+            }
+            .keyboardShortcut("t", modifiers: .command)
+
             Button("New Agent") {
                 model.openNewAgent()
             }
@@ -333,6 +337,15 @@ struct ShellCommands: Commands {
                 model.openFileSearch()
             }
             .keyboardShortcut("p", modifiers: .command)
+
+            Divider()
+
+            Button("Close Tab") {
+                if model.performCloseShortcut() == .closeWindow {
+                    NSApplication.shared.keyWindow?.performClose(nil)
+                }
+            }
+            .keyboardShortcut("w", modifiers: .command)
         }
 
         CommandMenu("Navigate") {

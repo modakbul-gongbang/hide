@@ -14,10 +14,10 @@ use crate::live::{
     SessionFetchError, TerminalSession, TerminalSessionContext, TerminalSessionMode,
 };
 use crate::model::{
-    CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
-    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
-    RemoteFileListSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION, Snapshot, Surface, TabSnapshot,
-    TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    CoreOptions, DiagnosticSnapshot, EditorDocumentSnapshot, FileTabSnapshot, LastErrorSnapshot,
+    PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
+    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION,
+    Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
@@ -213,6 +213,10 @@ enum RemoteControlRequest {
         cwd: String,
         label: String,
     },
+    CloseTab {
+        tab_id: String,
+        confirmed: bool,
+    },
 }
 
 impl RemoteControlRequest {
@@ -222,7 +226,10 @@ impl RemoteControlRequest {
             | Self::SplitPane { pane_id, .. }
             | Self::TogglePaneZoom { pane_id }
             | Self::ClosePane { pane_id, .. } => Some(pane_id),
-            Self::FocusWorkspace { .. } | Self::FocusTab { .. } | Self::CreateTab { .. } => None,
+            Self::FocusWorkspace { .. }
+            | Self::FocusTab { .. }
+            | Self::CreateTab { .. }
+            | Self::CloseTab { .. } => None,
         }
     }
 
@@ -230,6 +237,9 @@ impl RemoteControlRequest {
         matches!(
             self,
             Self::ClosePane {
+                confirmed: true,
+                ..
+            } | Self::CloseTab {
                 confirmed: true,
                 ..
             }
@@ -315,6 +325,13 @@ fn remote_tab_creation_key(
 #[derive(Debug, Deserialize)]
 struct FileOpenPayload {
     path: String,
+    workspace_id: String,
+    checkout_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileTabPayload {
+    tab_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,6 +342,7 @@ struct RemoteFileListPayload {
 
 #[derive(Debug, Deserialize)]
 struct FileSavePayload {
+    tab_id: String,
     path: String,
     contents_utf8: String,
     expected_modified_at_unix_ms: Option<u64>,
@@ -338,11 +356,6 @@ struct FileDraftPayload {
 #[derive(Debug, Deserialize)]
 struct FileConflictPayload {
     action: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileViewerVisibilityPayload {
-    visible: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -444,10 +457,11 @@ enum ValidatedEvent {
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
+    FileFocus(FileTabPayload),
+    FileClose(FileTabPayload),
     FileDraft(FileDraftPayload),
     FileSave(FileSavePayload),
     FileConflict(FileConflictPayload),
-    FileViewerVisibility(FileViewerVisibilityPayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
@@ -513,6 +527,8 @@ pub struct Runtime {
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
+    editor_documents: HashMap<String, EditorDocumentSnapshot>,
+    editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
     /// measures idleness from here, so roam and sleep are driven by real
@@ -630,6 +646,8 @@ impl Runtime {
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
+            editor_documents: HashMap::new(),
+            editor_tab_history: Vec::new(),
             worker_context: None,
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
@@ -657,23 +675,95 @@ impl Runtime {
         &self.snapshot
     }
 
+    fn file_tab_id(workspace_id: &str, checkout_id: &str, path: &str) -> String {
+        format!("file:{workspace_id}:{checkout_id}:{path}")
+    }
+
+    fn activate_file_tab(&mut self, tab_id: &str) -> Result<(), String> {
+        if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+            return Err(format!("File tab {tab_id} is not open"));
+        }
+        if let Some(active_id) = self.snapshot.editor.active_tab_id.as_deref()
+            && active_id != tab_id
+        {
+            self.editor_tab_history.retain(|known| known != active_id);
+            self.editor_tab_history.push(active_id.to_owned());
+        }
+        let document = self
+            .editor_documents
+            .get(tab_id)
+            .cloned()
+            .ok_or_else(|| format!("File tab {tab_id} has no document state"))?;
+        self.snapshot.editor.active_tab_id = Some(tab_id.to_owned());
+        self.snapshot.editor.document = Some(document);
+        Ok(())
+    }
+
+    fn deactivate_file_tab(&mut self) {
+        self.snapshot.editor.active_tab_id = None;
+        self.snapshot.editor.document = None;
+        self.editor_tab_history.clear();
+    }
+
+    fn file_tab_matches_focused_context(&self, tab: &FileTabSnapshot) -> bool {
+        self.snapshot.navigator.focused_workspace_id.as_deref() == Some(tab.workspace_id.as_str())
+            && self.snapshot.navigator.focused_checkout_id.as_deref()
+                == Some(tab.checkout_id.as_str())
+    }
+
+    fn sync_active_editor_document(&mut self) {
+        self.snapshot.editor.document = self
+            .snapshot
+            .editor
+            .active_tab_id
+            .as_deref()
+            .and_then(|tab_id| self.editor_documents.get(tab_id))
+            .cloned();
+    }
+
+    fn sync_file_tab_dirty(&mut self, tab_id: &str) {
+        let dirty = self
+            .editor_documents
+            .get(tab_id)
+            .is_some_and(|document| document.dirty);
+        if let Some(tab) = self
+            .snapshot
+            .editor
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+        {
+            tab.dirty = dirty;
+        }
+    }
+
     fn ingest_file_save_result(
         &mut self,
+        tab_id: String,
         path: String,
         contents: String,
-        editor: crate::model::EditorSnapshot,
+        editor: EditorDocumentSnapshot,
         result: Result<(), String>,
     ) -> bool {
-        if self.snapshot.editor.path.as_deref() != Some(path.as_str())
-            || self.snapshot.editor.contents_utf8.as_deref() != Some(contents.as_str())
-        {
+        let is_current_draft = self.snapshot.editor.tabs.iter().any(|tab| {
+            tab.id == tab_id
+                && tab.path == path
+                && self
+                    .editor_documents
+                    .get(&tab_id)
+                    .and_then(|document| document.contents_utf8.as_deref())
+                    == Some(contents.as_str())
+        });
+        if !is_current_draft {
             self.push_diagnostic(
                 "file.save_stale",
                 format!("Ignored a completed save for stale draft {path}"),
             );
             return true;
         }
-        self.snapshot.editor = editor;
+        self.editor_documents.insert(tab_id.clone(), editor);
+        self.sync_file_tab_dirty(&tab_id);
+        self.sync_active_editor_document();
         match result {
             Ok(()) => {
                 self.push_diagnostic("file.save_ready", format!("Saved {path}"));
@@ -1260,6 +1350,52 @@ impl Runtime {
                     workspace_id: source_id.to_owned(),
                     cwd,
                     label,
+                }
+            }
+            RemoteControlRequest::CloseTab { tab_id, confirmed } => {
+                let tab = session
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .find(|tab| tab.id.as_deref() == Some(tab_id.as_str()));
+                let Some(tab) = tab else {
+                    self.set_error(
+                        "remote.control.tab_not_found",
+                        format!("Tab {tab_id} does not belong to remote target {target_id}"),
+                        false,
+                    );
+                    return true;
+                };
+                let pane_ids = tab
+                    .panes
+                    .iter()
+                    .map(|pane| pane.id.as_str())
+                    .collect::<HashSet<_>>();
+                let needs_confirmation = session.agents.iter().any(|agent| {
+                    pane_ids.contains(agent.pane_id.as_str())
+                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                });
+                if needs_confirmation && !confirmed {
+                    self.set_error(
+                        "remote.control.close_confirmation_required",
+                        format!(
+                            "Tab {tab_id} on {target_id} contains an agent that is working or needs attention; remote close requires confirmed=true"
+                        ),
+                        false,
+                    );
+                    return true;
+                }
+                let Some(source_id) = remote_tab_source_id(&target_id, &tab_id) else {
+                    self.set_error(
+                        "remote.control.invalid_tab_scope",
+                        format!("Tab {tab_id} is not scoped to remote target {target_id}"),
+                        false,
+                    );
+                    return true;
+                };
+                RemoteControlAction::CloseTab {
+                    tab_id: source_id.to_owned(),
                 }
             }
         };
@@ -2671,6 +2807,57 @@ impl Runtime {
         true
     }
 
+    pub fn ingest_local_control_result(
+        &mut self,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, String>,
+        elapsed_ms: u128,
+    ) -> bool {
+        let action_kind = action.kind();
+        match result {
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id,
+                created_pane_id,
+            }) => {
+                self.push_diagnostic(
+                    "tab.control.ready",
+                    format!(
+                        "{action_kind} acknowledged in {elapsed_ms} ms; awaiting authoritative Herdr event"
+                    ),
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "tab_control",
+                        "kind": "tab.control.ready",
+                        "action": action_kind,
+                        "created_tab_id": created_tab_id,
+                        "created_pane_id": created_pane_id,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+            }
+            Err(message) => {
+                self.set_error(
+                    "tab.control.failed",
+                    format!("{action_kind} failed: {message}"),
+                    true,
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "tab_control",
+                        "kind": "tab.control.failed",
+                        "action": action_kind,
+                        "message": message,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+            }
+        }
+        true
+    }
+
     /// Appends only the decoded frame bytes when the delivering official
     /// terminal session is still the current generation and mode.
     pub fn ingest_terminal_session_frame(
@@ -2921,7 +3108,7 @@ impl Runtime {
     }
 
     fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
-        let Some((checkout_path, next_pane_id)) = self
+        let Some((checkout_path, next_pane_id, has_herdr_tab)) = self
             .snapshot
             .navigator
             .workspaces
@@ -2941,6 +3128,7 @@ impl Runtime {
                                 .flat_map(|tab| tab.panes.iter())
                                 .map(|pane| pane.id.clone())
                                 .next(),
+                            !checkout.tabs.is_empty(),
                         )
                     })
             })
@@ -2970,6 +3158,20 @@ impl Runtime {
         self.snapshot.navigator.root_path = Some(checkout_path);
         self.reset_terminal_projection(next_pane_id.clone());
         self.sync_active_tab_projection();
+        self.deactivate_file_tab();
+        if !has_herdr_tab
+            && let Some(file_tab_id) = self
+                .snapshot
+                .editor
+                .tabs
+                .iter()
+                .rev()
+                .find(|tab| tab.workspace_id == workspace_id && tab.checkout_id == checkout_id)
+                .map(|tab| tab.id.clone())
+            && let Err(message) = self.activate_file_tab(&file_tab_id)
+        {
+            self.set_error("file.focus_failed", message, false);
+        }
         self.persist_current_ui_state();
         if let (Some(context), Some(pane_id)) = (self.live.as_ref().cloned(), next_pane_id)
             && let Err(message) =
@@ -3362,7 +3564,7 @@ impl Runtime {
                     .snapshot
                     .navigator
                     .workspaces
-                    .iter_mut()
+                    .iter()
                     .find(|workspace| workspace.id == payload.workspace_id)
                 else {
                     self.set_error(
@@ -3372,47 +3574,53 @@ impl Runtime {
                     );
                     return true;
                 };
-                let checkout_index = match payload.checkout_id.as_deref() {
-                    Some(checkout_id) => {
-                        let Some(index) = workspace_snapshot
+                let checkout = payload
+                    .checkout_id
+                    .as_deref()
+                    .and_then(|checkout_id| {
+                        workspace_snapshot
                             .checkouts
                             .iter()
-                            .position(|checkout| checkout.id == checkout_id)
-                        else {
-                            self.set_error(
-                                "tab.unknown_checkout",
-                                format!("Checkout {checkout_id} is not available"),
-                                false,
-                            );
-                            return true;
-                        };
-                        index
-                    }
-                    None => 0,
-                };
-                let Some(checkout) = workspace_snapshot.checkouts.get_mut(checkout_index) else {
+                            .find(|checkout| checkout.id == checkout_id)
+                    })
+                    .or_else(|| workspace_snapshot.checkouts.first());
+                let Some(checkout) = checkout else {
                     self.set_error("tab.no_checkout", "Workspace has no checkout", false);
                     return true;
                 };
-                let tab_number = checkout.tabs.len() + 1;
-                let tab_id = format!("{}:tab:{tab_number}", checkout.id);
-                checkout.tabs.push(TabSnapshot {
-                    id: Some(tab_id),
-                    workspace_id: Some(workspace_snapshot.id.clone()),
-                    checkout_id: Some(checkout.id.clone()),
-                    label: Some(if payload.label.trim().is_empty() {
-                        format!("Tab {tab_number}")
-                    } else {
-                        payload.label.trim().to_owned()
-                    }),
-                    empty: true,
-                    panes: Vec::new(),
-                });
-                self.snapshot.navigator.focused_workspace_id = Some(workspace_snapshot.id.clone());
-                self.snapshot.navigator.focused_checkout_id = Some(checkout.id.clone());
-                self.snapshot.navigator.root_path = Some(checkout.path.clone());
-                self.sync_active_tab_projection();
+                let workspace_id = workspace_snapshot.id.clone();
+                let checkout_id = checkout.id.clone();
+                let cwd = checkout.path.clone();
+                let label = payload.label.trim();
+                if label.is_empty() {
+                    self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
+                    return true;
+                }
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.set_error(
+                        "tab.control_unavailable",
+                        "Tab creation requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+                self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+                self.snapshot.navigator.root_path = Some(cwd.clone());
+                self.deactivate_file_tab();
                 self.persist_current_ui_state();
+                let action = RemoteControlAction::CreateTab {
+                    workspace_id,
+                    cwd,
+                    label: label.to_owned(),
+                };
+                self.push_diagnostic(
+                    "tab.create.requested",
+                    format!("Creating {}", action.kind()),
+                );
+                if let Err(message) = live::spawn_local_control(context, action) {
+                    self.set_error("tab.create_worker_failed", message, true);
+                }
                 true
             }
             ValidatedEvent::FocusCheckout(payload) => {
@@ -3472,7 +3680,24 @@ impl Runtime {
                 self.snapshot.navigator.root_path = Some(checkout_path);
                 self.reset_terminal_projection(next_pane_id);
                 self.sync_active_tab_projection();
+                self.deactivate_file_tab();
                 self.persist_current_ui_state();
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.set_error(
+                        "tab.control_unavailable",
+                        "Tab focus requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                if let Err(message) = live::spawn_local_control(
+                    context,
+                    RemoteControlAction::FocusTab {
+                        tab_id: payload.tab_id,
+                    },
+                ) {
+                    self.set_error("tab.focus_worker_failed", message, true);
+                }
                 true
             }
             ValidatedEvent::FocusDevice(payload) => {
@@ -3491,6 +3716,7 @@ impl Runtime {
                     return true;
                 }
                 self.snapshot.navigator.focused_device_id = Some(payload.device_id);
+                self.deactivate_file_tab();
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
                 true
@@ -3733,8 +3959,58 @@ impl Runtime {
                 false
             }
             ValidatedEvent::CloseTab(payload) => {
-                let _ = (payload.tab_id, payload.confirmed);
-                false
+                let tab = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .find(|tab| tab.id.as_deref() == Some(payload.tab_id.as_str()));
+                let Some(tab) = tab else {
+                    self.set_error(
+                        "tab.unknown",
+                        format!("Tab {} is not available", payload.tab_id),
+                        false,
+                    );
+                    return true;
+                };
+                let pane_ids = tab
+                    .panes
+                    .iter()
+                    .map(|pane| pane.id.as_str())
+                    .collect::<HashSet<_>>();
+                let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
+                    pane_ids.contains(agent.pane_id.as_str())
+                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                });
+                if requires_confirmation && !payload.confirmed {
+                    self.set_error(
+                        "tab.close_confirmation_required",
+                        format!(
+                            "Tab {} contains an agent that is working or needs attention; close_tab requires confirmed=true",
+                            payload.tab_id
+                        ),
+                        false,
+                    );
+                    return true;
+                }
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.set_error(
+                        "tab.control_unavailable",
+                        "Tab close requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                let tab_id = payload.tab_id;
+                self.push_diagnostic("tab.close.requested", format!("Closing tab {tab_id}"));
+                if let Err(message) =
+                    live::spawn_local_control(context, RemoteControlAction::CloseTab { tab_id })
+                {
+                    self.set_error("tab.close_worker_failed", message, true);
+                }
+                true
             }
             ValidatedEvent::ClosePane(payload) => {
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
@@ -3771,38 +4047,201 @@ impl Runtime {
             }
             ValidatedEvent::RemoteControl(payload) => self.request_remote_control(payload),
             ValidatedEvent::RemoteFileList(payload) => self.request_remote_file_list(payload),
-            ValidatedEvent::FileOpen(payload)
-                if self.snapshot.editor.path.as_deref() == Some(payload.path.as_str()) =>
-            {
-                self.snapshot.editor.viewer_visible = true;
-                self.snapshot.ui_state.selected_path = Some(payload.path);
+            ValidatedEvent::FileOpen(payload) => {
+                let context_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                    workspace.id == payload.workspace_id
+                        && workspace
+                            .checkouts
+                            .iter()
+                            .any(|checkout| checkout.id == payload.checkout_id)
+                });
+                let context_is_focused = self.snapshot.navigator.focused_workspace_id.as_deref()
+                    == Some(payload.workspace_id.as_str())
+                    && self.snapshot.navigator.focused_checkout_id.as_deref()
+                        == Some(payload.checkout_id.as_str());
+                if !context_exists || !context_is_focused {
+                    self.set_error(
+                        "file.invalid_context",
+                        "A file tab requires the selected workspace and checkout",
+                        false,
+                    );
+                    return true;
+                }
+                if let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
+                    (tab.workspace_id == payload.workspace_id
+                        && tab.checkout_id == payload.checkout_id
+                        && tab.path == payload.path)
+                        .then(|| tab.id.clone())
+                }) {
+                    if let Err(message) = self.activate_file_tab(&tab_id) {
+                        self.set_error("file.focus_failed", message, false);
+                    }
+                    self.snapshot.ui_state.selected_path = Some(payload.path);
+                    self.persist_current_ui_state();
+                    return true;
+                }
+                match files::open(Path::new(&payload.path)) {
+                    Ok(document) => {
+                        let tab_id = Self::file_tab_id(
+                            &payload.workspace_id,
+                            &payload.checkout_id,
+                            &payload.path,
+                        );
+                        self.editor_documents.insert(tab_id.clone(), document);
+                        self.snapshot.editor.tabs.push(FileTabSnapshot {
+                            id: tab_id.clone(),
+                            workspace_id: payload.workspace_id,
+                            checkout_id: payload.checkout_id,
+                            path: payload.path.clone(),
+                            label: Path::new(&payload.path)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .filter(|name| !name.is_empty())
+                                .unwrap_or(payload.path.as_str())
+                                .to_owned(),
+                            dirty: false,
+                        });
+                        if let Err(message) = self.activate_file_tab(&tab_id) {
+                            self.set_error("file.focus_failed", message, false);
+                        }
+                        self.snapshot.ui_state.selected_path = Some(payload.path);
+                    }
+                    Err(message) => self.set_error("file.open_failed", message, true),
+                }
+                self.persist_current_ui_state();
                 true
             }
-            ValidatedEvent::FileOpen(payload) => match files::open(Path::new(&payload.path)) {
-                Ok(editor) => {
-                    self.snapshot.editor = editor;
-                    self.snapshot.ui_state.selected_path = Some(payload.path);
-                    true
+            ValidatedEvent::FileFocus(payload) => {
+                let Some(tab) = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == payload.tab_id)
+                else {
+                    self.set_error(
+                        "file.focus_failed",
+                        format!("File tab {} is not open", payload.tab_id),
+                        false,
+                    );
+                    return true;
+                };
+                if !self.file_tab_matches_focused_context(tab) {
+                    self.set_error(
+                        "file.invalid_context",
+                        "A file tab can only be focused in its workspace and checkout",
+                        false,
+                    );
+                    return true;
                 }
-                Err(message) => {
-                    self.set_error("file.open_failed", message, true);
-                    true
+                match self.activate_file_tab(&payload.tab_id) {
+                    Ok(()) => {
+                        self.snapshot.ui_state.selected_path = self
+                            .snapshot
+                            .editor
+                            .document
+                            .as_ref()
+                            .map(|document| document.path.clone());
+                    }
+                    Err(message) => self.set_error("file.focus_failed", message, false),
                 }
-            },
-            ValidatedEvent::FileDraft(payload) => {
-                match files::update_draft(&mut self.snapshot.editor, payload.contents_utf8) {
-                    Ok(()) => true,
-                    Err(message) => {
-                        self.set_error("file.draft_rejected", message, false);
-                        true
+                self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::FileClose(payload) => {
+                let Some(index) = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .position(|tab| tab.id == payload.tab_id)
+                else {
+                    self.set_error(
+                        "file.close_unknown_tab",
+                        format!("File tab {} is not open", payload.tab_id),
+                        false,
+                    );
+                    return true;
+                };
+                let was_active =
+                    self.snapshot.editor.active_tab_id.as_deref() == Some(payload.tab_id.as_str());
+                self.snapshot.editor.tabs.remove(index);
+                self.editor_documents.remove(&payload.tab_id);
+                self.editor_tab_history
+                    .retain(|tab_id| tab_id != &payload.tab_id);
+                if was_active {
+                    self.snapshot.editor.active_tab_id = None;
+                    self.snapshot.editor.document = None;
+                    while let Some(previous_id) = self.editor_tab_history.pop() {
+                        if self
+                            .snapshot
+                            .editor
+                            .tabs
+                            .iter()
+                            .any(|tab| tab.id == previous_id)
+                        {
+                            if let Err(message) = self.activate_file_tab(&previous_id) {
+                                self.set_error("file.focus_failed", message, false);
+                            }
+                            break;
+                        }
                     }
                 }
+                self.snapshot.ui_state.selected_path = self
+                    .snapshot
+                    .editor
+                    .document
+                    .as_ref()
+                    .map(|document| document.path.clone());
+                self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::FileDraft(payload) => {
+                let Some(tab_id) = self.snapshot.editor.active_tab_id.clone() else {
+                    self.set_error("file.draft_rejected", "No file tab is active", false);
+                    return true;
+                };
+                let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+                    self.set_error(
+                        "file.draft_rejected",
+                        "The active file tab has no document state",
+                        false,
+                    );
+                    return true;
+                };
+                match files::update_draft(document, payload.contents_utf8) {
+                    Ok(()) => {
+                        self.sync_file_tab_dirty(&tab_id);
+                        self.sync_active_editor_document();
+                    }
+                    Err(message) => self.set_error("file.draft_rejected", message, false),
+                }
+                true
             }
             ValidatedEvent::FileSave(payload) => {
-                if self.snapshot.editor.path.as_deref() == Some(payload.path.as_str()) {
-                    self.snapshot.editor.contents_utf8 = Some(payload.contents_utf8.clone());
-                    self.snapshot.editor.dirty = true;
-                }
+                let Some(tab) = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == payload.tab_id && tab.path == payload.path)
+                else {
+                    self.set_error("file.save_rejected", "The save target is not open", false);
+                    return true;
+                };
+                let tab_id = tab.id.clone();
+                let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+                    self.set_error(
+                        "file.save_rejected",
+                        "The save target has no document state",
+                        false,
+                    );
+                    return true;
+                };
+                document.contents_utf8 = Some(payload.contents_utf8.clone());
+                document.dirty = true;
+                self.sync_file_tab_dirty(&tab_id);
+                self.sync_active_editor_document();
                 let Some(context) = self.worker_context.clone() else {
                     self.set_error(
                         "file.save_worker_unavailable",
@@ -3812,9 +4251,14 @@ impl Runtime {
                     return true;
                 };
                 let path = payload.path;
+                let save_tab_id = tab_id.clone();
                 let contents = payload.contents_utf8;
                 let expected_modified_at = payload.expected_modified_at_unix_ms;
-                let mut editor = self.snapshot.editor.clone();
+                let mut editor = self
+                    .editor_documents
+                    .get(&tab_id)
+                    .cloned()
+                    .expect("the save document was validated");
                 match thread::Builder::new()
                     .name("herdr-core-file-save".to_owned())
                     .spawn(move || {
@@ -3828,9 +4272,13 @@ impl Runtime {
                             return;
                         };
                         let changed = match runtime.lock() {
-                            Ok(mut guard) => {
-                                guard.ingest_file_save_result(path, contents, editor, result)
-                            }
+                            Ok(mut guard) => guard.ingest_file_save_result(
+                                save_tab_id,
+                                path,
+                                contents,
+                                editor,
+                                result,
+                            ),
                             Err(_) => return,
                         };
                         drop(runtime);
@@ -3849,41 +4297,41 @@ impl Runtime {
                     }
                 }
             }
-            ValidatedEvent::FileConflict(payload) => match payload.action.as_str() {
-                "reload" => match files::reload(&mut self.snapshot.editor) {
-                    Ok(()) => true,
-                    Err(message) => {
-                        self.set_error("file.reload_failed", message, true);
-                        true
-                    }
-                },
-                "keep_editing" => {
-                    if let Some(conflict) = self.snapshot.editor.conflict.as_ref() {
-                        self.snapshot.editor.opened_modified_at_unix_ms =
-                            Some(conflict.disk_modified_at_unix_ms);
-                    }
-                    self.snapshot.editor.conflict = None;
-                    true
-                }
-                _ => {
+            ValidatedEvent::FileConflict(payload) => {
+                let Some(tab_id) = self.snapshot.editor.active_tab_id.clone() else {
+                    self.set_error("file.conflict_without_tab", "No file tab is active", false);
+                    return true;
+                };
+                let Some(document) = self.editor_documents.get_mut(&tab_id) else {
                     self.set_error(
-                        "file.invalid_conflict_action",
-                        "Conflict action must be reload or keep_editing",
-                        false,
-                    );
-                    true
-                }
-            },
-            ValidatedEvent::FileViewerVisibility(payload) => {
-                if payload.visible && self.snapshot.editor.path.is_none() {
-                    self.set_error(
-                        "file.viewer_without_document",
-                        "A file must be selected before the viewer can open",
+                        "file.conflict_without_document",
+                        "The active file tab has no document state",
                         false,
                     );
                     return true;
+                };
+                match payload.action.as_str() {
+                    "reload" => match files::reload(document) {
+                        Ok(()) => {
+                            self.sync_file_tab_dirty(&tab_id);
+                            self.sync_active_editor_document();
+                        }
+                        Err(message) => self.set_error("file.reload_failed", message, true),
+                    },
+                    "keep_editing" => {
+                        if let Some(conflict) = document.conflict.as_ref() {
+                            document.opened_modified_at_unix_ms =
+                                Some(conflict.disk_modified_at_unix_ms);
+                        }
+                        document.conflict = None;
+                        self.sync_active_editor_document();
+                    }
+                    _ => self.set_error(
+                        "file.invalid_conflict_action",
+                        "Conflict action must be reload or keep_editing",
+                        false,
+                    ),
                 }
-                self.snapshot.editor.viewer_visible = payload.visible;
                 true
             }
             ValidatedEvent::TerminalResize(payload) => {
@@ -4459,12 +4907,11 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
+        "file_focus" => decode!(FileTabPayload, FileFocus),
+        "file_close" => decode!(FileTabPayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_save" => decode!(FileSavePayload, FileSave),
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
-        "file_viewer_visibility" => {
-            decode!(FileViewerVisibilityPayload, FileViewerVisibility)
-        }
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),

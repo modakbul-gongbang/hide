@@ -30,12 +30,6 @@ struct WorkbenchPanel: View {
             guard model.isRemoteContext, let activeRoot else { return }
             model.loadRemoteFiles(path: activeRoot.path)
         }
-        .onAppear {
-            if !model.isRemoteContext,
-               let restored = model.core.snapshot?.uiState.selectedPath {
-                model.core.openFile(URL(fileURLWithPath: restored))
-            }
-        }
     }
 
     @ViewBuilder
@@ -48,7 +42,7 @@ struct WorkbenchPanel: View {
                 expandedPaths: Set(model.core.snapshot?.uiState.expandedPaths ?? []),
                 selectedPath: model.core.snapshot?.uiState.selectedPath,
                 fontScale: fontScale,
-                openFile: model.core.openFile,
+                openFile: model.openFile,
                 updateExpandedPaths: { paths in
                     model.core.persistUIState(expandedPaths: paths)
                 }

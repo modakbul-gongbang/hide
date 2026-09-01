@@ -93,57 +93,52 @@ struct WorkbenchPresentationTests {
         #expect(activationCount == 1)
     }
 
-    @Test @MainActor func viewerEscapeUsesApplicationLocalKeyRouting() {
-        let escape = NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: [],
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            characters: "\u{1b}",
-            charactersIgnoringModifiers: "\u{1b}",
-            isARepeat: false,
-            keyCode: 53
-        )!
-        let returnKey = NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: [],
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            characters: "\r",
-            charactersIgnoringModifiers: "\r",
-            isARepeat: false,
-            keyCode: 36
-        )!
-
-        #expect(WorkbenchViewerEscapeMonitor.handles(escape))
-        #expect(!WorkbenchViewerEscapeMonitor.handles(returnKey))
+    @Test func restoringASelectedPathDoesNotReopenItsFileTab() {
+        #expect(!WorkspaceOutlineOpenPolicy.shouldOpenSelection(
+            isProgrammaticRestore: true,
+            isDirectory: false,
+            isPlaceholder: false
+        ))
+        #expect(WorkspaceOutlineOpenPolicy.shouldOpenSelection(
+            isProgrammaticRestore: false,
+            isDirectory: false,
+            isPlaceholder: false
+        ))
     }
 
-    @Test func olderEditorDeltaWithoutViewerVisibilityStillDecodes() throws {
+    @Test func unifiedEditorDeltaDecodesTabMetadataAndOnlyTheActiveDocument() throws {
         let payload = """
         {
-            "path": "/repo/README.md",
-            "language": "md",
-            "contents_utf8": "draft",
-            "opened_modified_at_unix_ms": 1,
-            "dirty": true,
-            "readonly_reason": null,
-            "conflict": null,
-            "diff": null
+            "tabs": [{
+                "id": "file:w:c:/repo/README.md",
+                "workspace_id": "w",
+                "checkout_id": "c",
+                "path": "/repo/README.md",
+                "label": "README.md",
+                "dirty": true
+            }],
+            "active_tab_id": "file:w:c:/repo/README.md",
+            "document": {
+                "path": "/repo/README.md",
+                "language": "md",
+                "contents_utf8": "draft",
+                "opened_modified_at_unix_ms": 1,
+                "dirty": true,
+                "readonly_reason": null,
+                "conflict": null,
+                "diff": null
+            }
         }
         """
 
         let decoded = try JSONDecoder().decode(CoreEditorSnapshot.self, from: Data(payload.utf8))
 
-        #expect(decoded.viewerVisible == nil)
+        #expect(decoded.tabs.map(\.label) == ["README.md"])
+        #expect(decoded.activeTabID == "file:w:c:/repo/README.md")
         #expect(decoded.contentsUTF8 == "draft")
     }
 
-    @Test @MainActor func bridgeDismissalAndSameFileReopenPreserveTheCoreDraft() async throws {
+    @Test @MainActor func bridgeFileTabsDeduplicateAndCloseRestoresThePreviousFile() async throws {
         let stateURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("hide-workbench-state-\(UUID().uuidString).json")
         let macosRoot = URL(fileURLWithPath: #filePath)
@@ -151,6 +146,7 @@ struct WorkbenchPresentationTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let fileURL = macosRoot.appendingPathComponent("VerificationFixtures/Sample.swift")
+        let secondURL = macosRoot.appendingPathComponent("Package.swift")
         defer { try? FileManager.default.removeItem(at: stateURL) }
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
@@ -158,22 +154,32 @@ struct WorkbenchPresentationTests {
             "--workspace-root", macosRoot.path,
             "--state-path", stateURL.path,
         ])
+        try await Task.sleep(for: .milliseconds(100))
 
-        bridge.openFile(fileURL)
-        bridge.updateDraft("// unsaved bridge draft\n")
-        bridge.setFileViewerVisible(false)
+        guard let workspace = bridge.snapshot?.navigator.workspaces.first,
+              let checkout = workspace.checkouts.first
+        else {
+            Issue.record("verification fixture should project a workspace and checkout")
+            return
+        }
+        bridge.openFile(fileURL, workspaceID: workspace.id, checkoutID: checkout.id)
+        bridge.openFile(fileURL, workspaceID: workspace.id, checkoutID: checkout.id)
         try await Task.sleep(for: .milliseconds(50))
 
-        #expect(bridge.snapshot?.editor.viewerVisible == false)
-        #expect(bridge.snapshot?.editor.dirty == true)
-        #expect(bridge.snapshot?.editor.contentsUTF8 == "// unsaved bridge draft\n")
+        #expect(bridge.snapshot?.editor.tabs.count == 1)
+        #expect(bridge.snapshot?.editor.path == fileURL.path)
 
-        bridge.openFile(fileURL)
+        bridge.openFile(secondURL, workspaceID: workspace.id, checkoutID: checkout.id)
+        try await Task.sleep(for: .milliseconds(50))
+        let secondTabID = try #require(bridge.snapshot?.editor.activeTabID)
+        #expect(bridge.snapshot?.editor.tabs.count == 2)
+        #expect(bridge.snapshot?.editor.path == secondURL.path)
+
+        bridge.closeFileTab(secondTabID)
         try await Task.sleep(for: .milliseconds(50))
 
-        #expect(bridge.snapshot?.editor.viewerVisible == true)
-        #expect(bridge.snapshot?.editor.dirty == true)
-        #expect(bridge.snapshot?.editor.contentsUTF8 == "// unsaved bridge draft\n")
+        #expect(bridge.snapshot?.editor.tabs.count == 1)
+        #expect(bridge.snapshot?.editor.path == fileURL.path)
     }
 
     @Test func panelVisibilityDefaultsOpenAndDecodesIndependentClosedStates() throws {
