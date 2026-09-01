@@ -879,37 +879,39 @@ private struct WorkspaceNavigatorRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 7) {
+            HStack(spacing: 0) {
                 Button {
                     model.toggleWorkspace(workspace)
                 } label: {
-                    Image(systemName: workspace.expanded ? "chevron.down" : "chevron.right")
-                        .hideFont(size: 9, weight: .bold)
-                        .foregroundStyle(HideTheme.muted)
-                        .frame(width: 12, height: 20)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 7) {
+                        Image(systemName: workspace.expanded ? "chevron.down" : "chevron.right")
+                            .hideFont(size: 9, weight: .bold)
+                            .foregroundStyle(HideTheme.muted)
+                            .frame(width: 12, height: 20)
+                        Image(systemName: workspace.isGit ? "folder.badge.gearshape" : "folder")
+                            .hideFont(size: 12, weight: .semibold)
+                            .foregroundStyle(
+                                workspace.temporary
+                                    ? HideTheme.warning
+                                    : (isFocusedWorkspace ? accent : HideTheme.secondary)
+                            )
+                            .frame(width: 16)
+                        Text(workspace.label)
+                            .hideFont(size: 12, weight: .semibold)
+                            .foregroundStyle(isFocusedWorkspace ? HideTheme.primary : HideTheme.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(presentation.activityLabel)
+                            .hideFont(size: 9, design: .monospaced)
+                            .foregroundStyle(HideTheme.muted)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .frame(width: 22, height: 28)
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
-                Image(systemName: workspace.isGit ? "folder.badge.gearshape" : "folder")
-                    .hideFont(size: 12, weight: .semibold)
-                    .foregroundStyle(
-                        workspace.temporary
-                            ? HideTheme.warning
-                            : (isFocusedWorkspace ? accent : HideTheme.secondary)
-                    )
-                    .frame(width: 16)
-                Text(workspace.label)
-                    .hideFont(size: 12, weight: .semibold)
-                    .foregroundStyle(isFocusedWorkspace ? HideTheme.primary : HideTheme.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Text(presentation.activityLabel)
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-                    .lineLimit(1)
                 Menu {
                     Button("New Agent") {
                         model.openNewAgent(checkoutID: workspace.checkouts.first?.id)
@@ -932,7 +934,6 @@ private struct WorkspaceNavigatorRow: View {
             }
             .padding(.leading, 10)
             .padding(.trailing, 8)
-            .frame(minHeight: 34)
 
             if workspace.expanded {
                 ForEach(workspace.checkouts) { checkout in

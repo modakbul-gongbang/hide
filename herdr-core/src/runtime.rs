@@ -2949,6 +2949,10 @@ impl Runtime {
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                Self::apply_workspace_expansion(
+                    &mut self.snapshot.navigator.workspaces,
+                    &self.snapshot.ui_state.collapsed_workspace_ids,
+                );
                 // The live poller owns session-derived temporary workspaces.
                 // UI-state persistence must not rebuild from an empty session
                 // and erase the catalog that the user is currently viewing.
@@ -3794,6 +3798,48 @@ mod tests {
             temporary: false,
             checkouts,
         }
+    }
+
+    #[test]
+    fn ui_state_update_applies_workspace_expansion_without_waiting_for_a_poll() {
+        let mut runtime = runtime();
+        runtime.snapshot.navigator.workspaces = vec![workspace(
+            "workspace-a",
+            "A",
+            "/tmp/hide-runtime-a",
+            Vec::new(),
+        )];
+        let collapse = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_workspace_ids": ["workspace-a"],
+                "selected_path": null,
+                "selected_pane_id": null,
+                "shortcut_bindings": {}
+            }
+        }))
+        .expect("collapse workspace event");
+
+        assert!(runtime.dispatch_json(&collapse));
+        assert!(!runtime.snapshot().navigator.workspaces[0].expanded);
+
+        let expand = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_workspace_ids": [],
+                "selected_path": null,
+                "selected_pane_id": null,
+                "shortcut_bindings": {}
+            }
+        }))
+        .expect("expand workspace event");
+
+        assert!(runtime.dispatch_json(&expand));
+        assert!(runtime.snapshot().navigator.workspaces[0].expanded);
     }
 
     #[test]
