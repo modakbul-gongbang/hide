@@ -949,6 +949,7 @@ struct SessionReplica {
     state: ProjectionState,
     pending_layouts: BTreeSet<String>,
     pending_workspace_closures: BTreeSet<String>,
+    pending_active_tab_focuses: BTreeSet<String>,
     last_event: Option<(u64, String)>,
 }
 
@@ -1011,6 +1012,7 @@ impl SessionReplica {
             state,
             pending_layouts: BTreeSet::new(),
             pending_workspace_closures: BTreeSet::new(),
+            pending_active_tab_focuses: BTreeSet::new(),
             last_event: None,
         };
         replica.validate()?;
@@ -1238,7 +1240,9 @@ impl SessionReplica {
     }
 
     fn ready_to_publish(&self) -> bool {
-        self.pending_layouts.is_empty() && self.pending_workspace_closures.is_empty()
+        self.pending_layouts.is_empty()
+            && self.pending_workspace_closures.is_empty()
+            && self.pending_active_tab_focuses.is_empty()
     }
 
     fn replace_agents(&mut self, agents: Vec<WireAgent>) {
@@ -1474,8 +1478,17 @@ impl SessionReplica {
                         "closed tab belongs to another workspace",
                     ));
                 }
+                let active_tab_closed = self
+                    .state
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.workspace_id == payload.workspace_id)
+                    .is_some_and(|workspace| workspace.active_tab_id == payload.tab_id);
                 if workspace_tab_count == 1 {
                     self.pending_workspace_closures
+                        .insert(payload.workspace_id.clone());
+                } else if active_tab_closed {
+                    self.pending_active_tab_focuses
                         .insert(payload.workspace_id.clone());
                 }
                 self.remove_tab(&payload.tab_id);
@@ -1543,6 +1556,8 @@ impl SessionReplica {
                     ));
                 }
                 workspace.active_tab_id = payload.tab_id;
+                self.pending_active_tab_focuses
+                    .remove(&payload.workspace_id);
             }
             "pane_created" => {
                 let payload: PaneEvent = decode_event_data(data, event)?;
@@ -1582,8 +1597,40 @@ impl SessionReplica {
                         "closed pane belongs to another workspace",
                     ));
                 }
-                self.pending_layouts.insert(pane.tab_id.clone());
-                self.remove_pane(&payload.pane_id);
+                let tab_id = pane.tab_id.clone();
+                let last_pane_in_tab = self
+                    .state
+                    .panes
+                    .iter()
+                    .filter(|candidate| candidate.tab_id == tab_id)
+                    .count()
+                    == 1;
+                let workspace_tab_count = self
+                    .state
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.workspace_id == payload.workspace_id)
+                    .count();
+                if last_pane_in_tab && workspace_tab_count > 1 {
+                    let active_tab_closed = self
+                        .state
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.workspace_id == payload.workspace_id)
+                        .is_some_and(|workspace| workspace.active_tab_id == tab_id);
+                    if active_tab_closed {
+                        self.pending_active_tab_focuses
+                            .insert(payload.workspace_id.clone());
+                    }
+                    // Herdr 0.8.2 removes an emptied tab as part of pane.close
+                    // without emitting a separate tab.closed event. Mirror that
+                    // authoritative cascade so the replica cannot wait forever
+                    // for a layout.updated event for a tab that no longer exists.
+                    self.remove_tab(&tab_id);
+                } else {
+                    self.pending_layouts.insert(tab_id);
+                    self.remove_pane(&payload.pane_id);
+                }
             }
             "pane_updated" => {
                 let payload: PaneEvent = decode_event_data(data, event)?;
@@ -1768,6 +1815,7 @@ impl SessionReplica {
         self.pending_layouts
             .retain(|tab_id| !tab_ids.contains(tab_id));
         self.pending_workspace_closures.remove(workspace_id);
+        self.pending_active_tab_focuses.remove(workspace_id);
         self.clear_missing_focus();
     }
 
@@ -2373,6 +2421,43 @@ mod tests {
         })
     }
 
+    fn two_tab_snapshot() -> Value {
+        let mut value = snapshot();
+        value["tabs"]
+            .as_array_mut()
+            .expect("tabs array")
+            .push(json!({
+                "workspace_id": "w1",
+                "tab_id": "w1:t2",
+                "label": "2"
+            }));
+        value["panes"]
+            .as_array_mut()
+            .expect("panes array")
+            .push(json!({
+                "workspace_id": "w1",
+                "tab_id": "w1:t2",
+                "pane_id": "w1:p2",
+                "cwd": "/tmp/fixture"
+            }));
+        value["layouts"]
+            .as_array_mut()
+            .expect("layouts array")
+            .push(json!({
+                "workspace_id": "w1",
+                "tab_id": "w1:t2",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                "focused_pane_id": "w1:p2",
+                "panes": [{
+                    "pane_id": "w1:p2",
+                    "rect": {"x": 0, "y": 0, "width": 120, "height": 60}
+                }],
+                "splits": []
+            }));
+        value
+    }
+
     fn event(sequence: u64, kind: &str, data: Value) -> SequencedEventEnvelope {
         let raw = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
@@ -2718,6 +2803,132 @@ mod tests {
         assert!(projected.panes.is_empty());
         assert!(projected.layouts.is_empty());
         assert_eq!(projected.focused_pane_id, None);
+    }
+
+    #[test]
+    fn last_pane_close_removes_an_implicitly_closed_inactive_tab() {
+        let mut replica =
+            SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+
+        let pane_closed = replica
+            .apply(event(
+                41,
+                "pane_closed",
+                json!({
+                    "type": "pane_closed",
+                    "pane_id": "w1:p2",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("last pane close event");
+
+        assert!(pane_closed.publish);
+        assert!(replica.ready_to_publish());
+        let projected = replica.project();
+        assert_eq!(
+            projected
+                .tabs
+                .iter()
+                .map(|tab| tab.tab_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["w1:t1"]
+        );
+        assert!(projected.panes.iter().all(|pane| pane.pane_id != "w1:p2"));
+        assert!(
+            projected
+                .layouts
+                .iter()
+                .all(|layout| layout.tab_id != "w1:t2")
+        );
+    }
+
+    #[test]
+    fn last_pane_close_waits_for_the_authoritative_fallback_tab_focus() {
+        let mut replica =
+            SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+
+        let pane_closed = replica
+            .apply(event(
+                41,
+                "pane_closed",
+                json!({
+                    "type": "pane_closed",
+                    "pane_id": "w1:p1",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("last pane close event");
+        assert!(!pane_closed.publish);
+        assert!(!replica.ready_to_publish());
+
+        let workspace_focused = replica
+            .apply(event(
+                42,
+                "workspace_focused",
+                json!({
+                    "type": "workspace_focused",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("workspace focus event");
+        assert!(!workspace_focused.publish);
+
+        let tab_focused = replica
+            .apply(event(
+                43,
+                "tab_focused",
+                json!({
+                    "type": "tab_focused",
+                    "tab_id": "w1:t2",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("fallback tab focus event");
+        assert!(tab_focused.publish);
+        assert!(replica.ready_to_publish());
+        assert_eq!(replica.state.workspaces[0].active_tab_id, "w1:t2");
+        assert!(
+            replica
+                .project()
+                .tabs
+                .iter()
+                .all(|tab| tab.tab_id != "w1:t1")
+        );
+    }
+
+    #[test]
+    fn active_tab_close_waits_for_the_authoritative_fallback_tab_focus() {
+        let mut replica =
+            SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+
+        let tab_closed = replica
+            .apply(event(
+                41,
+                "tab_closed",
+                json!({
+                    "type": "tab_closed",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("active tab close event");
+        assert!(!tab_closed.publish);
+        assert!(!replica.ready_to_publish());
+
+        let tab_focused = replica
+            .apply(event(
+                42,
+                "tab_focused",
+                json!({
+                    "type": "tab_focused",
+                    "tab_id": "w1:t2",
+                    "workspace_id": "w1"
+                }),
+            ))
+            .expect("fallback tab focus event");
+        assert!(tab_focused.publish);
+        assert!(replica.ready_to_publish());
+        assert_eq!(replica.state.workspaces[0].active_tab_id, "w1:t2");
     }
 
     #[test]
