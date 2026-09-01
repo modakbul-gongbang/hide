@@ -1427,7 +1427,10 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         match (action, result) {
-            (PaneControlAction::Project { pane_id }, Ok(outcome)) => {
+            (
+                PaneControlAction::Project { pane_id },
+                Ok(PaneControlOutcome::Projected { layout }),
+            ) => {
                 if self.snapshot.terminal.pane_id.as_deref() != Some(pane_id.as_str()) {
                     self.push_diagnostic(
                         "pane.projection.stale",
@@ -1435,14 +1438,6 @@ impl Runtime {
                     );
                     return false;
                 }
-                let Some(layout) = outcome.layout else {
-                    self.set_error(
-                        "pane.projection_missing_layout",
-                        format!("Pane {pane_id} projection returned no layout"),
-                        true,
-                    );
-                    return true;
-                };
                 if !layout.pane_ids().contains(&pane_id.as_str()) {
                     self.set_error(
                         "pane.projection_mismatch",
@@ -1467,42 +1462,22 @@ impl Runtime {
                 self.apply_pane_layout(layout);
                 true
             }
-            (PaneControlAction::Focus { pane_id }, Ok(outcome)) => {
-                let Some(layout) = outcome.layout else {
-                    self.set_error(
-                        "pane.focus_missing_layout",
-                        format!("Pane {pane_id} focused without an authoritative layout"),
-                        true,
-                    );
-                    return true;
-                };
-                if layout.focused_pane_id != pane_id {
-                    self.set_error(
-                        "pane.focus_mismatch",
-                        format!(
-                            "Requested pane {pane_id}, but Herdr reported focused pane {}",
-                            layout.focused_pane_id
-                        ),
-                        true,
-                    );
-                    return true;
-                }
+            (PaneControlAction::Focus { pane_id }, Ok(PaneControlOutcome::Acknowledged { .. })) => {
                 self.push_diagnostic(
                     "pane.focus",
-                    format!("Pane {pane_id} focused in {elapsed_ms} ms"),
+                    format!(
+                        "Pane {pane_id} focus acknowledged in {elapsed_ms} ms; awaiting authoritative event"
+                    ),
                 );
-                self.snapshot.ui_state.selected_pane_id = Some(pane_id);
-                self.persist_ui_state();
-                self.apply_pane_layout(layout);
                 true
             }
             (
                 PaneControlAction::Split {
                     pane_id, direction, ..
                 },
-                Ok(outcome),
+                Ok(PaneControlOutcome::Acknowledged { created_pane_id }),
             ) => {
-                let Some(created_pane_id) = outcome.created_pane_id else {
+                let Some(created_pane_id) = created_pane_id else {
                     self.set_error(
                         "pane.split_invalid_response",
                         "Pane split completed without a created pane id",
@@ -1528,34 +1503,6 @@ impl Runtime {
                         "duration_ms": elapsed_ms,
                     })
                 );
-                if let Some(message) = outcome.layout_refresh_error {
-                    self.push_diagnostic("pane.layout.refresh_pending", message);
-                }
-                let Some(layout) = outcome.layout else {
-                    self.set_error(
-                        "pane.layout_refresh_failed",
-                        format!(
-                            "Pane {created_pane_id} was created, but Herdr did not return its authoritative layout"
-                        ),
-                        true,
-                    );
-                    return true;
-                };
-                if !layout.pane_ids().contains(&created_pane_id.as_str()) {
-                    self.set_error(
-                        "pane.layout_created_pane_missing",
-                        format!(
-                            "Authoritative layout does not contain created pane {created_pane_id}"
-                        ),
-                        true,
-                    );
-                    return true;
-                }
-                let authoritative_focus = layout.focused_pane_id.clone();
-                self.snapshot.focused.surface = Surface::Terminal;
-                self.snapshot.ui_state.selected_pane_id = Some(authoritative_focus);
-                self.persist_ui_state();
-                self.apply_pane_layout(layout);
                 true
             }
             (
@@ -1564,35 +1511,25 @@ impl Runtime {
                     direction,
                     amount,
                 },
-                Ok(outcome),
+                Ok(PaneControlOutcome::Acknowledged { .. }),
             ) => {
-                let Some(layout) = outcome.layout else {
-                    self.set_error(
-                        "pane.resize_missing_layout",
-                        format!("Pane {pane_id} resized without an authoritative layout"),
-                        true,
-                    );
-                    return true;
-                };
                 self.push_diagnostic(
                     "pane.resize",
                     format!(
-                        "Pane {pane_id} resized {} by {amount:.3} in {elapsed_ms} ms",
+                        "Pane {pane_id} resize {} by {amount:.3} acknowledged in {elapsed_ms} ms; awaiting authoritative event",
                         direction.as_str()
                     ),
                 );
-                self.apply_pane_layout(layout);
                 true
             }
-            (PaneControlAction::ToggleZoom { pane_id }, Ok(outcome)) => {
-                let layout_zoomed = outcome.layout.as_ref().map(|layout| layout.zoomed);
+            (
+                PaneControlAction::ToggleZoom { pane_id },
+                Ok(PaneControlOutcome::Acknowledged { .. }),
+            ) => {
                 self.push_diagnostic(
                     "pane.zoom_toggled",
                     format!(
-                        "Pane {pane_id} zoom {} in {elapsed_ms} ms",
-                        layout_zoomed
-                            .map(|zoomed| if zoomed { "enabled" } else { "disabled" })
-                            .unwrap_or("awaiting authoritative layout")
+                        "Pane {pane_id} zoom acknowledged in {elapsed_ms} ms; awaiting authoritative event"
                     ),
                 );
                 eprintln!(
@@ -1601,22 +1538,17 @@ impl Runtime {
                         "component": "pane_control",
                         "kind": "pane.zoom_ready",
                         "pane_id": pane_id,
-                        "zoomed": layout_zoomed,
                         "duration_ms": elapsed_ms,
                     })
                 );
-                if let Some(message) = outcome.layout_refresh_error {
-                    self.push_diagnostic("pane.layout.refresh_pending", message);
-                }
-                if let Some(layout) = outcome.layout {
-                    self.apply_pane_layout(layout);
-                }
                 true
             }
-            (PaneControlAction::Close { pane_id }, Ok(outcome)) => {
+            (PaneControlAction::Close { pane_id }, Ok(PaneControlOutcome::Acknowledged { .. })) => {
                 self.push_diagnostic(
                     "pane.close",
-                    format!("Pane {pane_id} closed in {elapsed_ms} ms"),
+                    format!(
+                        "Pane {pane_id} close acknowledged in {elapsed_ms} ms; awaiting authoritative event"
+                    ),
                 );
                 eprintln!(
                     "{}",
@@ -1627,39 +1559,22 @@ impl Runtime {
                         "duration_ms": elapsed_ms,
                     })
                 );
-
-                let _retired_session = self.terminal_sessions.remove(&pane_id);
-                self.terminal_session_generations.remove(&pane_id);
-                self.terminal_session_lifecycles.remove(&pane_id);
-                self.terminal_sizes.remove(&pane_id);
-                self.snapshot
-                    .terminal
-                    .panes
-                    .retain(|pane| pane.pane_id != pane_id);
-
-                if let Some(message) = outcome.layout_refresh_error {
-                    self.push_diagnostic("pane.layout.refresh_pending", message);
-                    if self.snapshot.terminal.pane_id.as_deref() == Some(pane_id.as_str()) {
-                        self.snapshot.terminal.pane_id = None;
-                        self.snapshot.focused.pane_id = None;
-                    }
-                } else if let Some(layout) = outcome.layout {
-                    let focused_pane_id = layout.focused_pane_id.clone();
-                    self.snapshot.focused.surface = Surface::Terminal;
-                    self.snapshot.focused.pane_id = Some(focused_pane_id.clone());
-                    self.snapshot.terminal.pane_id = Some(focused_pane_id.clone());
-                    self.snapshot.ui_state.selected_pane_id = Some(focused_pane_id);
-                    self.apply_pane_layout(layout);
-                } else {
-                    self.snapshot.pane_layout = None;
-                    self.snapshot.zoomed = None;
-                    self.snapshot.focused.pane_id = None;
-                    self.snapshot.terminal.pane_id = None;
-                    self.snapshot.terminal.panes.clear();
-                    self.snapshot.ui_state.selected_pane_id = None;
-                }
-                self.persist_ui_state();
-                self.sync_focused_terminal_projection();
+                true
+            }
+            (PaneControlAction::Project { .. }, Ok(PaneControlOutcome::Acknowledged { .. }))
+            | (
+                PaneControlAction::Focus { .. }
+                | PaneControlAction::Split { .. }
+                | PaneControlAction::Resize { .. }
+                | PaneControlAction::ToggleZoom { .. }
+                | PaneControlAction::Close { .. },
+                Ok(PaneControlOutcome::Projected { .. }),
+            ) => {
+                self.set_error(
+                    "pane.control_invalid_outcome",
+                    "Pane control returned an outcome for the wrong operation class",
+                    false,
+                );
                 true
             }
             (PaneControlAction::Project { .. }, Err(message)) => {
@@ -3527,6 +3442,91 @@ mod tests {
             assert!(!terminal_control_request_allowed(state, false), "{state}");
         }
         assert!(!terminal_control_request_allowed("idle", true));
+    }
+
+    #[test]
+    fn pane_mutation_receipts_never_publish_topology_ahead_of_session_sync() {
+        let mut runtime = runtime();
+        let pane_id = "w1:p1";
+        let layout = PaneLayoutSnapshot {
+            workspace_id: "w1".to_owned(),
+            tab_id: "w1:t1".to_owned(),
+            focused_pane_id: pane_id.to_owned(),
+            zoomed: false,
+            root: PaneLayoutNodeSnapshot::Pane {
+                pane_id: pane_id.to_owned(),
+            },
+        };
+        let panes = vec![TerminalPaneSnapshot {
+            pane_id: pane_id.to_owned(),
+            closed: false,
+            ..TerminalPaneSnapshot::default()
+        }];
+        runtime.snapshot.pane_layout = Some(layout.clone());
+        runtime.snapshot.focused.surface = Surface::Terminal;
+        runtime.snapshot.focused.pane_id = Some(pane_id.to_owned());
+        runtime.snapshot.terminal.pane_id = Some(pane_id.to_owned());
+        runtime.snapshot.terminal.panes = panes.clone();
+        runtime.snapshot.ui_state.selected_pane_id = Some(pane_id.to_owned());
+
+        let receipts = [
+            (
+                PaneControlAction::Split {
+                    pane_id: pane_id.to_owned(),
+                    direction: PaneSplitDirection::Right,
+                    cwd: Some("/tmp".to_owned()),
+                },
+                PaneControlOutcome::Acknowledged {
+                    created_pane_id: Some("w1:p2".to_owned()),
+                },
+            ),
+            (
+                PaneControlAction::Focus {
+                    pane_id: "w1:p2".to_owned(),
+                },
+                PaneControlOutcome::Acknowledged {
+                    created_pane_id: None,
+                },
+            ),
+            (
+                PaneControlAction::Resize {
+                    pane_id: pane_id.to_owned(),
+                    direction: PaneResizeDirection::Right,
+                    amount: 0.1,
+                },
+                PaneControlOutcome::Acknowledged {
+                    created_pane_id: None,
+                },
+            ),
+            (
+                PaneControlAction::ToggleZoom {
+                    pane_id: pane_id.to_owned(),
+                },
+                PaneControlOutcome::Acknowledged {
+                    created_pane_id: None,
+                },
+            ),
+            (
+                PaneControlAction::Close {
+                    pane_id: pane_id.to_owned(),
+                },
+                PaneControlOutcome::Acknowledged {
+                    created_pane_id: None,
+                },
+            ),
+        ];
+
+        for (action, receipt) in receipts {
+            assert!(runtime.ingest_pane_control_result(action, Ok(receipt), 3));
+            assert_eq!(runtime.snapshot.pane_layout, Some(layout.clone()));
+            assert_eq!(runtime.snapshot.terminal.panes, panes);
+            assert_eq!(runtime.snapshot.terminal.pane_id.as_deref(), Some(pane_id));
+            assert_eq!(runtime.snapshot.focused.pane_id.as_deref(), Some(pane_id));
+            assert_eq!(
+                runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+                Some(pane_id)
+            );
+        }
     }
 
     #[test]

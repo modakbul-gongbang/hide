@@ -169,10 +169,9 @@ pub enum PaneControlAction {
 }
 
 #[derive(Debug)]
-pub struct PaneControlOutcome {
-    pub created_pane_id: Option<String>,
-    pub layout: Option<PaneLayoutSnapshot>,
-    pub layout_refresh_error: Option<String>,
+pub enum PaneControlOutcome {
+    Projected { layout: PaneLayoutSnapshot },
+    Acknowledged { created_pane_id: Option<String> },
 }
 
 fn execute_pane_control(
@@ -180,11 +179,8 @@ fn execute_pane_control(
     action: &PaneControlAction,
 ) -> Result<PaneControlOutcome, String> {
     if let PaneControlAction::Project { pane_id } = action {
-        return fetch_pane_layout(&context.socket_path, pane_id).map(|layout| PaneControlOutcome {
-            created_pane_id: None,
-            layout: Some(layout),
-            layout_refresh_error: None,
-        });
+        return fetch_pane_layout(&context.socket_path, pane_id)
+            .map(|layout| PaneControlOutcome::Projected { layout });
     }
     if let PaneControlAction::Focus { pane_id } = action {
         request(
@@ -192,11 +188,8 @@ fn execute_pane_control(
             "pane.focus",
             json!({"pane_id": pane_id}),
         )?;
-        let layout = fetch_pane_layout(&context.socket_path, pane_id)?;
-        return Ok(PaneControlOutcome {
+        return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
-            layout: Some(layout),
-            layout_refresh_error: None,
         });
     }
     if let PaneControlAction::Resize {
@@ -210,11 +203,8 @@ fn execute_pane_control(
             "pane.resize",
             json!({"pane_id": pane_id, "direction": direction.as_str(), "amount": amount}),
         )?;
-        let layout = fetch_pane_layout(&context.socket_path, pane_id)?;
-        return Ok(PaneControlOutcome {
+        return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
-            layout: Some(layout),
-            layout_refresh_error: None,
         });
     }
 
@@ -249,43 +239,7 @@ fn execute_pane_control(
             | PaneControlAction::ToggleZoom { .. }
             | PaneControlAction::Close { .. } => None,
         };
-        let layout_pane_id = created_pane_id.as_deref().unwrap_or_else(|| match action {
-            PaneControlAction::Project { pane_id }
-            | PaneControlAction::Focus { pane_id }
-            | PaneControlAction::Split { pane_id, .. }
-            | PaneControlAction::Resize { pane_id, .. }
-            | PaneControlAction::ToggleZoom { pane_id }
-            | PaneControlAction::Close { pane_id } => pane_id,
-        });
-        let (layout, layout_refresh_error) = match action {
-            PaneControlAction::Close { .. } => match fetch_session(&context.socket_path) {
-                Ok(payload) => {
-                    let target = payload.focused_pane_id.as_deref().or_else(|| {
-                        payload
-                            .layouts
-                            .first()
-                            .map(|layout| layout.focused_pane_id.as_str())
-                    });
-                    match target {
-                        Some(pane_id) => match project_layout_for_pane(&payload, pane_id) {
-                            Ok(layout) => (Some(layout), None),
-                            Err(message) => (None, Some(message)),
-                        },
-                        None => (None, None),
-                    }
-                }
-                Err(error) => (None, Some(error.message().to_owned())),
-            },
-            _ => match fetch_pane_layout(&context.socket_path, layout_pane_id) {
-                Ok(layout) => (Some(layout), None),
-                Err(message) => (None, Some(message)),
-            },
-        };
-        return Ok(PaneControlOutcome {
-            created_pane_id,
-            layout,
-            layout_refresh_error,
-        });
+        return Ok(PaneControlOutcome::Acknowledged { created_pane_id });
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     Err(if stderr.is_empty() {

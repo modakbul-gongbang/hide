@@ -813,9 +813,20 @@ fn pane_control_dispatch_does_not_wait_for_the_child_process() {
     let returned_without_waiting = elapsed < Duration::from_millis(250);
 
     let split_result = wait_for_snapshot(core, Duration::from_secs(3), |current| {
-        current["status"]["last_error"]["kind"] == "pane.layout_refresh_failed"
+        current["status"]["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic["kind"] == "pane.split.right")
+            })
     });
     assert_eq!(split_result["terminal"]["pane_id"], "w-test:p1");
+    assert_eq!(
+        split_result["pane_layout"]["root"]["pane_id"], "w-test:p1",
+        "a mutation receipt must not publish topology before session sync"
+    );
+    assert!(split_result["status"]["last_error"].is_null());
 
     let focus_started = Instant::now();
     dispatch(
