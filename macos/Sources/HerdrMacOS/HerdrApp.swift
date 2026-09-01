@@ -70,6 +70,18 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return event }
             // The reverse chord is checked first: it is the forward chord plus
             // Shift, so testing forward first would swallow it.
+            if PaneKeyEventPolicy.isTabSwitcherRetreat(event) {
+                MainActor.assumeIsolated {
+                    self.model.beginOrRetreatTabSwitcher()
+                }
+                return nil
+            }
+            if PaneKeyEventPolicy.isTabSwitcherAdvance(event) {
+                MainActor.assumeIsolated {
+                    self.model.beginOrAdvanceTabSwitcher()
+                }
+                return nil
+            }
             if PaneKeyEventPolicy.isAgentSwitcherRetreat(event) {
                 MainActor.assumeIsolated {
                     self.model.beginOrRetreatAgentSwitcher()
@@ -82,20 +94,33 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil
             }
-            let switcherIsActive = MainActor.assumeIsolated {
-                self.model.agentSwitcherCycle != nil
+            let activeSwitchers = MainActor.assumeIsolated {
+                (
+                    agent: self.model.agentSwitcherCycle != nil,
+                    tab: self.model.tabSwitcherCycle != nil
+                )
             }
             if event.type == .keyDown,
                event.keyCode == 53,
-               switcherIsActive
+               activeSwitchers.agent || activeSwitchers.tab
             {
                 MainActor.assumeIsolated {
                     self.model.cancelAgentSwitcher()
+                    self.model.cancelTabSwitcher()
                 }
                 return nil
             }
             if event.type == .flagsChanged,
-               switcherIsActive,
+               activeSwitchers.tab,
+               !event.modifierFlags.contains(.control)
+            {
+                MainActor.assumeIsolated {
+                    self.model.commitTabSwitcher()
+                }
+                return nil
+            }
+            if event.type == .flagsChanged,
+               activeSwitchers.agent,
                !event.modifierFlags.contains(.option)
             {
                 MainActor.assumeIsolated {

@@ -140,6 +140,12 @@ struct ShellView: View {
             }
             if let cycle = model.agentSwitcherCycle {
                 AgentSwitcherOverlay(cycle: cycle, agents: model.agents)
+            } else if let cycle = model.tabSwitcherCycle {
+                TabSwitcherOverlay(
+                    cycle: cycle,
+                    tabs: model.unifiedTabs,
+                    checkoutLabel: model.focusedCheckout?.label
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -246,6 +252,75 @@ private struct AgentSwitcherOverlay: View {
         }
         .shadow(color: .black.opacity(0.45), radius: 22, y: 12)
         .accessibilityIdentifier("agent-mru-switcher")
+    }
+}
+
+private struct TabSwitcherOverlay: View {
+    let cycle: TabSwitcherCycle
+    let tabs: [ShellTabItem]
+    let checkoutLabel: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("RECENT TABS")
+                .hideFont(size: 10, weight: .bold)
+                .foregroundStyle(HideTheme.muted)
+            ForEach(cycle.tabIDs, id: \.self) { tabID in
+                if let tab = tabs.first(where: { $0.id == tabID }) {
+                    HStack(spacing: 10) {
+                        Image(systemName: icon(for: tab))
+                            .hideFont(size: 13, weight: .semibold)
+                            .foregroundStyle(HideTheme.secondary)
+                            .frame(width: 19, height: 19)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tab.label)
+                                .hideFont(size: 12, weight: .semibold)
+                                .lineLimit(1)
+                            Text(detail(for: tab))
+                                .hideFont(size: 9, design: .monospaced)
+                                .foregroundStyle(HideTheme.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if tab.dirty {
+                            Circle()
+                                .fill(HideTheme.secondary)
+                                .frame(width: 5, height: 5)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                    .background(
+                        tabID == cycle.selectedTabID ? HideTheme.accent.opacity(0.16) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 360)
+        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10).stroke(HideTheme.divider)
+        }
+        .shadow(color: .black.opacity(0.45), radius: 22, y: 12)
+        .accessibilityIdentifier("tab-mru-switcher")
+    }
+
+    private func icon(for tab: ShellTabItem) -> String {
+        switch tab.kind {
+        case .herdr: "terminal"
+        case .file: "doc.text"
+        }
+    }
+
+    private func detail(for tab: ShellTabItem) -> String {
+        let kind = switch tab.kind {
+        case .herdr: "Terminal"
+        case .file: "File"
+        }
+        guard let checkoutLabel, !checkoutLabel.isEmpty else { return kind }
+        return "\(kind) · \(checkoutLabel)"
     }
 }
 

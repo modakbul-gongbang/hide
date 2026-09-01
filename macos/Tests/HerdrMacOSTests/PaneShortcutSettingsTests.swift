@@ -201,6 +201,32 @@ struct PaneShortcutSettingsTests {
         #expect(!PaneKeyEventPolicy.isAgentSwitcherRetreat(withCommand))
     }
 
+    @Test func controlTabChordsAreCheckoutTabSwitchingOnly() {
+        let forward = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.control, .capsLock]
+        )
+        let backward = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.control, .shift]
+        )
+        let withOption = keyEvent(
+            characters: "\t",
+            keyCode: 48,
+            modifiers: [.control, .option]
+        )
+
+        #expect(PaneKeyEventPolicy.isTabSwitcherAdvance(forward))
+        #expect(!PaneKeyEventPolicy.isTabSwitcherRetreat(forward))
+        #expect(PaneKeyEventPolicy.isTabSwitcherRetreat(backward))
+        #expect(!PaneKeyEventPolicy.isTabSwitcherAdvance(backward))
+        #expect(!PaneKeyEventPolicy.isTabSwitcherAdvance(withOption))
+        #expect(!PaneKeyEventPolicy.isTabSwitcherRetreat(withOption))
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(forward))
+    }
+
     @Test func ordinaryScrollRoutesLocallyWhileOptionScrollKeepsTerminalMouseReporting() {
         let ordinary = scrollEvent(deltaY: 3, modifiers: [.capsLock])
         let option = scrollEvent(deltaY: 3, modifiers: [.option, .capsLock])

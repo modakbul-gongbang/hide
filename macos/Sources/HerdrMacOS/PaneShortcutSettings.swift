@@ -255,6 +255,20 @@ enum PaneKeyEventPolicy {
             && event.keyCode == 48
             && event.modifierFlags.intersection(chordModifiers) == [.option, .shift]
     }
+
+    static func isTabSwitcherAdvance(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 48
+            && event.modifierFlags.intersection(chordModifiers) == .control
+    }
+
+    /// Control+Shift+Tab is the reverse checkout-local tab chord. Command or
+    /// Option keeps ownership of its own shortcut instead of being swallowed.
+    static func isTabSwitcherRetreat(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 48
+            && event.modifierFlags.intersection(chordModifiers) == [.control, .shift]
+    }
 }
 
 enum PaneMenuPolicy {

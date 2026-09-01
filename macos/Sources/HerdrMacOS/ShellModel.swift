@@ -191,6 +191,7 @@ final class ShellModel: ObservableObject {
     @Published var showSettings = false
     @Published var showPetDashboard = false
     @Published private(set) var agentSwitcherCycle: AgentSwitcherCycle?
+    @Published private(set) var tabSwitcherCycle: TabSwitcherCycle?
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
     @Published var worktreeToDelete: CoreCheckoutSnapshot?
     @Published var interactionNotice: String?
@@ -213,6 +214,7 @@ final class ShellModel: ObservableObject {
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
     private var agentMRU = AgentMRU()
+    private var tabMRU = TabMRU()
 
     init(
         core: CoreBridge = CoreBridge(),
@@ -229,10 +231,12 @@ final class ShellModel: ObservableObject {
         shortcutDiagnostic = shortcutResolution.diagnostic ?? Self.uiStateDiagnostic(core.snapshot)
         observeAgentFocus(in: core.snapshot)
         remote.ingest(core.snapshot?.status.remote ?? [])
+        observeTabFocus()
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             self.observeAgentFocus(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
+            self.observeTabFocus()
             self.objectWillChange.send()
         }
         browserSubscription = browser.objectWillChange.sink { [weak self] _ in
@@ -719,6 +723,7 @@ final class ShellModel: ObservableObject {
     }
 
     func beginOrAdvanceAgentSwitcher() {
+        cancelTabSwitcher()
         observeAgentFocus(in: core.snapshot)
         if agentSwitcherCycle != nil {
             agentSwitcherCycle?.advance()
@@ -734,6 +739,7 @@ final class ShellModel: ObservableObject {
     /// the least recent agent, which is where walking backwards from the
     /// current one arrives.
     func beginOrRetreatAgentSwitcher() {
+        cancelTabSwitcher()
         observeAgentFocus(in: core.snapshot)
         if agentSwitcherCycle != nil {
             agentSwitcherCycle?.retreat()
@@ -766,6 +772,66 @@ final class ShellModel: ObservableObject {
             focusedPaneID: snapshot?.paneLayout?.focusedPaneID ?? snapshot?.terminal.paneID,
             availablePaneIDs: currentAgents.map(\.paneID)
         )
+    }
+
+    func beginOrAdvanceTabSwitcher() {
+        cancelAgentSwitcher()
+        observeTabFocus()
+        if tabSwitcherCycle != nil {
+            tabSwitcherCycle?.advance()
+            return
+        }
+        tabSwitcherCycle = TabSwitcherCycle(
+            originalTabID: unifiedTabs.first(where: { $0.active })?.id,
+            tabIDs: tabMRU.tabIDs
+        )
+    }
+
+    /// Control+Shift+Tab walks the checkout-local recent tab order backwards.
+    func beginOrRetreatTabSwitcher() {
+        cancelAgentSwitcher()
+        observeTabFocus()
+        if tabSwitcherCycle != nil {
+            tabSwitcherCycle?.retreat()
+            return
+        }
+        tabSwitcherCycle = TabSwitcherCycle(
+            originalTabID: unifiedTabs.first(where: { $0.active })?.id,
+            tabIDs: tabMRU.tabIDs,
+            direction: .backward
+        )
+    }
+
+    func commitTabSwitcher() {
+        guard let cycle = tabSwitcherCycle else { return }
+        defer { tabSwitcherCycle = nil }
+        let tabs = unifiedTabs
+        let available = Set(tabs.map(\.id))
+        guard let tabID = cycle.committedTabID(availableTabIDs: available),
+              let tab = tabs.first(where: { $0.id == tabID })
+        else { return }
+        focusUnifiedTab(tab)
+    }
+
+    func cancelTabSwitcher() {
+        tabSwitcherCycle = nil
+    }
+
+    private func observeTabFocus() {
+        let tabs = unifiedTabs
+        tabMRU.observe(
+            contextID: tabSwitcherContextID,
+            focusedTabID: tabs.first(where: { $0.active })?.id,
+            availableTabIDs: tabs.map(\.id)
+        )
+    }
+
+    private var tabSwitcherContextID: String? {
+        guard let checkout = focusedCheckout else { return nil }
+        let deviceID = isRemoteContext
+            ? remote.navigation?.deviceID ?? "remote"
+            : "local"
+        return "\(deviceID):\(checkout.workspaceID):\(checkout.id)"
     }
 
     func toggleWorkspace(_ workspace: CoreWorkspaceSnapshot) {
