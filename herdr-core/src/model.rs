@@ -508,6 +508,36 @@ pub struct RemoteStatusSnapshot {
     pub message: Option<String>,
     pub last_checked_at_unix_ms: Option<u64>,
     pub session: Option<RemoteSessionSnapshot>,
+    pub files: RemoteFileListSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteFileListSnapshot {
+    pub root_path: Option<String>,
+    pub state: String,
+    pub entries: Vec<RemoteFileEntrySnapshot>,
+    pub message: Option<String>,
+    pub generation: u64,
+}
+
+impl RemoteFileListSnapshot {
+    pub fn idle() -> Self {
+        Self {
+            root_path: None,
+            state: "idle".to_owned(),
+            entries: Vec::new(),
+            message: None,
+            generation: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteFileEntrySnapshot {
+    pub path: String,
+    pub name: String,
+    pub is_directory: bool,
+    pub size_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -660,6 +690,7 @@ impl Snapshot {
                         message: Some("Waiting for the first remote connection attempt".to_owned()),
                         last_checked_at_unix_ms: None,
                         session: None,
+                        files: RemoteFileListSnapshot::idle(),
                     })
                     .collect(),
                 chromux: ChromuxStatusSnapshot {

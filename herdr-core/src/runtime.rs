@@ -15,9 +15,12 @@ use crate::live::{
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
-    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION,
-    Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
+    RemoteFileListSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION, Snapshot, Surface, TabSnapshot,
+    TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
 };
+use crate::remote::RusshSftpTransport;
+use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -315,6 +318,12 @@ struct FileOpenPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct RemoteFileListPayload {
+    target_id: String,
+    root_path: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileSavePayload {
     path: String,
     contents_utf8: String,
@@ -433,6 +442,7 @@ enum ValidatedEvent {
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
     RemoteControl(RemoteControlPayload),
+    RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
     FileDraft(FileDraftPayload),
     FileSave(FileSavePayload),
@@ -491,12 +501,14 @@ pub struct Runtime {
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
+    remote_file_transports: HashMap<String, RusshSftpTransport>,
     remote_control_requests: VecDeque<(String, String)>,
     remote_tab_creations_in_flight: HashSet<(String, String, String, String)>,
     terminal_sessions: HashMap<String, TerminalSession>,
     terminal_session_generations: HashMap<String, u64>,
     terminal_session_lifecycles: HashMap<String, TerminalSessionLifecycle>,
     next_terminal_session_generation: u64,
+    next_remote_file_generation: u64,
     terminal_sizes: HashMap<String, (u16, u16)>,
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
@@ -606,12 +618,14 @@ impl Runtime {
             live: None,
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),
+            remote_file_transports: HashMap::new(),
             remote_control_requests: VecDeque::new(),
             remote_tab_creations_in_flight: HashSet::new(),
             terminal_sessions: HashMap::new(),
             terminal_session_generations: HashMap::new(),
             terminal_session_lifecycles: HashMap::new(),
             next_terminal_session_generation: 0,
+            next_remote_file_generation: 0,
             terminal_sizes: HashMap::new(),
             #[cfg(test)]
             suppress_terminal_session_workers: false,
@@ -759,6 +773,268 @@ impl Runtime {
     pub fn install_remote_terminal(&mut self, context: RemoteTerminalContext) {
         self.remote_terminals
             .insert(context.target_id().to_owned(), context);
+    }
+
+    pub fn install_remote_file_transport(
+        &mut self,
+        target_id: impl Into<String>,
+        transport: RusshSftpTransport,
+    ) {
+        self.remote_file_transports
+            .insert(target_id.into(), transport);
+    }
+
+    fn advance_remote_file_generation(&mut self) -> u64 {
+        self.next_remote_file_generation = self.next_remote_file_generation.saturating_add(1);
+        self.next_remote_file_generation
+    }
+
+    fn mark_remote_files_unavailable(
+        &mut self,
+        status_index: usize,
+        root_path: String,
+        message: String,
+        generation: u64,
+    ) {
+        self.snapshot.status.remote[status_index].files = RemoteFileListSnapshot {
+            root_path: Some(root_path),
+            state: "unavailable".to_owned(),
+            entries: Vec::new(),
+            message: Some(message),
+            generation,
+        };
+    }
+
+    fn request_remote_file_list(&mut self, payload: RemoteFileListPayload) -> bool {
+        let target_id = payload.target_id;
+        let root_path = payload.root_path;
+        let Some(status_index) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .position(|status| status.target_id == target_id)
+        else {
+            self.set_error(
+                "remote.files.unknown_target",
+                format!("Remote file listing requested an unconfigured target {target_id}"),
+                false,
+            );
+            return true;
+        };
+        if !Path::new(&root_path).is_absolute()
+            || root_path.bytes().any(|byte| byte.is_ascii_control())
+        {
+            let generation = self.advance_remote_file_generation();
+            self.mark_remote_files_unavailable(
+                status_index,
+                root_path.clone(),
+                "Remote file root must be an absolute single-line path".to_owned(),
+                generation,
+            );
+            self.set_error(
+                "remote.files.invalid_root",
+                format!("Remote file root is invalid for target {target_id}"),
+                false,
+            );
+            return true;
+        }
+        let status = &self.snapshot.status.remote[status_index];
+        if status.state != "connected" {
+            let message = status
+                .message
+                .clone()
+                .unwrap_or_else(|| format!("Remote target {target_id} is not connected"));
+            let generation = self.advance_remote_file_generation();
+            self.mark_remote_files_unavailable(status_index, root_path, message, generation);
+            return true;
+        }
+        let root_is_authoritative = status.session.as_ref().is_some_and(|session| {
+            session
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.checkouts.iter())
+                .any(|checkout| checkout.path == root_path)
+        });
+        if !root_is_authoritative {
+            let generation = self.advance_remote_file_generation();
+            self.mark_remote_files_unavailable(
+                status_index,
+                root_path.clone(),
+                "Remote file root is not part of the authoritative Herdr session".to_owned(),
+                generation,
+            );
+            self.set_error(
+                "remote.files.unknown_root",
+                format!("Remote file root {root_path} is not open on target {target_id}"),
+                false,
+            );
+            return true;
+        }
+        if status.files.root_path.as_deref() == Some(root_path.as_str())
+            && matches!(status.files.state.as_str(), "loading" | "ready")
+        {
+            return false;
+        }
+        let Some(transport) = self.remote_file_transports.get(&target_id).cloned() else {
+            let message = format!("Remote target {target_id} has no configured SFTP transport");
+            let generation = self.advance_remote_file_generation();
+            self.mark_remote_files_unavailable(
+                status_index,
+                root_path,
+                message.clone(),
+                generation,
+            );
+            self.set_error("remote.files.transport_unavailable", message, true);
+            return true;
+        };
+        let Some(context) = self.worker_context.clone() else {
+            let message = "The remote file worker is unavailable".to_owned();
+            let generation = self.advance_remote_file_generation();
+            self.mark_remote_files_unavailable(
+                status_index,
+                root_path,
+                message.clone(),
+                generation,
+            );
+            self.set_error("remote.files.worker_unavailable", message, true);
+            return true;
+        };
+
+        let generation = self.advance_remote_file_generation();
+        self.snapshot.status.remote[status_index].files = RemoteFileListSnapshot {
+            root_path: Some(root_path.clone()),
+            state: "loading".to_owned(),
+            entries: Vec::new(),
+            message: None,
+            generation,
+        };
+        self.push_diagnostic(
+            "remote.files.requested",
+            format!("Listing remote files for {target_id} at {root_path}"),
+        );
+        let worker_target_id = target_id.clone();
+        let worker_root_path = root_path.clone();
+        match thread::Builder::new()
+            .name(format!("herdr-core-remote-files-{target_id}"))
+            .spawn(move || {
+                let result = RemoteFileService::new(worker_root_path.clone(), transport)
+                    .and_then(|service| service.list(""))
+                    .map_err(|error| error.to_string());
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.ingest_remote_file_list_result(
+                        &worker_target_id,
+                        &worker_root_path,
+                        generation,
+                        result,
+                    ),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            }) {
+            Ok(_) => true,
+            Err(error) => self.ingest_remote_file_list_result(
+                &target_id,
+                &root_path,
+                generation,
+                Err(format!("Remote file worker could not be started: {error}")),
+            ),
+        }
+    }
+
+    fn ingest_remote_file_list_result(
+        &mut self,
+        target_id: &str,
+        root_path: &str,
+        generation: u64,
+        result: Result<Vec<FileEntry>, String>,
+    ) -> bool {
+        let Some(status_index) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .position(|status| status.target_id == target_id)
+        else {
+            self.set_error(
+                "remote.files.unknown_target",
+                format!("Remote file result named an unconfigured target {target_id}"),
+                false,
+            );
+            return true;
+        };
+        let files = &self.snapshot.status.remote[status_index].files;
+        if files.generation != generation || files.root_path.as_deref() != Some(root_path) {
+            self.push_diagnostic(
+                "remote.files.stale",
+                format!(
+                    "Ignored stale remote file result for {target_id} at {root_path} generation {generation}"
+                ),
+            );
+            return true;
+        }
+        match result {
+            Ok(mut entries) => {
+                entries.sort_by(|left, right| {
+                    let left_is_directory = left.kind == FileKind::Directory;
+                    let right_is_directory = right.kind == FileKind::Directory;
+                    right_is_directory
+                        .cmp(&left_is_directory)
+                        .then_with(|| {
+                            left.name
+                                .to_ascii_lowercase()
+                                .cmp(&right.name.to_ascii_lowercase())
+                        })
+                        .then_with(|| left.path.cmp(&right.path))
+                });
+                let entry_count = entries.len();
+                self.snapshot.status.remote[status_index].files = RemoteFileListSnapshot {
+                    root_path: Some(root_path.to_owned()),
+                    state: "ready".to_owned(),
+                    entries: entries
+                        .into_iter()
+                        .map(|entry| RemoteFileEntrySnapshot {
+                            path: entry.path,
+                            name: entry.name,
+                            is_directory: entry.kind == FileKind::Directory,
+                            size_bytes: entry.size_bytes,
+                        })
+                        .collect(),
+                    message: None,
+                    generation,
+                };
+                self.push_diagnostic(
+                    "remote.files.ready",
+                    format!("Listed {entry_count} remote files for {target_id} at {root_path}"),
+                );
+            }
+            Err(message) => {
+                self.mark_remote_files_unavailable(
+                    status_index,
+                    root_path.to_owned(),
+                    message.clone(),
+                    generation,
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "remote_files",
+                        "kind": "remote.files_failed",
+                        "target": target_id,
+                        "root_path": root_path,
+                        "generation": generation,
+                        "message": message,
+                    })
+                );
+            }
+        }
+        true
     }
 
     fn request_remote_control(&mut self, payload: RemoteControlPayload) -> bool {
@@ -1388,6 +1664,16 @@ impl Runtime {
                 if status.state != "connected" || status.message.is_some() {
                     status.state = "connected".to_owned();
                     status.message = None;
+                    changed = true;
+                }
+                if status.files.root_path.as_deref().is_some_and(|root_path| {
+                    !session
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .any(|checkout| checkout.path == root_path)
+                }) {
+                    status.files = RemoteFileListSnapshot::idle();
                     changed = true;
                 }
                 if status.session.as_ref() != Some(&session) {
@@ -3389,6 +3675,7 @@ impl Runtime {
                 true
             }
             ValidatedEvent::RemoteControl(payload) => self.request_remote_control(payload),
+            ValidatedEvent::RemoteFileList(payload) => self.request_remote_file_list(payload),
             ValidatedEvent::FileOpen(payload)
                 if self.snapshot.editor.path.as_deref() == Some(payload.path.as_str()) =>
             {
@@ -4069,6 +4356,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
+        "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_save" => decode!(FileSavePayload, FileSave),
@@ -4292,6 +4580,7 @@ mod tests {
                 focused_pane_id: None,
                 pane_layouts: Vec::new(),
             }),
+            files: RemoteFileListSnapshot::idle(),
         });
         let connector: Arc<dyn crate::herdr_api::ApiConnector> = Arc::new(
             crate::herdr_api::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
@@ -4347,6 +4636,7 @@ mod tests {
             message: None,
             last_checked_at_unix_ms: None,
             session: None,
+            files: RemoteFileListSnapshot::idle(),
         });
         runtime.snapshot.terminal.panes.push(TerminalPaneSnapshot {
             pane_id: "w-local:p1".to_owned(),
@@ -4493,6 +4783,120 @@ mod tests {
                 .iter()
                 .all(|pane| pane.pane_id != pane_id)
         );
+    }
+
+    #[test]
+    fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
+        let mut runtime = runtime();
+        let root_path = "/private/tmp/herdr-remote-files";
+        let workspace_id = "remote:mini:workspace:w9";
+        let checkout_id = "remote:mini:checkout:w9";
+        let mut remote_workspace = workspace(
+            workspace_id,
+            "Remote files",
+            root_path,
+            vec![checkout(workspace_id, checkout_id, root_path, None)],
+        );
+        remote_workspace.remote_target_id = Some("mini".to_owned());
+        remote_workspace.device_id = "mini".to_owned();
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: "mini".to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            last_checked_at_unix_ms: Some(1),
+            session: Some(RemoteSessionSnapshot {
+                workspaces: vec![remote_workspace],
+                agents: Vec::new(),
+                active_tab_ids: Default::default(),
+                focused_workspace_id: Some(workspace_id.to_owned()),
+                focused_checkout_id: Some(checkout_id.to_owned()),
+                focused_tab_id: None,
+                focused_pane_id: None,
+                pane_layouts: Vec::new(),
+            }),
+            files: RemoteFileListSnapshot::idle(),
+        });
+
+        let request = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "remote_file_list",
+            "payload": {"target_id": "mini", "root_path": root_path}
+        }))
+        .expect("remote file event");
+        assert!(runtime.dispatch_json(&request));
+        assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .expect("missing SFTP transport is externally visible")
+                .kind,
+            "remote.files.transport_unavailable"
+        );
+
+        runtime.snapshot.status.remote[0].files = RemoteFileListSnapshot {
+            root_path: Some(root_path.to_owned()),
+            state: "loading".to_owned(),
+            entries: Vec::new(),
+            message: None,
+            generation: 7,
+        };
+        assert!(runtime.ingest_remote_file_list_result(
+            "mini",
+            root_path,
+            7,
+            Ok(vec![
+                FileEntry {
+                    path: format!("{root_path}/zeta.txt"),
+                    name: "zeta.txt".to_owned(),
+                    kind: FileKind::File,
+                    size_bytes: 4,
+                },
+                FileEntry {
+                    path: format!("{root_path}/Sources"),
+                    name: "Sources".to_owned(),
+                    kind: FileKind::Directory,
+                    size_bytes: 96,
+                },
+            ]),
+        ));
+        let files = &runtime.snapshot.status.remote[0].files;
+        assert_eq!(files.state, "ready");
+        assert_eq!(files.entries[0].name, "Sources");
+        assert!(files.entries[0].is_directory);
+        assert_eq!(files.entries[1].name, "zeta.txt");
+
+        runtime.snapshot.status.remote[0].files = RemoteFileListSnapshot {
+            root_path: Some(root_path.to_owned()),
+            state: "loading".to_owned(),
+            entries: Vec::new(),
+            message: None,
+            generation: 8,
+        };
+        assert!(runtime.ingest_remote_file_list_result("mini", root_path, 7, Ok(Vec::new()),));
+        assert_eq!(runtime.snapshot.status.remote[0].files.state, "loading");
+        assert_eq!(runtime.snapshot.status.remote[0].files.generation, 8);
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .diagnostics
+                .last()
+                .expect("stale result is observable")
+                .kind,
+            "remote.files.stale"
+        );
+
+        runtime.next_remote_file_generation = 8;
+        runtime.snapshot.status.remote[0].state = "stale".to_owned();
+        assert!(runtime.dispatch_json(&request));
+        assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
+        assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
+        assert!(runtime.ingest_remote_file_list_result("mini", root_path, 8, Ok(Vec::new())));
+        assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
+        assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
     }
 
     #[test]

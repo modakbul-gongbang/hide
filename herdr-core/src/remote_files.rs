@@ -392,10 +392,13 @@ pub struct RemoteFileService<T> {
 impl<T> RemoteFileService<T> {
     pub fn new(root: impl Into<String>, transport: T) -> FileResult<Self> {
         let root = root.into();
-        if root.trim().is_empty() || !root.starts_with('/') {
+        if root.trim().is_empty()
+            || !Path::new(&root).is_absolute()
+            || root.bytes().any(|byte| byte.is_ascii_control())
+        {
             return Err(FileServiceError::InvalidPath {
                 path: root,
-                reason: "remote root must be an absolute path".to_owned(),
+                reason: "remote root must be an absolute single-line path".to_owned(),
             });
         }
         Ok(Self { root, transport })
@@ -888,5 +891,15 @@ mod tests {
             .unwrap();
         assert_eq!(service.open("remote.txt").unwrap().content, "after\n");
         assert_eq!(service.git_status().unwrap()[0].path, "remote.txt");
+    }
+
+    #[test]
+    fn remote_service_rejects_non_absolute_and_multiline_roots() {
+        for root in ["relative/project", "/remote/project\nother"] {
+            assert!(matches!(
+                RemoteFileService::new(root, FakeSftp::default()),
+                Err(FileServiceError::InvalidPath { .. })
+            ));
+        }
     }
 }

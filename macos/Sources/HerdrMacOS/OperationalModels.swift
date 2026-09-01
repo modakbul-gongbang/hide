@@ -413,10 +413,11 @@ struct RemoteWorkspaceSummary: Decodable, Identifiable, Sendable {
 
 struct RemoteFileNode: Identifiable, Hashable, Sendable {
     let path: String
+    let name: String
     let isDirectory: Bool
+    let sizeBytes: UInt64
 
     var id: String { path }
-    var name: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
 struct RemotePaneLayoutFrame: Decodable, Equatable, Sendable {
@@ -595,32 +596,29 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var workspaces: [RemoteWorkspaceSummary] = []
     @Published private(set) var navigation: RemoteNavigationSnapshot?
     @Published private(set) var files: [RemoteFileNode] = []
+    @Published private(set) var fileState = "idle"
     @Published private(set) var fileError: String?
     @Published private(set) var checkedAt = "never"
     @Published private(set) var targetLabel = "mini"
-    private(set) var sshAlias = "mini"
-    private var refreshGeneration = UUID()
     private var activeTargetID: String?
     private var statusesByTarget: [String: CoreRemoteStatus] = [:]
-    private var loadedFilePath: String?
 
     var statusMessage: String {
         message
     }
 
     func refreshMini() {
-        refresh(targetID: "mini", label: "mini", sshAlias: "mini")
+        refresh(targetID: "mini", label: "mini")
     }
 
     func clearNavigation() {
-        refreshGeneration = UUID()
         activeTargetID = nil
         isRefreshing = false
         navigation = nil
         workspaces = []
         files = []
+        fileState = "idle"
         fileError = nil
-        loadedFilePath = nil
         phase = .idle
         message = "Remote mini has not been checked yet."
     }
@@ -633,12 +631,12 @@ final class RemoteRuntimeModel: ObservableObject {
         apply(status)
     }
 
-    func refresh(targetID: String, label: String, sshAlias: String) {
-        refreshGeneration = UUID()
+    func refresh(targetID: String, label: String) {
         activeTargetID = targetID
+        files = []
+        fileState = "idle"
         fileError = nil
         targetLabel = label
-        self.sshAlias = sshAlias
         if let status = statusesByTarget[targetID] {
             apply(status)
         } else {
@@ -677,6 +675,28 @@ final class RemoteRuntimeModel: ObservableObject {
                     paneCount: workspace.checkouts.flatMap { $0.tabs }.flatMap { $0.panes }.count,
                     activeTabID: workspace.checkouts.first?.tabs.first?.id
                 )
+            }
+            let selectedRoot = projection.workspaces
+                .flatMap(\.checkouts)
+                .first(where: { $0.id == projection.focusedCheckoutID })?
+                .path
+            if status.files.rootPath == selectedRoot {
+                fileState = status.files.state
+                files = status.files.entries.map { entry in
+                    RemoteFileNode(
+                        path: entry.path,
+                        name: entry.name,
+                        isDirectory: entry.isDirectory,
+                        sizeBytes: entry.sizeBytes
+                    )
+                }
+                fileError = status.files.state == "unavailable"
+                    ? status.files.message ?? "Remote files are unavailable."
+                    : nil
+            } else {
+                fileState = "idle"
+                files = []
+                fileError = nil
             }
         }
 
@@ -720,62 +740,6 @@ final class RemoteRuntimeModel: ObservableObject {
         navigation = navigation?.focusedPane(paneID)
     }
 
-    func loadFiles(path: String) {
-        guard phase == .ready, !path.isEmpty, path != loadedFilePath else { return }
-        loadedFilePath = path
-        fileError = nil
-        let requestID = refreshGeneration
-        let alias = sshAlias
-        Task {
-            let result = await Task.detached {
-                let quotedPath = RemoteShellCommand.quote(path)
-                let command = "find \(quotedPath) -mindepth 1 -maxdepth 1 -type d -exec printf 'D\\t%s\\n' {} \\; ; find \(quotedPath) -mindepth 1 -maxdepth 1 -type f -exec printf 'F\\t%s\\n' {} \\;"
-                return SafeProcess.run(
-                    executable: "/usr/bin/ssh",
-                    arguments: [alias, RemoteShellCommand.loginShell(command)]
-                )
-            }.value
-            guard refreshGeneration == requestID else { return }
-            guard result.status == 0 else {
-                fileError = remoteFailure(result, label: targetLabel)
-                files = []
-                log(kind: "remote.files_failed")
-                return
-            }
-            files = String(decoding: result.stdout, as: UTF8.self)
-                .split(whereSeparator: \.isNewline)
-                .compactMap { line in
-                    let pieces = line.split(separator: "\t", maxSplits: 1).map(String.init)
-                    guard pieces.count == 2 else { return nil }
-                    return RemoteFileNode(path: pieces[1], isDirectory: pieces[0] == "D")
-                }
-                .sorted { lhs, rhs in
-                    if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
-                    return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-                }
-            log(kind: "remote.files_ready")
-        }
-    }
-
-    private func remoteFailure(_ result: ProcessReceipt, label: String) -> String {
-        let detail = String(decoding: result.stderr, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = detail.lowercased()
-        if normalized.contains("command not found") || normalized.contains("no such file") {
-            return "Herdr is not installed on \(label). Run `curl -fsSL https://herdr.dev/install.sh | sh` or `brew install herdr` there. Hide does not install it."
-        }
-        if normalized.contains("permission denied") || normalized.contains("publickey") {
-            return "SSH authentication failed for \(label). Check the existing ssh-agent and SSH config; Hide does not collect credentials."
-        }
-        if normalized.contains("host key verification failed") {
-            return "SSH host-key verification failed for \(label). Verify the host in known_hosts, then retry."
-        }
-        if normalized.contains("could not resolve") || normalized.contains("connection refused") || normalized.contains("no route") {
-            return "SSH could not reach \(label). Check the alias and host availability, then retry."
-        }
-        return detail.isEmpty ? "\(label) remote Herdr operation failed. Retry after checking SSH and the remote Herdr service." : detail
-    }
-
     private func log(kind: String) {
         let record: [String: Any] = [
             "kind": kind,
@@ -788,20 +752,6 @@ final class RemoteRuntimeModel: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
         VerificationReceipt.writeLine(data)
     }
-}
-
-enum RemoteShellCommand {
-    static func quote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    /// SSH joins its trailing arguments into one remote command. Keep the
-    /// complete login-shell invocation in one argument so `-c` receives the
-    /// entire Herdr command instead of treating its words as `$0`, `$1`, ... .
-    static func loginShell(_ command: String) -> String {
-        "zsh -ilc \(quote(command))"
-    }
-
 }
 
 enum DestructiveTargetKind: String, Sendable {

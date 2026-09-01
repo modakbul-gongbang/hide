@@ -758,12 +758,44 @@ struct CoreRemoteStatus: Decodable, Identifiable {
     let state: String
     let message: String?
     let session: CoreRemoteSessionSnapshot?
+    let files: CoreRemoteFileList
 
     enum CodingKeys: String, CodingKey {
         case targetID = "target_id"
         case state
         case message
         case session
+        case files
+    }
+}
+
+struct CoreRemoteFileList: Decodable {
+    let rootPath: String?
+    let state: String
+    let entries: [CoreRemoteFileEntry]
+    let message: String?
+    let generation: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case rootPath = "root_path"
+        case state
+        case entries
+        case message
+        case generation
+    }
+}
+
+struct CoreRemoteFileEntry: Decodable {
+    let path: String
+    let name: String
+    let isDirectory: Bool
+    let sizeBytes: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case name
+        case isDirectory = "is_directory"
+        case sizeBytes = "size_bytes"
     }
 }
 
@@ -1208,6 +1240,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func focusDevice(_ deviceID: String) {
         dispatch(kind: "focus_device", payload: ["device_id": deviceID])
+    }
+
+    func listRemoteFiles(targetID: String, rootPath: String) {
+        dispatch(kind: "remote_file_list", payload: [
+            "target_id": targetID,
+            "root_path": rootPath,
+        ])
     }
 
     /// Synchronizes the shell's visible device selection with the local-core

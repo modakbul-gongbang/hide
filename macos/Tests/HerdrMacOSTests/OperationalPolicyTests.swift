@@ -325,13 +325,36 @@ import Testing
     #expect(selected.focusedPaneID == pane.id)
 }
 
-@Test func remoteShellCommandQuotesPathsWithoutHandlingCredentials() {
-    #expect(RemoteShellCommand.quote("/tmp/remote checkout") == "'/tmp/remote checkout'")
-    #expect(RemoteShellCommand.quote("it's safe") == "'it'\\''s safe'")
-    #expect(
-        RemoteShellCommand.loginShell("herdr pane focus w1:p1")
-            == "zsh -ilc 'herdr pane focus w1:p1'"
-    )
+@Test func remoteStatusDecodesCoreOwnedSFTPFileState() throws {
+    let data = Data("""
+    {
+      "target_id": "mini",
+      "state": "connected",
+      "message": null,
+      "session": null,
+      "files": {
+        "root_path": "/private/tmp/project",
+        "state": "ready",
+        "entries": [{
+          "path": "/private/tmp/project/Sources",
+          "name": "Sources",
+          "is_directory": true,
+          "size_bytes": 96
+        }],
+        "message": null,
+        "generation": 7
+      }
+    }
+    """.utf8)
+
+    let status = try JSONDecoder().decode(CoreRemoteStatus.self, from: data)
+    let entry = try #require(status.files.entries.first)
+    #expect(status.files.rootPath == "/private/tmp/project")
+    #expect(status.files.state == "ready")
+    #expect(status.files.generation == 7)
+    #expect(entry.name == "Sources")
+    #expect(entry.isDirectory)
+    #expect(entry.sizeBytes == 96)
 }
 
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {

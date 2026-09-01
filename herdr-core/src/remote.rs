@@ -37,6 +37,8 @@ use crate::domain::{
 };
 use crate::herdr_api::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
+#[cfg(test)]
+use crate::remote_files::{FileService, RemoteFileService};
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
@@ -3500,6 +3502,7 @@ impl RemoteTunnelRegistry {
     }
 }
 
+#[derive(Clone)]
 pub struct RusshSftpTransport {
     client: Arc<RusshRemoteClient>,
 }
@@ -3948,6 +3951,39 @@ mod tests {
         shutdown();
         reader_thread.join().expect("reader thread joins");
         assert_eq!(observed, (true, true));
+    }
+
+    #[test]
+    #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_FILES_* variables"]
+    fn remote_sftp_fixture_probe() {
+        let alias_name = std::env::var("HERDR_TEST_REMOTE_FILES_SSH_ALIAS")
+            .expect("HERDR_TEST_REMOTE_FILES_SSH_ALIAS");
+        let root =
+            std::env::var("HERDR_TEST_REMOTE_FILES_ROOT").expect("HERDR_TEST_REMOTE_FILES_ROOT");
+        assert!(
+            root.starts_with("/private/tmp/herdr-ide-verify-remote-files-")
+                || root.starts_with("/tmp/herdr-ide-verify-remote-files-"),
+            "remote SFTP probe refused a root outside the owned fixture namespace"
+        );
+        let home = std::env::var_os("HOME").expect("HOME");
+        let alias =
+            SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
+                .expect("fixture alias");
+        let client = Arc::new(RusshRemoteClient::new(alias).expect("remote client"));
+        let service = RemoteFileService::new(root.clone(), RusshSftpTransport::new(client))
+            .expect("remote file service");
+
+        let entries = service.list("").expect("SFTP directory list");
+        let marker = entries
+            .iter()
+            .find(|entry| entry.name == "marker.txt")
+            .expect("fixture marker");
+        assert_eq!(marker.kind, FileKind::File);
+        assert_eq!(marker.path, format!("{root}/marker.txt"));
+        assert_eq!(
+            service.open("marker.txt").expect("SFTP read").content,
+            "ok\n"
+        );
     }
 
     #[test]

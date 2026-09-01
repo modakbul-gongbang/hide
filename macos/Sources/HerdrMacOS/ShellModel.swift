@@ -541,8 +541,9 @@ final class ShellModel: ObservableObject {
 
     func selectDevice(_ device: CoreDeviceSnapshot) {
         if device.kind == "remote" {
-            guard let alias = device.sshAlias?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !alias.isEmpty
+            guard device.sshAlias?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
             else {
                 interactionNotice = "\(device.label) is registered as remote but has no SSH alias. Repair the device in Settings before retrying."
                 HideLaunchTrace.mark("device.selection.failed", detail: "remote_alias_missing_\(device.id)")
@@ -554,7 +555,7 @@ final class ShellModel: ObservableObject {
             core.selectCommandDevice(id: device.id, label: device.label, isRemote: true)
             HideLaunchTrace.mark("device.selection", detail: "remote_\(device.id)")
             core.focusDevice(device.id)
-            remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+            remote.refresh(targetID: device.id, label: device.label)
             focus(.terminal)
             return
         }
@@ -591,6 +592,15 @@ final class ShellModel: ObservableObject {
             core.focusPane(agent.paneID)
         }
         focus(.terminal)
+    }
+
+    func loadRemoteFiles(path: String) {
+        guard isRemoteContext,
+              remote.phase == .ready,
+              let targetID = remote.navigation?.deviceID,
+              !path.isEmpty
+        else { return }
+        core.listRemoteFiles(targetID: targetID, rootPath: path)
     }
 
     func beginOrAdvanceAgentSwitcher() {
@@ -806,19 +816,19 @@ final class ShellModel: ObservableObject {
     func testDevice(_ device: CoreDeviceSnapshot) {
         core.testDevice(device.id)
         lastRemoteDevice = device
-        if let alias = device.sshAlias {
-            remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+        if device.sshAlias != nil {
+            remote.refresh(targetID: device.id, label: device.label)
         }
         interactionNotice = "Connection test requested for \(device.label). Authentication remains owned by SSH."
     }
 
     func retryRemote() {
         guard let device = lastRemoteDevice ?? devices.first(where: { $0.kind == "remote" }),
-              let alias = device.sshAlias else {
+              device.sshAlias != nil else {
             interactionNotice = "Add an SSH device before retrying a remote connection."
             return
         }
-        remote.refresh(targetID: device.id, label: device.label, sshAlias: alias)
+        remote.refresh(targetID: device.id, label: device.label)
     }
 
     private func startTerminal(for checkout: CoreCheckoutSnapshot) {

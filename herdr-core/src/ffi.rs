@@ -208,6 +208,10 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                             },
                         ),
                     );
+                    lock_recover(&runtime).install_remote_file_transport(
+                        target.id.clone(),
+                        crate::remote::RusshSftpTransport::new(Arc::clone(&client)),
+                    );
                     let context = crate::session_sync::SessionSyncContext::remote(
                         target.id.clone(),
                         target.label.clone(),

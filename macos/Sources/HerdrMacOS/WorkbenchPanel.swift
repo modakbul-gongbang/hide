@@ -28,7 +28,7 @@ struct WorkbenchPanel: View {
         .background(HideTheme.panel)
         .task(id: "\(model.isRemoteContext)-\(activeRoot?.path ?? "")") {
             guard model.isRemoteContext, let activeRoot else { return }
-            model.remote.loadFiles(path: activeRoot.path)
+            model.loadRemoteFiles(path: activeRoot.path)
         }
         .onAppear {
             if !model.isRemoteContext,
@@ -83,6 +83,17 @@ struct WorkbenchPanel: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(ShellMetrics.panelPadding)
+        } else if model.remote.fileState == "loading" {
+            VStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(HideTheme.secondary)
+                Text("Loading remote files")
+                    .hideFont(size: 10)
+                    .foregroundStyle(HideTheme.muted)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("remote-files-loading")
         } else if model.remote.files.isEmpty {
             ContentUnavailableView {
                 Label("No remote files", systemImage: "folder")
