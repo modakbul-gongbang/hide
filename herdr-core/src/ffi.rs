@@ -184,10 +184,21 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                     let connector = client
                         .herdr_api_connector(target.herdr_socket_path.clone())
                         .map_err(|error| error.to_string())?;
+                    let connector: Arc<dyn crate::herdr_api::ApiConnector> = Arc::new(connector);
+                    lock_recover(&runtime).install_remote_control(
+                        crate::live::RemoteControlContext::new(
+                            target.id.clone(),
+                            Arc::clone(&connector),
+                            Arc::downgrade(&runtime),
+                            ChangeNotifier {
+                                registration: Arc::clone(&callback),
+                            },
+                        ),
+                    );
                     let context = crate::session_sync::SessionSyncContext::remote(
                         target.id.clone(),
                         target.label.clone(),
-                        Arc::new(connector),
+                        connector,
                         Arc::downgrade(&runtime),
                         ChangeNotifier {
                             registration: Arc::clone(&callback),

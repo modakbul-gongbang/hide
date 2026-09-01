@@ -159,9 +159,6 @@ final class ShellModel: ObservableObject {
         browser.environmentStateProvider = { [weak core] key in
             core?.environmentState(for: key)
         }
-        remote.onActionFailure = { [weak self] message in
-            self?.interactionNotice = message
-        }
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
         }
@@ -406,8 +403,8 @@ final class ShellModel: ObservableObject {
                 checkoutID: checkout.id,
                 paneID: paneID
             )
-            if agents.contains(where: { $0.paneID == paneID }) {
-                remote.perform(.focusAgent(paneID: paneID))
+            if let targetID = remote.navigation?.deviceID {
+                core.focusRemotePane(targetID: targetID, paneID: paneID)
             }
             HideLaunchTrace.mark("pane.selection", detail: "remote_\(paneID)")
         } else {
@@ -513,10 +510,22 @@ final class ShellModel: ObservableObject {
         if isRemoteContext {
             remote.focus(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
             focus(.terminal)
+            guard let targetID = remote.navigation?.deviceID else {
+                interactionNotice = "The selected remote checkout has no target identity. No command was sent."
+                return
+            }
             if action == .startTerminal {
-                remote.startTerminal(checkout: checkout)
+                core.createRemoteTab(
+                    targetID: targetID,
+                    workspaceID: checkout.workspaceID,
+                    cwd: checkout.path,
+                    label: "hide \(checkout.label)"
+                )
             } else {
-                remote.focusWorkspace(projectedID: checkout.workspaceID)
+                core.focusRemoteWorkspace(
+                    targetID: targetID,
+                    workspaceID: checkout.workspaceID
+                )
             }
             return
         }
@@ -572,7 +581,11 @@ final class ShellModel: ObservableObject {
         let (workspace, checkout) = identity
         if isRemoteContext {
             remote.focus(workspaceID: workspace.id, checkoutID: checkout.id, paneID: agent.paneID)
-            remote.perform(.focusAgent(paneID: agent.paneID))
+            guard let targetID = remote.navigation?.deviceID else {
+                interactionNotice = "The selected remote agent has no target identity. No focus command was sent."
+                return
+            }
+            core.focusRemotePane(targetID: targetID, paneID: agent.paneID)
         } else {
             core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
             core.focusPane(agent.paneID)
@@ -697,11 +710,22 @@ final class ShellModel: ObservableObject {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
         }
-        if isRemoteContext, let checkout = focusedCheckout {
-            remote.createTab(checkout: checkout)
-        } else {
-            core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
+        if isRemoteContext {
+            guard let checkout = focusedCheckout,
+                  let targetID = remote.navigation?.deviceID
+            else {
+                interactionNotice = "The selected remote workspace has no routable checkout context. No tab was created."
+                return
+            }
+            core.createRemoteTab(
+                targetID: targetID,
+                workspaceID: checkout.workspaceID,
+                cwd: checkout.path,
+                label: "New tab"
+            )
+            return
         }
+        core.createTab(workspaceID: workspace.id, checkoutID: focusedCheckout?.id)
     }
 
     func focusTab(_ tab: CoreTabSnapshot) {
@@ -719,7 +743,11 @@ final class ShellModel: ObservableObject {
                 tabID: tabID,
                 paneID: tab.panes.first?.id
             )
-            remote.perform(.focusTab(tabID: tabID))
+            guard let targetID = remote.navigation?.deviceID else {
+                interactionNotice = "The selected remote tab has no target identity. No focus command was sent."
+                return
+            }
+            core.focusRemoteTab(targetID: targetID, tabID: tabID)
         } else {
             core.focusTab(
                 workspaceID: workspace.id,
@@ -987,10 +1015,17 @@ final class ShellModel: ObservableObject {
                 closeCurrentPane(target: .local(paneID: paneID))
             }
         case .remote(let paneID):
+            guard let targetID = remote.navigation?.deviceID else {
+                interactionNotice = "The selected remote pane has no target identity. No command was sent."
+                return
+            }
             switch command {
-            case .splitRight: remote.perform(.split(paneID: paneID, direction: .right))
-            case .splitDown: remote.perform(.split(paneID: paneID, direction: .down))
-            case .toggleZoom: remote.perform(.toggleZoom(paneID: paneID))
+            case .splitRight:
+                core.splitRemotePane(targetID: targetID, paneID: paneID, direction: .right)
+            case .splitDown:
+                core.splitRemotePane(targetID: targetID, paneID: paneID, direction: .down)
+            case .toggleZoom:
+                core.toggleRemotePaneZoom(targetID: targetID, paneID: paneID)
             case .closePane: closeCurrentPane(target: .remote(paneID: paneID))
             }
             focus(.terminal)
@@ -1064,7 +1099,11 @@ final class ShellModel: ObservableObject {
         case .local(let paneID):
             core.closePane(paneID, confirmed: confirmed)
         case .remote(let paneID):
-            remote.perform(.close(paneID: paneID))
+            guard let targetID = remote.navigation?.deviceID else {
+                interactionNotice = "The selected remote pane has no target identity. No close command was sent."
+                return
+            }
+            core.closeRemotePane(targetID: targetID, paneID: paneID, confirmed: confirmed)
         }
     }
 

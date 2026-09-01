@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::ffi::ChangeNotifier;
 #[cfg(test)]
 use crate::herdr_api::HERDR_PROTOCOL_REVISION;
-use crate::herdr_api::{ApiConnector, UnixSocketConnector, request};
+use crate::herdr_api::{ApiConnector, UnixSocketConnector, request, request_with_connector};
 use crate::model::{
     PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
     WorkspaceSnapshot,
@@ -169,26 +169,165 @@ pub enum PaneControlAction {
     },
 }
 
+impl PaneControlAction {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Project { .. } => "pane.project",
+            Self::Focus { .. } => "pane.focus",
+            Self::Split { .. } => "pane.split",
+            Self::Resize { .. } => "pane.resize",
+            Self::ToggleZoom { .. } => "pane.zoom",
+            Self::Close { .. } => "pane.close",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PaneControlOutcome {
     Projected { layout: PaneLayoutSnapshot },
     Acknowledged { created_pane_id: Option<String> },
 }
 
+#[derive(Clone, Debug)]
+pub enum RemoteControlAction {
+    Pane(PaneControlAction),
+    FocusWorkspace {
+        workspace_id: String,
+    },
+    FocusTab {
+        tab_id: String,
+    },
+    CreateTab {
+        workspace_id: String,
+        cwd: String,
+        label: String,
+    },
+}
+
+impl RemoteControlAction {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Pane(action) => action.kind(),
+            Self::FocusWorkspace { .. } => "workspace.focus",
+            Self::FocusTab { .. } => "tab.focus",
+            Self::CreateTab { .. } => "tab.create",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RemoteControlOutcome {
+    Acknowledged {
+        created_tab_id: Option<String>,
+        created_pane_id: Option<String>,
+    },
+}
+
+#[derive(Clone)]
+pub struct RemoteControlContext {
+    target_id: String,
+    api_connector: Arc<dyn ApiConnector>,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+}
+
+impl RemoteControlContext {
+    pub(crate) fn new(
+        target_id: impl Into<String>,
+        api_connector: Arc<dyn ApiConnector>,
+        runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
+    ) -> Self {
+        Self {
+            target_id: target_id.into(),
+            api_connector,
+            runtime,
+            notifier,
+        }
+    }
+
+    pub(crate) fn target_id(&self) -> &str {
+        &self.target_id
+    }
+}
+
+fn execute_remote_control(
+    connector: &dyn ApiConnector,
+    action: &RemoteControlAction,
+) -> Result<RemoteControlOutcome, String> {
+    let (created_tab_id, created_pane_id) = match action {
+        RemoteControlAction::Pane(action) => match action {
+            PaneControlAction::Focus { .. }
+            | PaneControlAction::Split { .. }
+            | PaneControlAction::ToggleZoom { .. }
+            | PaneControlAction::Close { .. } => match execute_pane_control(connector, action)? {
+                PaneControlOutcome::Acknowledged { created_pane_id } => (None, created_pane_id),
+                PaneControlOutcome::Projected { .. } => {
+                    return Err("remote pane mutation returned a layout projection".to_owned());
+                }
+            },
+            PaneControlAction::Project { .. } | PaneControlAction::Resize { .. } => {
+                return Err("unsupported remote pane control action".to_owned());
+            }
+        },
+        RemoteControlAction::FocusWorkspace { workspace_id } => {
+            control_request(
+                connector,
+                "workspace.focus",
+                json!({"workspace_id": workspace_id}),
+            )?;
+            (None, None)
+        }
+        RemoteControlAction::FocusTab { tab_id } => {
+            control_request(connector, "tab.focus", json!({"tab_id": tab_id}))?;
+            (None, None)
+        }
+        RemoteControlAction::CreateTab {
+            workspace_id,
+            cwd,
+            label,
+        } => {
+            let result = control_request(
+                connector,
+                "tab.create",
+                json!({
+                    "workspace_id": workspace_id,
+                    "cwd": cwd,
+                    "focus": true,
+                    "label": label,
+                }),
+            )?;
+            let tab_id = result
+                .pointer("/tab/tab_id")
+                .and_then(Value::as_str)
+                .filter(|tab_id| !tab_id.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| "tab.create response is missing tab.tab_id".to_owned())?;
+            let pane_id = result
+                .pointer("/root_pane/pane_id")
+                .and_then(Value::as_str)
+                .filter(|pane_id| !pane_id.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| "tab.create response is missing root_pane.pane_id".to_owned())?;
+            (Some(tab_id), Some(pane_id))
+        }
+    };
+    Ok(RemoteControlOutcome::Acknowledged {
+        created_tab_id,
+        created_pane_id,
+    })
+}
+
 fn execute_pane_control(
-    context: &LiveContext,
+    connector: &dyn ApiConnector,
     action: &PaneControlAction,
 ) -> Result<PaneControlOutcome, String> {
     if let PaneControlAction::Project { pane_id } = action {
-        return fetch_pane_layout(&context.socket_path, pane_id)
+        return fetch_pane_layout(connector, pane_id)
             .map(|layout| PaneControlOutcome::Projected { layout });
     }
     if let PaneControlAction::Focus { pane_id } = action {
-        request(
-            &context.socket_path,
-            "pane.focus",
-            json!({"pane_id": pane_id}),
-        )?;
+        control_request(connector, "pane.focus", json!({"pane_id": pane_id}))?;
         return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
         });
@@ -199,8 +338,8 @@ fn execute_pane_control(
         amount,
     } = action
     {
-        request(
-            &context.socket_path,
+        control_request(
+            connector,
             "pane.resize",
             json!({"pane_id": pane_id, "direction": direction.as_str(), "amount": amount}),
         )?;
@@ -209,49 +348,63 @@ fn execute_pane_control(
         });
     }
 
-    let Some(herdr_bin) = context.herdr_bin.as_ref() else {
-        return Err("herdr binary was not found; pane control is unavailable".to_owned());
-    };
-    let arguments = pane_control_arguments(action);
-    let output = Command::new(herdr_bin)
-        .args(&arguments)
-        .env("HERDR_SOCKET_PATH", &context.socket_path)
-        .output()
-        .map_err(|error| format!("herdr pane control could not start: {error}"))?;
-    if output.status.success() {
-        let created_pane_id = match action {
-            PaneControlAction::Split { .. } => {
-                let response: Value = serde_json::from_slice(&output.stdout)
-                    .map_err(|_| "herdr pane split returned unreadable JSON".to_owned())?;
-                Some(
-                    response
-                        .pointer("/result/pane/pane_id")
-                        .and_then(Value::as_str)
-                        .filter(|pane_id| !pane_id.trim().is_empty())
-                        .map(str::to_owned)
-                        .ok_or_else(|| {
-                            "herdr pane split response is missing result.pane.pane_id".to_owned()
-                        })?,
-                )
+    let created_pane_id = match action {
+        PaneControlAction::Split {
+            pane_id,
+            direction,
+            cwd,
+        } => {
+            let mut params = json!({
+                "target_pane_id": pane_id,
+                "direction": direction.as_str(),
+                "focus": false,
+            });
+            if let Some(cwd) = cwd.as_deref().filter(|value| !value.trim().is_empty()) {
+                params["cwd"] = Value::String(cwd.to_owned());
             }
-            PaneControlAction::Project { .. }
-            | PaneControlAction::Focus { .. }
-            | PaneControlAction::Resize { .. }
-            | PaneControlAction::ToggleZoom { .. }
-            | PaneControlAction::Close { .. } => None,
-        };
-        return Ok(PaneControlOutcome::Acknowledged { created_pane_id });
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(if stderr.is_empty() {
-        format!("herdr pane control exited with {}", output.status)
-    } else {
-        stderr
-    })
+            let result = control_request(connector, "pane.split", params)?;
+            Some(
+                result
+                    .pointer("/pane/pane_id")
+                    .and_then(Value::as_str)
+                    .filter(|pane_id| !pane_id.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| "pane.split response is missing pane.pane_id".to_owned())?,
+            )
+        }
+        PaneControlAction::ToggleZoom { pane_id } => {
+            control_request(
+                connector,
+                "pane.zoom",
+                json!({"pane_id": pane_id, "mode": "toggle"}),
+            )?;
+            None
+        }
+        PaneControlAction::Close { pane_id } => {
+            control_request(connector, "pane.close", json!({"pane_id": pane_id}))?;
+            None
+        }
+        PaneControlAction::Project { .. }
+        | PaneControlAction::Focus { .. }
+        | PaneControlAction::Resize { .. } => unreachable!("handled above"),
+    };
+    Ok(PaneControlOutcome::Acknowledged { created_pane_id })
 }
 
-fn fetch_pane_layout(socket_path: &Path, pane_id: &str) -> Result<PaneLayoutSnapshot, String> {
-    let result = request(socket_path, "pane.layout", json!({"pane_id": pane_id}))?;
+fn control_request(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    request_with_connector(connector, method, params, Duration::from_secs(5))
+        .map_err(|error| format!("{method} failed: {error}"))
+}
+
+fn fetch_pane_layout(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+) -> Result<PaneLayoutSnapshot, String> {
+    let result = control_request(connector, "pane.layout", json!({"pane_id": pane_id}))?;
     let layout = serde_json::from_value::<SessionLayoutPayload>(
         result
             .get("layout")
@@ -279,7 +432,7 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
         .name(worker_name)
         .spawn(move || {
             let started = Instant::now();
-            let result = execute_pane_control(&context, &action);
+            let result = execute_pane_control(context.api_connector.as_ref(), &action);
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -297,41 +450,65 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
         .map_err(|error| format!("pane control worker could not be started: {error}"))
 }
 
-fn pane_control_arguments(action: &PaneControlAction) -> Vec<String> {
-    match action {
-        PaneControlAction::Project { .. }
-        | PaneControlAction::Focus { .. }
-        | PaneControlAction::Resize { .. } => {
-            unreachable!("pane projection and focus use the socket API instead of the CLI")
+pub fn spawn_remote_control(
+    context: RemoteControlContext,
+    request_id: String,
+    action: RemoteControlAction,
+) -> Result<(), String> {
+    let target_id = context.target_id.clone();
+    let worker_name = match &action {
+        RemoteControlAction::Pane(PaneControlAction::Focus { .. }) => {
+            format!("herdr-core-remote-{target_id}-pane-focus")
         }
-        PaneControlAction::Split {
-            pane_id,
-            direction,
-            cwd,
-        } => {
-            let mut arguments = vec![
-                "pane".to_owned(),
-                "split".to_owned(),
-                pane_id.clone(),
-                "--direction".to_owned(),
-                direction.as_str().to_owned(),
-            ];
-            if let Some(cwd) = cwd.as_deref().filter(|value| !value.trim().is_empty()) {
-                arguments.push("--cwd".to_owned());
-                arguments.push(cwd.to_owned());
+        RemoteControlAction::Pane(PaneControlAction::Split { direction, .. }) => format!(
+            "herdr-core-remote-{target_id}-pane-split-{}",
+            direction.as_str()
+        ),
+        RemoteControlAction::Pane(PaneControlAction::ToggleZoom { .. }) => {
+            format!("herdr-core-remote-{target_id}-pane-zoom")
+        }
+        RemoteControlAction::Pane(PaneControlAction::Close { .. }) => {
+            format!("herdr-core-remote-{target_id}-pane-close")
+        }
+        RemoteControlAction::Pane(
+            PaneControlAction::Project { .. } | PaneControlAction::Resize { .. },
+        ) => return Err("unsupported remote pane control action".to_owned()),
+        RemoteControlAction::FocusWorkspace { .. } => {
+            format!("herdr-core-remote-{target_id}-workspace-focus")
+        }
+        RemoteControlAction::FocusTab { .. } => {
+            format!("herdr-core-remote-{target_id}-tab-focus")
+        }
+        RemoteControlAction::CreateTab { .. } => {
+            format!("herdr-core-remote-{target_id}-tab-create")
+        }
+    };
+    thread::Builder::new()
+        .name(worker_name)
+        .spawn(move || {
+            let started = Instant::now();
+            let result = execute_remote_control(context.api_connector.as_ref(), &action);
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_remote_control_result(
+                    &target_id,
+                    &request_id,
+                    action,
+                    result,
+                    elapsed_ms,
+                ),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
             }
-            arguments
-        }
-        PaneControlAction::ToggleZoom { pane_id } => vec![
-            "pane".to_owned(),
-            "zoom".to_owned(),
-            pane_id.clone(),
-            "--toggle".to_owned(),
-        ],
-        PaneControlAction::Close { pane_id } => {
-            vec!["pane".to_owned(), "close".to_owned(), pane_id.clone()]
-        }
-    }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("remote control worker could not be started: {error}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1252,43 +1429,386 @@ mod tests {
     }
 
     #[test]
-    fn pane_control_plans_right_down_and_zoom_without_shell_interpolation() {
-        assert_eq!(
-            pane_control_arguments(&PaneControlAction::Split {
+    fn pane_control_uses_the_official_socket_contract_for_every_mutation() {
+        let root = std::path::PathBuf::from("/tmp")
+            .join(format!("herdr-core-pane-control-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            let expected = [
+                (
+                    "pane.split",
+                    json!({
+                        "target_pane_id": "w1:p1",
+                        "direction": "right",
+                        "focus": false,
+                        "cwd": "/tmp/herdr-ide-verify-shortcuts"
+                    }),
+                ),
+                (
+                    "pane.split",
+                    json!({
+                        "target_pane_id": "w1:p1",
+                        "direction": "down",
+                        "focus": false
+                    }),
+                ),
+                ("pane.zoom", json!({"pane_id": "w1:p1", "mode": "toggle"})),
+                ("pane.close", json!({"pane_id": "w1:p1"})),
+            ];
+            for (method, params) in expected {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], method);
+                assert_eq!(request["params"], params);
+                let result = if method == "pane.split" {
+                    json!({"pane": {"pane_id": "w1:p2"}})
+                } else {
+                    json!({"changed": true})
+                };
+                writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
+                    .expect("write response");
+            }
+        });
+        let connector = UnixSocketConnector::new(&socket_path);
+        for action in [
+            PaneControlAction::Split {
                 pane_id: "w1:p1".to_owned(),
                 direction: PaneSplitDirection::Right,
                 cwd: Some("/tmp/herdr-ide-verify-shortcuts".to_owned()),
-            }),
-            [
-                "pane",
-                "split",
-                "w1:p1",
-                "--direction",
-                "right",
-                "--cwd",
-                "/tmp/herdr-ide-verify-shortcuts",
-            ]
-        );
-        assert_eq!(
-            pane_control_arguments(&PaneControlAction::Split {
+            },
+            PaneControlAction::Split {
                 pane_id: "w1:p1".to_owned(),
                 direction: PaneSplitDirection::Down,
                 cwd: None,
-            }),
-            ["pane", "split", "w1:p1", "--direction", "down"]
-        );
-        assert_eq!(
-            pane_control_arguments(&PaneControlAction::ToggleZoom {
+            },
+            PaneControlAction::ToggleZoom {
                 pane_id: "w1:p1".to_owned(),
-            }),
-            ["pane", "zoom", "w1:p1", "--toggle"]
-        );
-        assert_eq!(
-            pane_control_arguments(&PaneControlAction::Close {
+            },
+            PaneControlAction::Close {
                 pane_id: "w1:p1".to_owned(),
-            }),
-            ["pane", "close", "w1:p1"]
+            },
+        ] {
+            execute_pane_control(&connector, &action).expect("control request");
+        }
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn remote_session_control_uses_the_official_socket_contract() {
+        let root = std::path::PathBuf::from("/tmp")
+            .join(format!("herdr-core-remote-control-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            let expected = [
+                (
+                    "workspace.focus",
+                    json!({"workspace_id": "w1"}),
+                    json!({"type": "workspace_focused"}),
+                ),
+                (
+                    "tab.focus",
+                    json!({"tab_id": "w1:t2"}),
+                    json!({"type": "tab_focused"}),
+                ),
+                (
+                    "tab.create",
+                    json!({
+                        "workspace_id": "w1",
+                        "cwd": "/tmp/herdr-ide-remote-tab",
+                        "focus": true,
+                        "label": "New tab"
+                    }),
+                    json!({
+                        "type": "tab_created",
+                        "tab": {"tab_id": "w1:t3"},
+                        "root_pane": {"pane_id": "w1:p3"}
+                    }),
+                ),
+            ];
+            for (method, params, result) in expected {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], method);
+                assert_eq!(request["params"], params);
+                writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
+                    .expect("write response");
+            }
+        });
+        let connector = UnixSocketConnector::new(&socket_path);
+        let actions = [
+            RemoteControlAction::FocusWorkspace {
+                workspace_id: "w1".to_owned(),
+            },
+            RemoteControlAction::FocusTab {
+                tab_id: "w1:t2".to_owned(),
+            },
+            RemoteControlAction::CreateTab {
+                workspace_id: "w1".to_owned(),
+                cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
+                label: "New tab".to_owned(),
+            },
+        ];
+        let mut outcomes = actions
+            .iter()
+            .map(|action| execute_remote_control(&connector, action).expect("control request"));
+        assert!(matches!(
+            outcomes.next(),
+            Some(RemoteControlOutcome::Acknowledged {
+                created_tab_id: None,
+                created_pane_id: None,
+            })
+        ));
+        assert!(matches!(
+            outcomes.next(),
+            Some(RemoteControlOutcome::Acknowledged {
+                created_tab_id: None,
+                created_pane_id: None,
+            })
+        ));
+        assert!(matches!(
+            outcomes.next(),
+            Some(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some(tab_id),
+                created_pane_id: Some(pane_id),
+            }) if tab_id == "w1:t3" && pane_id == "w1:p3"
+        ));
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_CONTROL_* variables"]
+    fn official_remote_control_fixture_probe() {
+        let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
+            .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
+        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
+            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
+        let workspace_id = std::env::var("HERDR_TEST_REMOTE_CONTROL_WORKSPACE_ID")
+            .expect("HERDR_TEST_REMOTE_CONTROL_WORKSPACE_ID names the owned fixture workspace");
+        let cwd = std::env::var("HERDR_TEST_REMOTE_CONTROL_CWD")
+            .expect("HERDR_TEST_REMOTE_CONTROL_CWD names the owned fixture directory");
+        assert!(
+            cwd.starts_with("/tmp/herdr-ide-verify-"),
+            "remote control fixture must use the owned fixture namespace"
         );
+
+        let home = std::env::var_os("HOME").expect("HOME is configured");
+        let alias = crate::remote::SshAlias::from_config_file(
+            &std::path::PathBuf::from(home).join(".ssh/config"),
+            &alias_name,
+        )
+        .expect("SSH alias resolves");
+        let client =
+            crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
+        let connector = client
+            .herdr_api_connector(socket_path)
+            .expect("remote connector initializes");
+
+        let response = request_with_connector(
+            &connector,
+            "session.snapshot",
+            json!({}),
+            Duration::from_secs(5),
+        )
+        .expect("fixture session snapshot");
+        let snapshot = response["snapshot"]
+            .as_object()
+            .map(|_| &response["snapshot"])
+            .expect("session.snapshot response contains a snapshot");
+        let workspace = snapshot["workspaces"]
+            .as_array()
+            .and_then(|workspaces| {
+                workspaces.iter().find(|workspace| {
+                    workspace["workspace_id"].as_str() == Some(workspace_id.as_str())
+                })
+            })
+            .expect("owned fixture workspace is present");
+        assert!(
+            workspace["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("herdr-ide-verify-")),
+            "remote control refused a workspace outside the owned fixture namespace"
+        );
+        let original_tab_id = snapshot["tabs"]
+            .as_array()
+            .and_then(|tabs| {
+                tabs.iter()
+                    .find(|tab| tab["workspace_id"].as_str() == Some(workspace_id.as_str()))
+            })
+            .and_then(|tab| tab["tab_id"].as_str())
+            .expect("owned fixture workspace has a tab")
+            .to_owned();
+
+        execute_remote_control(
+            &connector,
+            &RemoteControlAction::FocusWorkspace {
+                workspace_id: workspace_id.clone(),
+            },
+        )
+        .expect("focus owned fixture workspace");
+        execute_remote_control(
+            &connector,
+            &RemoteControlAction::FocusTab {
+                tab_id: original_tab_id,
+            },
+        )
+        .expect("focus owned fixture tab");
+
+        let RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some(created_tab_id),
+            created_pane_id: Some(created_root_pane_id),
+        } = execute_remote_control(
+            &connector,
+            &RemoteControlAction::CreateTab {
+                workspace_id: workspace_id.clone(),
+                cwd: cwd.clone(),
+                label: "Herdr IDE remote control probe".to_owned(),
+            },
+        )
+        .expect("create fixture tab")
+        else {
+            panic!("tab.create did not return the created tab and root pane ids");
+        };
+
+        let RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: Some(created_split_pane_id),
+        } = execute_remote_control(
+            &connector,
+            &RemoteControlAction::Pane(PaneControlAction::Split {
+                pane_id: created_root_pane_id.clone(),
+                direction: PaneSplitDirection::Right,
+                cwd: Some(cwd),
+            }),
+        )
+        .expect("split fixture pane")
+        else {
+            panic!("pane.split did not return the created pane id");
+        };
+
+        for action in [
+            RemoteControlAction::Pane(PaneControlAction::Focus {
+                pane_id: created_split_pane_id.clone(),
+            }),
+            RemoteControlAction::Pane(PaneControlAction::ToggleZoom {
+                pane_id: created_split_pane_id.clone(),
+            }),
+            RemoteControlAction::Pane(PaneControlAction::ToggleZoom {
+                pane_id: created_split_pane_id.clone(),
+            }),
+            RemoteControlAction::Pane(PaneControlAction::Close {
+                pane_id: created_split_pane_id.clone(),
+            }),
+        ] {
+            execute_remote_control(&connector, &action).expect("mutate only the fixture pane");
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let response = request_with_connector(
+                &connector,
+                "session.snapshot",
+                json!({}),
+                Duration::from_secs(5),
+            )
+            .expect("post-control session snapshot");
+            let snapshot = response["snapshot"]
+                .as_object()
+                .map(|_| &response["snapshot"])
+                .expect("session.snapshot response contains a snapshot");
+            let created_tab_visible = snapshot["tabs"].as_array().is_some_and(|tabs| {
+                tabs.iter()
+                    .any(|tab| tab["tab_id"].as_str() == Some(created_tab_id.as_str()))
+            });
+            let created_root_visible = snapshot["panes"].as_array().is_some_and(|panes| {
+                panes
+                    .iter()
+                    .any(|pane| pane["pane_id"].as_str() == Some(created_root_pane_id.as_str()))
+            });
+            let closed_split_absent = snapshot["panes"].as_array().is_some_and(|panes| {
+                panes
+                    .iter()
+                    .all(|pane| pane["pane_id"].as_str() != Some(created_split_pane_id.as_str()))
+            });
+            if created_tab_visible && created_root_visible && closed_split_absent {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "authoritative snapshot did not converge after remote controls"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn pane_control_worker_returns_before_the_socket_receipt() {
+        let root = std::path::PathBuf::from("/tmp")
+            .join(format!("herdr-core-pane-worker-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut line)
+                .expect("read request");
+            let request: Value = serde_json::from_str(&line).expect("request JSON");
+            assert_eq!(request["method"], "pane.split");
+            std::thread::sleep(Duration::from_millis(500));
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "id": request["id"],
+                    "result": {"pane": {"pane_id": "w1:p2"}}
+                })
+            )
+            .expect("write response");
+        });
+        let context = LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: Weak::new(),
+            notifier: ChangeNotifier::noop(),
+            api_connector: Arc::new(UnixSocketConnector::new(&socket_path)),
+        };
+
+        let started = Instant::now();
+        spawn_pane_control(
+            context,
+            PaneControlAction::Split {
+                pane_id: "w1:p1".to_owned(),
+                direction: PaneSplitDirection::Right,
+                cwd: Some("/tmp".to_owned()),
+            },
+        )
+        .expect("worker starts");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "pane control spawn waited {elapsed:?} for the socket receipt"
+        );
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]
@@ -1338,7 +1858,8 @@ mod tests {
 
         request(&socket_path, "pane.focus", json!({"pane_id": "fixture:p2"}))
             .expect("focus request");
-        let layout = fetch_pane_layout(&socket_path, "fixture:p2").expect("focused layout");
+        let layout = fetch_pane_layout(&UnixSocketConnector::new(&socket_path), "fixture:p2")
+            .expect("focused layout");
         assert_eq!(layout.focused_pane_id, "fixture:p2");
         assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
 

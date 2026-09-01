@@ -1352,6 +1352,93 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
+    func focusRemotePane(targetID: String, paneID: String) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "focus_pane",
+            extra: ["pane_id": paneID]
+        )
+    }
+
+    func splitRemotePane(targetID: String, paneID: String, direction: PaneSplitDirection) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "split_pane",
+            extra: [
+                "pane_id": paneID,
+                "direction": direction.rawValue,
+            ]
+        )
+    }
+
+    func toggleRemotePaneZoom(targetID: String, paneID: String) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "toggle_pane_zoom",
+            extra: ["pane_id": paneID]
+        )
+    }
+
+    func closeRemotePane(targetID: String, paneID: String, confirmed: Bool) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "close_pane",
+            extra: [
+                "pane_id": paneID,
+                "confirmed": confirmed,
+            ]
+        )
+    }
+
+    func focusRemoteWorkspace(targetID: String, workspaceID: String) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "focus_workspace",
+            extra: ["workspace_id": workspaceID]
+        )
+    }
+
+    func focusRemoteTab(targetID: String, tabID: String) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "focus_tab",
+            extra: ["tab_id": tabID]
+        )
+    }
+
+    func createRemoteTab(
+        targetID: String,
+        workspaceID: String,
+        cwd: String,
+        label: String
+    ) {
+        dispatchRemoteControl(
+            targetID: targetID,
+            action: "create_tab",
+            extra: [
+                "workspace_id": workspaceID,
+                "cwd": cwd,
+                "label": label,
+            ]
+        )
+    }
+
+    private func dispatchRemoteControl(
+        targetID: String,
+        action: String,
+        extra: [String: Any] = [:]
+    ) {
+        var payload: [String: Any] = [
+            "target_id": targetID,
+            "request_id": UUID().uuidString,
+            "action": action,
+        ]
+        for (key, value) in extra {
+            payload[key] = value
+        }
+        dispatch(kind: "remote_control", payload: payload)
+    }
+
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
         let checkedMilliseconds = UInt64(
             (ISO8601DateFormatter().date(from: receipt.checkedAt)?.timeIntervalSince1970 ?? Date().timeIntervalSince1970) * 1_000

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Weak};
 use std::thread;
@@ -10,7 +10,8 @@ use serde_json::Value;
 use crate::ffi::ChangeNotifier;
 use crate::live::{
     LiveContext, PaneControlAction, PaneControlOutcome, PaneResizeDirection, PaneSplitDirection,
-    SessionFetchError, TerminalSession, TerminalSessionMode,
+    RemoteControlAction, RemoteControlContext, RemoteControlOutcome, SessionFetchError,
+    TerminalSession, TerminalSessionMode,
 };
 use crate::model::{
     CoreOptions, DiagnosticSnapshot, LastErrorSnapshot, PaneLayoutSnapshot, PaneSnapshot,
@@ -172,6 +173,93 @@ struct ConfirmedPanePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct RemoteControlPayload {
+    target_id: String,
+    request_id: String,
+    #[serde(flatten)]
+    request: RemoteControlRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum RemoteControlRequest {
+    FocusPane {
+        pane_id: String,
+    },
+    SplitPane {
+        pane_id: String,
+        direction: PaneSplitDirection,
+        #[serde(default)]
+        cwd: Option<String>,
+    },
+    TogglePaneZoom {
+        pane_id: String,
+    },
+    ClosePane {
+        pane_id: String,
+        confirmed: bool,
+    },
+    FocusWorkspace {
+        workspace_id: String,
+    },
+    FocusTab {
+        tab_id: String,
+    },
+    CreateTab {
+        workspace_id: String,
+        cwd: String,
+        label: String,
+    },
+}
+
+impl RemoteControlRequest {
+    fn pane_id(&self) -> Option<&str> {
+        match self {
+            Self::FocusPane { pane_id }
+            | Self::SplitPane { pane_id, .. }
+            | Self::TogglePaneZoom { pane_id }
+            | Self::ClosePane { pane_id, .. } => Some(pane_id),
+            Self::FocusWorkspace { .. } | Self::FocusTab { .. } | Self::CreateTab { .. } => None,
+        }
+    }
+
+    fn confirmed(&self) -> bool {
+        matches!(
+            self,
+            Self::ClosePane {
+                confirmed: true,
+                ..
+            }
+        )
+    }
+}
+
+fn remote_workspace_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
+    projected_id
+        .strip_prefix(&format!("remote:{target_id}:workspace:"))
+        .filter(|workspace_id| !workspace_id.trim().is_empty())
+}
+
+fn remote_tab_creation_key(
+    target_id: &str,
+    action: &RemoteControlAction,
+) -> Option<(String, String, String, String)> {
+    match action {
+        RemoteControlAction::CreateTab {
+            workspace_id,
+            cwd,
+            label,
+        } => Some((
+            target_id.to_owned(),
+            workspace_id.clone(),
+            cwd.clone(),
+            label.clone(),
+        )),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct FileOpenPayload {
     path: String,
 }
@@ -294,6 +382,7 @@ enum ValidatedEvent {
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
+    RemoteControl(RemoteControlPayload),
     FileOpen(FileOpenPayload),
     FileDraft(FileDraftPayload),
     FileSave(FileSavePayload),
@@ -350,6 +439,9 @@ pub struct Runtime {
     state_path: PathBuf,
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
+    remote_controls: HashMap<String, RemoteControlContext>,
+    remote_control_requests: VecDeque<(String, String)>,
+    remote_tab_creations_in_flight: HashSet<(String, String, String, String)>,
     terminal_sessions: HashMap<String, TerminalSession>,
     terminal_session_generations: HashMap<String, u64>,
     terminal_session_lifecycles: HashMap<String, TerminalSessionLifecycle>,
@@ -461,6 +553,9 @@ impl Runtime {
             state_path,
             remote_targets,
             live: None,
+            remote_controls: HashMap::new(),
+            remote_control_requests: VecDeque::new(),
+            remote_tab_creations_in_flight: HashSet::new(),
             terminal_sessions: HashMap::new(),
             terminal_session_generations: HashMap::new(),
             terminal_session_lifecycles: HashMap::new(),
@@ -602,6 +697,248 @@ impl Runtime {
 
     pub fn set_live(&mut self, context: LiveContext) {
         self.live = Some(context);
+    }
+
+    pub fn install_remote_control(&mut self, context: RemoteControlContext) {
+        self.remote_controls
+            .insert(context.target_id().to_owned(), context);
+    }
+
+    fn request_remote_control(&mut self, payload: RemoteControlPayload) -> bool {
+        let target_id = payload.target_id;
+        let request_id = payload.request_id;
+        if target_id.trim().is_empty() || request_id.trim().is_empty() {
+            self.set_error(
+                "remote.control.invalid_request",
+                "Remote control requires non-empty target_id and request_id",
+                false,
+            );
+            return true;
+        }
+        if self
+            .remote_control_requests
+            .iter()
+            .any(|known| known == &(target_id.clone(), request_id.clone()))
+        {
+            self.push_diagnostic(
+                "remote.control.duplicate_ignored",
+                format!("Ignored duplicate remote request {request_id} for {target_id}"),
+            );
+            return true;
+        }
+        let Some(context) = self.remote_controls.get(&target_id).cloned() else {
+            self.set_error(
+                "remote.control.unavailable",
+                format!("Remote control is unavailable for target {target_id}"),
+                true,
+            );
+            return true;
+        };
+        let Some(remote) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|remote| remote.target_id == target_id)
+        else {
+            self.set_error(
+                "remote.control.unknown_target",
+                format!("Remote target {target_id} is not configured"),
+                false,
+            );
+            return true;
+        };
+        if remote.state != "connected" {
+            self.set_error(
+                "remote.control.not_connected",
+                format!(
+                    "Remote target {target_id} is {}; no command was sent",
+                    remote.state
+                ),
+                true,
+            );
+            return true;
+        }
+        let Some(session) = remote.session.clone() else {
+            self.set_error(
+                "remote.control.session_missing",
+                format!("Remote target {target_id} has no authoritative session projection"),
+                true,
+            );
+            return true;
+        };
+        if let Some(pane_id) = payload.request.pane_id().map(str::to_owned) {
+            if pane_id.trim().is_empty() {
+                self.set_error(
+                    "remote.control.invalid_pane",
+                    "Remote pane control requires a non-empty pane_id",
+                    false,
+                );
+                return true;
+            }
+            let pane_exists = session.workspaces.iter().any(|workspace| {
+                workspace.checkouts.iter().any(|checkout| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                })
+            });
+            if !pane_exists {
+                self.set_error(
+                    "remote.control.pane_not_found",
+                    format!("Pane {pane_id} does not belong to remote target {target_id}"),
+                    false,
+                );
+                return true;
+            }
+            let needs_confirmation =
+                matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
+                    && session.agents.iter().any(|agent| {
+                        agent.pane_id == pane_id
+                            && matches!(
+                                agent.state.as_str(),
+                                "working" | "question" | "approval" | "error" | "unseen_completion"
+                            )
+                    });
+            if needs_confirmation && !payload.request.confirmed() {
+                self.set_error(
+                    "remote.control.close_confirmation_required",
+                    format!(
+                        "Pane {pane_id} on {target_id} is working or needs attention; remote close requires confirmed=true"
+                    ),
+                    false,
+                );
+                return true;
+            }
+        }
+
+        let action = match payload.request {
+            RemoteControlRequest::FocusPane { pane_id } => {
+                RemoteControlAction::Pane(PaneControlAction::Focus { pane_id })
+            }
+            RemoteControlRequest::SplitPane {
+                pane_id,
+                direction,
+                cwd,
+            } => RemoteControlAction::Pane(PaneControlAction::Split {
+                pane_id,
+                direction,
+                cwd,
+            }),
+            RemoteControlRequest::TogglePaneZoom { pane_id } => {
+                RemoteControlAction::Pane(PaneControlAction::ToggleZoom { pane_id })
+            }
+            RemoteControlRequest::ClosePane { pane_id, .. } => {
+                RemoteControlAction::Pane(PaneControlAction::Close { pane_id })
+            }
+            RemoteControlRequest::FocusWorkspace { workspace_id } => {
+                let Some(source_id) = session
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == workspace_id)
+                    .then(|| remote_workspace_source_id(&target_id, &workspace_id))
+                    .flatten()
+                else {
+                    self.set_error(
+                        "remote.control.workspace_not_found",
+                        format!(
+                            "Workspace {workspace_id} does not belong to remote target {target_id}"
+                        ),
+                        false,
+                    );
+                    return true;
+                };
+                RemoteControlAction::FocusWorkspace {
+                    workspace_id: source_id.to_owned(),
+                }
+            }
+            RemoteControlRequest::FocusTab { tab_id } => {
+                let exists = !tab_id.trim().is_empty()
+                    && session.workspaces.iter().any(|workspace| {
+                        workspace.checkouts.iter().any(|checkout| {
+                            checkout
+                                .tabs
+                                .iter()
+                                .any(|tab| tab.id.as_deref() == Some(tab_id.as_str()))
+                        })
+                    });
+                if !exists {
+                    self.set_error(
+                        "remote.control.tab_not_found",
+                        format!("Tab {tab_id} does not belong to remote target {target_id}"),
+                        false,
+                    );
+                    return true;
+                }
+                RemoteControlAction::FocusTab { tab_id }
+            }
+            RemoteControlRequest::CreateTab {
+                workspace_id,
+                cwd,
+                label,
+            } => {
+                let Some(source_id) = session
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == workspace_id)
+                    .then(|| remote_workspace_source_id(&target_id, &workspace_id))
+                    .flatten()
+                else {
+                    self.set_error(
+                        "remote.control.workspace_not_found",
+                        format!(
+                            "Workspace {workspace_id} does not belong to remote target {target_id}"
+                        ),
+                        false,
+                    );
+                    return true;
+                };
+                if cwd.trim().is_empty() || label.trim().is_empty() {
+                    self.set_error(
+                        "remote.control.invalid_tab",
+                        "Remote tab creation requires non-empty cwd and label",
+                        false,
+                    );
+                    return true;
+                }
+                RemoteControlAction::CreateTab {
+                    workspace_id: source_id.to_owned(),
+                    cwd,
+                    label,
+                }
+            }
+        };
+
+        let creation_key = remote_tab_creation_key(&target_id, &action);
+        if let Some(key) = creation_key.as_ref()
+            && !self.remote_tab_creations_in_flight.insert(key.clone())
+        {
+            self.push_diagnostic(
+                "remote.control.duplicate_tab_ignored",
+                format!(
+                    "Ignored duplicate in-flight tab.create for workspace {} on {target_id}",
+                    key.1
+                ),
+            );
+            return true;
+        }
+        if self.remote_control_requests.len() == 128 {
+            self.remote_control_requests.pop_front();
+        }
+        self.remote_control_requests
+            .push_back((target_id.clone(), request_id.clone()));
+        self.push_diagnostic(
+            "remote.control.requested",
+            format!("Sending {} to {target_id}", action.kind()),
+        );
+        if let Err(message) = live::spawn_remote_control(context, request_id, action) {
+            if let Some(key) = creation_key {
+                self.remote_tab_creations_in_flight.remove(&key);
+            }
+            self.set_error("remote.control.worker_failed", message, true);
+        }
+        true
     }
 
     /// Groups the session's working directories under the Herdr workspace that
@@ -1677,6 +2014,73 @@ impl Runtime {
                 true
             }
         }
+    }
+
+    pub fn ingest_remote_control_result(
+        &mut self,
+        target_id: &str,
+        request_id: &str,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, String>,
+        elapsed_ms: u128,
+    ) -> bool {
+        let action_kind = action.kind();
+        if let Some(key) = remote_tab_creation_key(target_id, &action) {
+            self.remote_tab_creations_in_flight.remove(&key);
+        }
+        match result {
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id,
+                created_pane_id,
+            }) => {
+                let mut receipt = String::new();
+                if let Some(tab_id) = created_tab_id.as_deref() {
+                    receipt.push_str(&format!("; created tab {tab_id}"));
+                }
+                if let Some(pane_id) = created_pane_id.as_deref() {
+                    receipt.push_str(&format!("; created pane {pane_id}"));
+                }
+                self.push_diagnostic(
+                    "remote.control.ready",
+                    format!(
+                        "{action_kind} for {target_id} acknowledged in {elapsed_ms} ms{receipt}; awaiting authoritative event"
+                    ),
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "remote_control",
+                        "kind": "remote.control.ready",
+                        "target": target_id,
+                        "request_id": request_id,
+                        "action": action_kind,
+                        "created_tab_id": created_tab_id,
+                        "created_pane_id": created_pane_id,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+            }
+            Err(message) => {
+                self.set_error(
+                    "remote.control.failed",
+                    format!("{action_kind} for {target_id} failed: {message}"),
+                    true,
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "remote_control",
+                        "kind": "remote.control.failed",
+                        "target": target_id,
+                        "request_id": request_id,
+                        "action": action_kind,
+                        "message": message,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+            }
+        }
+        true
     }
 
     /// Appends only the decoded frame bytes when the delivering official
@@ -2773,6 +3177,7 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::RemoteControl(payload) => self.request_remote_control(payload),
             ValidatedEvent::FileOpen(payload)
                 if self.snapshot.editor.path.as_deref() == Some(payload.path.as_str()) =>
             {
@@ -3419,6 +3824,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
+        "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "file_open" => decode!(FileOpenPayload, FileOpen),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_save" => decode!(FileSavePayload, FileSave),
@@ -3505,10 +3911,12 @@ mod tests {
     use super::*;
     use crate::live::SessionFetchError;
     use crate::model::{
-        CheckoutSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, TabSnapshot,
-        TerminalPaneSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
+        CheckoutSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot,
+        RemoteSessionSnapshot, RemoteStatusSnapshot, TabSnapshot, TerminalPaneSnapshot,
+        WorkspaceRegistration, WorkspaceSnapshot,
     };
     use crate::sidebar::SessionSnapshotPayload;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_RUNTIME_STATE_ID: AtomicU64 = AtomicU64::new(0);
@@ -3611,6 +4019,70 @@ mod tests {
                 Some(pane_id)
             );
         }
+    }
+
+    #[test]
+    fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
+        let mut runtime = runtime();
+        let projected_workspace_id = "remote:mini:workspace:w1";
+        let mut remote_workspace = workspace(
+            projected_workspace_id,
+            "Fixture",
+            "/tmp/herdr-ide-remote-tab",
+            Vec::new(),
+        );
+        remote_workspace.remote_target_id = Some("mini".to_owned());
+        remote_workspace.device_id = "mini".to_owned();
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: "mini".to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            last_checked_at_unix_ms: Some(1),
+            session: Some(RemoteSessionSnapshot {
+                workspaces: vec![remote_workspace],
+                agents: Vec::new(),
+                active_tab_ids: Default::default(),
+                focused_workspace_id: Some(projected_workspace_id.to_owned()),
+                focused_checkout_id: None,
+                focused_tab_id: None,
+                focused_pane_id: None,
+                pane_layouts: Vec::new(),
+            }),
+        });
+        let connector: Arc<dyn crate::herdr_api::ApiConnector> = Arc::new(
+            crate::herdr_api::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        );
+        runtime.install_remote_control(RemoteControlContext::new(
+            "mini",
+            connector,
+            Weak::new(),
+            ChangeNotifier::noop(),
+        ));
+        runtime.remote_tab_creations_in_flight.insert((
+            "mini".to_owned(),
+            "w1".to_owned(),
+            "/tmp/herdr-ide-remote-tab".to_owned(),
+            "New tab".to_owned(),
+        ));
+
+        assert!(runtime.request_remote_control(RemoteControlPayload {
+            target_id: "mini".to_owned(),
+            request_id: "request-2".to_owned(),
+            request: RemoteControlRequest::CreateTab {
+                workspace_id: projected_workspace_id.to_owned(),
+                cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
+                label: "New tab".to_owned(),
+            },
+        }));
+
+        let diagnostic = runtime
+            .snapshot
+            .status
+            .diagnostics
+            .last()
+            .expect("duplicate outcome is visible to the caller");
+        assert_eq!(diagnostic.kind, "remote.control.duplicate_tab_ignored");
+        assert!(runtime.snapshot.status.last_error.is_none());
     }
 
     #[test]
