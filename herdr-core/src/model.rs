@@ -34,6 +34,7 @@ pub struct Snapshot {
     pub pane_layout: Option<PaneLayoutSnapshot>,
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
+    pub changes: ChangesSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub input_generation: u64,
@@ -373,7 +374,26 @@ pub struct EditorDocumentSnapshot {
     pub dirty: bool,
     pub readonly_reason: Option<String>,
     pub conflict: Option<EditorConflictSnapshot>,
-    pub diff: Option<DiffSnapshot>,
+}
+
+/// The right panel's two sections. The set is closed: a third section is a
+/// product decision, not a value a caller may invent.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RightPanelSection {
+    #[default]
+    Explorer,
+    Changes,
+}
+
+impl RightPanelSection {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "explorer" => Some(Self::Explorer),
+            "changes" => Some(Self::Changes),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -382,6 +402,11 @@ pub struct UiStateSnapshot {
     pub left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
     pub right_panel_visible: bool,
+    /// Which of the right panel's two sections is showing. Persisted rather
+    /// than held in the view, because hiding the panel tears the view down
+    /// and the section has to come back the way it was left.
+    #[serde(default)]
+    pub right_panel_section: RightPanelSection,
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
@@ -435,6 +460,7 @@ impl Default for UiStateSnapshot {
         Self {
             left_sidebar_visible: true,
             right_panel_visible: true,
+            right_panel_section: RightPanelSection::default(),
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
             selected_path: None,
@@ -495,10 +521,82 @@ pub struct EditorConflictSnapshot {
     pub opened_modified_at_unix_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct DiffSnapshot {
-    pub added_lines: Vec<u32>,
-    pub removed_lines: Vec<u32>,
+/// One checkout's Git working-tree state, plus the diff of the file the user
+/// selected in the changes view. Produced by [`crate::changes`] outside the
+/// runtime mutex and ingested whole.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct ChangesSnapshot {
+    /// The checkout these entries describe. A view that renders entries under
+    /// a different root than it asked about would be lying about whose
+    /// changes it is showing, so the root travels with them.
+    pub root_path: Option<String>,
+    pub entries: Vec<ChangedFileSnapshot>,
+    pub selected_path: Option<String>,
+    pub diff: Option<ChangedFileDiffSnapshot>,
+    /// Why there is nothing to list. Present whenever the reader could not
+    /// produce entries, so an empty list is never mistaken for "no changes".
+    pub unavailable_reason: Option<String>,
+}
+
+/// The four working-tree states this round presents. Git's porcelain codes
+/// carry more distinctions than the view uses; [`ChangedFileStatus::from_porcelain`]
+/// is the single place they collapse.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangedFileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Untracked,
+}
+
+impl ChangedFileStatus {
+    /// Maps one porcelain v1 `XY` pair onto the presented status. Index and
+    /// worktree columns are read together: a file staged as added and then
+    /// edited is still an addition to the reader, and a delete on either side
+    /// is a delete.
+    pub fn from_porcelain(code: &str) -> Self {
+        let mut characters = code.chars();
+        let index = characters.next().unwrap_or(' ');
+        let worktree = characters.next().unwrap_or(' ');
+        if index == '?' || worktree == '?' {
+            return Self::Untracked;
+        }
+        if index == 'D' || worktree == 'D' {
+            return Self::Deleted;
+        }
+        if index == 'A' || worktree == 'A' {
+            return Self::Added;
+        }
+        Self::Modified
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Modified => "modified",
+            Self::Added => "added",
+            Self::Deleted => "deleted",
+            Self::Untracked => "untracked",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ChangedFileSnapshot {
+    /// Absolute, so activating a row needs no second join against the root.
+    pub path: String,
+    /// Relative to the checkout root, which is what the row shows.
+    pub relative_path: String,
+    pub status: ChangedFileStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ChangedFileDiffSnapshot {
+    pub path: String,
+    pub text: String,
+    /// Set when the diff was cut short, naming the limit that cut it. A
+    /// silently truncated diff would read as a complete one.
+    pub truncated_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -706,6 +804,7 @@ impl Snapshot {
                 active_tab_id: None,
                 document: None,
             },
+            changes: ChangesSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
                 marked_text: String::new(),
@@ -772,8 +871,9 @@ impl PetSnapshot {
 }
 
 /// The sections of [`Snapshot`] that ride the revisioned `rest` channel of
-/// the delta wire: everything except the editor (its own revision), the
-/// terminal chunk ring (sequence cursor), and the per-event scalars.
+/// the delta wire: everything except the editor and the changes view (each
+/// with its own revision), the terminal chunk ring (sequence cursor), and the
+/// per-event scalars.
 /// Owned copy retained by the runtime to stamp revisions by comparison, so
 /// no mutation site needs dirty-tracking discipline.
 #[derive(Clone, Debug, PartialEq)]
@@ -837,15 +937,18 @@ impl RestSections {
     }
 }
 
-/// One delta response on the snapshot wire. `rest` and `editor` are present
-/// only when the caller's `have_revision` predates their last change;
-/// `chunks` carries only sequences past the caller's cursor.
+/// One delta response on the snapshot wire. `rest`, `editor`, and `changes`
+/// are present only when the caller's `have_revision` predates their last
+/// change; `chunks` carries only sequences past the caller's cursor. The
+/// changes view holds a whole file's diff text, so it is kept off `rest`,
+/// which restamps whenever any agent's elapsed time ticks.
 #[derive(Serialize)]
 pub struct SnapshotDeltaWire<'a> {
     pub schema_version: u32,
     pub revision: u64,
     pub rest: Option<RestWire<'a>>,
     pub editor: Option<&'a EditorSnapshot>,
+    pub changes: Option<&'a ChangesSnapshot>,
     pub input_generation: u64,
     pub terminal_sequence: u64,
     pub chunks: Vec<&'a TerminalChunk>,

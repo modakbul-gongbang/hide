@@ -923,10 +923,19 @@ enum PaneActivityPresentation {
     }
 }
 
+/// A panel's 44pt title row. A panel that presents more than one section
+/// passes `sections`, and the section chooser takes the title's place rather
+/// than adding a second row above the content.
 struct PanelHeader: View {
+    struct Sections {
+        let active: RightPanelSection
+        let select: (RightPanelSection) -> Void
+    }
+
     let title: String
     let systemImage: String
     let trailing: String
+    let sections: Sections?
     let collapseAction: (() -> Void)?
     let collapseAccessibilityLabel: String?
     let collapseShortcut: String?
@@ -945,6 +954,7 @@ struct PanelHeader: View {
         title: String,
         systemImage: String,
         trailing: String,
+        sections: Sections? = nil,
         collapseAction: (() -> Void)? = nil,
         collapseAccessibilityLabel: String? = nil,
         collapseShortcut: String? = nil,
@@ -954,6 +964,7 @@ struct PanelHeader: View {
         self.title = title
         self.systemImage = systemImage
         self.trailing = trailing
+        self.sections = sections
         self.collapseAction = collapseAction
         self.collapseAccessibilityLabel = collapseAccessibilityLabel
         self.collapseAccessibilityIdentifier = collapseAccessibilityIdentifier
@@ -961,8 +972,12 @@ struct PanelHeader: View {
 
     var body: some View {
         HStack(spacing: ShellMetrics.compactSpacing) {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
+            if let sections {
+                PanelSectionPicker(active: sections.active, select: sections.select)
+            } else {
+                Label(title, systemImage: systemImage)
+                    .font(.headline)
+            }
             Spacer(minLength: ShellMetrics.compactSpacing)
             Text(trailing)
                 .font(.caption)
@@ -985,6 +1000,38 @@ struct PanelHeader: View {
         }
         .padding(.horizontal, ShellMetrics.panelPadding)
         .frame(height: 44)
+    }
+}
+
+/// The right panel's section chooser. Both sections are always visible, so
+/// the panel's structure is encoded in the control rather than hidden behind a
+/// menu the operator has to open to discover.
+private struct PanelSectionPicker: View {
+    let active: RightPanelSection
+    let select: (RightPanelSection) -> Void
+
+    var body: some View {
+        HStack(spacing: HideTheme.spacingXXS) {
+            ForEach(RightPanelSection.allCases) { section in
+                let isActive = section == active
+                Button {
+                    select(section)
+                } label: {
+                    Label(section.title, systemImage: section.systemImage)
+                        .hideFont(size: 11, weight: .medium)
+                        .foregroundStyle(isActive ? HideTheme.primary : HideTheme.secondary)
+                        .padding(.horizontal, HideTheme.spacingSM)
+                        .padding(.vertical, HideTheme.spacingXS)
+                        .background(
+                            RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                                .fill(isActive ? HideTheme.elevated : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("right-panel-section-\(section.rawValue)")
+                .accessibilityAddTraits(isActive ? [.isSelected] : [])
+            }
+        }
     }
 }
 

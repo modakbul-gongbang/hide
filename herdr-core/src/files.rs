@@ -1,10 +1,9 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 use std::time::UNIX_EPOCH;
 
-use crate::model::{DiffSnapshot, EditorConflictSnapshot, EditorDocumentSnapshot};
+use crate::model::{EditorConflictSnapshot, EditorDocumentSnapshot};
 
 const MAX_EDITABLE_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -45,7 +44,6 @@ pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
         dirty: false,
         readonly_reason,
         conflict: None,
-        diff: git_diff(path),
     })
 }
 
@@ -87,7 +85,6 @@ pub fn save(
         editor.opened_modified_at_unix_ms = Some(disk_modified);
         editor.dirty = false;
         editor.conflict = None;
-        editor.diff = git_diff(path);
         return Ok(());
     }
 
@@ -123,7 +120,6 @@ pub fn save(
     editor.opened_modified_at_unix_ms = Some(modified);
     editor.dirty = false;
     editor.conflict = None;
-    editor.diff = git_diff(path);
     Ok(())
 }
 
@@ -148,65 +144,9 @@ fn language_for(path: &Path) -> Option<String> {
         .map(|extension| extension.to_ascii_lowercase())
 }
 
-fn git_diff(path: &Path) -> Option<DiffSnapshot> {
-    let parent = path.parent()?;
-    let output = Command::new("git")
-        .args([
-            "-C",
-            parent.to_str()?,
-            "diff",
-            "--unified=0",
-            "--",
-            path.file_name()?.to_str()?,
-        ])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| parse_unified_diff(&String::from_utf8_lossy(&output.stdout)))
-}
-
-pub fn parse_unified_diff(diff: &str) -> DiffSnapshot {
-    let mut added_lines = Vec::new();
-    let mut removed_lines = Vec::new();
-    for line in diff.lines().filter(|line| line.starts_with("@@")) {
-        let mut pieces = line.split_whitespace();
-        let _ = pieces.next();
-        if let (Some(old), Some(new)) = (pieces.next(), pieces.next()) {
-            append_range(old.trim_start_matches('-'), &mut removed_lines);
-            append_range(new.trim_start_matches('+'), &mut added_lines);
-        }
-    }
-    DiffSnapshot {
-        added_lines,
-        removed_lines,
-    }
-}
-
-fn append_range(token: &str, destination: &mut Vec<u32>) {
-    let mut parts = token.split(',');
-    let Some(start) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
-        return;
-    };
-    let count = parts
-        .next()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(1);
-    destination.extend(start..start.saturating_add(count));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unified_diff_hunks_project_added_and_removed_document_lines() {
-        let diff = "@@ -2,2 +2,3 @@\n-old\n+new\n@@ -10 +11,0 @@\n-old\n";
-        let projected = parse_unified_diff(diff);
-        assert_eq!(projected.removed_lines, [2, 3, 10]);
-        assert_eq!(projected.added_lines, [2, 3, 4]);
-    }
 
     #[test]
     fn draft_updates_keep_unsaved_contents_in_memory() {
@@ -218,7 +158,6 @@ mod tests {
             dirty: false,
             readonly_reason: None,
             conflict: None,
-            diff: None,
         };
         update_draft(&mut editor, "new".to_owned()).unwrap();
         assert!(editor.dirty);

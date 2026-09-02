@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PetOriginSnapshot, UiStateSnapshot, WorkspaceRegistration,
-    default_accent_hex, default_font_size, default_panel_visible,
+    DeviceRegistration, PetOriginSnapshot, RightPanelSection, UiStateSnapshot,
+    WorkspaceRegistration, default_accent_hex, default_font_size, default_panel_visible,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -19,6 +19,8 @@ struct StoredUiState {
     left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
     right_panel_visible: bool,
+    #[serde(default)]
+    right_panel_section: RightPanelSection,
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
@@ -82,6 +84,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
         UiStateSnapshot {
             left_sidebar_visible: stored.left_sidebar_visible,
             right_panel_visible: stored.right_panel_visible,
+            right_panel_section: stored.right_panel_section,
             expanded_paths: stored.expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
             selected_path: stored.selected_path,
@@ -113,6 +116,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         schema_version: UI_STATE_SCHEMA_VERSION,
         left_sidebar_visible: state.left_sidebar_visible,
         right_panel_visible: state.right_panel_visible,
+        right_panel_section: state.right_panel_section,
         expanded_paths: state.expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         selected_path: state.selected_path.clone(),

@@ -17,8 +17,9 @@ use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
     FileTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, clamp_pane_text_scale,
     PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
-    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION,
-    Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
+    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
+    SCHEMA_VERSION, Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
+    UiStateSnapshot,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
@@ -365,6 +366,8 @@ struct UiStateUpdatePayload {
     left_sidebar_visible: Option<bool>,
     #[serde(default)]
     right_panel_visible: Option<bool>,
+    #[serde(default)]
+    right_panel_section: Option<String>,
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
@@ -384,6 +387,14 @@ struct UiStateUpdatePayload {
     accent_hex: Option<String>,
     #[serde(default)]
     font_size: Option<f32>,
+}
+
+/// Which changed file the changes view is showing the diff for. `None`
+/// deselects, which is what closing the diff means.
+#[derive(Debug, Deserialize)]
+struct ChangesSelectPayload {
+    #[serde(default)]
+    path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,6 +485,7 @@ enum ValidatedEvent {
     TerminalResize(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
     PaneTextScale(PaneTextScalePayload),
+    ChangesSelect(ChangesSelectPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -575,8 +587,10 @@ struct DeltaState {
     revision: u64,
     rest_revision: u64,
     editor_revision: u64,
+    changes_revision: u64,
     last_rest: Option<crate::model::RestSections>,
     last_editor: Option<crate::model::EditorSnapshot>,
+    last_changes: Option<crate::model::ChangesSnapshot>,
 }
 
 impl Runtime {
@@ -808,6 +822,11 @@ impl Runtime {
             self.delta.editor_revision = self.delta.revision;
             self.delta.last_editor = Some(self.snapshot.editor.clone());
         }
+        if self.delta.last_changes.as_ref() != Some(&self.snapshot.changes) {
+            self.delta.revision += 1;
+            self.delta.changes_revision = self.delta.revision;
+            self.delta.last_changes = Some(self.snapshot.changes.clone());
+        }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
         let have_revision = if have_revision > self.delta.revision {
@@ -851,6 +870,8 @@ impl Runtime {
                 pet: &self.snapshot.pet,
             }),
             editor: (self.delta.editor_revision > have_revision).then_some(&self.snapshot.editor),
+            changes: (self.delta.changes_revision > have_revision)
+                .then_some(&self.snapshot.changes),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,
             chunks,
@@ -2339,6 +2360,39 @@ impl Runtime {
     /// Applies provider usage that the session-sync coordinator read outside
     /// the runtime mutex. The two fixed rows are revisioned with the rest
     /// snapshot, so an unchanged refresh produces no shell work.
+    /// What the changes reader should describe right now, or `None` when the
+    /// changes view is not showing and nothing should be read at all. This is
+    /// the whole reason the reader never forks `git` on a per-tick path.
+    pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
+        if !self.snapshot.ui_state.right_panel_visible
+            || self.snapshot.ui_state.right_panel_section != RightPanelSection::Changes
+        {
+            return None;
+        }
+        let root_path = self.snapshot.navigator.root_path.as_ref()?;
+        Some(crate::changes::ChangesRequest {
+            root_path: PathBuf::from(root_path),
+            selected_path: self.snapshot.changes.selected_path.clone(),
+        })
+    }
+
+    /// Accepts a projection only while it still describes the checkout the
+    /// runtime is asking about, so a slow read against a checkout the operator
+    /// has already left cannot overwrite the current one.
+    pub fn ingest_changes(&mut self, changes: crate::model::ChangesSnapshot) -> bool {
+        let expected = self
+            .changes_request()
+            .map(|request| request.root_path.to_string_lossy().into_owned());
+        if expected != changes.root_path {
+            return false;
+        }
+        if self.snapshot.changes == changes {
+            return false;
+        }
+        self.snapshot.changes = changes;
+        true
+    }
+
     pub fn ingest_provider_usage(
         &mut self,
         provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
@@ -4424,6 +4478,17 @@ impl Runtime {
                 }
                 changed
             }
+            ValidatedEvent::ChangesSelect(payload) => {
+                if self.snapshot.changes.selected_path == payload.path {
+                    return false;
+                }
+                self.snapshot.changes.selected_path = payload.path;
+                // The previous file's diff is dropped now rather than left
+                // showing under the newly selected file's name until the
+                // reader catches up.
+                self.snapshot.changes.diff = None;
+                true
+            }
             ValidatedEvent::UiStateUpdate(payload) => {
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
@@ -4435,6 +4500,13 @@ impl Runtime {
                     right_panel_visible: payload
                         .right_panel_visible
                         .unwrap_or(current.right_panel_visible),
+                    // An unrecognised section name keeps the current one
+                    // rather than silently resetting the panel to Explorer.
+                    right_panel_section: payload
+                        .right_panel_section
+                        .as_deref()
+                        .and_then(RightPanelSection::parse)
+                        .unwrap_or(current.right_panel_section),
                     expanded_paths: payload.expanded_paths,
                     collapsed_workspace_ids: payload.collapsed_workspace_ids,
                     selected_path: payload.selected_path,
@@ -4971,6 +5043,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
+        "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(ValidatedEvent::PetToggleVisible),

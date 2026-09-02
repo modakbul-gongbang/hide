@@ -10,9 +10,10 @@ private let coreChangeCallback: @convention(c) (UnsafeMutableRawPointer?) -> Voi
 }
 
 /// Composed view state the shell renders. Assembled from delta responses:
-/// rest sections replace wholesale when their revision moves, the editor
-/// rides its own revision, and terminal chunks stream past this value to the
-/// terminal views, so chunk-only updates leave it untouched.
+/// rest sections replace wholesale when their revision moves, the editor and
+/// the changes view each ride their own revision, and terminal chunks stream
+/// past this value to the terminal views, so chunk-only updates leave it
+/// untouched.
 struct CoreSnapshot {
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
@@ -20,19 +21,41 @@ struct CoreSnapshot {
     let paneLayout: CorePaneLayoutSnapshot?
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
+    let changes: CoreChangesSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+
+    /// Rebuilds the snapshot with only the independently revisioned sections
+    /// that arrived, so a delta carrying one of them leaves the rest alone.
+    func replacing(
+        editor: CoreEditorSnapshot?,
+        changes: CoreChangesSnapshot?
+    ) -> CoreSnapshot {
+        CoreSnapshot(
+            schemaVersion: schemaVersion,
+            navigator: navigator,
+            zoomed: zoomed,
+            paneLayout: paneLayout,
+            terminal: terminal,
+            editor: editor ?? self.editor,
+            changes: changes ?? self.changes,
+            uiState: uiState,
+            status: status,
+            pet: pet
+        )
+    }
 }
 
 /// One response on the delta snapshot wire: `herdr_core_snapshot` called
-/// with the bridge's revision and terminal-sequence cursors. `rest` and
-/// `editor` are absent when the cursor already covers them.
+/// with the bridge's revision and terminal-sequence cursors. `rest`,
+/// `editor`, and `changes` are absent when the cursor already covers them.
 struct CoreSnapshotDelta: Decodable {
     let schemaVersion: UInt32
     let revision: UInt64
     let rest: CoreRestSnapshot?
     let editor: CoreEditorSnapshot?
+    let changes: CoreChangesSnapshot?
     let terminalSequence: UInt64
     let chunks: [CoreTerminalChunk]
     let chunksDropped: Bool
@@ -42,6 +65,7 @@ struct CoreSnapshotDelta: Decodable {
         case revision
         case rest
         case editor
+        case changes
         case terminalSequence = "terminal_sequence"
         case chunks
         case chunksDropped = "chunks_dropped"
@@ -615,7 +639,6 @@ struct CoreEditorSnapshot: Decodable {
     var dirty: Bool { document?.dirty ?? false }
     var readonlyReason: String? { document?.readonlyReason }
     var conflict: CoreEditorConflict? { document?.conflict }
-    var diff: CoreDiffSnapshot? { document?.diff }
 
     enum CodingKeys: String, CodingKey {
         case tabs
@@ -650,7 +673,6 @@ struct CoreEditorDocumentSnapshot: Decodable {
     let dirty: Bool
     let readonlyReason: String?
     let conflict: CoreEditorConflict?
-    let diff: CoreDiffSnapshot?
 
     enum CodingKeys: String, CodingKey {
         case path
@@ -660,13 +682,13 @@ struct CoreEditorDocumentSnapshot: Decodable {
         case dirty
         case readonlyReason = "readonly_reason"
         case conflict
-        case diff
     }
 }
 
 struct CoreUIStateSnapshot: Decodable {
     let leftSidebarVisible: Bool
     let rightPanelVisible: Bool
+    let rightPanelSection: RightPanelSection
     let expandedPaths: [String]
     let collapsedWorkspaceIDs: [String]
     let selectedPath: String?
@@ -685,6 +707,7 @@ struct CoreUIStateSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case leftSidebarVisible = "left_sidebar_visible"
         case rightPanelVisible = "right_panel_visible"
+        case rightPanelSection = "right_panel_section"
         case expandedPaths = "expanded_paths"
         case collapsedWorkspaceIDs = "collapsed_workspace_ids"
         case selectedPath = "selected_path"
@@ -703,6 +726,10 @@ struct CoreUIStateSnapshot: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
         rightPanelVisible = try container.decodeIfPresent(Bool.self, forKey: .rightPanelVisible) ?? true
+        rightPanelSection = try container.decodeIfPresent(
+            RightPanelSection.self,
+            forKey: .rightPanelSection
+        ) ?? .explorer
         expandedPaths = try container.decode([String].self, forKey: .expandedPaths)
         collapsedWorkspaceIDs = try container.decodeIfPresent(
             [String].self,
@@ -769,13 +796,96 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-struct CoreDiffSnapshot: Decodable {
-    let addedLines: [UInt32]
-    let removedLines: [UInt32]
+/// The right panel's two sections. The core owns which one is showing, so the
+/// choice survives hiding and reopening the panel.
+enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
+    case explorer
+    case changes
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .explorer: "Explorer"
+        case .changes: "Changes"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .explorer: "doc.text.magnifyingglass"
+        case .changes: "arrow.triangle.branch"
+        }
+    }
+}
+
+/// One checkout's Git working-tree state as the core read it.
+struct CoreChangesSnapshot: Decodable {
+    let rootPath: String?
+    let entries: [CoreChangedFile]
+    let selectedPath: String?
+    let diff: CoreChangedFileDiff?
+    /// Why there is nothing to list. An empty list with no reason means the
+    /// checkout genuinely has no changes.
+    let unavailableReason: String?
 
     enum CodingKeys: String, CodingKey {
-        case addedLines = "added_lines"
-        case removedLines = "removed_lines"
+        case rootPath = "root_path"
+        case entries
+        case selectedPath = "selected_path"
+        case diff
+        case unavailableReason = "unavailable_reason"
+    }
+
+    static let empty = CoreChangesSnapshot(
+        rootPath: nil,
+        entries: [],
+        selectedPath: nil,
+        diff: nil,
+        unavailableReason: nil
+    )
+}
+
+struct CoreChangedFile: Decodable, Identifiable, Equatable {
+    let path: String
+    let relativePath: String
+    let status: CoreChangedFileStatus
+
+    var id: String { path }
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case relativePath = "relative_path"
+        case status
+    }
+}
+
+enum CoreChangedFileStatus: String, Decodable, Equatable {
+    case modified
+    case added
+    case deleted
+    case untracked
+
+    /// The single letter the row shows, which is how Git itself names these.
+    var badge: String {
+        switch self {
+        case .modified: "M"
+        case .added: "A"
+        case .deleted: "D"
+        case .untracked: "U"
+        }
+    }
+}
+
+struct CoreChangedFileDiff: Decodable, Equatable {
+    let path: String
+    let text: String
+    let truncatedReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case text
+        case truncatedReason = "truncated_reason"
     }
 }
 
@@ -1666,6 +1776,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func persistUIState(
         leftSidebarVisible: Bool? = nil,
         rightPanelVisible: Bool? = nil,
+        rightPanelSection: RightPanelSection? = nil,
         expandedPaths: [String]? = nil,
         collapsedWorkspaceIDs: [String]? = nil,
         selectedPath: String? = nil,
@@ -1681,6 +1792,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         var payload: [String: Any] = [
             "left_sidebar_visible": leftSidebarVisible ?? current?.leftSidebarVisible ?? true,
             "right_panel_visible": rightPanelVisible ?? current?.rightPanelVisible ?? true,
+            "right_panel_section": (rightPanelSection ?? current?.rightPanelSection ?? .explorer)
+                .rawValue,
             "expanded_paths": expandedPaths ?? current?.expandedPaths ?? [],
             "collapsed_workspace_ids": collapsedWorkspaceIDs ?? current?.collapsedWorkspaceIDs ?? [],
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
@@ -1704,6 +1817,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             )
         }
         dispatch(kind: "ui_state_update", payload: payload)
+    }
+
+    /// Selects the changed file whose diff the changes view shows, or clears
+    /// the selection when `path` is nil.
+    func selectChangedFile(path: String?) {
+        dispatch(kind: "changes_select", payload: ["path": path.map { $0 as Any } ?? NSNull()])
     }
 
     func dispatch(kind: String, payload: [String: Any]) {
@@ -1786,7 +1905,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 )
             }
             if let rest = decoded.rest {
-                // The protocol stamps both sections ahead of a fresh cursor,
+                // The protocol stamps every section ahead of a fresh cursor,
                 // so a missing editor here is a contract violation, not a
                 // state to default over.
                 guard let editor = decoded.editor ?? snapshot?.editor else {
@@ -1800,25 +1919,19 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     paneLayout: rest.paneLayout,
                     terminal: rest.terminal,
                     editor: editor,
+                    changes: decoded.changes ?? snapshot?.changes ?? .empty,
                     uiState: rest.uiState,
                     status: rest.status,
                     pet: rest.pet
                 ))
-            } else if let editor = decoded.editor {
+            } else if decoded.editor != nil || decoded.changes != nil {
                 guard let current = snapshot else {
-                    bridgeError = "delta.protocol: editor arrived before the first full snapshot"
+                    bridgeError = "delta.protocol: a section arrived before the first full snapshot"
                     return
                 }
-                snapshot = CoreSnapshot(
-                    schemaVersion: current.schemaVersion,
-                    navigator: current.navigator,
-                    zoomed: current.zoomed,
-                    paneLayout: current.paneLayout,
-                    terminal: current.terminal,
-                    editor: editor,
-                    uiState: current.uiState,
-                    status: current.status,
-                    pet: current.pet
+                snapshot = current.replacing(
+                    editor: decoded.editor,
+                    changes: decoded.changes
                 )
             }
             haveRevision = decoded.revision

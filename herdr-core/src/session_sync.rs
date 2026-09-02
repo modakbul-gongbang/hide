@@ -214,6 +214,11 @@ fn run_coordinator(
     let mut usage_reader = context
         .is_local()
         .then(|| crate::usage::ProviderUsageReader::new(home_path));
+    // Git reads describe this machine's checkouts, so only the local
+    // coordinator runs one.
+    let mut changes_reader = context
+        .is_local()
+        .then(crate::changes::ChangesReader::new);
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -300,6 +305,21 @@ fn run_coordinator(
         {
             stop_subscription(&mut subscription);
             return;
+        }
+
+        if let Some(reader) = changes_reader.as_mut() {
+            // The request is read under a brief lock; the `git` calls that
+            // answer it happen after the guard is dropped.
+            let Some(request) = read_changes_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(changes) = reader.read_if_due(request)
+                && !publish_changes(&context, changes)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
         }
 
         let timeout = coordinator_wait(subscription.is_some(), reconnect_at, next_agent_refresh);
@@ -695,6 +715,32 @@ fn publish_provider_usage(
     };
     let changed = match runtime.lock() {
         Ok(mut guard) => guard.ingest_provider_usage(provider_usage),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+/// Reads what the changes view needs, holding the runtime mutex only for the
+/// read itself. `None` means the runtime is gone.
+fn read_changes_request(
+    context: &SessionSyncContext,
+) -> Option<Option<crate::changes::ChangesRequest>> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.changes_request();
+    drop(runtime);
+    Some(request)
+}
+
+fn publish_changes(context: &SessionSyncContext, changes: crate::model::ChangesSnapshot) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_changes(changes),
         Err(_) => return false,
     };
     drop(runtime);

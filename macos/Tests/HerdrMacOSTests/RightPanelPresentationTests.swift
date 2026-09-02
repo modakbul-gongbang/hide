@@ -135,8 +135,7 @@ struct RightPanelPresentationTests {
                 "opened_modified_at_unix_ms": 1,
                 "dirty": true,
                 "readonly_reason": null,
-                "conflict": null,
-                "diff": null
+                "conflict": null
             }
         }
         """

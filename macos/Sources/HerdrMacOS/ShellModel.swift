@@ -1141,6 +1141,23 @@ final class ShellModel: ObservableObject {
         core.snapshot?.uiState.rightPanelVisible ?? true
     }
 
+    var rightPanelSection: RightPanelSection {
+        core.snapshot?.uiState.rightPanelSection ?? .explorer
+    }
+
+    func selectRightPanelSection(_ section: RightPanelSection) {
+        guard section != rightPanelSection else { return }
+        core.persistUIState(rightPanelSection: section)
+    }
+
+    var changes: CoreChangesSnapshot {
+        core.snapshot?.changes ?? .empty
+    }
+
+    func selectChangedFile(_ path: String?) {
+        core.selectChangedFile(path: path)
+    }
+
     func toggleLeftSidebar() {
         core.persistUIState(leftSidebarVisible: !leftSidebarVisible)
     }

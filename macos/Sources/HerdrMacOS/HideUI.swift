@@ -27,6 +27,13 @@ enum HideTheme {
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
     static let success = Color(red: 0.37, green: 0.90, blue: 0.62)
+    /// Diff line tints, named here so the changes view and any later diff
+    /// surface cannot drift apart. They lean on the semantic pair above
+    /// rather than introducing hues of their own.
+    static let diffAdded = success
+    static let diffRemoved = danger
+    static let diffAddedBackground = success.opacity(0.10)
+    static let diffRemovedBackground = danger.opacity(0.10)
 
     static let spacingNone: CGFloat = 0
     static let spacingXXS: CGFloat = 2
