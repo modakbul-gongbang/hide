@@ -247,7 +247,8 @@ private struct TerminalPanel: View {
                             onFocus: { model.focusPane(pane.id) },
                             onReconnect: { model.reconnectPane(pane.id) },
                             onClose: { model.closePaneFromHeader(pane.id) },
-                            onFork: { model.forkPaneFromHeader(pane.id) }
+                            onFork: { model.forkPaneFromHeader(pane.id) },
+                            onOpenPort: { model.openPanePort($0) }
                         ) {
                             TerminalHost(
                                 bridge: model.core,
@@ -743,6 +744,7 @@ struct PaneTerminalCell<Content: View>: View {
     let onReconnect: () -> Void
     let onClose: () -> Void
     let onFork: () -> Void
+    let onOpenPort: (UInt16) -> Void
     private let content: () -> Content
 
     init(
@@ -755,6 +757,7 @@ struct PaneTerminalCell<Content: View>: View {
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
+        onOpenPort: @escaping (UInt16) -> Void = { _ in },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
@@ -766,6 +769,7 @@ struct PaneTerminalCell<Content: View>: View {
         self.onReconnect = onReconnect
         self.onClose = onClose
         self.onFork = onFork
+        self.onOpenPort = onOpenPort
         self.content = content
     }
 
@@ -783,10 +787,12 @@ struct PaneTerminalCell<Content: View>: View {
             isFocused: isFocused,
             forkedFrom: PaneHeaderControls.forkMark(pane.fork),
             showsFork: showsFork,
+            ports: pane.ports,
             onFocus: onFocus,
             onReconnect: onReconnect,
             onClose: onClose,
             onFork: onFork,
+            onOpenPort: onOpenPort,
             content: content
         )
     }
@@ -862,10 +868,13 @@ struct HideTerminalPaneCard<Content: View>: View {
     /// The pane this one was forked from, when Herdr's lineage says so.
     let forkedFrom: String?
     let showsFork: Bool
+    /// Ports a server is listening on from this pane's directory.
+    let ports: [UInt16]
     let onFocus: () -> Void
     let onReconnect: () -> Void
     let onClose: () -> Void
     let onFork: () -> Void
+    let onOpenPort: (UInt16) -> Void
     private let content: () -> Content
 
     init(
@@ -876,10 +885,12 @@ struct HideTerminalPaneCard<Content: View>: View {
         isFocused: Bool,
         forkedFrom: String? = nil,
         showsFork: Bool = false,
+        ports: [UInt16] = [],
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
+        onOpenPort: @escaping (UInt16) -> Void = { _ in },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.paneID = paneID
@@ -889,10 +900,12 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.isFocused = isFocused
         self.forkedFrom = forkedFrom
         self.showsFork = showsFork
+        self.ports = ports
         self.onFocus = onFocus
         self.onReconnect = onReconnect
         self.onClose = onClose
         self.onFork = onFork
+        self.onOpenPort = onOpenPort
         self.content = content
     }
 
@@ -910,6 +923,24 @@ struct HideTerminalPaneCard<Content: View>: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+
+                ForEach(ports, id: \.self) { port in
+                    Button { onOpenPort(port) } label: {
+                        Text(":\(String(port))")
+                            .hideFont(size: 9, weight: .semibold)
+                            .foregroundStyle(HideTheme.accent)
+                            .padding(.horizontal, HideTheme.spacingXS)
+                            .frame(height: HideTheme.Layout.panelCollapseControlSize)
+                            .background(
+                                RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
+                                    .fill(HideTheme.elevated)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open http://localhost:\(String(port))")
+                    .accessibilityLabel("Open port \(String(port)) for pane \(paneID)")
+                }
 
                 if let forkedFrom {
                     // The mark is the state; the parent's id is on the tooltip

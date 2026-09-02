@@ -251,6 +251,25 @@ pub struct PaneSnapshot {
     pub summary: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
+    /// The ports listened on from at or below this pane's working directory.
+    pub ports: Vec<u16>,
+}
+
+/// The TCP listeners the machine has, with where each was started from.
+///
+/// Attribution to a pane is not decided here: the reader ships what it saw and
+/// the projection applies the rule, so the rule stays testable without a
+/// server to point it at.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ListeningPortsSnapshot {
+    pub entries: Vec<ListeningPortSnapshot>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ListeningPortSnapshot {
+    pub port: u16,
+    pub cwd: String,
 }
 
 /// What the pane header needs to know about forking this pane.

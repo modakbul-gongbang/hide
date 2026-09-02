@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readers=(changes)
+readers=(changes ports)
 
 # 1. The module that holds the mutex, and the file module it calls
 #    synchronously while holding it, execute no subprocess at all.

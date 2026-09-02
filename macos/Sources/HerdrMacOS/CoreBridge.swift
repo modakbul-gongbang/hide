@@ -488,10 +488,13 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let summary: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
+    /// Ports listened on from at or below this pane's working directory.
+    let ports: [UInt16]
 
     enum CodingKeys: String, CodingKey {
         case id
         case fork
+        case ports
         case herdrLabel = "herdr_label"
         case terminalTitle = "terminal_title"
         case workspaceLabel = "workspace_label"
@@ -510,7 +513,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         state: String,
         summary: String?,
         activityAt: UInt64?,
-        fork: CorePaneFork = CorePaneFork()
+        fork: CorePaneFork = CorePaneFork(),
+        ports: [UInt16] = []
     ) {
         self.id = id
         self.herdrLabel = herdrLabel
@@ -521,9 +525,11 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.summary = summary
         self.activityAt = activityAt
         self.fork = fork
+        self.ports = ports
     }
 
-    /// `fork` is the one section this shell can render without, so its absence
+    /// `fork` and `ports` are the two sections this shell can render without,
+    /// so their absence
     /// defaults rather than failing the whole snapshot decode. Every other
     /// field describes the pane itself, and a pane missing one of those is a
     /// snapshot worth rejecting.
@@ -538,6 +544,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
+        ports = try container.decodeIfPresent([UInt16].self, forKey: .ports) ?? []
     }
 }
 

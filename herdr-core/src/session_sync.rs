@@ -219,6 +219,10 @@ fn run_coordinator(
     let mut changes_reader = context
         .is_local()
         .then(crate::changes::ChangesReader::new);
+    // A listening port is this machine's, so only the local coordinator looks.
+    let mut ports_reader = context
+        .is_local()
+        .then(crate::ports::PortsReader::new);
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -316,6 +320,17 @@ fn run_coordinator(
             };
             if let Some(changes) = reader.read_if_due(request)
                 && !publish_changes(&context, changes)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = ports_reader.as_mut() {
+            // `lsof` runs here, outside every lock; only the result is handed
+            // in.
+            if let Some(ports) = reader.read_if_due()
+                && !publish_ports(&context, ports)
             {
                 stop_subscription(&mut subscription);
                 return;
@@ -741,6 +756,24 @@ fn publish_changes(context: &SessionSyncContext, changes: crate::model::ChangesS
     };
     let changed = match runtime.lock() {
         Ok(mut guard) => guard.ingest_changes(changes),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_ports(
+    context: &SessionSyncContext,
+    ports: crate::model::ListeningPortsSnapshot,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_listening_ports(ports),
         Err(_) => return false,
     };
     drop(runtime);
@@ -1203,6 +1236,10 @@ impl SessionReplica {
                                         .and_then(Value::as_str)
                                         .and_then(|activity| activity.parse().ok()),
                                     fork: crate::runtime::pane_fork_snapshot(agent),
+                                    // Ports describe this machine's listeners,
+                                    // so a remote pane reports none rather than
+                                    // claiming the local machine's.
+                                    ports: Vec::new(),
                                 }
                             })
                             .collect::<Vec<_>>();

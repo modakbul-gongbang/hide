@@ -29,6 +29,15 @@ enum PaneHeaderControls {
         fork.available
     }
 
+    /// The address a port indicator opens.
+    ///
+    /// A dev server is reached over http on the loopback name, not by the
+    /// address the listener bound to: a server on `*:5173` and one on
+    /// `127.0.0.1:5173` are both `http://localhost:5173` from here.
+    static func portURL(_ port: UInt16) -> URL? {
+        URL(string: "http://localhost:\(port)")
+    }
+
     /// A pane that Herdr's lineage records as spawned from another is marked as
     /// a fork. The mark is the visual encoding of that state; the parent's id
     /// rides along so the header can name it on hover rather than in the row.

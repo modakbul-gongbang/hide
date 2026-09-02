@@ -583,6 +583,10 @@ pub struct Runtime {
     /// activation during that wait would bill a second session.
     forks_in_flight: HashSet<String>,
     fork_sequence: u64,
+    /// The machine's TCP listeners, refreshed on their own window by the
+    /// session-sync coordinator. Held here rather than in the snapshot because
+    /// what the shell renders is the per-pane attribution, not the raw list.
+    listening_ports: crate::model::ListeningPortsSnapshot,
     delta: DeltaState,
 }
 
@@ -692,6 +696,7 @@ impl Runtime {
             last_session_spaces: Vec::new(),
             forks_in_flight: HashSet::new(),
             fork_sequence: 0,
+            listening_ports: crate::model::ListeningPortsSnapshot::default(),
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -1572,6 +1577,7 @@ impl Runtime {
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
         let projected_agents = project_agents(payload.clone()).agents;
+        let listening_ports = self.listening_ports.entries.clone();
 
         for layout in &payload.layouts {
             // A plain terminal pane is not necessarily represented in the
@@ -1639,6 +1645,7 @@ impl Runtime {
                                 .and_then(|source| source.cwd.clone())
                         })
                         .unwrap_or_else(|| checkout.path.clone());
+                    let ports = crate::ports::attributed_ports(&cwd, &listening_ports);
                     PaneSnapshot {
                         id: pane.pane_id.clone(),
                         herdr_label: source.and_then(|source| source.label.clone()),
@@ -1651,6 +1658,7 @@ impl Runtime {
                         summary: agent.map(|agent| agent.summary.clone()),
                         activity_at_unix_ms: agent.and_then(|agent| agent.activity.parse().ok()),
                         fork: pane_fork_snapshot(agent),
+                        ports,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2662,6 +2670,34 @@ impl Runtime {
     /// `herdr agent new` creates the pane and starts the agent in one atomic
     /// call, so a failure leaves nothing behind and there is no half-made pane
     /// to clean up. The reason it failed is reported rather than swallowed.
+    /// Records the machine's listeners and re-attributes every pane to them.
+    ///
+    /// Panes are re-walked here because ports arrive on their own window rather
+    /// than with a session snapshot, so a server that started since the last
+    /// topology update would otherwise stay invisible until the topology moved.
+    pub fn ingest_listening_ports(&mut self, ports: crate::model::ListeningPortsSnapshot) -> bool {
+        if self.listening_ports == ports {
+            return false;
+        }
+        self.listening_ports = ports;
+        let entries = self.listening_ports.entries.clone();
+        let mut changed = false;
+        for workspace in self.snapshot.navigator.workspaces.iter_mut() {
+            for checkout in workspace.checkouts.iter_mut() {
+                for tab in checkout.tabs.iter_mut() {
+                    for pane in tab.panes.iter_mut() {
+                        let attributed = crate::ports::attributed_ports(&pane.cwd, &entries);
+                        if pane.ports != attributed {
+                            pane.ports = attributed;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        changed
+    }
+
     pub fn ingest_fork_result(
         &mut self,
         parent_pane_id: &str,
@@ -6052,6 +6088,7 @@ mod tests {
             summary: None,
             activity_at_unix_ms: None,
             fork: PaneForkSnapshot::default(),
+            ports: Vec::new(),
         }
     }
 

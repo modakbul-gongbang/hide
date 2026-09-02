@@ -1600,7 +1600,8 @@ private struct HideTerminalSurface: View {
                             onFocus: { model.focusPane(pane.id) },
                             onReconnect: { model.reconnectPane(pane.id) },
                             onClose: { model.closePaneFromHeader(pane.id) },
-                            onFork: { model.forkPaneFromHeader(pane.id) }
+                            onFork: { model.forkPaneFromHeader(pane.id) },
+                            onOpenPort: { model.openPanePort($0) }
                         ) {
                             TerminalHost(
                                 bridge: model.core,

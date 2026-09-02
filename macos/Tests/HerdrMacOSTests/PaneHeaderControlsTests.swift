@@ -29,6 +29,13 @@ struct PaneHeaderControlsTests {
         #expect(!PaneHeaderControls.closeRequiresConfirmation(paneState: "attached"))
     }
 
+    @Test func aPortIndicatorOpensTheLoopbackAddressOverHttp() {
+        // The listener's bound address is not the address to open: a server on
+        // `*:5173` and one on `127.0.0.1:5173` are both localhost from here.
+        #expect(PaneHeaderControls.portURL(5173)?.absoluteString == "http://localhost:5173")
+        #expect(PaneHeaderControls.portURL(80)?.absoluteString == "http://localhost:80")
+    }
+
     @Test func aPaneWithNoForkFactsDecodesAsNeitherForkableNorAFork() throws {
         // Every pane the core ships carries the section, but a pane snapshot
         // written before it must not decode into a header offering a fork.
@@ -39,5 +46,6 @@ struct PaneHeaderControlsTests {
         let pane = try JSONDecoder().decode(CorePaneSnapshot.self, from: Data(json.utf8))
         #expect(!PaneHeaderControls.showsFork(pane.fork))
         #expect(PaneHeaderControls.forkMark(pane.fork) == nil)
+        #expect(pane.ports.isEmpty)
     }
 }

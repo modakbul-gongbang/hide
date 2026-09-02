@@ -1392,6 +1392,21 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
+    /// Opens a port a server in this pane's directory is listening on.
+    ///
+    /// Chrome first, the default browser when Chrome is absent, and a stated
+    /// reason when neither takes it - the same routing a terminal link uses,
+    /// because it is the same question.
+    func openPanePort(_ port: UInt16) {
+        guard let url = PaneHeaderControls.portURL(port) else {
+            interactionNotice = "Port \(port) does not form an address that can be opened."
+            return
+        }
+        ExternalBrowser.open(url) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
     /// Closes one pane from its own header.
     ///
     /// This routes through the same consequence flow the close command uses, so
