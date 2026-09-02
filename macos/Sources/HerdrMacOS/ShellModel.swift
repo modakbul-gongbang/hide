@@ -1177,6 +1177,30 @@ final class ShellModel: ObservableObject {
         core.persistUIState(rightPanelVisible: !rightPanelVisible)
     }
 
+    /// Reveals the find bar on whichever surface is on screen. Both surfaces
+    /// carry their own bar, so this focuses the right one and hands it AppKit's
+    /// standard find action.
+    func showFindInFocusedSurface() {
+        switch PaneFindPolicy.target(
+            activeFileTabID: core.snapshot?.editor.activeTabID,
+            focusedPaneID: focusedPaneID,
+            isRemoteContext: isRemoteContext
+        ) {
+        case .none:
+            return
+        case .fileEditor:
+            // Focus may sit on the tree or the tab strip, so the editor's own
+            // text view is put in front of the action rather than assumed to
+            // already be the first responder.
+            if let textView = NSApp.keyWindow?.contentView?.firstDescendantTextView() {
+                NSApp.keyWindow?.makeFirstResponder(textView)
+            }
+        case .terminal(let paneID):
+            core.focusTerminal(paneID: paneID)
+        }
+        FindResponderAction.send(.showFindInterface)
+    }
+
     /// The scale key for the file editor. Herdr pane ids always carry a `:`,
     /// so this cannot collide with one.
     static let fileEditorScaleKey = "file-editor"

@@ -205,6 +205,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBar: TerminalFindBarView?
     private var findBarTerm: String = ""
     private var findBarOptions: SearchOptions = SearchOptions()
+    private var searchHighlightView: SearchHighlightView?
+    /// The fill behind every match other than the one the selection is on. A
+    /// host sets this to its own token; the default is the system's highlight.
+    open var searchHighlightColor: NSColor = NSColor.systemYellow.withAlphaComponent(0.28) {
+        didSet { searchHighlightView?.color = searchHighlightColor }
+    }
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
     var textBlinkVisible = true
@@ -1170,7 +1176,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //selectionView.notifyScrolled(source: terminal)
         updateScroller()
+        // Matches are placed by visible row, so scrolling moves every one of
+        // them.
+        refreshSearchHighlights()
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
+    }
+
+    /// A resize or a font change moves every cell, so the highlights are
+    /// replaced rather than left at their old coordinates.
+    open override func layout() {
+        super.layout()
+        searchHighlightView?.frame = bounds
+        refreshSearchHighlights()
     }
     
     open func linefeed(source: Terminal) {
@@ -2599,11 +2616,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         updateFindPasteboard(term)
         let options = findBar?.options ?? SearchOptions()
+        findBarTerm = term
         if next {
             _ = findNext(term, options: options)
         } else {
             _ = findPrevious(term, options: options)
         }
+        refreshFindState()
     }
 
     private func setFindPasteboardFromSelection() {
@@ -2658,7 +2677,83 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
         ])
         findBar = bar
+        findBarDidLoad(bar)
         return bar
+    }
+
+    /// Called once, when the find bar is first created. A host overrides this
+    /// to restyle the bar into its own design system; SwiftTerm has no access
+    /// to that system, so it hands over the bar instead of guessing.
+    open func findBarDidLoad(_ bar: TerminalFindBarView) {
+    }
+
+    /// Refreshes the bar's counter and the all-match highlight together, so
+    /// the count and what is drawn can never disagree.
+    private func refreshFindState() {
+        guard let findBar, !findBar.isHidden else {
+            clearSearchHighlights()
+            return
+        }
+        let term = findBarTerm
+        let summary = term.isEmpty ? (0, 0) : searchMatchSummary(term, options: findBarOptions)
+        findBar.summary = terminalFindBarSummary(
+            term: term,
+            index: summary.0,
+            total: summary.1
+        )
+        refreshSearchHighlights()
+    }
+
+    private func clearSearchHighlights() {
+        searchHighlightView?.rects = []
+    }
+
+    /// Places one rect over each match that is currently on screen. Matches
+    /// scrolled out of view are simply absent rather than drawn off-frame.
+    private func refreshSearchHighlights() {
+        guard !findBarTerm.isEmpty else {
+            clearSearchHighlights()
+            return
+        }
+        let overlay = ensureSearchHighlightView()
+        guard let cellDimension else {
+            overlay.rects = []
+            return
+        }
+        let buffer = terminal.displayBuffer
+        let firstVisibleRow = buffer.yDisp
+        let visibleRows = terminal.rows
+        overlay.rects = searchMatchPositions(findBarTerm, options: findBarOptions)
+            .compactMap { match in
+                let visibleRow = match.row - firstVisibleRow
+                guard visibleRow >= 0, visibleRow < visibleRows, match.length > 0 else {
+                    return nil
+                }
+                // The terminal's own coordinate space is unflipped and row 0
+                // is at the top, which is the same arithmetic
+                // `characterIndex(for:)` uses in reverse.
+                return NSRect(
+                    x: CGFloat(match.col) * cellDimension.width,
+                    y: bounds.height - CGFloat(visibleRow + 1) * cellDimension.height,
+                    width: CGFloat(match.length) * cellDimension.width,
+                    height: cellDimension.height
+                )
+            }
+    }
+
+    private func ensureSearchHighlightView() -> SearchHighlightView {
+        if let searchHighlightView {
+            searchHighlightView.frame = bounds
+            return searchHighlightView
+        }
+        let overlay = SearchHighlightView(frame: bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.color = searchHighlightColor
+        // Below the find bar, which is added afterwards, so the bar is never
+        // painted over by a match sitting behind it.
+        addSubview(overlay, positioned: .below, relativeTo: findBar)
+        searchHighlightView = overlay
+        return overlay
     }
 
     private func showFindBar(prefillSelection: Bool) {
@@ -2675,6 +2770,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private func hideFindBar() {
         findBar?.isHidden = true
+        findBarTerm = ""
+        clearSearch()
+        clearSearchHighlights()
         window?.makeFirstResponder(self)
     }
 
@@ -2682,10 +2780,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         findBarTerm = term
         if term.isEmpty {
             clearSearch()
+            refreshFindState()
             return
         }
         updateFindPasteboard(term)
         _ = findNext(term, options: findBarOptions)
+        refreshFindState()
     }
 
     private func handleFindBarOptionsChanged(_ options: SearchOptions) {
@@ -2693,6 +2793,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if !findBarTerm.isEmpty {
             _ = findNext(findBarTerm, options: options)
         }
+        refreshFindState()
     }
     
     open func selectionChanged(source: Terminal) {

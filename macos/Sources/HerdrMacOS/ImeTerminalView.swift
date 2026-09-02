@@ -131,6 +131,25 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
 
+    /// SwiftTerm cannot see this shell's design system, so it hands the bar
+    /// over and the shell paints it. Only the parts the vendor exposes are
+    /// touched; the bar's layout stays the vendor's.
+    override func findBarDidLoad(_ bar: TerminalFindBarView) {
+        bar.material = .windowBackground
+        bar.layer?.backgroundColor = HideTheme.Native.elevated.cgColor
+        bar.layer?.cornerRadius = HideTheme.radiusMedium
+        bar.layer?.borderWidth = HideTheme.Layout.hairlineWidth
+        bar.layer?.borderColor = HideTheme.Native.divider.cgColor
+
+        let targets = bar.styleTargets
+        targets.field.textColor = HideTheme.Native.primary
+        targets.field.font = NSFont.systemFont(ofSize: 11)
+        targets.summary.textColor = HideTheme.Native.secondary
+        for button in targets.buttons {
+            button.contentTintColor = HideTheme.Native.secondary
+        }
+    }
+
     /// Consulted by the terminal delegate before bytes are forwarded.
     func shouldDeliverToPane(_ bytes: ArraySlice<UInt8>) -> Bool {
         CompositionInputPolicy.shouldDeliver(

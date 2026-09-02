@@ -413,6 +413,10 @@ struct ShellCommands: Commands {
             menuButton(.toggleLeftSidebar) { model.toggleLeftSidebar() }
             menuButton(.toggleSidebarView) { model.toggleSidebarContent() }
             menuButton(.toggleRightPanel) { model.toggleRightPanel() }
+
+            Divider()
+
+            menuButton(.findInPane) { model.showFindInFocusedSurface() }
         }
 
         CommandMenu("Pane") {

@@ -28,6 +28,7 @@ struct TerminalHost: NSViewRepresentable {
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         terminal.linkReporting = .implicit
         terminal.linkHighlightMode = .hover
+        terminal.searchHighlightColor = HideTheme.Native.searchMatchHighlight
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
         terminal.onPointerFocus = onFocus
         context.coordinator.terminal = terminal

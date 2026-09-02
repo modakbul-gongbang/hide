@@ -1551,6 +1551,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return registrationID
     }
 
+    /// Puts one pane's terminal view in front of the keyboard. The pane's own
+    /// registration owns the view, so the focus request goes through it rather
+    /// than through a second reference to the same view.
+    func focusTerminal(paneID: String) {
+        terminalRegistrations[paneID]?.focus()
+    }
+
     func unregisterTerminal(paneID: String, registrationID: UUID) {
         guard terminalRegistrations[paneID]?.id == registrationID else { return }
         terminalRegistrations.removeValue(forKey: paneID)

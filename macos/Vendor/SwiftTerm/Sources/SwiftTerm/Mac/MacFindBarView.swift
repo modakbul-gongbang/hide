@@ -6,7 +6,23 @@
 #if os(macOS)
 import AppKit
 
-final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
+/// The result counter's text for a match position. A search with a term but
+/// no match says so rather than leaving the field looking inert, which is the
+/// whole difference between "found nothing" and "did nothing".
+public func terminalFindBarSummary (term: String, index: Int, total: Int) -> String {
+    if term.isEmpty {
+        return ""
+    }
+    if total == 0 {
+        return "No matches"
+    }
+    if index == 0 {
+        return "\(total) matches"
+    }
+    return "\(index)/\(total)"
+}
+
+public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     var onSearchChanged: ((String) -> Void)?
     var onFindNext: (() -> Void)?
     var onFindPrevious: (() -> Void)?
@@ -14,6 +30,7 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     var onOptionsChanged: ((SearchOptions) -> Void)?
 
     private let searchField = NSSearchField()
+    private let summaryLabel = NSTextField(labelWithString: "")
     private let previousButton = NSButton()
     private let nextButton = NSButton()
     private let closeButton = NSButton()
@@ -21,12 +38,26 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     private let regexButton = NSButton(checkboxWithTitle: ".*", target: nil, action: nil)
     private let wholeWordButton = NSButton(checkboxWithTitle: "Word", target: nil, action: nil)
 
-    var searchText: String {
+    public var searchText: String {
         get { searchField.stringValue }
         set { searchField.stringValue = newValue }
     }
 
-    var options: SearchOptions {
+    /// The match counter, or the reason there is none.
+    public var summary: String {
+        get { summaryLabel.stringValue }
+        set { summaryLabel.stringValue = newValue }
+    }
+
+    /// The field, the counter, and the controls, so a host can restyle the bar
+    /// into its own design system. SwiftTerm has no access to that system, so
+    /// it exposes the parts rather than guessing at colors.
+    public var styleTargets: (field: NSSearchField, summary: NSTextField, buttons: [NSButton]) {
+        (searchField, summaryLabel, [previousButton, nextButton, closeButton,
+                                     caseSensitiveButton, regexButton, wholeWordButton])
+    }
+
+    public var options: SearchOptions {
         SearchOptions(
             caseSensitive: caseSensitiveButton.state == .on,
             regex: regexButton.state == .on,
@@ -34,17 +65,17 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         )
     }
 
-    override init(frame frameRect: NSRect) {
+    public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
     }
 
-    required init?(coder: NSCoder) {
+    public required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
     }
 
-    func focus() {
+    public func focus() {
         window?.makeFirstResponder(searchField)
     }
 
@@ -81,8 +112,14 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         configureOptionButton(regexButton, tooltip: "Regex")
         configureOptionButton(wholeWordButton, tooltip: "Whole Word")
 
+        summaryLabel.font = NSFont.systemFont(ofSize: 11)
+        summaryLabel.textColor = .secondaryLabelColor
+        summaryLabel.alignment = .right
+        summaryLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+
         let stack = NSStackView(views: [
             searchField,
+            summaryLabel,
             previousButton,
             nextButton,
             caseSensitiveButton,
@@ -148,11 +185,11 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         onOptionsChanged?(options)
     }
 
-    func controlTextDidChange(_ obj: Notification) {
+    public func controlTextDidChange(_ obj: Notification) {
         onSearchChanged?(searchField.stringValue)
     }
 
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             onClose?()
             return true

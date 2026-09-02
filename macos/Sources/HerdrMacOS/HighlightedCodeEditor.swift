@@ -37,6 +37,11 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.isEditable = isEditable
         textView.textContainerInset = NSSize(width: 10, height: 10)
+        // AppKit's own find bar, which the editor never enabled. Incremental
+        // searching is what highlights every match rather than only the one
+        // the caret is on, and it is what reports a term with no match.
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
 
         let scrollView = NSScrollView()

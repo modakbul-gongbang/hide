@@ -21,6 +21,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
     case toggleLeftSidebar = "toggle_left_sidebar"
     case toggleSidebarView = "toggle_sidebar_view"
     case toggleRightPanel = "toggle_right_panel"
+    case findInPane = "find_in_pane"
 
     var id: String { rawValue }
 
@@ -35,6 +36,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .toggleLeftSidebar: "Toggle Left Sidebar"
         case .toggleSidebarView: "Toggle Sidebar View"
         case .toggleRightPanel: "Toggle Right Panel"
+        case .findInPane: "Find in Pane"
         }
     }
 
@@ -49,6 +51,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .toggleLeftSidebar: PaneShortcut(key: "b", modifiers: [.command])
         case .toggleSidebarView: PaneShortcut(key: "e", modifiers: [.command])
         case .toggleRightPanel: PaneShortcut(key: "b", modifiers: [.command, .shift])
+        case .findInPane: PaneShortcut(key: "f", modifiers: [.command])
         }
     }
 

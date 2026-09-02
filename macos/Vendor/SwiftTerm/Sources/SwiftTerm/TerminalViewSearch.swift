@@ -8,6 +8,20 @@
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
+/// One match's place in the terminal buffer: an absolute buffer row, the
+/// starting column, and how many cells it covers.
+public struct SearchMatchPosition: Equatable {
+    public let row: Int
+    public let col: Int
+    public let length: Int
+
+    public init (row: Int, col: Int, length: Int) {
+        self.row = row
+        self.col = col
+        self.length = length
+    }
+}
+
 extension TerminalView {
     /// Finds the next match for `term`, selects it, and optionally scrolls it into view.
     /// - Parameters:
@@ -65,6 +79,19 @@ extension TerminalView {
             return (0, all.count)
         }
         return (i + 1, all.count)
+    }
+
+    /// Every match for `term` as a buffer position and a length, in buffer
+    /// order and capped at `limit`. A host that wants to highlight all matches
+    /// needs their positions, which `findNext` alone cannot give: the terminal
+    /// has one selection, so it can only show the current match.
+    public func searchMatchPositions (_ term: String, options: SearchOptions = SearchOptions(), limit: Int = 1000) -> [SearchMatchPosition] {
+        guard let search = search else {
+            return []
+        }
+        return search.findAll(term: term, options: options, limit: limit).map { result in
+            SearchMatchPosition(row: result.row, col: result.col, length: max(result.size, 0))
+        }
     }
 
     /// Clears the current search state and selection.

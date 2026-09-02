@@ -34,6 +34,21 @@ enum HideTheme {
     static let diffRemoved = danger
     static let diffAddedBackground = success.opacity(0.10)
     static let diffRemovedBackground = danger.opacity(0.10)
+    /// The fill behind a search match that is not the current one. Content
+    /// emphasis rather than chrome, so it is allowed a saturated tint.
+    static let searchMatchHighlight = accent.opacity(0.24)
+
+    /// The same tokens as `NSColor`, for the AppKit views the shell hosts.
+    /// They are converted here rather than at each call site so a view and its
+    /// SwiftUI neighbours cannot end up on different values.
+    enum Native {
+        static let panel = NSColor(HideTheme.panel)
+        static let elevated = NSColor(HideTheme.elevated)
+        static let divider = NSColor(HideTheme.divider)
+        static let primary = NSColor(HideTheme.primary)
+        static let secondary = NSColor(HideTheme.secondary)
+        static let searchMatchHighlight = NSColor(HideTheme.searchMatchHighlight)
+    }
 
     static let spacingNone: CGFloat = 0
     static let spacingXXS: CGFloat = 2
