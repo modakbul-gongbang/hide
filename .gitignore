@@ -6,7 +6,7 @@ out/
 
 # Local research and agent pipeline files
 .research/
-agents/
+/agents/
 
 # Run artifacts are never committed; see "Evidence Belongs Outside The
 # Repository" in AGENTS.md. They belong under agents/runs/<slug>/.
