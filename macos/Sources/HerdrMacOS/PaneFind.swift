@@ -50,12 +50,18 @@ enum FindResponderAction {
 }
 
 extension NSView {
-    /// The first descendant text view, used to put the file editor's own text
-    /// view in front of the find action when focus is elsewhere in the window.
-    func firstDescendantTextView() -> NSTextView? {
-        if let textView = self as? NSTextView { return textView }
+    /// The first descendant text view that carries a find bar, used to put the
+    /// file editor's own text view in front of the find action when focus is
+    /// elsewhere in the window.
+    ///
+    /// The window holds other text views - the terminal's marked-text overlay,
+    /// and whatever field editor is active - so the search is narrowed to the
+    /// one property that is only ever set on the editor. Matching any text view
+    /// would hand the find action to a surface that has no bar to show.
+    func firstDescendantFindableTextView() -> NSTextView? {
+        if let textView = self as? NSTextView, textView.usesFindBar { return textView }
         for subview in subviews {
-            if let found = subview.firstDescendantTextView() { return found }
+            if let found = subview.firstDescendantFindableTextView() { return found }
         }
         return nil
     }

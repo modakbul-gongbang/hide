@@ -84,6 +84,20 @@ struct PaneFindTests {
         #expect(textView.isIncrementalSearchingEnabled)
     }
 
+    @Test @MainActor func theFindActionSkipsTextViewsThatCarryNoBar() {
+        // The window also holds the terminal's marked-text overlay and whatever
+        // field editor is active. Handing the find action to one of those would
+        // reveal nothing, so the lookup must walk past them.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 400))
+        let overlay = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 20))
+        let editor = NSTextView(frame: NSRect(x: 0, y: 20, width: 320, height: 380))
+        HighlightedCodeEditor.enableFindBar(on: editor)
+        container.addSubview(overlay)
+        container.addSubview(editor)
+
+        #expect(container.firstDescendantFindableTextView() === editor)
+    }
+
     @Test @MainActor func theFindChordIsClaimedByTheShellAndNotLeftToTheTerminal() {
         #expect(ShellMenuCommand.findInPane.shortcut.key == "f")
         #expect(ShellMenuCommand.findInPane.shortcut.modifiers == [.command])

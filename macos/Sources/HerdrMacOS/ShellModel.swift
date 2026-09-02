@@ -1192,7 +1192,7 @@ final class ShellModel: ObservableObject {
             // Focus may sit on the tree or the tab strip, so the editor's own
             // text view is put in front of the action rather than assumed to
             // already be the first responder.
-            if let textView = NSApp.keyWindow?.contentView?.firstDescendantTextView() {
+            if let textView = NSApp.keyWindow?.contentView?.firstDescendantFindableTextView() {
                 NSApp.keyWindow?.makeFirstResponder(textView)
             }
         case .terminal(let paneID):

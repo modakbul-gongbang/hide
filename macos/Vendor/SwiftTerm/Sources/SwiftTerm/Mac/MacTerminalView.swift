@@ -2766,11 +2766,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             handleFindBarSearchChanged(initial)
         }
         bar.focus()
+        // The bar remembers its term across a hide, so a reopen with nothing to
+        // prefill rebuilds the counter and highlights from what the bar shows
+        // rather than leaving a stale count over an unhighlighted buffer.
+        refreshFindState()
     }
 
     private func hideFindBar() {
         findBar?.isHidden = true
-        findBarTerm = ""
         clearSearch()
         clearSearchHighlights()
         window?.makeFirstResponder(self)
