@@ -656,7 +656,7 @@ struct CoreEditorDocumentSnapshot: Decodable {
 
 struct CoreUIStateSnapshot: Decodable {
     let leftSidebarVisible: Bool
-    let rightWorkbenchVisible: Bool
+    let rightPanelVisible: Bool
     let expandedPaths: [String]
     let collapsedWorkspaceIDs: [String]
     let selectedPath: String?
@@ -671,7 +671,7 @@ struct CoreUIStateSnapshot: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case leftSidebarVisible = "left_sidebar_visible"
-        case rightWorkbenchVisible = "right_workbench_visible"
+        case rightPanelVisible = "right_panel_visible"
         case expandedPaths = "expanded_paths"
         case collapsedWorkspaceIDs = "collapsed_workspace_ids"
         case selectedPath = "selected_path"
@@ -688,7 +688,7 @@ struct CoreUIStateSnapshot: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
-        rightWorkbenchVisible = try container.decodeIfPresent(Bool.self, forKey: .rightWorkbenchVisible) ?? true
+        rightPanelVisible = try container.decodeIfPresent(Bool.self, forKey: .rightPanelVisible) ?? true
         expandedPaths = try container.decode([String].self, forKey: .expandedPaths)
         collapsedWorkspaceIDs = try container.decodeIfPresent(
             [String].self,
@@ -1638,7 +1638,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func persistUIState(
         leftSidebarVisible: Bool? = nil,
-        rightWorkbenchVisible: Bool? = nil,
+        rightPanelVisible: Bool? = nil,
         expandedPaths: [String]? = nil,
         collapsedWorkspaceIDs: [String]? = nil,
         selectedPath: String? = nil,
@@ -1653,7 +1653,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let effectivePaneID = selectedPaneID ?? current?.selectedPaneID
         var payload: [String: Any] = [
             "left_sidebar_visible": leftSidebarVisible ?? current?.leftSidebarVisible ?? true,
-            "right_workbench_visible": rightWorkbenchVisible ?? current?.rightWorkbenchVisible ?? true,
+            "right_panel_visible": rightPanelVisible ?? current?.rightPanelVisible ?? true,
             "expanded_paths": expandedPaths ?? current?.expandedPaths ?? [],
             "collapsed_workspace_ids": collapsedWorkspaceIDs ?? current?.collapsedWorkspaceIDs ?? [],
             "selected_path": effectivePath.map { $0 as Any } ?? NSNull(),
@@ -1898,7 +1898,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let agents: [[String: Any]] = [
             Self.fixtureAgent("error", "×", "00", "1755000007000", "Build failed", "12s", "Core", "codex", "status_error_new"),
             Self.fixtureAgent("question", "?", "01", "1755000006000", "Choose persistence scope", "4m", "UI", "claude", "status_question_new"),
-            Self.fixtureAgent("approval", "!", "02", "1755000005000", "Approve local save", "8m", "Workbench", "codex", "status_approval_new"),
+            Self.fixtureAgent("approval", "!", "02", "1755000005000", "Approve local save", "8m", "Explorer", "codex", "status_approval_new"),
             Self.fixtureAgent("done", "●", "04", "1755000004000", "Sidebar contract complete", "2h", "Agents", "claude", "status_done_new"),
             Self.fixtureAgent("working", "●", "05", "1755000003000", "Connecting Rust bytes", "18s", "Terminal", "codex", "status_working"),
             Self.fixtureAgent("idle", "○", "10", "1755000002000", "Reviewed fixture", "3d", "Verify", "claude", "status_idle"),

@@ -101,7 +101,10 @@ struct PaneShortcutSettingsTests {
         #expect(PaneShortcutPolicy.command(for: closePane, bindings: PaneShortcutPolicy.defaults) == .closePane)
     }
 
-    @Test func closeShortcutConsumesTheLastTabBeforeAllowingWindowClose() {
+    /// The close shortcut used to close the whole window once nothing was left
+    /// to close, which is how the operator lost the application by pressing
+    /// `⌘W` one time too many. It now says there is nothing to close instead.
+    @Test func closeShortcutClosesTabsAndNeverTheWindow() {
         #expect(CloseShortcutPolicy.action(
             hasWorkspace: true,
             hasActiveFileTab: true,
@@ -119,13 +122,19 @@ struct PaneShortcutSettingsTests {
             hasActiveFileTab: false,
             hasActiveHerdrTab: false,
             tabCount: 0
-        ) == .closeWindow)
+        ) == .nothingToClose)
         #expect(CloseShortcutPolicy.action(
             hasWorkspace: false,
             hasActiveFileTab: false,
             hasActiveHerdrTab: false,
             tabCount: 0
-        ) == .closeWindow)
+        ) == .nothingToClose)
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: true,
+            hasActiveFileTab: false,
+            hasActiveHerdrTab: false,
+            tabCount: 3
+        ) == .blocked)
     }
 
     @Test func herdrTabLabelsUseStableTabNumbersWithoutOverwritingCustomNames() {

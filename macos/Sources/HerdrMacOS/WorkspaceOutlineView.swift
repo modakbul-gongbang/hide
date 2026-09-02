@@ -174,7 +174,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         outline.onActivate = { [weak coordinator = context.coordinator] in
             coordinator?.activateSelection()
         }
-        outline.setAccessibilityIdentifier("workbench-file-tree")
+        outline.setAccessibilityIdentifier("explorer-file-tree")
 
         let scroll = WorkspaceOutlineScrollView()
         scroll.documentView = outline
@@ -507,7 +507,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
 
         private static func reportFailure(path: String, message: String) {
             let payload = [
-                "component": "workbench",
+                "component": "explorer",
                 "kind": "directory.read_failed",
                 "path": path,
                 "message": message,

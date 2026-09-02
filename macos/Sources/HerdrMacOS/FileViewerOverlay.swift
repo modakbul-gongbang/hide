@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-struct WorkbenchViewerOverlay: View {
+struct FileViewerOverlay: View {
     @EnvironmentObject private var model: ShellModel
     @State private var draft = ""
 
@@ -23,13 +23,13 @@ struct WorkbenchViewerOverlay: View {
             } else {
                 unavailable(
                     title: "No file selected",
-                    message: "Choose a local file from Workbench to open it here."
+                    message: "Choose a local file from the explorer to open it here."
                 )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
-        .accessibilityIdentifier("workbench-viewer-overlay")
+        .accessibilityIdentifier("file-viewer-overlay")
         .task(id: editor?.path) {
             draft = editor?.contentsUTF8 ?? ""
         }

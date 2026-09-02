@@ -363,7 +363,7 @@ struct UiStateUpdatePayload {
     #[serde(default)]
     left_sidebar_visible: Option<bool>,
     #[serde(default)]
-    right_workbench_visible: Option<bool>,
+    right_panel_visible: Option<bool>,
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
@@ -4379,9 +4379,9 @@ impl Runtime {
                     left_sidebar_visible: payload
                         .left_sidebar_visible
                         .unwrap_or(current.left_sidebar_visible),
-                    right_workbench_visible: payload
-                        .right_workbench_visible
-                        .unwrap_or(current.right_workbench_visible),
+                    right_panel_visible: payload
+                        .right_panel_visible
+                        .unwrap_or(current.right_panel_visible),
                     expanded_paths: payload.expanded_paths,
                     collapsed_workspace_ids: payload.collapsed_workspace_ids,
                     selected_path: payload.selected_path,

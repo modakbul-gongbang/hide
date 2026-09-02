@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct WorkbenchPanel: View {
+struct RightPanel: View {
     @EnvironmentObject private var model: ShellModel
 
     private var activeRoot: URL? { model.focusedPath }
@@ -11,13 +11,13 @@ struct WorkbenchPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(
-                title: "Workbench",
+                title: "Explorer",
                 systemImage: "doc.text.magnifyingglass",
                 trailing: model.isRemoteContext ? "Remote" : (activeRoot?.lastPathComponent ?? "No workspace"),
-                collapseAction: model.toggleRightWorkbench,
-                collapseAccessibilityLabel: "Hide Workbench",
-                collapseShortcut: "⌘⌥B",
-                collapseAccessibilityIdentifier: "hide-toggle-right-workbench"
+                collapseAction: model.toggleRightPanel,
+                collapseAccessibilityLabel: "Hide Right Panel",
+                collapseShortcut: ShellMenuCommand.toggleRightPanel.displayShortcut,
+                collapseAccessibilityIdentifier: "hide-toggle-right-panel"
             )
             Rectangle()
                 .fill(HideTheme.divider)
@@ -55,7 +55,7 @@ struct WorkbenchPanel: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(ShellMetrics.panelPadding)
-            .accessibilityIdentifier("workbench-file-tree")
+            .accessibilityIdentifier("explorer-file-tree")
         }
     }
 

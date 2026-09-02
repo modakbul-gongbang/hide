@@ -45,6 +45,23 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
         return (ordered + [key]).joined(separator: "+")
     }
 
+    /// The chord as the operator reads it on a menu or in help text. Written
+    /// once here so a rebind cannot leave a stale chord printed in a tooltip,
+    /// which is how a retired chord outlived the binding it described.
+    var displayString: String {
+        let symbols: [Modifier: String] = [
+            .control: "⌃",
+            .option: "⌥",
+            .shift: "⇧",
+            .command: "⌘",
+        ]
+        // macOS prints modifiers in a fixed order regardless of how they were
+        // declared: control, option, shift, command.
+        let order: [Modifier] = [.control, .option, .shift, .command]
+        let prefix = order.filter(modifiers.contains).compactMap { symbols[$0] }.joined()
+        return prefix + (key == "return" ? "↩" : key.uppercased())
+    }
+
     var keyEquivalent: KeyEquivalent {
         key == "return" ? .return : KeyEquivalent(Character(key))
     }
@@ -401,7 +418,7 @@ final class PaneCommandWindow: NSWindow {
         while let view = candidate {
             if let terminal = view as? TerminalView { return terminal }
             // A view that scrolls on its own keeps the wheel before any
-            // terminal beneath it does. The workbench tree and the file viewer
+            // terminal beneath it does. The explorer tree and the file viewer
             // are both NSScrollView-backed and cover the pane canvas.
             if view is NSScrollView { return nil }
             candidate = view.superview
@@ -439,9 +456,7 @@ final class PaneCommandWindow: NSWindow {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if UnifiedTabShortcutPolicy.isClose(event), let model = paneCommandModel {
-            if model.performCloseShortcut() == .closeWindow {
-                performClose(nil)
-            }
+            model.performCloseShortcut()
             return true
         }
         if let model = paneCommandModel,

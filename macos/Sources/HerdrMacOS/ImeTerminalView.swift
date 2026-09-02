@@ -76,6 +76,34 @@ enum ModifiedTerminalInputPolicy {
         return commandDeleteBytes
     }
 
+    /// `⌘←` and `⌘→` mean line start and line end in every other macOS text
+    /// field. AppKit routes them to `moveToLeftEndOfLine:` and
+    /// `moveToRightEndOfLine:`, which SwiftTerm encodes as `ESC b` / `ESC f` -
+    /// word back and word forward - so a long agent prompt needed one press
+    /// per word. `^A` / `^E` is the readline convention every shell and both
+    /// agent CLIs already read as line start and line end, and is what
+    /// iTerm2's natural-text-editing preset sends for these two chords.
+    static let lineStartBytes: [UInt8] = [0x01]
+    static let lineEndBytes: [UInt8] = [0x05]
+
+    static func lineNavigationBytes(
+        for event: NSEvent,
+        composing: Bool
+    ) -> [UInt8]? {
+        // Arrow keys carry `.function` and `.numericPad` of their own, so the
+        // comparison is against the four chord modifiers only.
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        guard !composing,
+              event.type == .keyDown,
+              modifiers == .command
+        else { return nil }
+        switch event.keyCode {
+        case 123: return lineStartBytes
+        case 124: return lineEndBytes
+        default: return nil
+        }
+    }
+
     static func shiftEnterBytes(
         for event: NSEvent,
         kittyKeyboardEnabled: Bool,
@@ -127,6 +155,14 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
         }
         if let event = eventArray.first,
            let bytes = ModifiedTerminalInputPolicy.commandDeleteBytes(
+               for: event,
+               composing: composingAtEvent
+           ) {
+            terminalDelegate?.send(source: self, data: bytes[...])
+            return
+        }
+        if let event = eventArray.first,
+           let bytes = ModifiedTerminalInputPolicy.lineNavigationBytes(
                for: event,
                composing: composingAtEvent
            ) {

@@ -105,4 +105,72 @@ import Testing
             ) == nil)
         }
     }
+
+    /// `⌘←` and `⌘→` reached SwiftTerm as `moveToLeftEndOfLine:` and
+    /// `moveToRightEndOfLine:`, which it encodes as `ESC b` / `ESC f` - word
+    /// back and word forward. A long agent prompt then needed one press per
+    /// word. These pin the line-start and line-end encoding, and pin that the
+    /// arrow keys' own `.function` and `.numericPad` flags do not defeat the
+    /// modifier comparison, which is what a naive equality check would do.
+    @Test func commandArrowsEncodeLineStartAndLineEnd() throws {
+        func arrow(_ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers.union([.function, .numericPad]),
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "",
+                charactersIgnoringModifiers: "",
+                isARepeat: false,
+                keyCode: keyCode
+            ))
+        }
+
+        #expect(ModifiedTerminalInputPolicy.lineNavigationBytes(
+            for: try arrow(123, .command),
+            composing: false
+        ) == [0x01])
+        #expect(ModifiedTerminalInputPolicy.lineNavigationBytes(
+            for: try arrow(124, .command),
+            composing: false
+        ) == [0x05])
+    }
+
+    @Test func plainAndOtherModifiedArrowsAreLeftToTheTerminal() throws {
+        func arrow(_ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers.union([.function, .numericPad]),
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "",
+                charactersIgnoringModifiers: "",
+                isARepeat: false,
+                keyCode: keyCode
+            ))
+        }
+
+        for modifiers: NSEvent.ModifierFlags in [[], .option, .control, [.command, .shift], [.command, .option]] {
+            for keyCode: UInt16 in [123, 124] {
+                #expect(ModifiedTerminalInputPolicy.lineNavigationBytes(
+                    for: try arrow(keyCode, modifiers),
+                    composing: false
+                ) == nil)
+            }
+        }
+        for keyCode: UInt16 in [125, 126] {
+            #expect(ModifiedTerminalInputPolicy.lineNavigationBytes(
+                for: try arrow(keyCode, .command),
+                composing: false
+            ) == nil)
+        }
+        #expect(ModifiedTerminalInputPolicy.lineNavigationBytes(
+            for: try arrow(123, .command),
+            composing: true
+        ) == nil)
+    }
 }

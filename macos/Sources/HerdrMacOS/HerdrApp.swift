@@ -62,6 +62,13 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             height: ShellMetrics.windowMinHeight
         )
         window.isRestorable = false
+        // The delegate keeps the only strong reference to this window, and
+        // AppKit's default for a programmatically created window is to release
+        // it on close. Closing the window then left `mainWindow` pointing at
+        // freed memory, and the next Dock activation crashed inside
+        // `applicationShouldHandleReopen` with EXC_BAD_ACCESS while retaining
+        // it. The delegate owns the window's lifetime; AppKit does not.
+        window.isReleasedWhenClosed = false
         window.titlebarSeparatorStyle = .automatic
         window.contentView = NSHostingView(rootView: content)
         window.center()
@@ -165,9 +172,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             }
             if UnifiedTabShortcutPolicy.isClose(event) {
                 MainActor.assumeIsolated {
-                    if self.model.performCloseShortcut() == .closeWindow {
-                        self.mainWindow?.performClose(nil)
-                    }
+                    self.model.performCloseShortcut()
                 }
                 return nil
             }
@@ -382,39 +387,15 @@ struct ShellCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Tab") {
-                model.addTab()
-            }
-            .keyboardShortcut("t", modifiers: .command)
-
-            Button("New Agent") {
-                model.openNewAgent()
-            }
-            .keyboardShortcut("n", modifiers: .command)
-
-            Button("New Workspace") {
-                model.openNewWorkspace()
-            }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-
-            Button("Search") {
-                model.openSearch()
-            }
-            .keyboardShortcut("k", modifiers: .command)
-
-            Button("Open File") {
-                model.openFileSearch()
-            }
-            .keyboardShortcut("p", modifiers: .command)
+            menuButton(.newTab) { model.addTab() }
+            menuButton(.newAgent) { model.openNewAgent() }
+            menuButton(.newWorkspace) { model.openNewWorkspace() }
+            menuButton(.search) { model.openSearch() }
+            menuButton(.openFile) { model.openFileSearch() }
 
             Divider()
 
-            Button("Close Tab") {
-                if model.performCloseShortcut() == .closeWindow {
-                    NSApplication.shared.keyWindow?.performClose(nil)
-                }
-            }
-            .keyboardShortcut("w", modifiers: .command)
+            menuButton(.closeTab) { model.performCloseShortcut() }
         }
 
         CommandMenu("Navigate") {
@@ -429,20 +410,9 @@ struct ShellCommands: Commands {
 
             Divider()
 
-            Button("Toggle Left Sidebar") {
-                model.toggleLeftSidebar()
-            }
-            .keyboardShortcut("b", modifiers: .command)
-
-            Button("Toggle Sidebar View") {
-                model.toggleSidebarContent()
-            }
-            .keyboardShortcut("e", modifiers: .command)
-
-            Button("Toggle Workbench") {
-                model.toggleRightWorkbench()
-            }
-            .keyboardShortcut("b", modifiers: [.command, .option])
+            menuButton(.toggleLeftSidebar) { model.toggleLeftSidebar() }
+            menuButton(.toggleSidebarView) { model.toggleSidebarContent() }
+            menuButton(.toggleRightPanel) { model.toggleRightPanel() }
         }
 
         CommandMenu("Pane") {
@@ -453,6 +423,17 @@ struct ShellCommands: Commands {
             Divider()
             paneButton(.closePane)
         }
+    }
+
+    private func menuButton(
+        _ command: ShellMenuCommand,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(command.title, action: action)
+            .keyboardShortcut(
+                command.shortcut.keyEquivalent,
+                modifiers: command.shortcut.eventModifiers
+            )
     }
 
     private func paneButton(_ command: PaneCommand) -> some View {

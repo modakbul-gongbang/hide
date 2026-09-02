@@ -4,11 +4,11 @@ import Highlightr
 import Testing
 @testable import HerdrMacOS
 
-@Suite("Workbench presentation")
-struct WorkbenchPresentationTests {
+@Suite("Right panel presentation")
+struct RightPanelPresentationTests {
     @Test func directoryLoaderReadsOnlyTheRequestedLevelAndKeepsRepositoryDotfiles() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hide-workbench-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("hide-right-panel-\(UUID().uuidString)", isDirectory: true)
         let sources = root.appendingPathComponent("Sources", isDirectory: true)
         let ignoredGit = root.appendingPathComponent(".git", isDirectory: true)
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
@@ -140,7 +140,7 @@ struct WorkbenchPresentationTests {
 
     @Test @MainActor func bridgeFileTabsDeduplicateAndCloseRestoresThePreviousFile() async throws {
         let stateURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hide-workbench-state-\(UUID().uuidString).json")
+            .appendingPathComponent("hide-right-panel-state-\(UUID().uuidString).json")
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -189,13 +189,13 @@ struct WorkbenchPresentationTests {
         )
         let closed = try JSONDecoder().decode(
             CoreUIStateSnapshot.self,
-            from: Data(#"{"expanded_paths":[],"left_sidebar_visible":false,"right_workbench_visible":false}"#.utf8)
+            from: Data(#"{"expanded_paths":[],"left_sidebar_visible":false,"right_panel_visible":false}"#.utf8)
         )
 
         #expect(defaults.leftSidebarVisible)
-        #expect(defaults.rightWorkbenchVisible)
+        #expect(defaults.rightPanelVisible)
         #expect(!closed.leftSidebarVisible)
-        #expect(!closed.rightWorkbenchVisible)
+        #expect(!closed.rightPanelVisible)
     }
 
     @Test @MainActor func panelVisibilityAndUnrelatedUIStateSurviveBridgeRelaunch() async throws {
@@ -212,7 +212,7 @@ struct WorkbenchPresentationTests {
         let deviceRegistrationIDs = first?.snapshot?.uiState.deviceRegistrations.map(\.id)
         first?.persistUIState(
             leftSidebarVisible: false,
-            rightWorkbenchVisible: false,
+            rightPanelVisible: false,
             expandedPaths: ["/repo/Sources"],
             selectedPath: "/repo/Sources/App.swift",
             shortcutBindings: ["split_right": "command+option+r"],
@@ -230,7 +230,7 @@ struct WorkbenchPresentationTests {
         let uiState = try #require(restored.snapshot?.uiState)
 
         #expect(!uiState.leftSidebarVisible)
-        #expect(!uiState.rightWorkbenchVisible)
+        #expect(!uiState.rightPanelVisible)
         #expect(uiState.expandedPaths == ["/repo/Sources"])
         #expect(uiState.selectedPath == "/repo/Sources/App.swift")
         #expect(uiState.shortcutBindings["split_right"] == "command+option+r")

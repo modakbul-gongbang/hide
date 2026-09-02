@@ -11,8 +11,8 @@ enum ShellMetrics {
     static let agentsIdealWidth: CGFloat = 270
     static let terminalMinWidth: CGFloat = 420
     static let terminalIdealWidth: CGFloat = 760
-    static let workbenchMinWidth: CGFloat = 260
-    static let workbenchIdealWidth: CGFloat = 360
+    static let rightPanelMinWidth: CGFloat = 260
+    static let rightPanelIdealWidth: CGFloat = 360
 
     static let panelPadding: CGFloat = 14
     static let compactSpacing: CGFloat = 8
@@ -46,15 +46,15 @@ private struct LegacyShellView: View {
                     .onTapGesture { model.focus(.terminal) }
                     .accessibilityIdentifier("terminal-panel")
 
-                WorkbenchPanel()
+                RightPanel()
                     .frame(
-                        minWidth: ShellMetrics.workbenchMinWidth,
-                        idealWidth: ShellMetrics.workbenchIdealWidth
+                        minWidth: ShellMetrics.rightPanelMinWidth,
+                        idealWidth: ShellMetrics.rightPanelIdealWidth
                     )
                     .focusable()
-                    .focused($focusedSurface, equals: .workbench)
-                    .onTapGesture { model.focus(.workbench) }
-                    .accessibilityIdentifier("workbench-panel")
+                    .focused($focusedSurface, equals: .rightPanel)
+                    .onTapGesture { model.focus(.rightPanel) }
+                    .accessibilityIdentifier("right-panel")
             }
 
             Divider()

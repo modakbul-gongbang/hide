@@ -5,7 +5,7 @@ import Foundation
 enum ShellSurface: String, CaseIterable, Hashable {
     case agents
     case terminal
-    case workbench
+    case rightPanel
 
     var title: String {
         switch self {
@@ -13,8 +13,8 @@ enum ShellSurface: String, CaseIterable, Hashable {
             "Agents"
         case .terminal:
             "Terminal"
-        case .workbench:
-            "Workbench"
+        case .rightPanel:
+            "Right Panel"
         }
     }
 }
@@ -74,19 +74,19 @@ enum CheckoutStartState {
     case failed(String)
 }
 
-enum CloseShortcutDisposition: Equatable {
-    case handled
-    case closeWindow
-}
-
 enum CloseShortcutAction: Equatable {
     case closeFile
     case closeHerdr
-    case closeWindow
+    case nothingToClose
     case blocked
 }
 
 enum CloseShortcutPolicy {
+    /// Closing the last tab used to close the window, which is how the
+    /// operator lost the whole application by pressing `⌘W` one time too many.
+    /// The close shortcut closes what it names - a file tab or a Herdr tab -
+    /// and when nothing is left it says so. Closing the window stays on the
+    /// window's own close control, where the operator means it.
     static func action(
         hasWorkspace: Bool,
         hasActiveFileTab: Bool,
@@ -94,9 +94,9 @@ enum CloseShortcutPolicy {
         tabCount: Int
     ) -> CloseShortcutAction {
         if hasActiveFileTab { return .closeFile }
-        if !hasWorkspace { return .closeWindow }
+        if !hasWorkspace { return .nothingToClose }
         if hasActiveHerdrTab { return .closeHerdr }
-        return tabCount == 0 ? .closeWindow : .blocked
+        return tabCount == 0 ? .nothingToClose : .blocked
     }
 }
 
@@ -547,8 +547,8 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("terminal.link.opened", detail: "external")
         case .file(let path, _, _):
             if isRemoteContext {
-                interactionNotice = "\(path) belongs to the remote device. Remote Workbench preview is not available in the current read-only snapshot contract."
-                focus(.workbench)
+                interactionNotice = "\(path) belongs to the remote device. Remote file preview is not available in the current read-only snapshot contract."
+                focus(.rightPanel)
                 HideLaunchTrace.mark("terminal.link.failed", detail: "remote_file_contract")
                 return
             }
@@ -563,9 +563,9 @@ final class ShellModel: ObservableObject {
             ) {
             case .file(let url):
                 openFile(url)
-                focus(.workbench)
+                focus(.rightPanel)
                 interactionNotice = nil
-                HideLaunchTrace.mark("terminal.link.opened", detail: "workbench_file")
+                HideLaunchTrace.mark("terminal.link.opened", detail: "local_file")
             case .failure(let message):
                 interactionNotice = message
                 HideLaunchTrace.mark("terminal.link.failed", detail: "local_file_resolution")
@@ -1136,8 +1136,8 @@ final class ShellModel: ObservableObject {
         core.snapshot?.uiState.leftSidebarVisible ?? true
     }
 
-    var rightWorkbenchVisible: Bool {
-        core.snapshot?.uiState.rightWorkbenchVisible ?? true
+    var rightPanelVisible: Bool {
+        core.snapshot?.uiState.rightPanelVisible ?? true
     }
 
     func toggleLeftSidebar() {
@@ -1155,16 +1155,16 @@ final class ShellModel: ObservableObject {
         showSidebarContent(sidebarContent.alternate)
     }
 
-    func toggleRightWorkbench() {
-        core.persistUIState(rightWorkbenchVisible: !rightWorkbenchVisible)
+    func toggleRightPanel() {
+        core.persistUIState(rightPanelVisible: !rightPanelVisible)
     }
 
     func focus(_ surface: ShellSurface) {
         switch surface {
         case .agents where !leftSidebarVisible:
             core.persistUIState(leftSidebarVisible: true)
-        case .workbench where !rightWorkbenchVisible:
-            core.persistUIState(rightWorkbenchVisible: true)
+        case .rightPanel where !rightPanelVisible:
+            core.persistUIState(rightPanelVisible: true)
         default:
             break
         }
@@ -1227,7 +1227,7 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    func performCloseShortcut() -> CloseShortcutDisposition {
+    func performCloseShortcut() {
         let activeFile = core.snapshot?.editor.activeTabID.flatMap { activeID in
             core.snapshot?.editor.tabs.first(where: { $0.id == activeID })
         }
@@ -1239,30 +1239,29 @@ final class ShellModel: ObservableObject {
         ) {
         case .closeFile:
             guard let tab = activeFile else {
-                interactionNotice = "The active file tab could not be resolved. No window was closed."
-                return .handled
+                interactionNotice = "The active file tab could not be resolved. Nothing was closed."
+                return
             }
             HideLaunchTrace.mark("tab.close_shortcut.file", detail: tab.id)
             closeFileTab(tab)
-            return .handled
-        case .closeWindow:
-            HideLaunchTrace.mark(
-                "tab.close_shortcut.window",
-                detail: focusedWorkspace == nil ? "no_workspace" : "workspace_without_tabs"
-            )
-            return .closeWindow
         case .closeHerdr:
             guard let tab = focusedTab, let tabID = tab.id else {
-                interactionNotice = "The active Herdr tab could not be resolved. No window was closed."
-                return .handled
+                interactionNotice = "The active Herdr tab could not be resolved. Nothing was closed."
+                return
             }
             HideLaunchTrace.mark("tab.close_shortcut.herdr", detail: tabID)
             requestTabClose(tab)
-            return .handled
+        case .nothingToClose:
+            interactionNotice = focusedWorkspace == nil
+                ? "There is no open tab to close. Create a workspace to start one."
+                : "There is no open tab to close. Create a pane to start one."
+            HideLaunchTrace.mark(
+                "tab.close_shortcut.nothing_to_close",
+                detail: focusedWorkspace == nil ? "no_workspace" : "workspace_without_tabs"
+            )
         case .blocked:
-            interactionNotice = "The selected workspace has tabs but none is active. No window was closed."
+            interactionNotice = "The selected workspace has tabs but none is active. Nothing was closed."
             HideLaunchTrace.mark("tab.close_shortcut.blocked", detail: "tabs_without_active_tab")
-            return .handled
         }
     }
 

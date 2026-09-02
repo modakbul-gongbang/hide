@@ -11,6 +11,13 @@ enum HideTheme {
     static let primary = Color.white.opacity(0.92)
     static let secondary = Color.white.opacity(0.52)
     static let muted = Color.white.opacity(0.32)
+    /// File-row icons are category illustration, so their neutrals sit on this
+    /// system's own neutral ladder rather than on Seti's. Seti's own neutral,
+    /// `#6D8086`, is a dark slate that reads as a speck against the panel at
+    /// 12px - which is what made `.gitignore` and `Cargo.toml` look unrendered.
+    /// These two are DESIGN.md's `mute` and `charcoal` steps.
+    static let fileIconNeutralHex = "#9C9C9D"
+    static let fileIconDocumentHex = "#D3D3D4"
     static let accent = Color(red: 0.725, green: 1.0, blue: 0.40)
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
@@ -48,9 +55,9 @@ enum HideTheme {
         static let sidebarMaxWidth: CGFloat = 440
         static let terminalMinWidth: CGFloat = 540
         static let terminalIdealWidth: CGFloat = 760
-        static let workbenchMinWidth: CGFloat = 260
-        static let workbenchIdealWidth: CGFloat = 355
-        static let workbenchMaxWidth: CGFloat = 560
+        static let rightPanelMinWidth: CGFloat = 260
+        static let rightPanelIdealWidth: CGFloat = 355
+        static let rightPanelMaxWidth: CGFloat = 560
     }
 
     static func color(for hex: String) -> Color {
@@ -128,15 +135,15 @@ struct ShellView: View {
                         maxHeight: .infinity,
                         alignment: .topLeading
                     )
-                if model.rightWorkbenchVisible {
-                    WorkbenchPanel()
+                if model.rightPanelVisible {
+                    RightPanel()
                         .frame(
-                            minWidth: HideTheme.Layout.workbenchMinWidth,
-                            idealWidth: HideTheme.Layout.workbenchIdealWidth,
-                            maxWidth: HideTheme.Layout.workbenchMaxWidth,
+                            minWidth: HideTheme.Layout.rightPanelMinWidth,
+                            idealWidth: HideTheme.Layout.rightPanelIdealWidth,
+                            maxWidth: HideTheme.Layout.rightPanelMaxWidth,
                             maxHeight: .infinity
                         )
-                        .accessibilityIdentifier("workbench-panel")
+                        .accessibilityIdentifier("right-panel")
                 }
             }
             if let cycle = model.agentSwitcherCycle {
@@ -1360,7 +1367,7 @@ private struct HideMainView: View {
                 HideTerminalSurface()
                 if !model.isRemoteContext,
                    model.core.snapshot?.editor.activeTabID != nil {
-                    WorkbenchViewerOverlay()
+                    FileViewerOverlay()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1421,16 +1428,16 @@ private struct HideTerminalHeader: View {
                         .hideFont(size: 10, weight: .medium)
                         .foregroundStyle(HideTheme.warning)
                 }
-                if !model.rightWorkbenchVisible {
+                if !model.rightPanelVisible {
                     Button {
-                        model.toggleRightWorkbench()
+                        model.toggleRightPanel()
                     } label: {
                         Image(systemName: "rectangle.rightthird.inset.filled")
                     }
                     .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    .help("Show Workbench (⌘⌥B)")
-                    .accessibilityLabel("Show Workbench")
-                    .accessibilityIdentifier("hide-restore-right-workbench")
+                    .help("Show Right Panel (\(ShellMenuCommand.toggleRightPanel.displayShortcut))")
+                    .accessibilityLabel("Show Right Panel")
+                    .accessibilityIdentifier("hide-restore-right-panel")
                 }
             }
             .padding(.horizontal, 18)
@@ -1673,6 +1680,7 @@ private struct HideEmptyCheckoutState: View {
                         .frame(maxWidth: 360)
                     Button("New Workspace") { model.openNewWorkspace() }
                         .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                        .accessibilityIdentifier("hide-empty-state-new-workspace")
                 } else {
                     switch model.checkoutStartState {
                     case .starting:
@@ -1711,14 +1719,21 @@ private struct HideEmptyCheckoutState: View {
                         }
                             .buttonStyle(HideToolbarButtonStyle(isProminent: true))
                     case .idle:
-                        Text("Preparing terminal")
+                        // This state used to promise a terminal Hide never
+                        // started: nothing calls `startTerminal` from here.
+                        // The empty state now carries the control that starts
+                        // one, and says only what pressing it does.
+                        Text("No panes open")
                             .hideFont(size: 17, weight: .semibold)
                             .foregroundStyle(HideTheme.primary)
-                        Text("Hide will start a new Herdr tab and terminal pane at this checkout.")
+                        Text("This checkout has no terminal pane. Create one to start working in it.")
                             .hideFont(size: 12)
                             .foregroundStyle(HideTheme.secondary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 360)
+                        Button("New Pane") { model.addTab() }
+                            .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                            .accessibilityIdentifier("hide-empty-state-new-pane")
                     }
                 }
             }

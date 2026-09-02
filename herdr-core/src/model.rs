@@ -251,7 +251,7 @@ pub struct ConnectionSnapshot {
 pub enum Surface {
     Sidebar,
     Terminal,
-    Workbench,
+    RightPanel,
     Pet,
 }
 
@@ -375,7 +375,7 @@ pub struct UiStateSnapshot {
     #[serde(default = "default_panel_visible")]
     pub left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
-    pub right_workbench_visible: bool,
+    pub right_panel_visible: bool,
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
@@ -403,7 +403,7 @@ impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
             left_sidebar_visible: true,
-            right_workbench_visible: true,
+            right_panel_visible: true,
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
             selected_path: None,

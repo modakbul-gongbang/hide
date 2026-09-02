@@ -18,7 +18,7 @@ struct StoredUiState {
     #[serde(default = "default_panel_visible")]
     left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
-    right_workbench_visible: bool,
+    right_panel_visible: bool,
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
@@ -79,7 +79,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
     (
         UiStateSnapshot {
             left_sidebar_visible: stored.left_sidebar_visible,
-            right_workbench_visible: stored.right_workbench_visible,
+            right_panel_visible: stored.right_panel_visible,
             expanded_paths: stored.expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
             selected_path: stored.selected_path,
@@ -109,7 +109,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
     let stored = StoredUiState {
         schema_version: UI_STATE_SCHEMA_VERSION,
         left_sidebar_visible: state.left_sidebar_visible,
-        right_workbench_visible: state.right_workbench_visible,
+        right_panel_visible: state.right_panel_visible,
         expanded_paths: state.expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         selected_path: state.selected_path.clone(),
@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
         assert!(state.left_sidebar_visible);
-        assert!(state.right_workbench_visible);
+        assert!(state.right_panel_visible);
         assert!(state.shortcut_bindings.is_empty());
         assert!(state.pet_visible, "a pre-pet store still shows the pet");
         assert_eq!(state.pet_origin, None);
@@ -172,7 +172,7 @@ mod tests {
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             left_sidebar_visible: false,
-            right_workbench_visible: false,
+            right_panel_visible: false,
             ..UiStateSnapshot::default()
         };
 
@@ -181,7 +181,7 @@ mod tests {
 
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(!restored.left_sidebar_visible);
-        assert!(!restored.right_workbench_visible);
+        assert!(!restored.right_panel_visible);
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);
     }
