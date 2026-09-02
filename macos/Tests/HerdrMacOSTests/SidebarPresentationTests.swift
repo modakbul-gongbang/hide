@@ -142,3 +142,24 @@ private func presentationAgent(
     #expect(presentation.agentCount == 1)
     #expect(presentation.activityLabel == "1 agent")
 }
+
+@Test func agentShortcutNumbersFollowListOrderAndStopAtNine() {
+    let agents = (1...11).map {
+        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", state: "idle")
+    }
+
+    #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: agents) == 1)
+    #expect(AgentShortcutNumbering.number(ofPaneID: "pane-9", in: agents) == 9)
+    #expect(AgentShortcutNumbering.number(ofPaneID: "pane-10", in: agents) == nil)
+    #expect(AgentShortcutNumbering.number(ofPaneID: "pane-absent", in: agents) == nil)
+}
+
+@Test func agentLookupByNumberRejectsSlotsPastTheList() {
+    let agents = (1...3).map {
+        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", state: "idle")
+    }
+
+    #expect(AgentShortcutNumbering.agent(atNumber: 2, in: agents)?.paneID == "pane-2")
+    #expect(AgentShortcutNumbering.agent(atNumber: 4, in: agents) == nil)
+    #expect(AgentShortcutNumbering.agent(atNumber: 0, in: agents) == nil)
+}

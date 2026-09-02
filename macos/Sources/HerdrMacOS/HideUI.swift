@@ -1300,6 +1300,12 @@ private struct AgentNavigatorRow: View {
                             .foregroundStyle(showsWorkspace ? HideTheme.primary : HideTheme.secondary)
                             .lineLimit(1)
                         Spacer(minLength: 0)
+                        if model.agentShortcutHintsVisible,
+                           let shortcutNumber = model.agentShortcutNumber(paneID: agent.paneID)
+                        {
+                            SidebarBadge(label: "⌘\(shortcutNumber)", color: HideTheme.secondary)
+                                .transition(.opacity)
+                        }
                         Text(agent.elapsed)
                             .hideFont(size: 9, design: .monospaced)
                             .foregroundStyle(HideTheme.muted)
@@ -1334,6 +1340,7 @@ private struct AgentNavigatorRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.12), value: model.agentShortcutHintsVisible)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
         .accessibilityLabel("\(agent.workspaceLabel), \(agent.agentKind), \(agent.state)")
         .accessibilityValue(isFocused ? "Selected" : "Not selected")

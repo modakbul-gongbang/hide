@@ -68,6 +68,14 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
+            // The keycap hints track Command wherever it is pressed, so this
+            // observes the flag change and lets the event continue to the
+            // switcher-commit branches below.
+            if event.type == .flagsChanged {
+                MainActor.assumeIsolated {
+                    self.model.setCommandModifierHeld(event.modifierFlags.contains(.command))
+                }
+            }
             if PaneKeyEventPolicy.isSidebarViewToggle(event) {
                 MainActor.assumeIsolated {
                     self.model.toggleSidebarContent()
@@ -247,6 +255,10 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationDidResignActive(_ notification: Notification) {
         model.cancelAgentSwitcher()
         model.cancelTabSwitcher()
+        // Command-Tab releases Command while another app is frontmost, so the
+        // flagsChanged release never reaches this monitor and the keycap hints
+        // would stay on screen.
+        model.setCommandModifierHeld(false)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -406,20 +418,14 @@ struct ShellCommands: Commands {
         }
 
         CommandMenu("Navigate") {
-            Button("Focus Agents") {
-                model.focus(.agents)
+            // Titles stay static so the menu does not rebuild on every
+            // snapshot tick; an empty slot is a no-op inside the model.
+            ForEach(1...AgentShortcutNumbering.capacity, id: \.self) { number in
+                Button("Select Agent \(number)") {
+                    model.selectAgent(shortcutNumber: number)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
             }
-            .keyboardShortcut("1", modifiers: .command)
-
-            Button("Focus Terminal") {
-                model.focus(.terminal)
-            }
-            .keyboardShortcut("2", modifiers: .command)
-
-            Button("Focus Workbench") {
-                model.focus(.workbench)
-            }
-            .keyboardShortcut("3", modifiers: .command)
 
             Divider()
 

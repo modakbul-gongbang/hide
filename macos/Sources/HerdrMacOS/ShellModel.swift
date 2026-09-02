@@ -200,6 +200,9 @@ final class ShellModel: ObservableObject {
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
     @Published private(set) var checkoutStartState: CheckoutStartState = .idle
+    /// True once Command has been held past the reveal delay, which is what
+    /// draws the ⌘n keycaps on the agent rows.
+    @Published private(set) var agentShortcutHintsVisible = false
     let core: CoreBridge
     let browser: BrowserRuntimeModel
     let remote: RemoteRuntimeModel
@@ -212,6 +215,8 @@ final class ShellModel: ObservableObject {
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
     private var agentMRU = AgentMRU()
+    private var commandModifierHeld = false
+    private var agentShortcutHintTask: Task<Void, Never>?
     private var tabMRU = TabMRU()
 
     init(
@@ -717,6 +722,41 @@ final class ShellModel: ObservableObject {
         }
         focus(.terminal)
     }
+
+    /// ⌘1…⌘9 select the nth agent in the same order the sidebar lists them.
+    /// A number past the end of the list is a miss, not an error: the user is
+    /// reaching for a slot that is simply empty right now.
+    func selectAgent(shortcutNumber: Int) {
+        guard let agent = AgentShortcutNumbering.agent(atNumber: shortcutNumber, in: agents) else {
+            return
+        }
+        selectAgent(agent)
+    }
+
+    func agentShortcutNumber(paneID: String) -> Int? {
+        AgentShortcutNumbering.number(ofPaneID: paneID, in: agents)
+    }
+
+    /// Command held past the reveal delay shows the keycaps; releasing it
+    /// hides them at once. The delay exists so that every ordinary ⌘ chord -
+    /// ⌘K, ⌘W, ⌘C - does not flash the whole sidebar on its way through.
+    func setCommandModifierHeld(_ held: Bool) {
+        guard held != commandModifierHeld else { return }
+        commandModifierHeld = held
+        agentShortcutHintTask?.cancel()
+        agentShortcutHintTask = nil
+        guard held else {
+            agentShortcutHintsVisible = false
+            return
+        }
+        agentShortcutHintTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: ShellModel.agentShortcutHintDelayNanoseconds)
+            guard !Task.isCancelled, let self, self.commandModifierHeld else { return }
+            self.agentShortcutHintsVisible = true
+        }
+    }
+
+    static let agentShortcutHintDelayNanoseconds: UInt64 = 150_000_000
 
     func loadRemoteFiles(path: String) {
         guard isRemoteContext,

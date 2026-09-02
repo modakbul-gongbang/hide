@@ -81,3 +81,26 @@ struct SidebarWorkspacePresentation: Equatable {
         agentCount = agents.filter { paneIDs.contains($0.paneID) }.count
     }
 }
+
+/// Direct-select numbering for the sidebar agent list. The number is a
+/// property of the agent's position in the runtime's own agent projection, not
+/// of whichever sidebar view is showing, so the Projects view and the Agents
+/// view label the same agent identically.
+enum AgentShortcutNumbering {
+    /// Only the first nine agents get a number: ⌘0 is not a tenth slot, it is
+    /// a different key, and a two-digit chord is not a shortcut anyone reaches
+    /// for without looking.
+    static let capacity = 9
+
+    static func number(ofPaneID paneID: String, in agents: [SidebarAgent]) -> Int? {
+        guard let index = agents.firstIndex(where: { $0.paneID == paneID }),
+              index < capacity
+        else { return nil }
+        return index + 1
+    }
+
+    static func agent(atNumber number: Int, in agents: [SidebarAgent]) -> SidebarAgent? {
+        guard number >= 1, number <= capacity, number <= agents.count else { return nil }
+        return agents[number - 1]
+    }
+}
