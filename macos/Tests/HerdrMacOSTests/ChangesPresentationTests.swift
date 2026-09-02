@@ -27,7 +27,7 @@ struct ChangesPresentationTests {
             "diff": {
                 "path": "/repo/a.rs",
                 "text": "@@ -1 +1 @@\\n-old\\n+new\\n",
-                "truncated_reason": null
+                "notice": null
             },
             "unavailable_reason": null
         }

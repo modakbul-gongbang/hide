@@ -463,6 +463,10 @@ pub struct UiStateSnapshot {
     pub device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     pub accent_hex: String,
+    /// The interface font size, in points, that the Appearance slider sets.
+    /// It scales the shell's own chrome - every `hideFont` call site - and
+    /// nothing else. A pane's terminal bytes and the editor's code are sized by
+    /// `pane_text_scales` instead, so the two never apply to the same text.
     #[serde(default = "default_font_size")]
     pub font_size: f32,
     /// Text scale for one pane's own content, keyed by pane id. A pane at the
@@ -633,7 +637,7 @@ pub struct ChangedFileDiffSnapshot {
     pub text: String,
     /// Set when the diff was cut short, naming the limit that cut it. A
     /// silently truncated diff would read as a complete one.
-    pub truncated_reason: Option<String>,
+    pub notice: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

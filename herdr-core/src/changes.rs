@@ -182,7 +182,7 @@ fn read_diff(toplevel: &Path, entry: &ChangedFileSnapshot) -> ChangedFileDiffSna
         Err(reason) => ChangedFileDiffSnapshot {
             path: entry.path.clone(),
             text: String::new(),
-            truncated_reason: Some(reason),
+            notice: Some(reason),
         },
     }
 }
@@ -231,7 +231,7 @@ fn truncate_diff(path: String, text: String) -> ChangedFileDiffSnapshot {
         return ChangedFileDiffSnapshot {
             path,
             text,
-            truncated_reason: None,
+            notice: None,
         };
     }
     // Cut on a character boundary so the retained text stays valid UTF-8.
@@ -242,7 +242,7 @@ fn truncate_diff(path: String, text: String) -> ChangedFileDiffSnapshot {
     ChangedFileDiffSnapshot {
         path,
         text: text[..end].to_owned(),
-        truncated_reason: Some(format!(
+        notice: Some(format!(
             "This diff is larger than {} KB and is shown truncated",
             MAX_DIFF_BYTES / 1024
         )),
@@ -289,7 +289,7 @@ mod tests {
     fn an_oversized_diff_states_that_it_was_cut() {
         let projected = truncate_diff("/x".to_owned(), "a".repeat(MAX_DIFF_BYTES + 1));
         assert_eq!(projected.text.len(), MAX_DIFF_BYTES);
-        assert!(projected.truncated_reason.is_some());
+        assert!(projected.notice.is_some());
     }
 
     #[test]

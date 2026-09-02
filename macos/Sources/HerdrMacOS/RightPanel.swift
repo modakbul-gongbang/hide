@@ -286,7 +286,7 @@ private struct DiffText: View {
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             VStack(alignment: .leading, spacing: 0) {
-                if let reason = diff.truncatedReason {
+                if let reason = diff.notice {
                     Text(reason)
                         .hideFont(size: 10)
                         .foregroundStyle(HideTheme.warning)

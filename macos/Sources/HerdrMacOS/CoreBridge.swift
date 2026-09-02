@@ -928,12 +928,15 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
 struct CoreChangedFileDiff: Decodable, Equatable {
     let path: String
     let text: String
-    let truncatedReason: String?
+    /// Why this diff is not the whole story: it was cut for size, or git
+    /// would not produce it. Either way the reader is told rather than shown a
+    /// short diff that looks complete.
+    let notice: String?
 
     enum CodingKeys: String, CodingKey {
         case path
         case text
-        case truncatedReason = "truncated_reason"
+        case notice
     }
 }
 
