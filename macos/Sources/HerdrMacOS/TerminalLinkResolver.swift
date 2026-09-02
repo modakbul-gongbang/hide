@@ -97,6 +97,28 @@ enum TerminalLinkResolver {
         return .unresolved("Hide could not resolve \(displayed) as a file or a web address.")
     }
 
+    /// The web reading of a token, decided without touching the filesystem.
+    ///
+    /// A remote pane prints paths that name files on the other machine, so
+    /// resolving them here would either miss or, worse, hit an unrelated local
+    /// file of the same name. A web address means the same thing from either
+    /// side, so it still opens.
+    static func webURL(in rawValue: String) -> URL? {
+        let value = stripBalancedBoundaryQuotes(
+            rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        guard !value.isEmpty else { return nil }
+        if let url = explicitExternalURL(in: value) {
+            if let scheme = url.scheme?.lowercased(),
+               ["http", "https"].contains(scheme),
+               url.host == nil {
+                return nil
+            }
+            return url
+        }
+        return plausibleWebURL(in: value)
+    }
+
     private static func route(
         resolution: TerminalFileResolution,
         displaying path: String
@@ -122,10 +144,15 @@ enum TerminalLinkResolver {
         return nil
     }
 
-    /// A schemeless host, with or without a path. Either the token carries a
-    /// URL path after a dotted host, or its last label is a TLD common in
-    /// agent output. `https` is assumed because every host worth clicking in
-    /// agent output serves it, and http-only hosts redirect.
+    /// A schemeless host, with or without a path. Either the host is a local
+    /// address, or the token carries a URL path after a dotted host, or its
+    /// last label is a TLD common in agent output.
+    ///
+    /// The scheme is chosen from the host rather than fixed: a public name gets
+    /// `https`, because every host worth clicking in agent output serves it and
+    /// http-only hosts redirect. A local address gets `http`, because a dev
+    /// server printed by an agent has no certificate and `https` would fail the
+    /// TLS handshake instead of opening the page the user asked for.
     static func plausibleWebURL(in value: String) -> URL? {
         guard !value.contains(" "), !value.hasPrefix("/"), !value.hasPrefix("~"), !value.hasPrefix(".") else {
             return nil
@@ -137,8 +164,8 @@ enum TerminalLinkResolver {
            Int(host[host.index(after: colon)...]) != nil {
             host = String(host[..<colon])
         }
-        if host == "localhost" {
-            return URL(string: "https://" + value)
+        if host.lowercased() == "localhost" || isIPv4Literal(host) {
+            return URL(string: "http://" + value)
         }
         let labels = host.split(separator: ".", omittingEmptySubsequences: false)
         guard labels.count >= 2 else { return nil }
@@ -152,6 +179,20 @@ enum TerminalLinkResolver {
         guard topLevel.count >= 2, topLevel.allSatisfy(\.isLetter) else { return nil }
         guard hasURLTail || webTopLevelDomains.contains(topLevel) else { return nil }
         return URL(string: "https://" + value)
+    }
+
+    /// A dotted-quad address. Agents print `127.0.0.1:3000` and `0.0.0.0:8080`
+    /// as often as they print `localhost`, and the TLD test rejects both
+    /// because a numeric last label is not a TLD.
+    private static func isIPv4Literal(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4 else { return false }
+        return octets.allSatisfy { octet in
+            guard octet.count <= 3, octet.allSatisfy(\.isNumber),
+                  let number = Int(octet)
+            else { return false }
+            return number <= 255
+        }
     }
 
     /// Resolves a path against the pane's working directory, the checkout

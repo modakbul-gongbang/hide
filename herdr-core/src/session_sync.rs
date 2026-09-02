@@ -825,6 +825,8 @@ struct PaneWire {
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
     terminal_title: Option<String>,
     #[serde(default)]
     terminal_title_stripped: Option<String>,
@@ -912,6 +914,12 @@ impl ProjectionState {
             .map(|pane| SessionPanePayload {
                 pane_id: pane.pane_id.clone(),
                 cwd: pane.cwd.clone(),
+                label: non_blank(pane.label.as_deref()),
+                terminal_title: non_blank(
+                    pane.terminal_title_stripped
+                        .as_deref()
+                        .or(pane.terminal_title.as_deref()),
+                ),
             })
             .collect();
         let workspaces = workspace_labels
@@ -1122,13 +1130,13 @@ impl SessionReplica {
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
                                     id: remote_pane_id(target_id, &pane.pane_id),
-                                    label: pane
-                                        .terminal_title_stripped
-                                        .as_deref()
-                                        .or(pane.terminal_title.as_deref())
-                                        .filter(|title| !title.trim().is_empty())
-                                        .unwrap_or(&pane.pane_id)
-                                        .to_owned(),
+                                    herdr_label: non_blank(pane.label.as_deref()),
+                                    terminal_title: non_blank(
+                                        pane.terminal_title_stripped
+                                            .as_deref()
+                                            .or(pane.terminal_title.as_deref()),
+                                    ),
+                                    workspace_label: non_blank(Some(workspace.label.as_str())),
                                     cwd: pane.cwd.clone().unwrap_or_else(|| path.clone()),
                                     state: agent
                                         .map(|agent| agent.state.clone())
@@ -2101,6 +2109,16 @@ fn validate_workspace_wire(
 fn validate_tab_wire(event: &str, tab: &TabWire) -> Result<(), SessionFetchError> {
     ensure_non_empty(event, "tab.tab_id", &tab.tab_id)?;
     ensure_non_empty(event, "tab.workspace_id", &tab.workspace_id)
+}
+
+/// A Herdr label or terminal title that is present but blank carries no more
+/// information than an absent one, and a header ladder that treated the two
+/// differently would show an empty title instead of falling through.
+fn non_blank(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn validate_pane_wire(event: &str, pane: &PaneWire) -> Result<(), SessionFetchError> {

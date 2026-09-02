@@ -168,7 +168,7 @@ import Testing
 @Test func checkoutWithAExistingPaneOnlyChangesFocus() {
     let pane = CorePaneSnapshot(
         id: "pane-existing",
-        label: "terminal",
+        herdrLabel: "terminal",
         cwd: "/tmp/hide-existing-checkout",
         state: "attached",
         summary: nil,
@@ -237,7 +237,6 @@ import Testing
             empty: false,
             panes: [CorePaneSnapshot(
                 id: "pane-b",
-                label: "pane-b",
                 cwd: "/tmp/hide-workspace-b",
                 state: "attached",
                 summary: nil,

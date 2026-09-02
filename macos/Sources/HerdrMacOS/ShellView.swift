@@ -760,8 +760,9 @@ struct PaneTerminalCell<Content: View>: View {
         HideTerminalPaneCard(
             paneID: pane.id,
             title: PaneHeaderPresentation.title(
-                label: pane.label,
-                cwd: pane.cwd,
+                herdrLabel: pane.herdrLabel,
+                terminalTitle: pane.terminalTitle,
+                workspaceLabel: pane.workspaceLabel,
                 paneID: pane.id
             ),
             status: status,
@@ -775,17 +776,24 @@ struct PaneTerminalCell<Content: View>: View {
 }
 
 enum PaneHeaderPresentation {
-    static func title(label: String, cwd: String, paneID: String) -> String {
-        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !normalizedLabel.isEmpty {
-            return normalizedLabel
+    /// The name a pane is shown by, most specific first.
+    ///
+    /// A Herdr label is a name the user chose for this pane, so it outranks
+    /// everything. A terminal title is what the running program calls itself,
+    /// which distinguishes two panes in the same project. The workspace label
+    /// names the project, which every pane in it shares. The pane id is the
+    /// last resort and is never empty.
+    static func title(
+        herdrLabel: String?,
+        terminalTitle: String?,
+        workspaceLabel: String?,
+        paneID: String
+    ) -> String {
+        for candidate in [herdrLabel, terminalTitle, workspaceLabel] {
+            let normalized = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !normalized.isEmpty { return normalized }
         }
-        let normalizedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedCWD.isEmpty else { return paneID }
-        let folder = URL(fileURLWithPath: normalizedCWD, isDirectory: true)
-            .lastPathComponent
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return folder.isEmpty ? paneID : folder
+        return paneID
     }
 }
 

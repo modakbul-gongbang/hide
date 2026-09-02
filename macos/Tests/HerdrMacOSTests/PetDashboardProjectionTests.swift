@@ -145,7 +145,6 @@ struct PetDashboardProjectionTests {
         let panes = paneIDs.map { paneID in
             CorePaneSnapshot(
                 id: paneID,
-                label: paneID,
                 cwd: "/tmp/\(id)",
                 state: "active",
                 summary: nil,

@@ -232,7 +232,13 @@ pub struct TabSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
     pub id: String,
-    pub label: String,
+    /// The three names a pane can be shown by, in the order the header prefers
+    /// them. The core ships the ingredients rather than a chosen title so the
+    /// local and remote projections cannot disagree about the ladder, and so
+    /// the one that runs it stays testable in the shell.
+    pub herdr_label: Option<String>,
+    pub terminal_title: Option<String>,
+    pub workspace_label: Option<String>,
     pub cwd: String,
     pub state: String,
     pub summary: Option<String>,

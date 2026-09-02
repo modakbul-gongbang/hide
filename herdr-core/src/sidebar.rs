@@ -97,6 +97,12 @@ pub struct SessionPanePayload {
     pub pane_id: String,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// The name the user gave this pane in Herdr, when they gave it one.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// What the program running in the pane set the terminal title to.
+    #[serde(default)]
+    pub terminal_title: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

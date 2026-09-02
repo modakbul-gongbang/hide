@@ -538,6 +538,18 @@ final class ShellModel: ObservableObject {
 
     func openTerminalLink(_ rawValue: String, paneID: String) {
         if isRemoteContext {
+            // A web address means the same thing from either machine, so it
+            // still opens; a path names a file on the other machine, which the
+            // read-only snapshot contract cannot fetch.
+            if let url = TerminalLinkResolver.webURL(in: rawValue) {
+                ExternalBrowser.open(url) { [weak self] message in
+                    self?.interactionNotice = message
+                    HideLaunchTrace.mark("terminal.link.failed", detail: "external_open")
+                }
+                interactionNotice = nil
+                HideLaunchTrace.mark("terminal.link.opened", detail: "external")
+                return
+            }
             interactionNotice = "\(rawValue) was printed by a remote pane. Remote file preview is not available in the current read-only snapshot contract."
             HideLaunchTrace.mark("terminal.link.failed", detail: "remote_file_contract")
             return

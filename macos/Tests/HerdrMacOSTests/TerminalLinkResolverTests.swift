@@ -24,10 +24,34 @@ struct TerminalLinkResolverTests {
     @Test func aSchemelessHostOpensOnTheWebRatherThanBeingSearchedForAsAFile() throws {
         let docs = try #require(URL(string: "https://docs.anthropic.com/en/docs"))
         let host = try #require(URL(string: "https://github.com"))
-        let local = try #require(URL(string: "https://localhost:5173/health"))
         #expect(route("docs.anthropic.com/en/docs") == .web(docs))
         #expect(route("github.com") == .web(host))
-        #expect(route("localhost:5173/health") == .web(local))
+    }
+
+    /// A dev server printed by an agent has no certificate, so assuming
+    /// `https` would fail the TLS handshake instead of opening the page. A
+    /// dotted-quad address also has to survive the TLD test, which rejects a
+    /// numeric last label.
+    @Test func aLocalAddressOpensOverHTTPRatherThanFailingTheTLSHandshake() throws {
+        let named = try #require(URL(string: "http://localhost:5173/health"))
+        let loopback = try #require(URL(string: "http://127.0.0.1:3000"))
+        let anyInterface = try #require(URL(string: "http://0.0.0.0:8080/"))
+        #expect(route("localhost:5173/health") == .web(named))
+        #expect(route("127.0.0.1:3000") == .web(loopback))
+        #expect(route("0.0.0.0:8080/") == .web(anyInterface))
+    }
+
+    /// A remote pane's paths name files on the other machine, but a web
+    /// address means the same thing from either side. The remote branch reads
+    /// the token through this entry point, so it must not consult the
+    /// filesystem or claim a bare path is a host.
+    @Test func theWebReadingOfATokenIsDecidedWithoutTheFilesystem() throws {
+        let explicit = try #require(URL(string: "https://example.com/docs"))
+        #expect(TerminalLinkResolver.webURL(in: "https://example.com/docs") == explicit)
+        #expect(TerminalLinkResolver.webURL(in: "localhost:5173") != nil)
+        #expect(TerminalLinkResolver.webURL(in: "/etc/hosts") == nil)
+        #expect(TerminalLinkResolver.webURL(in: "Foo.swift") == nil)
+        #expect(TerminalLinkResolver.webURL(in: "") == nil)
     }
 
     /// `Foo.swift` and `example.com` are the same shape. A dotted name whose

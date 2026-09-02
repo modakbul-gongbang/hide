@@ -454,7 +454,11 @@ struct CoreTabSnapshot: Decodable, Identifiable {
 
 struct CorePaneSnapshot: Decodable, Identifiable {
     let id: String
-    let label: String
+    /// The three names a pane can be shown by. The core ships all three and
+    /// `PaneHeaderPresentation` picks; see its ladder for the order.
+    let herdrLabel: String?
+    let terminalTitle: String?
+    let workspaceLabel: String?
     let cwd: String
     let state: String
     let summary: String?
@@ -462,7 +466,9 @@ struct CorePaneSnapshot: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case label
+        case herdrLabel = "herdr_label"
+        case terminalTitle = "terminal_title"
+        case workspaceLabel = "workspace_label"
         case cwd
         case state
         case summary
@@ -471,14 +477,18 @@ struct CorePaneSnapshot: Decodable, Identifiable {
 
     init(
         id: String,
-        label: String,
+        herdrLabel: String? = nil,
+        terminalTitle: String? = nil,
+        workspaceLabel: String? = nil,
         cwd: String,
         state: String,
         summary: String?,
         activityAt: UInt64?
     ) {
         self.id = id
-        self.label = label
+        self.herdrLabel = herdrLabel
+        self.terminalTitle = terminalTitle
+        self.workspaceLabel = workspaceLabel
         self.cwd = cwd
         self.state = state
         self.summary = summary

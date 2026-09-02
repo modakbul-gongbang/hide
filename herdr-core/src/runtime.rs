@@ -1578,10 +1578,11 @@ impl Runtime {
                     let agent = projected_agents
                         .iter()
                         .find(|agent| agent.pane_id == pane.pane_id);
-                    let cwd = payload
+                    let source = payload
                         .panes
                         .iter()
-                        .find(|source| source.pane_id == pane.pane_id)
+                        .find(|source| source.pane_id == pane.pane_id);
+                    let cwd = source
                         .and_then(|source| source.cwd.clone())
                         .or_else(|| {
                             payload
@@ -1596,9 +1597,9 @@ impl Runtime {
                         .unwrap_or_else(|| checkout.path.clone());
                     PaneSnapshot {
                         id: pane.pane_id.clone(),
-                        label: agent
-                            .map(|agent| agent.workspace_label.clone())
-                            .unwrap_or_else(|| pane.pane_id.clone()),
+                        herdr_label: source.and_then(|source| source.label.clone()),
+                        terminal_title: source.and_then(|source| source.terminal_title.clone()),
+                        workspace_label: agent.map(|agent| agent.workspace_label.clone()),
                         cwd,
                         state: agent
                             .map(|agent| agent.state.clone())
@@ -5711,7 +5712,9 @@ mod tests {
     fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         PaneSnapshot {
             id: id.to_owned(),
-            label: id.to_owned(),
+            herdr_label: None,
+            terminal_title: None,
+            workspace_label: None,
             cwd: cwd.to_owned(),
             state: "attached".to_owned(),
             summary: None,

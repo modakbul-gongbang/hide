@@ -7,20 +7,31 @@ import Testing
 @MainActor
 @Suite("Pane grid presentation")
 struct PaneGridPresentationTests {
-    @Test func paneHeaderPrefersLabelThenFolderThenPaneIdentifier() {
+    /// R7: a pane the user named shows that name, and only a pane with no name
+    /// of its own falls back to the project every pane in it shares.
+    @Test func paneHeaderPrefersHerdrLabelThenTerminalTitleThenWorkspaceThenPaneIdentifier() {
         #expect(PaneHeaderPresentation.title(
-            label: "  review agent  ",
-            cwd: "/Users/example/projects/hide",
+            herdrLabel: "  review agent  ",
+            terminalTitle: "claude",
+            workspaceLabel: "hide",
             paneID: "w1:p1"
         ) == "review agent")
         #expect(PaneHeaderPresentation.title(
-            label: "   ",
-            cwd: "/Users/example/projects/oh-my-principle",
+            herdrLabel: nil,
+            terminalTitle: "claude",
+            workspaceLabel: "hide",
+            paneID: "w1:p1"
+        ) == "claude")
+        #expect(PaneHeaderPresentation.title(
+            herdrLabel: "   ",
+            terminalTitle: "  ",
+            workspaceLabel: "oh-my-principle",
             paneID: "w1:p1"
         ) == "oh-my-principle")
         #expect(PaneHeaderPresentation.title(
-            label: "",
-            cwd: "",
+            herdrLabel: nil,
+            terminalTitle: nil,
+            workspaceLabel: nil,
             paneID: "w1:p1"
         ) == "w1:p1")
     }

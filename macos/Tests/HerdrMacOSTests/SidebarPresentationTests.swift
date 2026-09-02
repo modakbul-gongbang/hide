@@ -5,7 +5,6 @@ import Testing
 private func presentationPane(id: String) -> CorePaneSnapshot {
     CorePaneSnapshot(
         id: id,
-        label: id,
         cwd: "/tmp/hide",
         state: "idle",
         summary: nil,
