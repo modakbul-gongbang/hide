@@ -14,7 +14,8 @@ use crate::live::{
     SessionFetchError, TerminalSession, TerminalSessionContext, TerminalSessionMode,
 };
 use crate::model::{
-    CoreOptions, DiagnosticSnapshot, EditorDocumentSnapshot, FileTabSnapshot, LastErrorSnapshot,
+    CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
+    FileTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, clamp_pane_text_scale,
     PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, SCHEMA_VERSION,
     Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot,
@@ -391,6 +392,12 @@ struct RetryConnectPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct PaneTextScalePayload {
+    pane_id: String,
+    direction: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct PetVisibilityPayload {
     visible: bool,
 }
@@ -466,6 +473,7 @@ enum ValidatedEvent {
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
+    PaneTextScale(PaneTextScalePayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -4372,6 +4380,50 @@ impl Runtime {
                 }
                 false
             }
+            ValidatedEvent::PaneTextScale(payload) => {
+                let current = self
+                    .snapshot
+                    .ui_state
+                    .pane_text_scales
+                    .get(&payload.pane_id)
+                    .copied()
+                    .unwrap_or(DEFAULT_PANE_TEXT_SCALE);
+                let next = match payload.direction.as_str() {
+                    "in" => clamp_pane_text_scale(current + PANE_TEXT_SCALE_STEP),
+                    "out" => clamp_pane_text_scale(current - PANE_TEXT_SCALE_STEP),
+                    "reset" => DEFAULT_PANE_TEXT_SCALE,
+                    other => {
+                        self.set_error(
+                            "pane.text_scale_unknown_direction",
+                            format!(
+                                "{other} is not a text scale direction; expected in, out, or reset"
+                            ),
+                            true,
+                        );
+                        return true;
+                    }
+                };
+                // A pane at the default is absent rather than stored at 1.0,
+                // so resetting every pane leaves an empty map rather than a
+                // row per pane the user ever touched.
+                let changed = if next == DEFAULT_PANE_TEXT_SCALE {
+                    self.snapshot
+                        .ui_state
+                        .pane_text_scales
+                        .remove(&payload.pane_id)
+                        .is_some()
+                } else {
+                    self.snapshot
+                        .ui_state
+                        .pane_text_scales
+                        .insert(payload.pane_id.clone(), next)
+                        != Some(next)
+                };
+                if changed {
+                    self.persist_ui_state();
+                }
+                changed
+            }
             ValidatedEvent::UiStateUpdate(payload) => {
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
@@ -4405,6 +4457,10 @@ impl Runtime {
                         .unwrap_or(current.device_registrations),
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     font_size: payload.font_size.unwrap_or(current.font_size),
+                    // The zoom chords own this map; a navigator or keyboard
+                    // save must not erase it, for the same reason the pet
+                    // fields above are carried through.
+                    pane_text_scales: current.pane_text_scales,
                 };
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
@@ -4914,6 +4970,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
+        "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(ValidatedEvent::PetToggleVisible),
@@ -4987,6 +5044,7 @@ fn unix_milliseconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{MAX_PANE_TEXT_SCALE, MIN_PANE_TEXT_SCALE};
     use crate::live::SessionFetchError;
     use crate::model::{
         CheckoutSnapshot, DeviceSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot,
@@ -5685,6 +5743,60 @@ mod tests {
                 home_path: None,
             },
         )
+    }
+
+    /// R11/AC16: the chords move one pane's scale within bounds and reset it,
+    /// and the store keeps only the panes the user actually changed.
+    #[test]
+    fn pane_text_scale_steps_within_bounds_and_leaves_other_panes_alone() {
+        let mut runtime = runtime();
+        let scale = |pane: &str, direction: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "pane_text_scale",
+                "payload": {"pane_id": pane, "direction": direction}
+            }))
+            .expect("pane text scale event")
+        };
+
+        assert!(runtime.dispatch_json(&scale("w1:p1", "in")));
+        assert_eq!(
+            runtime.snapshot().ui_state.pane_text_scales.get("w1:p1"),
+            Some(&1.1)
+        );
+        // A second pane is untouched by the first pane's zoom.
+        assert!(!runtime.snapshot().ui_state.pane_text_scales.contains_key("w1:p2"));
+
+        // The upper bound holds however many times it is pressed, and a press
+        // that changes nothing reports no change.
+        for _ in 0..40 {
+            runtime.dispatch_json(&scale("w1:p1", "in"));
+        }
+        assert_eq!(
+            runtime.snapshot().ui_state.pane_text_scales.get("w1:p1"),
+            Some(&MAX_PANE_TEXT_SCALE)
+        );
+        assert!(!runtime.dispatch_json(&scale("w1:p1", "in")));
+
+        for _ in 0..40 {
+            runtime.dispatch_json(&scale("w1:p1", "out"));
+        }
+        assert_eq!(
+            runtime.snapshot().ui_state.pane_text_scales.get("w1:p1"),
+            Some(&MIN_PANE_TEXT_SCALE)
+        );
+
+        // Reset drops the row rather than storing the default.
+        assert!(runtime.dispatch_json(&scale("w1:p1", "reset")));
+        assert!(runtime.snapshot().ui_state.pane_text_scales.is_empty());
+        assert!(!runtime.dispatch_json(&scale("w1:p1", "reset")));
+
+        // An unknown direction is surfaced, not silently ignored.
+        assert!(runtime.dispatch_json(&scale("w1:p1", "sideways")));
+        assert_eq!(
+            runtime.snapshot().status.last_error.as_ref().map(|error| error.kind.clone()),
+            Some("pane.text_scale_unknown_direction".to_owned())
+        );
     }
 
     fn working_payload() -> SessionSnapshotPayload {

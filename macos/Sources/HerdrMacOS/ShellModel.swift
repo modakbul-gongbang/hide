@@ -1160,6 +1160,28 @@ final class ShellModel: ObservableObject {
         core.persistUIState(rightPanelVisible: !rightPanelVisible)
     }
 
+    /// The scale key for the file editor. Herdr pane ids always carry a `:`,
+    /// so this cannot collide with one.
+    static let fileEditorScaleKey = "file-editor"
+
+    /// What the zoom chords act on: whatever the user is actually looking at.
+    /// The editor overlays the terminal surface whenever a file tab is open,
+    /// so an open tab means the editor is what is on screen.
+    var textScaleTarget: String? {
+        if !isRemoteContext, core.snapshot?.editor.activeTabID != nil {
+            return Self.fileEditorScaleKey
+        }
+        return focusedPaneID
+    }
+
+    /// A target the user has never zoomed is absent from the map, which reads
+    /// as the default rather than as a missing value.
+    func textScale(for target: String) -> CGFloat {
+        CGFloat(core.snapshot?.uiState.paneTextScales[target] ?? 1)
+    }
+
+    var editorTextScale: CGFloat { textScale(for: Self.fileEditorScaleKey) }
+
     func focus(_ surface: ShellSurface) {
         switch surface {
         case .agents where !leftSidebarVisible:
@@ -1356,6 +1378,17 @@ final class ShellModel: ObservableObject {
     }
 
     func performPaneCommand(_ command: PaneCommand) {
+        // Text size is keyed by pane id and rendered by the shell, so it means
+        // the same thing for a local and a remote pane and is settled before
+        // the route split rather than twice inside it.
+        if let direction = command.textScaleDirection {
+            guard let target = textScaleTarget else {
+                interactionNotice = "Select a pane before changing its text size."
+                return
+            }
+            core.setPaneTextScale(paneID: target, direction: direction)
+            return
+        }
         switch paneCommandRoute {
         case .unavailable(let message):
             interactionNotice = message
@@ -1374,6 +1407,10 @@ final class ShellModel: ObservableObject {
                     return
                 }
                 closeCurrentPane(target: .local(paneID: paneID))
+            case .increaseTextSize, .decreaseTextSize, .resetTextSize:
+                // Unreachable: `textScaleDirection` is non-nil for exactly
+                // these three and the guard above has already returned.
+                assertionFailure("a text size command reached the route switch")
             }
         case .remote(let paneID):
             guard let targetID = remote.navigation?.deviceID else {
@@ -1388,6 +1425,10 @@ final class ShellModel: ObservableObject {
             case .toggleZoom:
                 core.toggleRemotePaneZoom(targetID: targetID, paneID: paneID)
             case .closePane: closeCurrentPane(target: .remote(paneID: paneID))
+            case .increaseTextSize, .decreaseTextSize, .resetTextSize:
+                // Unreachable: `textScaleDirection` is non-nil for exactly
+                // these three and the guard above has already returned.
+                assertionFailure("a text size command reached the route switch")
             }
             focus(.terminal)
         }

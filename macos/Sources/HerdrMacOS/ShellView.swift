@@ -249,6 +249,7 @@ private struct TerminalPanel: View {
                             TerminalHost(
                                 bridge: model.core,
                                 paneID: pane.id,
+                                textScale: model.textScale(for: pane.id),
                                 onFocus: { model.focusPane(pane.id) },
                                 onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                             )

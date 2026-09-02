@@ -678,6 +678,9 @@ struct CoreUIStateSnapshot: Decodable {
     let deviceRegistrations: [CoreDeviceRegistration]
     let accentHex: String
     let fontSize: Double
+    /// Per-pane content text scale. A pane the user has not zoomed is absent,
+    /// so a lookup miss means the default rather than an error.
+    let paneTextScales: [String: Double]
 
     enum CodingKeys: String, CodingKey {
         case leftSidebarVisible = "left_sidebar_visible"
@@ -693,6 +696,7 @@ struct CoreUIStateSnapshot: Decodable {
         case deviceRegistrations = "device_registrations"
         case accentHex = "accent_hex"
         case fontSize = "font_size"
+        case paneTextScales = "pane_text_scales"
     }
 
     init(from decoder: Decoder) throws {
@@ -722,6 +726,10 @@ struct CoreUIStateSnapshot: Decodable {
         ) ?? []
         accentHex = try container.decodeIfPresent(String.self, forKey: .accentHex) ?? "#B9FF66"
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
+        paneTextScales = try container.decodeIfPresent(
+            [String: Double].self,
+            forKey: .paneTextScales
+        ) ?? [:]
     }
 }
 
@@ -1239,6 +1247,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func focusPane(_ paneID: String) {
         dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
+    }
+
+    /// The core owns the ladder and its bounds, so the shell sends a direction
+    /// rather than a computed size and reads the result back off the snapshot.
+    func setPaneTextScale(paneID: String, direction: PaneTextScaleDirection) {
+        dispatch(
+            kind: "pane_text_scale",
+            payload: ["pane_id": paneID, "direction": direction.rawValue]
+        )
     }
 
     var pet: CorePetSnapshot? { snapshot?.pet }

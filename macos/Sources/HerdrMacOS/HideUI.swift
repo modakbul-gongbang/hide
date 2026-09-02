@@ -18,6 +18,11 @@ enum HideTheme {
     /// These two are DESIGN.md's `mute` and `charcoal` steps.
     static let fileIconNeutralHex = "#9C9C9D"
     static let fileIconDocumentHex = "#D3D3D4"
+    /// Monospaced content sizes at a pane's default scale. The per-pane zoom
+    /// chords multiply these; they are tokens rather than call-site literals so
+    /// the two content surfaces cannot drift apart.
+    static let terminalBaseFontSize: CGFloat = 14
+    static let editorBaseFontSize: CGFloat = 12
     static let accent = Color(red: 0.725, green: 1.0, blue: 0.40)
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
@@ -1575,6 +1580,7 @@ private struct HideTerminalSurface: View {
                             TerminalHost(
                                 bridge: model.core,
                                 paneID: pane.id,
+                                textScale: model.textScale(for: pane.id),
                                 onFocus: { model.focusPane(pane.id) },
                                 onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                             )

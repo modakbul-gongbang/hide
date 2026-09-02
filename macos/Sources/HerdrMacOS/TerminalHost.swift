@@ -5,6 +5,8 @@ import SwiftUI
 struct TerminalHost: NSViewRepresentable {
     @ObservedObject var bridge: CoreBridge
     let paneID: String
+    /// This pane's text scale, from the core's persisted per-pane map.
+    let textScale: CGFloat
     let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
 
@@ -15,7 +17,10 @@ struct TerminalHost: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalView {
         let terminal = ImeTerminalView(
             frame: .zero,
-            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+            font: NSFont.monospacedSystemFont(
+                ofSize: HideTheme.terminalBaseFontSize * textScale,
+                weight: .regular
+            )
         )
         terminal.hidePaneID = paneID
         terminal.terminalDelegate = context.coordinator
@@ -49,6 +54,14 @@ struct TerminalHost: NSViewRepresentable {
         context.coordinator.bridge = bridge
         context.coordinator.onOpenLink = onOpenLink
         (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
+        // SwiftTerm's font setter recomputes the cell metrics and resizes the
+        // grid, and its delegate reports the new size on to the PTY, so the
+        // reflow follows from this assignment. It also clears the selection,
+        // which is why it is guarded on an actual change.
+        let size = HideTheme.terminalBaseFontSize * textScale
+        if terminal.font.pointSize != size {
+            terminal.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        }
     }
 
     static func dismantleNSView(_ terminal: TerminalView, coordinator: Coordinator) {

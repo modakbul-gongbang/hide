@@ -44,6 +44,8 @@ struct StoredUiState {
     accent_hex: String,
     #[serde(default = "default_font_size")]
     font_size: f32,
+    #[serde(default)]
+    pane_text_scales: BTreeMap<String, f32>,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -94,6 +96,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             font_size: stored.font_size,
+            pane_text_scales: stored.pane_text_scales,
         },
         LoadDisposition::Loaded,
     )
@@ -124,6 +127,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         font_size: state.font_size,
+        pane_text_scales: state.pane_text_scales.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;

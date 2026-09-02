@@ -51,7 +51,8 @@ struct FileViewerOverlay: View {
             HighlightedCodeEditor(
                 text: $draft,
                 language: syntaxLanguage(for: url),
-                isEditable: readonlyReason == nil
+                isEditable: readonlyReason == nil,
+                textScale: model.editorTextScale
             )
         } else {
             unavailable(

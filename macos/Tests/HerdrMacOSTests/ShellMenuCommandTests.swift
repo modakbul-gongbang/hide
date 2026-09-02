@@ -39,4 +39,34 @@ struct ShellMenuCommandTests {
             #expect(command.shortcut.modifiers.contains(.command))
         }
     }
+
+    /// Menu chords and pane chords are declared in two separate catalogs and
+    /// resolved by two different paths, so nothing but this check stops one
+    /// from shadowing the other. `⌘0` next to the `⌘1`-`⌘9` agent chords is
+    /// exactly the kind of neighbour that makes the gap worth holding open.
+    @Test func noPaneCommandCollidesWithAMenuOrAgentChord() {
+        let menuChords = Set(ShellMenuCommand.allCases.map(\.shortcut.canonical))
+        let agentChords = Set(
+            (1...AgentShortcutNumbering.capacity).map { "command+\($0)" }
+        )
+        let paneChords = PaneCommand.allCases.map(\.defaultShortcut.canonical)
+        #expect(Set(paneChords).count == paneChords.count)
+        for chord in paneChords {
+            #expect(!menuChords.contains(chord))
+            #expect(!agentChords.contains(chord))
+        }
+    }
+
+    /// The three text-size commands are text size, not the layout zoom that
+    /// `toggleZoom` already means. Naming them apart is the whole reason the
+    /// two can coexist as pane commands.
+    @Test func onlyTheTextSizeCommandsCarryAScaleDirection() {
+        #expect(PaneCommand.increaseTextSize.textScaleDirection == .in)
+        #expect(PaneCommand.decreaseTextSize.textScaleDirection == .out)
+        #expect(PaneCommand.resetTextSize.textScaleDirection == .reset)
+        #expect(PaneCommand.toggleZoom.textScaleDirection == nil)
+        #expect(PaneCommand.closePane.textScaleDirection == nil)
+        #expect(PaneCommand.splitRight.textScaleDirection == nil)
+        #expect(PaneCommand.splitDown.textScaleDirection == nil)
+    }
 }

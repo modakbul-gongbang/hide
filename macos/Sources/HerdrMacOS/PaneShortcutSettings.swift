@@ -7,6 +7,9 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
     case splitDown = "split_down"
     case toggleZoom = "toggle_zoom"
     case closePane = "close_pane"
+    case increaseTextSize = "increase_text_size"
+    case decreaseTextSize = "decrease_text_size"
+    case resetTextSize = "reset_text_size"
 
     var id: String { rawValue }
 
@@ -16,6 +19,9 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
         case .splitDown: "Split Down"
         case .toggleZoom: "Toggle Zoom"
         case .closePane: "Close Pane"
+        case .increaseTextSize: "Increase Text Size"
+        case .decreaseTextSize: "Decrease Text Size"
+        case .resetTextSize: "Actual Text Size"
         }
     }
 
@@ -25,8 +31,31 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
         case .splitDown: PaneShortcut(key: "d", modifiers: [.command, .shift])
         case .toggleZoom: PaneShortcut(key: "return", modifiers: [.command, .option])
         case .closePane: PaneShortcut(key: "w", modifiers: [.command, .shift])
+        // `toggleZoom` above is layout zoom - one pane filling the tab. These
+        // three are text size, which is why they are not named zoom.
+        case .increaseTextSize: PaneShortcut(key: "=", modifiers: [.command])
+        case .decreaseTextSize: PaneShortcut(key: "-", modifiers: [.command])
+        case .resetTextSize: PaneShortcut(key: "0", modifiers: [.command])
         }
     }
+
+    /// The direction this command asks the core for, or nil when the command
+    /// is not about text size at all.
+    var textScaleDirection: PaneTextScaleDirection? {
+        switch self {
+        case .increaseTextSize: .in
+        case .decreaseTextSize: .out
+        case .resetTextSize: .reset
+        case .splitRight, .splitDown, .toggleZoom, .closePane: nil
+        }
+    }
+}
+
+/// The wire values the core's `pane_text_scale` event accepts.
+enum PaneTextScaleDirection: String, Sendable {
+    case `in`
+    case out
+    case reset
 }
 
 struct PaneShortcut: Equatable, Hashable, Sendable {

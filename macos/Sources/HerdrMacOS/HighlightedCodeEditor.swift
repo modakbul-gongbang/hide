@@ -6,6 +6,9 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     @Binding var text: String
     let language: String?
     let isEditable: Bool
+    /// The file editor is one surface rather than a pane, so it carries the
+    /// scale of the pane whose chords last changed it.
+    let textScale: CGFloat
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -23,7 +26,10 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         let textView = NSTextView(frame: .zero, textContainer: container)
         textView.autoresizingMask = [NSView.AutoresizingMask.width]
         textView.delegate = context.coordinator
-        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: NSFont.Weight.regular)
+        textView.font = NSFont.monospacedSystemFont(
+            ofSize: HideTheme.editorBaseFontSize * textScale,
+            weight: NSFont.Weight.regular
+        )
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -72,6 +78,10 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         textView.isEditable = isEditable
+        let size = HideTheme.editorBaseFontSize * textScale
+        if textView.font?.pointSize != size {
+            textView.font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
+        }
         if let storage = textView.textStorage as? CodeAttributedString {
             storage.language = language
         }

@@ -403,6 +403,31 @@ pub struct UiStateSnapshot {
     pub accent_hex: String,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+    /// Text scale for one pane's own content, keyed by pane id. A pane at the
+    /// default scale is absent rather than present at 1.0, so the map stays
+    /// the size of what the user actually changed.
+    #[serde(default)]
+    pub pane_text_scales: BTreeMap<String, f32>,
+}
+
+/// The scale a pane has until the user zooms it.
+pub const DEFAULT_PANE_TEXT_SCALE: f32 = 1.0;
+
+/// One press of the zoom chords. Small enough that the range takes several
+/// presses to cross, large enough to be visible in one.
+pub const PANE_TEXT_SCALE_STEP: f32 = 0.1;
+
+/// The bounds a pane's text scale is clamped to. Below the minimum the terminal
+/// is unreadable; above the maximum a standard pane holds too few columns to
+/// show a command line without wrapping.
+pub const MIN_PANE_TEXT_SCALE: f32 = 0.7;
+pub const MAX_PANE_TEXT_SCALE: f32 = 2.0;
+
+/// Rounded to the step so repeated presses cannot drift the stored value off
+/// the ladder through float error.
+pub fn clamp_pane_text_scale(scale: f32) -> f32 {
+    let stepped = (scale / PANE_TEXT_SCALE_STEP).round() * PANE_TEXT_SCALE_STEP;
+    stepped.clamp(MIN_PANE_TEXT_SCALE, MAX_PANE_TEXT_SCALE)
 }
 
 impl Default for UiStateSnapshot {
@@ -426,6 +451,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             font_size: default_font_size(),
+            pane_text_scales: BTreeMap::new(),
         }
     }
 }
