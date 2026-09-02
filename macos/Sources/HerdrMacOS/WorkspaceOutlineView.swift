@@ -1,13 +1,21 @@
 import AppKit
 import SwiftUI
 
-enum WorkspaceOutlineOpenPolicy {
-    static func shouldOpenSelection(
-        isProgrammaticRestore: Bool,
-        isDirectory: Bool,
-        isPlaceholder: Bool
-    ) -> Bool {
-        !isProgrammaticRestore && !isDirectory && !isPlaceholder
+/// What activating a row does. Opening used to be bound to selection change,
+/// so walking the tree with the arrow keys opened a file tab for every row it
+/// passed, and a directory's name was inert while only its disclosure triangle
+/// worked. Activation is a click on the row body or `Return`; selection is
+/// only a cursor.
+enum WorkspaceOutlineActivation: Equatable {
+    case open
+    case toggle
+    case none
+}
+
+enum WorkspaceOutlineActivationPolicy {
+    static func activation(isDirectory: Bool, isPlaceholder: Bool) -> WorkspaceOutlineActivation {
+        if isPlaceholder { return .none }
+        return isDirectory ? .toggle : .open
     }
 }
 
@@ -170,7 +178,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         outline.delegate = context.coordinator
         outline.dataSource = context.coordinator
         outline.target = context.coordinator
-        outline.doubleAction = #selector(Coordinator.activateSelection)
+        outline.action = #selector(Coordinator.activateClickedRow)
         outline.onActivate = { [weak coordinator = context.coordinator] in
             coordinator?.activateSelection()
         }
@@ -208,9 +216,13 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private var rootGeneration: UInt64 = 0
         private var desiredExpandedPaths: Set<String> = []
         private var selectedPath: String?
+        /// The last path this view actually moved the selection to. The core
+        /// reports the active file tab's path on every snapshot; re-asserting
+        /// it on every tick would snap an arrow-key cursor back to the open
+        /// file, so the selection moves only when that path changes.
+        private var appliedSelectedPath: String??
         private var fontScale: CGFloat = 1
         private var suppressExpansionPersistence = false
-        private var isRestoringSelection = false
 
         init(openFile: @escaping (URL) -> Void, updateExpandedPaths: @escaping ([String]) -> Void) {
             self.openFile = openFile
@@ -229,6 +241,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 rootGeneration &+= 1
                 rootPath = rootURL.path
                 rootNode = WorkspaceOutlineNode(entry: .init(url: rootURL, isDirectory: true))
+                appliedSelectedPath = nil
                 outline?.reloadData()
                 if let rootNode {
                     suppressExpansionPersistence = true
@@ -292,18 +305,6 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             // them by URL until the root changes instead of re-enumerating on re-expansion.
         }
 
-        func outlineViewSelectionDidChange(_ notification: Notification) {
-            guard let outline, outline.selectedRow >= 0,
-                  let node = outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode,
-                  WorkspaceOutlineOpenPolicy.shouldOpenSelection(
-                      isProgrammaticRestore: isRestoringSelection,
-                      isDirectory: node.isDirectory,
-                      isPlaceholder: node.isPlaceholder
-                  )
-            else { return }
-            openFile(node.url)
-        }
-
         func outlineView(
             _ outlineView: NSOutlineView,
             viewFor tableColumn: NSTableColumn?,
@@ -323,19 +324,39 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             return row
         }
 
+        /// A click anywhere on a row's body activates it. The disclosure
+        /// triangle is its own control and consumes its own click, so a click
+        /// on the triangle never reaches here and cannot toggle twice.
+        @objc func activateClickedRow() {
+            guard let outline, outline.clickedRow >= 0,
+                  let node = outline.item(atRow: outline.clickedRow) as? WorkspaceOutlineNode
+            else { return }
+            activate(node)
+        }
+
         @objc func activateSelection() {
             guard let outline, outline.selectedRow >= 0,
-                  let node = outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode,
-                  !node.isPlaceholder
+                  let node = outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode
             else { return }
-            if node.isDirectory {
+            activate(node)
+        }
+
+        private func activate(_ node: WorkspaceOutlineNode) {
+            guard let outline else { return }
+            switch WorkspaceOutlineActivationPolicy.activation(
+                isDirectory: node.isDirectory,
+                isPlaceholder: node.isPlaceholder
+            ) {
+            case .open:
+                openFile(node.url)
+            case .toggle:
                 if outline.isItemExpanded(node) {
                     outline.collapseItem(node)
                 } else {
                     outline.expandItem(node)
                 }
-            } else {
-                openFile(node.url)
+            case .none:
+                break
             }
         }
 
@@ -455,15 +476,52 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             guard let outline, let rootNode else { return }
             suppressExpansionPersistence = true
             expandRecordedDescendants(of: rootNode, in: outline)
-            if let selectedPath,
-               let node = visibleNode(path: selectedPath, from: rootNode),
-               outline.row(forItem: node) >= 0
-            {
-                isRestoringSelection = true
-                outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: node)), byExtendingSelection: false)
-                isRestoringSelection = false
-            }
+            applySelection(in: outline, rootNode: rootNode)
             suppressExpansionPersistence = false
+        }
+
+        /// The highlighted row follows the active file tab: it moves on open
+        /// and on tab switch, and clears when the last file tab closes, which
+        /// is what left a highlight standing on a file nobody had open.
+        private func applySelection(in outline: NSOutlineView, rootNode: WorkspaceOutlineNode) {
+            guard appliedSelectedPath != .some(selectedPath) else { return }
+            guard let selectedPath else {
+                appliedSelectedPath = .some(nil)
+                outline.deselectAll(nil)
+                return
+            }
+            // A file inside a collapsed folder has no row to highlight, so the
+            // ancestors are opened on the way down. A folder still loading
+            // returns nothing now and this runs again when its load lands.
+            guard let node = revealNode(path: selectedPath, from: rootNode, in: outline) else { return }
+            let row = outline.row(forItem: node)
+            guard row >= 0 else { return }
+            appliedSelectedPath = .some(selectedPath)
+            outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            outline.scrollRowToVisible(row)
+        }
+
+        /// Walks from the root toward `path`, expanding and loading each
+        /// ancestor. Returns the node once every ancestor on the way is loaded,
+        /// and nil while a load is still in flight.
+        private func revealNode(
+            path: String,
+            from node: WorkspaceOutlineNode,
+            in outline: NSOutlineView
+        ) -> WorkspaceOutlineNode? {
+            if node.url.path == path { return node }
+            guard node.isDirectory, path.hasPrefix(node.url.path + "/") else { return nil }
+            if case .loaded = node.state {} else {
+                loadChildren(of: node)
+                return nil
+            }
+            guard let child = node.children.first(where: {
+                $0.url.path == path || path.hasPrefix($0.url.path + "/")
+            }) else { return nil }
+            if child.isDirectory, !outline.isItemExpanded(child) {
+                outline.expandItem(child)
+            }
+            return revealNode(path: path, from: child, in: outline)
         }
 
         private func expandRecordedDescendants(of node: WorkspaceOutlineNode, in outline: NSOutlineView) {
@@ -474,14 +532,6 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             for child in node.children where child.isDirectory {
                 expandRecordedDescendants(of: child, in: outline)
             }
-        }
-
-        private func visibleNode(path: String, from node: WorkspaceOutlineNode) -> WorkspaceOutlineNode? {
-            if node.url.path == path { return node }
-            for child in node.children {
-                if let match = visibleNode(path: path, from: child) { return match }
-            }
-            return nil
         }
 
         private func persistExpansionIfNeeded() {

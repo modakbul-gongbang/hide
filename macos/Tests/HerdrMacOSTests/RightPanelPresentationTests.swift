@@ -93,17 +93,27 @@ struct RightPanelPresentationTests {
         #expect(activationCount == 1)
     }
 
-    @Test func restoringASelectedPathDoesNotReopenItsFileTab() {
-        #expect(!WorkspaceOutlineOpenPolicy.shouldOpenSelection(
-            isProgrammaticRestore: true,
+    /// Opening was bound to selection change, so arrow-key traversal opened a
+    /// file tab for every row it passed and a directory's name did nothing.
+    /// Activation now decides by what the row is, and selection decides
+    /// nothing.
+    @Test func activationOpensAFileTogglesADirectoryAndIgnoresAPlaceholder() {
+        #expect(WorkspaceOutlineActivationPolicy.activation(
             isDirectory: false,
             isPlaceholder: false
-        ))
-        #expect(WorkspaceOutlineOpenPolicy.shouldOpenSelection(
-            isProgrammaticRestore: false,
-            isDirectory: false,
+        ) == .open)
+        #expect(WorkspaceOutlineActivationPolicy.activation(
+            isDirectory: true,
             isPlaceholder: false
-        ))
+        ) == .toggle)
+        #expect(WorkspaceOutlineActivationPolicy.activation(
+            isDirectory: false,
+            isPlaceholder: true
+        ) == .none)
+        #expect(WorkspaceOutlineActivationPolicy.activation(
+            isDirectory: true,
+            isPlaceholder: true
+        ) == .none)
     }
 
     @Test func unifiedEditorDeltaDecodesTabMetadataAndOnlyTheActiveDocument() throws {

@@ -537,42 +537,31 @@ final class ShellModel: ObservableObject {
     }
 
     func openTerminalLink(_ rawValue: String, paneID: String) {
-        switch TerminalLinkResolver.parse(rawValue) {
-        case .external(let url):
-            guard NSWorkspace.shared.open(url) else {
-                interactionNotice = "The default macOS app could not open this terminal URL."
+        if isRemoteContext {
+            interactionNotice = "\(rawValue) was printed by a remote pane. Remote file preview is not available in the current read-only snapshot contract."
+            HideLaunchTrace.mark("terminal.link.failed", detail: "remote_file_contract")
+            return
+        }
+        switch TerminalLinkResolver.route(
+            rawValue,
+            paneCWD: paneMetadata(for: paneID)?.cwd ?? "",
+            checkoutRoot: focusedCheckout.map { URL(fileURLWithPath: $0.path, isDirectory: true) }
+        ) {
+        case .web(let url):
+            ExternalBrowser.open(url) { [weak self] message in
+                self?.interactionNotice = message
                 HideLaunchTrace.mark("terminal.link.failed", detail: "external_open")
-                return
             }
+            interactionNotice = nil
             HideLaunchTrace.mark("terminal.link.opened", detail: "external")
-        case .file(let path, _, _):
-            if isRemoteContext {
-                interactionNotice = "\(path) belongs to the remote device. Remote file preview is not available in the current read-only snapshot contract."
-                focus(.rightPanel)
-                HideLaunchTrace.mark("terminal.link.failed", detail: "remote_file_contract")
-                return
-            }
-            let paneCWD = paneMetadata(for: paneID)?.cwd ?? ""
-            let checkoutRoot = focusedCheckout.map {
-                URL(fileURLWithPath: $0.path, isDirectory: true)
-            }
-            switch TerminalLinkResolver.resolveLocalFile(
-                path: path,
-                paneCWD: paneCWD,
-                checkoutRoot: checkoutRoot
-            ) {
-            case .file(let url):
-                openFile(url)
-                focus(.rightPanel)
-                interactionNotice = nil
-                HideLaunchTrace.mark("terminal.link.opened", detail: "local_file")
-            case .failure(let message):
-                interactionNotice = message
-                HideLaunchTrace.mark("terminal.link.failed", detail: "local_file_resolution")
-            }
-        case .invalid(let message):
+        case .file(let url):
+            openFile(url)
+            focus(.rightPanel)
+            interactionNotice = nil
+            HideLaunchTrace.mark("terminal.link.opened", detail: "local_file")
+        case .unresolved(let message):
             interactionNotice = message
-            HideLaunchTrace.mark("terminal.link.failed", detail: "invalid_target")
+            HideLaunchTrace.mark("terminal.link.failed", detail: "unresolved_target")
         }
     }
 

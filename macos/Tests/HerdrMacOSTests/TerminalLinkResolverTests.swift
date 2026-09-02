@@ -2,31 +2,45 @@ import Foundation
 import Testing
 @testable import HerdrMacOS
 
-@Suite("Terminal link resolver")
+/// The reported defect: a schemeless host an agent printed went down the
+/// local-file path and produced "could not find inside the selected checkout".
+/// These pin the routing order - resolution first, spelling second - and pin
+/// that a real file outside the checkout opens like any other.
+@Suite("Terminal link routing")
 struct TerminalLinkResolverTests {
     @Test func explicitURLsUseTheMacOSExternalHandlerPolicy() throws {
         let httpsURL = try #require(URL(string: "https://example.com/docs"))
         let mailURL = try #require(URL(string: "mailto:hello@example.com"))
         let customURL = try #require(URL(string: "hide-preview://open/item"))
 
-        #expect(TerminalLinkResolver.parse("https://example.com/docs") == .external(httpsURL))
-        #expect(TerminalLinkResolver.parse("mailto:hello@example.com") == .external(mailURL))
-        #expect(TerminalLinkResolver.parse("hide-preview://open/item") == .external(customURL))
-        #expect(TerminalLinkResolver.parse("https:///missing-host") == .invalid(
+        #expect(route("https://example.com/docs") == .web(httpsURL))
+        #expect(route("mailto:hello@example.com") == .web(mailURL))
+        #expect(route("hide-preview://open/item") == .web(customURL))
+        #expect(route("https:///missing-host") == .unresolved(
             "The terminal URL has no host and cannot be opened."
         ))
     }
 
-    @Test func fileURLsAndSourceLocationsStayInsideHide() throws {
-        #expect(TerminalLinkResolver.parse("file:///tmp/App.swift:19:4") == .file(
-            path: "/tmp/App.swift",
-            line: 19,
-            column: 4
-        ))
-        #expect(TerminalLinkResolver.parse("'Sources/App.swift:27'") == .file(
-            path: "Sources/App.swift",
-            line: 27,
-            column: nil
+    @Test func aSchemelessHostOpensOnTheWebRatherThanBeingSearchedForAsAFile() throws {
+        let docs = try #require(URL(string: "https://docs.anthropic.com/en/docs"))
+        let host = try #require(URL(string: "https://github.com"))
+        let local = try #require(URL(string: "https://localhost:5173/health"))
+        #expect(route("docs.anthropic.com/en/docs") == .web(docs))
+        #expect(route("github.com") == .web(host))
+        #expect(route("localhost:5173/health") == .web(local))
+    }
+
+    /// `Foo.swift` and `example.com` are the same shape. A dotted name whose
+    /// last label is not a web TLD and that carries no URL path is neither
+    /// opened as a page nor claimed to be missing from the checkout.
+    @Test func aDottedNameThatIsNeitherAFileNorAHostIsNamedRatherThanGuessed() {
+        let result = route("Foo.swift")
+        #expect(result == .unresolved("Hide could not resolve Foo.swift as a file or a web address."))
+        if case .unresolved(let message) = result {
+            #expect(!message.contains("checkout"))
+        }
+        #expect(route("src/main.rs") == .unresolved(
+            "Hide could not resolve src/main.rs as a file or a web address."
         ))
     }
 
@@ -35,19 +49,41 @@ struct TerminalLinkResolverTests {
         defer { fixture.remove() }
         let nested = fixture.root.appendingPathComponent("Sources", isDirectory: true)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        let rootFile = fixture.root.appendingPathComponent("target.txt")
+        try Data("root".utf8).write(to: fixture.root.appendingPathComponent("target.txt"))
         let nestedFile = nested.appendingPathComponent("target.txt")
-        try Data("root".utf8).write(to: rootFile)
         try Data("nested".utf8).write(to: nestedFile)
 
-        #expect(TerminalLinkResolver.resolveLocalFile(
-            path: "target.txt",
-            paneCWD: nested.path,
-            checkoutRoot: fixture.root
-        ) == .file(nestedFile.resolvingSymlinksInPath()))
+        #expect(route("target.txt", paneCWD: nested.path, checkoutRoot: fixture.root)
+            == .file(nestedFile.standardizedFileURL.resolvingSymlinksInPath()))
     }
 
-    @Test func missingRootsFoldersUnreadableAndOutsidePathsReturnVisibleFailures() throws {
+    /// The operator asked for a file outside the checkout to open as a tab.
+    /// Nothing below the resolver ever refused one; only the resolver did.
+    @Test func anAbsolutePathOutsideTheCheckoutOpensAsAFile() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let checkout = fixture.root.appendingPathComponent("checkout", isDirectory: true)
+        try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+        let outside = fixture.root.appendingPathComponent("outside.txt")
+        try Data("outside".utf8).write(to: outside)
+
+        #expect(route(outside.path, paneCWD: checkout.path, checkoutRoot: checkout)
+            == .file(outside.standardizedFileURL.resolvingSymlinksInPath()))
+    }
+
+    @Test func aSourceLocationSuffixStillResolvesTheFileItNames() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let file = fixture.root.appendingPathComponent("App.swift")
+        try Data("code".utf8).write(to: file)
+
+        #expect(route("\(file.path):19:4", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
+            == .file(file.standardizedFileURL.resolvingSymlinksInPath()))
+        #expect(route("'App.swift:27'", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
+            == .file(file.standardizedFileURL.resolvingSymlinksInPath()))
+    }
+
+    @Test func foldersAndUnreadableFilesStateTheirOwnReason() throws {
         let fixture = try LocalFileFixture()
         defer { fixture.remove() }
         let folder = fixture.root.appendingPathComponent("Assets", isDirectory: true)
@@ -59,26 +95,22 @@ struct TerminalLinkResolverTests {
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: unreadable.path)
         }
 
-        #expect(TerminalLinkResolver.resolveLocalFile(
-            path: "README.md",
-            paneCWD: fixture.root.path,
-            checkoutRoot: nil
-        ) == .failure("Hide cannot open this path because the selected checkout has no local root."))
-        #expect(TerminalLinkResolver.resolveLocalFile(
-            path: "Assets",
-            paneCWD: fixture.root.path,
-            checkoutRoot: fixture.root
-        ) == .failure("Assets is a folder. Terminal links currently open files in Workbench."))
-        #expect(TerminalLinkResolver.resolveLocalFile(
-            path: "secret.txt",
-            paneCWD: fixture.root.path,
-            checkoutRoot: fixture.root
-        ) == .failure("Hide found secret.txt, but it is not readable."))
-        #expect(TerminalLinkResolver.resolveLocalFile(
-            path: fixture.root.deletingLastPathComponent().appendingPathComponent("outside.txt").path,
-            paneCWD: fixture.root.path,
-            checkoutRoot: fixture.root
-        ) == .failure("Hide could not find \(fixture.root.deletingLastPathComponent().appendingPathComponent("outside.txt").path) inside the selected checkout."))
+        #expect(route("Assets", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
+            == .unresolved("Assets is a folder. Terminal links open files."))
+        #expect(route("secret.txt", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
+            == .unresolved("Hide found secret.txt, but it is not readable."))
+    }
+
+    @Test func anEmptyLinkIsRejectedRatherThanResolved() {
+        #expect(route("   ") == .unresolved("The terminal link is empty."))
+    }
+
+    private func route(
+        _ value: String,
+        paneCWD: String = "",
+        checkoutRoot: URL? = nil
+    ) -> TerminalLinkRoute {
+        TerminalLinkResolver.route(value, paneCWD: paneCWD, checkoutRoot: checkoutRoot)
     }
 }
 
