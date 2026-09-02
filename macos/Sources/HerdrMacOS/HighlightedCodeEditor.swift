@@ -37,11 +37,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.isEditable = isEditable
         textView.textContainerInset = NSSize(width: 10, height: 10)
-        // AppKit's own find bar, which the editor never enabled. Incremental
-        // searching is what highlights every match rather than only the one
-        // the caret is on, and it is what reports a term with no match.
-        textView.usesFindBar = true
-        textView.isIncrementalSearchingEnabled = true
+        Self.enableFindBar(on: textView)
         storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
 
         let scrollView = NSScrollView()
@@ -52,6 +48,15 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
         return scrollView
+    }
+
+    /// AppKit's own find bar, which the editor never enabled, so `⌘F` had
+    /// nothing to reveal over a file tab. Incremental searching is what
+    /// highlights every match rather than only the one the caret is on, and
+    /// what reports a term that matches nothing.
+    static func enableFindBar(on textView: NSTextView) {
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
     }
 
     static func makeTextStorage(

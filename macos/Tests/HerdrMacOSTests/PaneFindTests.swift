@@ -72,6 +72,18 @@ struct PaneFindTests {
         #expect(positions.map(\.col) == [0, 7, 0])
     }
 
+    @Test @MainActor func theFileEditorRevealsAFindBarThatHighlightsEveryMatch() {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        #expect(!textView.usesFindBar)
+
+        HighlightedCodeEditor.enableFindBar(on: textView)
+
+        #expect(textView.usesFindBar)
+        // Incremental searching is the part that highlights every match and
+        // reports a term with none; the bar alone would only jump the caret.
+        #expect(textView.isIncrementalSearchingEnabled)
+    }
+
     @Test @MainActor func theFindChordIsClaimedByTheShellAndNotLeftToTheTerminal() {
         #expect(ShellMenuCommand.findInPane.shortcut.key == "f")
         #expect(ShellMenuCommand.findInPane.shortcut.modifiers == [.command])
