@@ -284,6 +284,8 @@ mod tests {
             sort_rank: "10".to_owned(),
             activity: "0000000000001".to_owned(),
             ambient: None,
+            session_id: None,
+            spawned_from_pane_id: None,
         }
     }
 

@@ -1333,3 +1333,67 @@ fn chunk_ring_overflow_is_reported_to_a_lagging_cursor() {
 
     herdr_core_destroy(core);
 }
+
+/// AC11: the fork control is offered only where a fork could actually succeed.
+///
+/// The three rejections are the three ways a pane can look forkable and not be:
+/// no agent at all, an agent whose fork command this shell does not know, and a
+/// detected agent Herdr recorded no session id for.
+#[test]
+fn only_a_detected_agent_with_a_forkable_session_offers_a_fork() {
+    let core = create();
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "session_snapshot",
+            "payload": {
+                "agents": [
+                    {"pane_id":"claude-with-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000001"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"codex-with-session","workspace_label":"Fixture","agent":"codex","agent_status":"idle","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000002"},"spawned_from_pane_id":"claude-with-session","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000002","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"claude-no-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000003","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"session-by-path","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"path","value":"/tmp/session.jsonl"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000004","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"unknown-agent","workspace_label":"Fixture","agent":"gemini","agent_status":"idle","agent_session":{"source":"herdr:gemini","agent":"gemini","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000005"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000005","summary":"Idle","elapsed":"1m"}}
+                ]
+            }
+        }),
+    );
+
+    // A pane with no agent at all never reaches the worker.
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "fork_pane", "payload": {"pane_id": "plain-terminal"}}),
+    );
+    assert_eq!(
+        snapshot(core)["status"]["last_error"]["kind"],
+        "pane.fork_no_agent"
+    );
+
+    // An agent whose fork command is unknown, and one whose session Herdr
+    // recorded as a path, are both refused for the same reason: the command
+    // that would run takes a session id neither of them has.
+    for pane_id in ["unknown-agent", "session-by-path", "claude-no-session"] {
+        dispatch(
+            core,
+            json!({"schema_version": 2, "kind": "fork_pane", "payload": {"pane_id": pane_id}}),
+        );
+        assert_eq!(
+            snapshot(core)["status"]["last_error"]["kind"],
+            "pane.fork_unsupported_agent",
+            "{pane_id} should not be forkable"
+        );
+    }
+
+    // A forkable pane gets past the gate and stops only at the live connection
+    // this test does not have, which is what proves the gate let it through.
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "fork_pane", "payload": {"pane_id": "claude-with-session"}}),
+    );
+    assert_eq!(
+        snapshot(core)["status"]["last_error"]["kind"],
+        "pane.control_unavailable"
+    );
+
+    herdr_core_destroy(core);
+}

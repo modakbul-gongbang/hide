@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
+use crate::fork::{ForkRequest, fork_arguments};
 use crate::herdr_api::{ApiConnector, UnixSocketConnector, request_with_connector};
 #[cfg(test)]
 use crate::herdr_api::{HERDR_PROTOCOL_REVISION, request};
@@ -580,6 +581,86 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
         })
         .map(|_| ())
         .map_err(|error| format!("pane control worker could not be started: {error}"))
+}
+
+/// Runs one `herdr agent new` and reports what it produced.
+///
+/// This is a CLI wrapper rather than a socket request because agent lifecycle
+/// is CLI-owned: the command starts a process, waits for the agent to come up,
+/// and reports a startup failure as its own exit status. `HERDR_SOCKET_PATH` is
+/// set from the live context for the same reason every other spawned herdr
+/// process sets it - it is what keeps this build's commands on this build's
+/// server.
+pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<(), String> {
+    let herdr_bin = context.herdr_bin.clone().ok_or_else(|| {
+        "herdr binary was not found; install herdr or set its path in the app options".to_owned()
+    })?;
+    thread::Builder::new()
+        .name("herdr-core-agent-fork".to_owned())
+        .spawn(move || {
+            let started = Instant::now();
+            let parent_pane_id = request.parent_pane_id.clone();
+            let result = run_agent_fork(&herdr_bin, &context.socket_path, &request);
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_fork_result(&parent_pane_id, result, elapsed_ms),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("fork worker could not be started: {error}"))
+}
+
+fn run_agent_fork(
+    herdr_bin: &Path,
+    socket_path: &Path,
+    request: &ForkRequest,
+) -> Result<String, String> {
+    let output = Command::new(herdr_bin)
+        .args(fork_arguments(request))
+        .env("HERDR_SOCKET_PATH", socket_path)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("herdr agent new could not be run: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if stderr.is_empty() {
+            format!("herdr agent new exited with {}", output.status)
+        } else {
+            stderr
+        });
+    }
+    let response: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("herdr agent new returned unreadable output: {error}"))?;
+    forked_pane_id(&response)
+        .ok_or_else(|| "herdr agent new reported no created pane".to_owned())
+}
+
+/// The created pane's id, wherever the CLI puts it. The command answers with
+/// the pane it made, and that id is what proves the fork landed.
+fn forked_pane_id(response: &Value) -> Option<String> {
+    for pointer in [
+        "/result/pane/pane_id",
+        "/result/agent/pane_id",
+        "/pane/pane_id",
+        "/agent/pane_id",
+    ] {
+        if let Some(pane_id) = response
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|pane_id| !pane_id.trim().is_empty())
+        {
+            return Some(pane_id.to_owned());
+        }
+    }
+    None
 }
 
 pub fn spawn_remote_control(

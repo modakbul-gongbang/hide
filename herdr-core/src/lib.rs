@@ -4,6 +4,7 @@ pub mod domain;
 mod environment;
 mod ffi;
 mod files;
+mod fork;
 pub mod fixture;
 mod herdr_api;
 pub mod herdr_contract;

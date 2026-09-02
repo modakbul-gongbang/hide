@@ -1392,6 +1392,38 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
+    /// Closes one pane from its own header.
+    ///
+    /// This routes through the same consequence flow the close command uses, so
+    /// a pane whose agent is working states that before it goes rather than
+    /// being discarded by a control that happens to sit closer to the cursor.
+    func closePaneFromHeader(_ paneID: String) {
+        closeCurrentPane(target: isRemoteContext ? .remote(paneID: paneID) : .local(paneID: paneID))
+    }
+
+    /// Whether this pane's header offers a fork.
+    ///
+    /// The core decides whether the agent can be forked at all; what is added
+    /// here is that a remote pane has no fork route, so the control is withheld
+    /// rather than dispatching an event the core would block anyway.
+    func canForkPane(_ pane: CorePaneSnapshot) -> Bool {
+        !isRemoteContext && PaneHeaderControls.showsFork(pane.fork)
+    }
+
+    /// Forks one pane into a sibling carrying its conversation forward.
+    ///
+    /// The wait is real - the agent has to start before the pane appears - so
+    /// the notice says the fork was asked for rather than leaving the header
+    /// looking inert.
+    func forkPaneFromHeader(_ paneID: String) {
+        guard let pane = paneMetadata(for: paneID), canForkPane(pane) else {
+            interactionNotice = "This pane has no agent session that can be forked."
+            return
+        }
+        core.forkPane(paneID)
+        interactionNotice = "Forking \(paneID) into a sibling pane. The agent has to start before it appears."
+    }
+
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
         let paneID = closeTarget.paneID
         guard paneMetadata(for: paneID) != nil else {

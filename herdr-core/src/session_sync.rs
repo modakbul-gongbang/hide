@@ -892,6 +892,10 @@ struct WireAgent {
     #[serde(default)]
     agent_status: Option<String>,
     #[serde(default)]
+    agent_session: Option<crate::sidebar::SessionAgentSessionPayload>,
+    #[serde(default)]
+    spawned_from_pane_id: Option<String>,
+    #[serde(default)]
     state_change_seq: u64,
     #[serde(default)]
     tokens: BTreeMap<String, Value>,
@@ -939,6 +943,8 @@ impl ProjectionState {
                     cwd: agent.cwd.clone(),
                     agent: agent.agent.clone(),
                     agent_status: agent.agent_status.clone(),
+                    agent_session: agent.agent_session.clone(),
+                    spawned_from_pane_id: agent.spawned_from_pane_id.clone(),
                     state_change_seq: Some(agent.state_change_seq),
                     tokens: agent.tokens.clone(),
                     ambient: agent.ambient.clone(),
@@ -1196,6 +1202,7 @@ impl SessionReplica {
                                         .and_then(|source| source.tokens.get("activity"))
                                         .and_then(Value::as_str)
                                         .and_then(|activity| activity.parse().ok()),
+                                    fork: crate::runtime::pane_fork_snapshot(agent),
                                 }
                             })
                             .collect::<Vec<_>>();

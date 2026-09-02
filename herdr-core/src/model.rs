@@ -164,6 +164,12 @@ pub struct SidebarAgentSnapshot {
     pub sort_rank: String,
     pub activity: String,
     pub ambient: Option<AmbientSignal>,
+    /// The conversation id this agent is running, kept only when Herdr recorded
+    /// the session as an id. A session recorded as a path is dropped here,
+    /// because neither agent's fork command takes one.
+    pub session_id: Option<String>,
+    /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    pub spawned_from_pane_id: Option<String>,
 }
 
 /// The only three values this client ever reads out of a pane's optional
@@ -244,6 +250,18 @@ pub struct PaneSnapshot {
     pub state: String,
     pub summary: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
+    pub fork: PaneForkSnapshot,
+}
+
+/// What the pane header needs to know about forking this pane.
+///
+/// Both facts come from Herdr: whether the pane runs an agent whose own fork
+/// command can take its recorded session, and whether this pane is itself the
+/// result of such a fork.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PaneForkSnapshot {
+    pub available: bool,
+    pub forked_from_pane_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

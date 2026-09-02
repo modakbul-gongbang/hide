@@ -82,6 +82,15 @@ pub struct SessionAgentPayload {
     pub agent: Option<String>,
     #[serde(default)]
     pub agent_status: Option<String>,
+    /// Herdr's record of the conversation this agent is running, when it has
+    /// one. `kind` says whether `value` is an id or a path; only an id can be
+    /// handed to an agent's own fork command.
+    #[serde(default)]
+    pub agent_session: Option<SessionAgentSessionPayload>,
+    /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    /// Present only on an agent started through `agent.new` with a source pane.
+    #[serde(default)]
+    pub spawned_from_pane_id: Option<String>,
     #[serde(default)]
     pub state_change_seq: Option<u64>,
     #[serde(default)]
@@ -90,6 +99,12 @@ pub struct SessionAgentPayload {
     /// [`parse_ambient`] so a broken record can never partially survive.
     #[serde(default)]
     pub ambient: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct SessionAgentSessionPayload {
+    pub kind: String,
+    pub value: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -240,6 +255,14 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
             sort_rank,
             activity,
             ambient,
+            session_id: agent
+                .agent_session
+                .as_ref()
+                .filter(|session| session.kind == "id")
+                .map(|session| session.value.clone())
+                .filter(|value| !value.trim().is_empty()),
+            spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
+                .map(str::to_owned),
         },
     })
 }

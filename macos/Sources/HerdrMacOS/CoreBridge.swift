@@ -487,9 +487,11 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let state: String
     let summary: String?
     let activityAt: UInt64?
+    let fork: CorePaneFork
 
     enum CodingKeys: String, CodingKey {
         case id
+        case fork
         case herdrLabel = "herdr_label"
         case terminalTitle = "terminal_title"
         case workspaceLabel = "workspace_label"
@@ -507,7 +509,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         cwd: String,
         state: String,
         summary: String?,
-        activityAt: UInt64?
+        activityAt: UInt64?,
+        fork: CorePaneFork = CorePaneFork()
     ) {
         self.id = id
         self.herdrLabel = herdrLabel
@@ -517,6 +520,44 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.state = state
         self.summary = summary
         self.activityAt = activityAt
+        self.fork = fork
+    }
+
+    /// `fork` is the one section this shell can render without, so its absence
+    /// defaults rather than failing the whole snapshot decode. Every other
+    /// field describes the pane itself, and a pane missing one of those is a
+    /// snapshot worth rejecting.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        herdrLabel = try container.decodeIfPresent(String.self, forKey: .herdrLabel)
+        terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
+        workspaceLabel = try container.decodeIfPresent(String.self, forKey: .workspaceLabel)
+        cwd = try container.decode(String.self, forKey: .cwd)
+        state = try container.decode(String.self, forKey: .state)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
+        fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
+    }
+}
+
+/// What the core says about forking one pane.
+///
+/// `available` is the core's answer to whether this pane runs an agent whose
+/// own fork command could take its recorded session, so the header renders the
+/// control rather than deciding the question a second time.
+struct CorePaneFork: Decodable, Equatable {
+    let available: Bool
+    let forkedFromPaneID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case forkedFromPaneID = "forked_from_pane_id"
+    }
+
+    init(available: Bool = false, forkedFromPaneID: String? = nil) {
+        self.available = available
+        self.forkedFromPaneID = forkedFromPaneID
     }
 }
 
@@ -1069,6 +1110,7 @@ struct CoreDispatchRoutingPolicy {
         "create_pane",
         "toggle_zoom",
         "close_pane",
+        "fork_pane",
     ]
 
     static func blocks(kind: String, whenDeviceIsRemote isRemote: Bool) -> Bool {
@@ -1602,6 +1644,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "pane_id": paneID,
             "confirmed": confirmed,
         ])
+    }
+
+    func forkPane(_ paneID: String) {
+        dispatch(kind: "fork_pane", payload: ["pane_id": paneID])
     }
 
     func focusRemotePane(targetID: String, paneID: String) {

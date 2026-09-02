@@ -243,8 +243,11 @@ private struct TerminalPanel: View {
                             status: model.paneStatus(for: pane.id),
                             statusMessage: model.paneTransportMessage(for: pane.id),
                             isFocused: item.isFocused,
+                            showsFork: model.canForkPane(pane),
                             onFocus: { model.focusPane(pane.id) },
-                            onReconnect: { model.reconnectPane(pane.id) }
+                            onReconnect: { model.reconnectPane(pane.id) },
+                            onClose: { model.closePaneFromHeader(pane.id) },
+                            onFork: { model.forkPaneFromHeader(pane.id) }
                         ) {
                             TerminalHost(
                                 bridge: model.core,
@@ -735,8 +738,11 @@ struct PaneTerminalCell<Content: View>: View {
     let status: String
     let statusMessage: String?
     let isFocused: Bool
+    let showsFork: Bool
     let onFocus: () -> Void
     let onReconnect: () -> Void
+    let onClose: () -> Void
+    let onFork: () -> Void
     private let content: () -> Content
 
     init(
@@ -744,16 +750,22 @@ struct PaneTerminalCell<Content: View>: View {
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
+        showsFork: Bool = false,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
+        onClose: @escaping () -> Void = {},
+        onFork: @escaping () -> Void = {},
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
+        self.showsFork = showsFork
         self.onFocus = onFocus
         self.onReconnect = onReconnect
+        self.onClose = onClose
+        self.onFork = onFork
         self.content = content
     }
 
@@ -769,10 +781,48 @@ struct PaneTerminalCell<Content: View>: View {
             status: status,
             statusMessage: statusMessage,
             isFocused: isFocused,
+            forkedFrom: PaneHeaderControls.forkMark(pane.fork),
+            showsFork: showsFork,
             onFocus: onFocus,
             onReconnect: onReconnect,
+            onClose: onClose,
+            onFork: onFork,
             content: content
         )
+    }
+}
+
+/// One icon control in a pane header.
+///
+/// The header has a single 28pt row to spend, so these are icon-only and carry
+/// their meaning in a tooltip and an accessibility label rather than in text.
+struct PaneHeaderButton: View {
+    let systemImage: String
+    let help: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .hideFont(size: 9, weight: .semibold)
+                .foregroundStyle(isHovering ? HideTheme.primary : HideTheme.secondary)
+                .frame(
+                    width: HideTheme.Layout.panelCollapseControlSize,
+                    height: HideTheme.Layout.panelCollapseControlSize
+                )
+                .background(
+                    RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
+                        .fill(isHovering ? HideTheme.elevated : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 
@@ -809,8 +859,13 @@ struct HideTerminalPaneCard<Content: View>: View {
     let status: String
     let statusMessage: String?
     let isFocused: Bool
+    /// The pane this one was forked from, when Herdr's lineage says so.
+    let forkedFrom: String?
+    let showsFork: Bool
     let onFocus: () -> Void
     let onReconnect: () -> Void
+    let onClose: () -> Void
+    let onFork: () -> Void
     private let content: () -> Content
 
     init(
@@ -819,8 +874,12 @@ struct HideTerminalPaneCard<Content: View>: View {
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
+        forkedFrom: String? = nil,
+        showsFork: Bool = false,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
+        onClose: @escaping () -> Void = {},
+        onFork: @escaping () -> Void = {},
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.paneID = paneID
@@ -828,23 +887,56 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
+        self.forkedFrom = forkedFrom
+        self.showsFork = showsFork
         self.onFocus = onFocus
         self.onReconnect = onReconnect
+        self.onClose = onClose
+        self.onFork = onFork
         self.content = content
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Button(action: onFocus) {
-                Text(title)
-                    .hideFont(size: 10, weight: .semibold)
-                    .foregroundStyle(HideTheme.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+            HStack(spacing: HideTheme.spacingXS) {
+                Button(action: onFocus) {
+                    Text(title)
+                        .hideFont(size: 10, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+
+                if let forkedFrom {
+                    // The mark is the state; the parent's id is on the tooltip
+                    // rather than in the row, which has one line to spend.
+                    Image(systemName: "arrow.triangle.branch")
+                        .hideFont(size: 9, weight: .semibold)
+                        .foregroundStyle(HideTheme.secondary)
+                        .help("Forked from pane \(forkedFrom)")
+                        .accessibilityLabel("Forked from pane \(forkedFrom)")
+                }
+
+                if showsFork {
+                    PaneHeaderButton(
+                        systemImage: "arrow.triangle.branch",
+                        help: "Fork this agent into a sibling pane",
+                        accessibilityLabel: "Fork pane \(paneID)",
+                        action: onFork
+                    )
+                }
+
+                PaneHeaderButton(
+                    systemImage: "xmark",
+                    help: "Close this pane",
+                    accessibilityLabel: "Close pane \(paneID)",
+                    action: onClose
+                )
             }
-            .buttonStyle(.plain)
             .padding(.horizontal, HideTheme.spacingSM)
             .frame(
                 maxWidth: .infinity,
@@ -852,7 +944,6 @@ struct HideTerminalPaneCard<Content: View>: View {
                 maxHeight: HideTheme.Layout.paneHeaderHeight,
                 alignment: .leading
             )
-            .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
 
             Rectangle()
                 .fill(HideTheme.divider)

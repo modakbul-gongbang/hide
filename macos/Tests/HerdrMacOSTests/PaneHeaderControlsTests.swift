@@ -1,0 +1,43 @@
+import Foundation
+import Testing
+@testable import HerdrMacOS
+
+@Suite("Pane header controls")
+struct PaneHeaderControlsTests {
+    @Test func forkIsOfferedOnlyWhereTheCoreSaysAForkCouldSucceed() {
+        // The core has already weighed the agent kind and its recorded session;
+        // the header must not second-guess that answer, only render it.
+        #expect(PaneHeaderControls.showsFork(CorePaneFork(available: true)))
+        #expect(!PaneHeaderControls.showsFork(CorePaneFork(available: false)))
+    }
+
+    @Test func aPaneHerdrRecordsAsSpawnedFromAnotherIsMarkedAsAFork() {
+        #expect(PaneHeaderControls.forkMark(CorePaneFork(forkedFromPaneID: "w1:p2")) == "w1:p2")
+        #expect(PaneHeaderControls.forkMark(CorePaneFork()) == nil)
+        // A blank lineage value is no lineage: a mark with nothing to name
+        // would claim a parent that was never recorded.
+        #expect(PaneHeaderControls.forkMark(CorePaneFork(forkedFromPaneID: "  ")) == nil)
+    }
+
+    @Test func closingAWorkingPaneStatesTheConsequenceFirst() {
+        // The same states the core refuses to close unconfirmed. If these two
+        // lists drift, the header offers a close the core then rejects.
+        for state in ["working", "blocked", "question", "approval", "error", "unseen_completion"] {
+            #expect(PaneHeaderControls.closeRequiresConfirmation(paneState: state))
+        }
+        #expect(!PaneHeaderControls.closeRequiresConfirmation(paneState: "idle"))
+        #expect(!PaneHeaderControls.closeRequiresConfirmation(paneState: "attached"))
+    }
+
+    @Test func aPaneWithNoForkFactsDecodesAsNeitherForkableNorAFork() throws {
+        // Every pane the core ships carries the section, but a pane snapshot
+        // written before it must not decode into a header offering a fork.
+        let json = """
+        {"id":"w1:p1","cwd":"/checkout","state":"attached","summary":null,
+         "activity_at_unix_ms":null,"fork":{"available":false,"forked_from_pane_id":null}}
+        """
+        let pane = try JSONDecoder().decode(CorePaneSnapshot.self, from: Data(json.utf8))
+        #expect(!PaneHeaderControls.showsFork(pane.fork))
+        #expect(PaneHeaderControls.forkMark(pane.fork) == nil)
+    }
+}

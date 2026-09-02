@@ -16,13 +16,15 @@ use crate::live::{
 use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
     FileTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, clamp_pane_text_scale,
-    PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
+    PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
     SCHEMA_VERSION, Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
     UiStateSnapshot,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
+use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
+use crate::model::SidebarAgentSnapshot;
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -175,6 +177,11 @@ struct ConfirmedTabPayload {
 struct ConfirmedPanePayload {
     pane_id: String,
     confirmed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PaneTargetPayload {
+    pane_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -472,6 +479,7 @@ enum ValidatedEvent {
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
+    ForkPane(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
@@ -570,6 +578,11 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    /// Panes whose fork has been started and not yet answered. `herdr agent
+    /// new` blocks until the agent has started, so without this a second
+    /// activation during that wait would bill a second session.
+    forks_in_flight: HashSet<String>,
+    fork_sequence: u64,
     delta: DeltaState,
 }
 
@@ -677,6 +690,8 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            forks_in_flight: HashSet::new(),
+            fork_sequence: 0,
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -1635,6 +1650,7 @@ impl Runtime {
                             .unwrap_or_else(|| "unknown".to_owned()),
                         summary: agent.map(|agent| agent.summary.clone()),
                         activity_at_unix_ms: agent.and_then(|agent| agent.activity.parse().ok()),
+                        fork: pane_fork_snapshot(agent),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2641,6 +2657,39 @@ impl Runtime {
     /// Applies a background pane-control result to the owner-thread snapshot.
     /// The child process is never waited on while the Swift caller holds the
     /// runtime lock; completion arrives through the normal change callback.
+    /// Records the outcome of a fork worker.
+    ///
+    /// `herdr agent new` creates the pane and starts the agent in one atomic
+    /// call, so a failure leaves nothing behind and there is no half-made pane
+    /// to clean up. The reason it failed is reported rather than swallowed.
+    pub fn ingest_fork_result(
+        &mut self,
+        parent_pane_id: &str,
+        result: Result<String, String>,
+        elapsed_ms: u128,
+    ) -> bool {
+        self.forks_in_flight.remove(parent_pane_id);
+        match result {
+            Ok(forked_pane_id) => {
+                self.push_diagnostic(
+                    "pane.fork.created",
+                    format!(
+                        "Forked pane {parent_pane_id} into {forked_pane_id} in {elapsed_ms}ms"
+                    ),
+                );
+                true
+            }
+            Err(message) => {
+                self.set_error(
+                    "pane.fork_failed",
+                    format!("Pane {parent_pane_id} could not be forked: {message}"),
+                    true,
+                );
+                true
+            }
+        }
+    }
+
     pub fn ingest_pane_control_result(
         &mut self,
         action: PaneControlAction,
@@ -4105,6 +4154,89 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::ForkPane(payload) => {
+                let pane_id = payload.pane_id;
+                let Some(agent) = self
+                    .snapshot
+                    .navigator
+                    .agents
+                    .iter()
+                    .find(|agent| agent.pane_id == pane_id)
+                else {
+                    self.set_error(
+                        "pane.fork_no_agent",
+                        format!("Pane {pane_id} is not running an agent that can be forked"),
+                        false,
+                    );
+                    return true;
+                };
+                let (Some(agent_kind), Some(session_id)) = (
+                    ForkableAgent::parse(&agent.agent_kind),
+                    agent.session_id.clone(),
+                ) else {
+                    self.set_error(
+                        "pane.fork_unsupported_agent",
+                        format!(
+                            "Pane {pane_id} runs {} with no forkable session id",
+                            agent.agent_kind
+                        ),
+                        false,
+                    );
+                    return true;
+                };
+                // A fork blocks until the agent has started, which takes long
+                // enough for a second click to land. Refusing the second one by
+                // name is what keeps one activation from becoming two sessions.
+                if !self.forks_in_flight.insert(pane_id.clone()) {
+                    self.set_error(
+                        "pane.fork_already_running",
+                        format!("Pane {pane_id} is already being forked"),
+                        false,
+                    );
+                    return true;
+                }
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.forks_in_flight.remove(&pane_id);
+                    self.set_error(
+                        "pane.control_unavailable",
+                        "Forking a pane requires a live Herdr connection",
+                        true,
+                    );
+                    return true;
+                };
+                let cwd = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .flat_map(|tab| tab.panes.iter())
+                    .find(|pane| pane.id == pane_id)
+                    .map(|pane| pane.cwd.clone());
+                self.fork_sequence += 1;
+                // The name is already unique and already sanitized, so it is
+                // also the retry identity rather than a second thing to keep
+                // unique.
+                let name = fork_name(
+                    &pane_id,
+                    &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
+                );
+                let request = ForkRequest {
+                    parent_pane_id: pane_id.clone(),
+                    agent: agent_kind,
+                    session_id,
+                    cwd,
+                    idempotency_key: format!("hide-{name}"),
+                    name,
+                };
+                self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
+                if let Err(message) = live::spawn_agent_fork(context, request) {
+                    self.forks_in_flight.remove(&pane_id);
+                    self.set_error("pane.fork_worker_failed", message, true);
+                }
+                true
+            }
             ValidatedEvent::RemoteControl(payload) => self.request_remote_control(payload),
             ValidatedEvent::RemoteFileList(payload) => self.request_remote_file_list(payload),
             ValidatedEvent::FileOpen(payload) => {
@@ -5030,6 +5162,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
+        "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
@@ -5055,6 +5188,20 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
         }),
+    }
+}
+
+/// Projects the two fork facts the pane header renders from.
+///
+/// A pane with no agent is neither forkable nor a fork, which is why the
+/// default carries both answers rather than the snapshot holding an optional.
+pub fn pane_fork_snapshot(agent: Option<&SidebarAgentSnapshot>) -> PaneForkSnapshot {
+    let Some(agent) = agent else {
+        return PaneForkSnapshot::default();
+    };
+    PaneForkSnapshot {
+        available: is_forkable(Some(agent.agent_kind.as_str()), agent.session_id.as_deref()),
+        forked_from_pane_id: agent.spawned_from_pane_id.clone(),
     }
 }
 
@@ -5904,6 +6051,7 @@ mod tests {
             state: "attached".to_owned(),
             summary: None,
             activity_at_unix_ms: None,
+            fork: PaneForkSnapshot::default(),
         }
     }
 
