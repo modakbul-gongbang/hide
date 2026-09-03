@@ -363,7 +363,7 @@ fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivity, bool) {
     (demand, activity, agent.unread)
 }
 
-fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
+pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
     let (demand, activity, unread) = axes_of(agent);
     agent_group(demand, activity, unread, agent.blocked)
 }

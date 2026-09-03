@@ -165,21 +165,24 @@ struct CorePetSnapshot: Decodable, Equatable {
     }
 }
 
+/// The four groups the sidebar draws, counted by the core. `needsYou` is the
+/// pet's act-now number and `done` is what finished unseen, so a badge can
+/// never disagree with the section it stands for.
 struct CorePetBadges: Decodable, Equatable {
-    let working: Int
+    let needsYou: Int
     let done: Int
-    let attention: Int
-    let error: Int
+    let working: Int
+    let seen: Int
     let disconnected: Int
     let subagentsActive: UInt32
     let backgroundRunning: UInt32
     let backgroundFailed: UInt32
 
     enum CodingKeys: String, CodingKey {
-        case working
+        case needsYou = "needs_you"
         case done
-        case attention
-        case error
+        case working
+        case seen
         case disconnected
         case subagentsActive = "subagents_active"
         case backgroundRunning = "background_running"
@@ -187,10 +190,10 @@ struct CorePetBadges: Decodable, Equatable {
     }
 
     static let none = CorePetBadges(
-        working: 0,
+        needsYou: 0,
         done: 0,
-        attention: 0,
-        error: 0,
+        working: 0,
+        seen: 0,
         disconnected: 0,
         subagentsActive: 0,
         backgroundRunning: 0,

@@ -534,10 +534,10 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             "visible": mainWindow.isVisible,
         ]
         let badgeRecord: [String: Any] = [
-            "working": pet?.badges.working ?? 0,
+            "needs_you": pet?.badges.needsYou ?? 0,
             "done": pet?.badges.done ?? 0,
-            "attention": pet?.badges.attention ?? 0,
-            "error": pet?.badges.error ?? 0,
+            "working": pet?.badges.working ?? 0,
+            "seen": pet?.badges.seen ?? 0,
             "disconnected": pet?.badges.disconnected ?? 0,
             "subagents_active": pet?.badges.subagentsActive ?? 0,
             "background_running": pet?.badges.backgroundRunning ?? 0,

@@ -409,11 +409,31 @@ private struct PetDashboardView: View {
 
             HStack(spacing: 8) {
                 PetCountTile(label: "TOTAL", value: projection.counts.total, color: HideTheme.primary)
-                PetCountTile(label: "WORKING", value: projection.counts.working, color: HideTheme.accent)
-                PetCountTile(label: "DONE", value: projection.counts.done, color: HideTheme.success)
-                PetCountTile(label: "IDLE", value: projection.counts.idle, color: HideTheme.secondary)
-                PetCountTile(label: "ERROR", value: projection.counts.error, color: HideTheme.danger)
-                PetCountTile(label: "DISCONNECTED", value: projection.counts.disconnected, color: HideTheme.warning)
+                PetCountTile(
+                    label: AgentGroup.needsYou.title.uppercased(),
+                    value: projection.counts.needsYou,
+                    color: HideTheme.warning
+                )
+                PetCountTile(
+                    label: AgentGroup.done.title.uppercased(),
+                    value: projection.counts.done,
+                    color: HideTheme.success
+                )
+                PetCountTile(
+                    label: AgentGroup.working.title.uppercased(),
+                    value: projection.counts.working,
+                    color: HideTheme.accent
+                )
+                PetCountTile(
+                    label: AgentGroup.seen.title.uppercased(),
+                    value: projection.counts.seen,
+                    color: HideTheme.secondary
+                )
+                PetCountTile(
+                    label: "DISCONNECTED",
+                    value: projection.counts.disconnected,
+                    color: HideTheme.danger
+                )
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 14)

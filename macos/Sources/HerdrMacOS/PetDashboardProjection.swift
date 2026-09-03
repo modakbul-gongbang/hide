@@ -1,11 +1,15 @@
 import Foundation
 
+/// The dashboard's tiles: the sidebar's four groups, plus the rows whose
+/// server stopped answering. It counts the same groups the sidebar sections
+/// and the pet badges do, so no two surfaces can report a different number for
+/// the same agents.
 struct PetDashboardCounts: Equatable {
     let total: Int
-    let working: Int
+    let needsYou: Int
     let done: Int
-    let idle: Int
-    let error: Int
+    let working: Int
+    let seen: Int
     let disconnected: Int
 }
 
@@ -13,9 +17,10 @@ struct PetDashboardRow: Identifiable, Equatable {
     let id: String
     let paneID: String
     let agentKind: String
-    /// The core's group for this row: `needs_you`, `done`, `working`, `seen`,
-    /// or `disconnected` when the server stopped answering.
-    let group: String
+    /// The core's group for this row. A row whose server stopped answering
+    /// keeps the group it was last seen in; `connection` is what says the
+    /// server went away, so one field never has to mean two things.
+    let group: AgentGroup
     /// What the agent needs from the operator, for the row's mark and color.
     let demand: String
     /// Whether the agent is running.
@@ -62,7 +67,7 @@ enum PetDashboardProjector {
                 id: agent.paneID,
                 paneID: agent.paneID,
                 agentKind: agent.agentKind,
-                group: agentConnected ? agent.group : "disconnected",
+                group: AgentGroup(agent: agent),
                 demand: agentConnected ? agent.demand : "none",
                 activity: agentConnected ? agent.activity : "unknown",
                 emphasized: agentConnected && agent.emphasized,
@@ -107,13 +112,17 @@ enum PetDashboardProjector {
         }
 
         let rows = groups.flatMap { $0.agents }
+        // A disconnected row is counted as disconnected and nowhere else: the
+        // server that would have said what it is waiting for has stopped
+        // answering, so a count of what needs the operator would be a guess.
+        let live = rows.filter { $0.connection == "connected" }
         let counts = PetDashboardCounts(
             total: rows.count,
-            working: rows.count { $0.group == "working" },
-            done: rows.count { $0.group == "done" },
-            idle: rows.count { $0.group == "seen" },
-            error: rows.count { $0.group == "needs_you" && $0.demand == "error" },
-            disconnected: rows.count { $0.group == "disconnected" }
+            needsYou: live.count { $0.group == .needsYou },
+            done: live.count { $0.group == .done },
+            working: live.count { $0.group == .working },
+            seen: live.count { $0.group == .seen },
+            disconnected: rows.count { $0.connection != "connected" }
         )
         return PetDashboardProjection(
             counts: counts,

@@ -85,10 +85,15 @@ pub struct PetSnapshot {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PetBadgesSnapshot {
-    pub working: usize,
+    /// The four groups the sidebar draws, counted once. `needs_you` is the
+    /// pet's "act now" number and `done` is what finished unseen, so the badge
+    /// row and the sidebar cannot disagree.
+    pub needs_you: usize,
     pub done: usize,
-    pub attention: usize,
-    pub error: usize,
+    pub working: usize,
+    pub seen: usize,
+    /// Retained agents on a server that stopped answering. They are counted
+    /// separately because a stale count of what is waiting would be a lie.
     pub disconnected: usize,
     pub subagents_active: u32,
     pub background_running: u32,

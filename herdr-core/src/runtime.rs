@@ -3089,7 +3089,7 @@ impl Runtime {
         let connected = self.snapshot.status.herdr.state == "connected";
         let agents = &self.snapshot.navigator.agents;
         let summary = pet::summarize(agents, connected);
-        if summary.error + summary.attention + summary.working > 0 {
+        if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
@@ -3110,10 +3110,10 @@ impl Runtime {
             sleep_phase: pet::sleep_phase_for_idle_ms(idle_ms).as_str().to_owned(),
             roam_allowed: connected && pet::is_roam_allowed(summary, idle_ms, self.pet_dragging),
             badges: PetBadgesSnapshot {
-                working: summary.working,
+                needs_you: summary.needs_you,
                 done: summary.done,
-                attention: summary.attention,
-                error: summary.error,
+                working: summary.working,
+                seen: summary.seen,
                 disconnected: summary.disconnected,
                 subagents_active: ambient.subagents_active,
                 background_running: ambient.background_running,

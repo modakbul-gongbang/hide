@@ -25,12 +25,14 @@ struct PetDashboardProjectionTests {
             connectionMessage: nil
         )
 
+        // R6, AC9: the tiles count the sidebar's four groups, so Needs You
+        // holds the error alongside the question and the approval.
         #expect(projection.counts == PetDashboardCounts(
             total: 6,
-            working: 1,
+            needsYou: 3,
             done: 1,
-            idle: 1,
-            error: 1,
+            working: 1,
+            seen: 1,
             disconnected: 0
         ))
         #expect(projection.groups.map(\.id) == ["w1", "unassigned-agents"])
@@ -38,9 +40,9 @@ struct PetDashboardProjectionTests {
         #expect(projection.groups[1].agents.map(\.paneID) == ["p5", "p6"])
         #expect(projection.groups[0].agents[0].ambient == ambient)
         #expect(projection.groups[0].agents[1].ambient == nil)
-        #expect(projection.groups[0].agents[1].group == "done")
+        #expect(projection.groups[0].agents[1].group == .done)
         #expect(projection.groups[0].agents[1].statusLabel == "Done")
-        #expect(projection.groups[1].agents[0].group == "needs_you")
+        #expect(projection.groups[1].agents[0].group == .needsYou)
         #expect(projection.groups[1].agents[1].demand == "approval")
 
         let rowFields = Set(Mirror(reflecting: projection.groups[0].agents[0]).children.compactMap(\.label))
@@ -70,15 +72,15 @@ struct PetDashboardProjectionTests {
             connectionMessage: "Herdr server is not answering"
         )
 
+        // AC9: a server that stopped answering counts nothing as waiting.
         #expect(projection.counts == PetDashboardCounts(
             total: 2,
-            working: 0,
+            needsYou: 0,
             done: 0,
-            idle: 0,
-            error: 0,
+            working: 0,
+            seen: 0,
             disconnected: 2
         ))
-        #expect(projection.groups[0].agents.allSatisfy { $0.group == "disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.statusLabel == "Disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.connection == "disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.ambient == nil })
@@ -107,13 +109,47 @@ struct PetDashboardProjectionTests {
         )
         #expect(empty.counts == PetDashboardCounts(
             total: 0,
-            working: 0,
+            needsYou: 0,
             done: 0,
-            idle: 0,
-            error: 0,
+            working: 0,
+            seen: 0,
             disconnected: 0
         ))
         #expect(empty.groups.isEmpty)
+    }
+
+    /// R6, SC5. The dashboard tiles and the sidebar sections read the same
+    /// group off the same rows, so a count on one surface cannot disagree with
+    /// the section on the other. This is the class of bug the dashboard's own
+    /// buckets used to cause.
+    @Test func dashboardTilesMatchTheSidebarSections() {
+        let agents = [
+            agent("p1", group: "working"),
+            agent("p2", group: "done"),
+            agent("p3", group: "done"),
+            agent("p4", group: "seen"),
+            agent("p5", group: "needs_you", demand: "error"),
+            agent("p6", group: "needs_you", demand: "question"),
+        ]
+        let projection = PetDashboardProjector.project(
+            agents: agents,
+            workspaces: [
+                workspace(
+                    "w1",
+                    label: "Workspace A",
+                    paneIDs: ["p1", "p2", "p3", "p4", "p5", "p6"]
+                )
+            ],
+            connection: "connected",
+            connectionMessage: nil
+        )
+        let sidebar = { (group: AgentGroup) in SidebarGrouping.agents(agents, in: group).count }
+
+        #expect(projection.counts.needsYou == sidebar(.needsYou))
+        #expect(projection.counts.done == sidebar(.done))
+        #expect(projection.counts.working == sidebar(.working))
+        #expect(projection.counts.seen == sidebar(.seen))
+        #expect(projection.counts.total == agents.count)
     }
 
     private func agent(

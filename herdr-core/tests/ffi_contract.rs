@@ -334,8 +334,11 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
         "two working panes juggle"
     );
     assert_eq!(working["pet"]["badges"]["working"], 2);
-    assert_eq!(working["pet"]["badges"]["attention"], 0);
-    assert_eq!(working["pet"]["badges"]["error"], 0);
+    assert_eq!(working["pet"]["badges"]["needs_you"], 0);
+    assert_eq!(
+        working["pet"]["badges"]["done"], 1,
+        "the idle pane nobody has focused is unread, so it is Done"
+    );
     assert_eq!(working["pet"]["connection"], "connected");
 
     // A question outranks the working panes and joins the queue. Herdr's own
@@ -359,7 +362,7 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     let asked = snapshot(core);
     assert_eq!(asked["pet"]["pose"], "notification");
     assert_eq!(
-        asked["pet"]["badges"]["attention"], 2,
+        asked["pet"]["badges"]["needs_you"], 2,
         "Herdr dropping a question to its read token does not read it for Hide"
     );
     assert_eq!(
@@ -538,7 +541,7 @@ fn official_agent_statuses_survive_without_optional_plugin_tokens() {
     assert_eq!(axes_for("blocked"), ("approval", "unknown", "needs_you"));
     assert_eq!(axes_for("done"), ("none", "stopped", "done"));
     assert_eq!(projected["pet"]["badges"]["working"], 1);
-    assert_eq!(projected["pet"]["badges"]["attention"], 1);
+    assert_eq!(projected["pet"]["badges"]["needs_you"], 1);
     assert_eq!(projected["pet"]["badges"]["done"], 1);
     assert!(
         projected["status"]["diagnostics"]
