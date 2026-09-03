@@ -89,11 +89,37 @@ private final class WorkspaceOutlineNode: NSObject {
 /// which AppKit never reports as an exit. The result was a band of rows all
 /// drawing hover at once, which reads as a multiple selection because the
 /// selected and hovered fills differ only in alpha. The outline view now owns
-/// the hovered row and recomputes it from the live pointer position, so the
-/// state cannot outlive the row it described.
+/// the hovered row: a crossing is reported to it rather than acted on, and it
+/// re-reads the pointer whenever rows move under it, so no fill outlives the
+/// item it described.
 private final class WorkspaceOutlineRowView: NSTableRowView {
     var level = 0 { didSet { needsDisplay = true } }
     var isHovered = false { didSet { needsDisplay = true } }
+    private var trackingAreaReference: NSTrackingArea?
+
+    /// A row still carries the tracking area, because enter and exit are the
+    /// only pointer events available here: `mouseMoved` needs the window to
+    /// accept moved events, which no owner of this window turns on. What
+    /// changed is that the row reports the crossing rather than acting on it.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
+        let tracking = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(tracking)
+        trackingAreaReference = tracking
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        (superview as? WorkspaceNSOutlineView)?.hoverEntered(self)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        (superview as? WorkspaceNSOutlineView)?.hoverExited(self)
+    }
 
     override func prepareForReuse() {
         super.prepareForReuse()
@@ -126,37 +152,28 @@ final class WorkspaceNSOutlineView: NSOutlineView {
     var onActivate: (() -> Void)?
 
     private var hoveredRow = -1
-    private var trackingAreaReference: NSTrackingArea?
 
-    /// `.inVisibleRect` has AppKit rebuild this area as the view scrolls, and
-    /// that rebuild is the one signal a wheel scroll reliably produces, so the
-    /// hovered row is recomputed here as well as on pointer movement.
+    /// `.inVisibleRect` has AppKit rebuild tracking areas as the view scrolls,
+    /// and that rebuild is the one signal a wheel scroll reliably produces, so
+    /// the hovered row is recomputed from the pointer here.
     override func updateTrackingAreas() {
-        if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
-        let tracking = NSTrackingArea(
-            rect: .zero,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(tracking)
-        trackingAreaReference = tracking
         super.updateTrackingAreas()
         syncHoveredRow()
     }
 
-    override func mouseEntered(with event: NSEvent) { syncHoveredRow() }
-    override func mouseMoved(with event: NSEvent) { syncHoveredRow() }
-    override func mouseExited(with event: NSEvent) { applyHoveredRow(-1) }
+    func hoverEntered(_ rowView: NSTableRowView) {
+        applyHoveredRow(rowIndex(of: rowView))
+    }
 
-    override func scrollWheel(with event: NSEvent) {
-        super.scrollWheel(with: event)
-        syncHoveredRow()
+    func hoverExited(_ rowView: NSTableRowView) {
+        guard rowIndex(of: rowView) == hoveredRow else { return }
+        applyHoveredRow(-1)
     }
 
     /// Reads the row under the pointer now, rather than trusting a value an
-    /// earlier event left behind. Called for pointer movement and for the two
-    /// ways a row can change without the pointer moving: a scroll, and a row
-    /// view arriving on screen.
+    /// earlier crossing left behind. This covers the two ways the row under
+    /// the pointer changes without a crossing: a scroll, and a row view
+    /// arriving on screen.
     func syncHoveredRow() {
         guard let window, window.isKeyWindow else {
             applyHoveredRow(-1)
@@ -164,6 +181,16 @@ final class WorkspaceNSOutlineView: NSOutlineView {
         }
         let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
         applyHoveredRow(visibleRect.contains(point) ? row(at: point) : -1)
+    }
+
+    private func rowIndex(of target: NSTableRowView) -> Int {
+        let visible = rows(in: visibleRect)
+        guard visible.length > 0 else { return -1 }
+        for candidate in visible.location..<(visible.location + visible.length)
+        where rowView(atRow: candidate, makeIfNecessary: false) === target {
+            return candidate
+        }
+        return -1
     }
 
     /// Sweeps every visible row rather than only the pair that changed, so a
