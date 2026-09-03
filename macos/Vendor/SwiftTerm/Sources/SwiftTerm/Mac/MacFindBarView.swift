@@ -34,9 +34,14 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
     private let previousButton = NSButton()
     private let nextButton = NSButton()
     private let closeButton = NSButton()
-    private let caseSensitiveButton = NSButton(checkboxWithTitle: "Aa", target: nil, action: nil)
-    private let regexButton = NSButton(checkboxWithTitle: ".*", target: nil, action: nil)
-    private let wholeWordButton = NSButton(checkboxWithTitle: "Word", target: nil, action: nil)
+    /// The three search options live behind one pull-down rather than as three
+    /// labelled checkboxes in the row. Spelled out they were wider than the
+    /// search field itself, which is what made this bar span the pane instead
+    /// of floating over a corner of it.
+    private let optionsButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let caseSensitiveItem = NSMenuItem(title: "Case Sensitive", action: nil, keyEquivalent: "")
+    private let regexItem = NSMenuItem(title: "Regular Expression", action: nil, keyEquivalent: "")
+    private let wholeWordItem = NSMenuItem(title: "Whole Word", action: nil, keyEquivalent: "")
 
     public var searchText: String {
         get { searchField.stringValue }
@@ -53,15 +58,14 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
     /// into its own design system. SwiftTerm has no access to that system, so
     /// it exposes the parts rather than guessing at colors.
     public var styleTargets: (field: NSSearchField, summary: NSTextField, buttons: [NSButton]) {
-        (searchField, summaryLabel, [previousButton, nextButton, closeButton,
-                                     caseSensitiveButton, regexButton, wholeWordButton])
+        (searchField, summaryLabel, [previousButton, nextButton, closeButton, optionsButton])
     }
 
     public var options: SearchOptions {
         SearchOptions(
-            caseSensitive: caseSensitiveButton.state == .on,
-            regex: regexButton.state == .on,
-            wholeWord: wholeWordButton.state == .on
+            caseSensitive: caseSensitiveItem.state == .on,
+            regex: regexItem.state == .on,
+            wholeWord: wholeWordItem.state == .on
         )
     }
 
@@ -84,7 +88,7 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
         material = .popover
         blendingMode = .withinWindow
         state = .active
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 6
         layer?.masksToBounds = true
 
         searchField.placeholderString = "Find"
@@ -93,6 +97,7 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
         searchField.sendsSearchStringImmediately = true
         searchField.target = self
         searchField.action = #selector(searchFieldAction)
+        searchField.controlSize = .small
         searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -108,9 +113,7 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
         closeButton.target = self
         closeButton.action = #selector(closeTapped)
 
-        configureOptionButton(caseSensitiveButton, tooltip: "Case Sensitive")
-        configureOptionButton(regexButton, tooltip: "Regex")
-        configureOptionButton(wholeWordButton, tooltip: "Whole Word")
+        configureOptionsButton()
 
         summaryLabel.font = NSFont.systemFont(ofSize: 11)
         summaryLabel.textColor = .secondaryLabelColor
@@ -122,24 +125,24 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
             summaryLabel,
             previousButton,
             nextButton,
-            caseSensitiveButton,
-            regexButton,
-            wholeWordButton,
+            optionsButton,
             closeButton
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 200)
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            // A definite width, not a floor: the bar is a fixed compact field
+            // that floats over the pane, so it must not grow with its content.
+            searchField.widthAnchor.constraint(equalToConstant: 150)
         ])
     }
 
@@ -152,13 +155,32 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
         button.toolTip = tooltip
     }
 
-    private func configureOptionButton(_ button: NSButton, tooltip: String) {
-        button.setButtonType(.switch)
-        button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: 11)
-        button.toolTip = tooltip
-        button.target = self
-        button.action = #selector(optionChanged)
+    private func configureOptionsButton() {
+        let menu = NSMenu()
+        // A pull-down spends its first item on the button face, never showing
+        // it in the list.
+        let face = NSMenuItem()
+        face.image = NSImage(
+            systemSymbolName: "ellipsis.circle",
+            accessibilityDescription: "Search options"
+        )
+        menu.addItem(face)
+        for item in [caseSensitiveItem, regexItem, wholeWordItem] {
+            item.target = self
+            item.action = #selector(optionToggled(_:))
+            menu.addItem(item)
+        }
+        optionsButton.menu = menu
+        optionsButton.translatesAutoresizingMaskIntoConstraints = false
+        optionsButton.bezelStyle = .texturedRounded
+        optionsButton.controlSize = .small
+        optionsButton.imagePosition = .imageOnly
+        optionsButton.toolTip = "Search options"
+    }
+
+    @objc private func optionToggled(_ sender: NSMenuItem) {
+        sender.state = sender.state == .on ? .off : .on
+        onOptionsChanged?(options)
     }
 
     @objc private func searchFieldAction() {
@@ -179,10 +201,6 @@ public final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegat
 
     @objc private func closeTapped() {
         onClose?()
-    }
-
-    @objc private func optionChanged() {
-        onOptionsChanged?(options)
     }
 
     public func controlTextDidChange(_ obj: Notification) {

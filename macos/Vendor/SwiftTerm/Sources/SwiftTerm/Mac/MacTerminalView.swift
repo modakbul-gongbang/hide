@@ -1187,7 +1187,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open override func layout() {
         super.layout()
         searchHighlightView?.frame = bounds
+        layoutFindBar()
         refreshSearchHighlights()
+    }
+
+    /// Floats the find bar over the top trailing corner of the grid.
+    ///
+    /// The frame is set here and nowhere else, so the bar occupies no layout
+    /// space and the terminal's own size never depends on it. It is clamped to
+    /// the view so a narrow pane shrinks the field rather than pushing it out
+    /// of sight.
+    private func layoutFindBar() {
+        guard let findBar, !findBar.isHidden else { return }
+        let inset: CGFloat = 8
+        let fitting = findBar.fittingSize
+        let width = min(fitting.width, max(0, bounds.width - inset * 2))
+        let height = fitting.height
+        findBar.frame = NSRect(
+            x: bounds.maxX - width - inset,
+            y: bounds.maxY - height - inset,
+            width: width,
+            height: height
+        )
     }
     
     open func linefeed(source: Terminal) {
@@ -2651,7 +2672,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return findBar
         }
         let bar = TerminalFindBarView()
-        bar.translatesAutoresizingMaskIntoConstraints = false
+        // The bar is framed by hand in `layout()`, never by constraints
+        // against this view. A constrained subview can push its own size back
+        // into the layout that hosts the terminal, and a terminal that changes
+        // size resizes the pty and reflows the grid - which is the one thing a
+        // find field must never do to what it is searching.
+        bar.translatesAutoresizingMaskIntoConstraints = true
         bar.isHidden = true
         bar.onSearchChanged = { [weak self] term in
             self?.handleFindBarSearchChanged(term)
@@ -2670,13 +2696,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
 
         addSubview(bar)
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
-            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
-        ])
         findBar = bar
+        layoutFindBar()
         findBarDidLoad(bar)
         return bar
     }
@@ -2759,6 +2780,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private func showFindBar(prefillSelection: Bool) {
         let bar = ensureFindBar()
         bar.isHidden = false
+        layoutFindBar()
         let selectedText = prefillSelection ? selection.getSelectedText() : nil
         let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
         if let initial {
