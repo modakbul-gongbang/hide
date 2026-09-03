@@ -2563,6 +2563,29 @@ impl Runtime {
         }
     }
 
+    /// Puts a pane back on screen after its close did not happen.
+    ///
+    /// The projection removed it optimistically, and a close that fails
+    /// produces no Herdr event, so nothing else would ever contradict that
+    /// removal. `Project` asks Herdr for the authoritative layout holding this
+    /// pane, which is the same request checkout navigation already uses, so
+    /// the correction arrives through the existing projection path rather than
+    /// through a saved copy of what the layout used to be.
+    fn restore_projection_after_failed_close(&mut self, pane_id: &str) {
+        let Some(context) = self.live.as_ref().cloned() else { return };
+        if let Err(message) = live::spawn_pane_control(
+            context,
+            PaneControlAction::Project {
+                pane_id: pane_id.to_owned(),
+            },
+        ) {
+            self.push_diagnostic(
+                "pane.close_restore_failed",
+                format!("Could not re-project pane {pane_id} after a failed close: {message}"),
+            );
+        }
+    }
+
     fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
         let pane_ids = layout
             .pane_ids()
@@ -2980,7 +3003,8 @@ impl Runtime {
                 self.set_error("pane.zoom_failed", message, true);
                 true
             }
-            (PaneControlAction::Close { .. }, Err(message)) => {
+            (PaneControlAction::Close { pane_id }, Err(message)) => {
+                self.restore_projection_after_failed_close(&pane_id);
                 self.set_error("pane.close_failed", message, true);
                 true
             }
@@ -4370,9 +4394,28 @@ impl Runtime {
                 let pane_id = payload.pane_id;
                 self.retain_project_before_last_pane_closes(&pane_id);
                 self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
-                if let Err(message) =
-                    live::spawn_pane_control(context, PaneControlAction::Close { pane_id })
+                // Take the pane out of the rendered projection now instead of
+                // waiting for `pane_closed`, which was measured arriving 167 ms
+                // after the request. Only the projection runs ahead: the sync
+                // replica still holds the pane, so the authoritative event
+                // decodes against a pane that exists and then recomputes this
+                // same projection to the same answer. Nothing records that a
+                // close is in flight, because nothing has to be reconciled.
+                if let Some(layout) = self
+                    .snapshot
+                    .pane_layout
+                    .as_ref()
+                    .and_then(|layout| layout.removing(&pane_id))
                 {
+                    self.apply_pane_layout(layout);
+                }
+                if let Err(message) = live::spawn_pane_control(
+                    context,
+                    PaneControlAction::Close {
+                        pane_id: pane_id.clone(),
+                    },
+                ) {
+                    self.restore_projection_after_failed_close(&pane_id);
                     self.set_error("pane.close_worker_failed", message, true);
                 }
                 true

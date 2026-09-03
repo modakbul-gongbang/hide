@@ -404,6 +404,36 @@ pub enum PaneLayoutNodeSnapshot {
 }
 
 impl PaneLayoutNodeSnapshot {
+    /// This subtree with `pane_id` gone, or `None` when the subtree was only
+    /// that pane.
+    ///
+    /// A split holds exactly two children, so removing one leaves the other
+    /// standing in the split's place rather than a split with a hole in it.
+    /// The ratio goes with the split that no longer exists; the surviving
+    /// child takes the whole rectangle, which is what Herdr's own layout does.
+    fn removing(&self, pane_id: &str) -> Option<Self> {
+        match self {
+            Self::Pane { pane_id: candidate } => {
+                (candidate != pane_id).then(|| self.clone())
+            }
+            Self::Split {
+                direction,
+                ratio,
+                first,
+                second,
+            } => match (first.removing(pane_id), second.removing(pane_id)) {
+                (Some(first), Some(second)) => Some(Self::Split {
+                    direction: *direction,
+                    ratio: *ratio,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }),
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
+            },
+        }
+    }
+
     fn collect_pane_ids<'a>(&'a self, pane_ids: &mut Vec<&'a str>) {
         match self {
             Self::Pane { pane_id } => pane_ids.push(pane_id),
@@ -1085,4 +1115,86 @@ pub struct TerminalMetaWire<'a> {
     pub closed: bool,
     pub exit_code: Option<i32>,
     pub panes: &'a [TerminalPaneSnapshot],
+}
+
+#[cfg(test)]
+mod pane_layout_removal_tests {
+    use super::*;
+
+    fn pane(pane_id: &str) -> PaneLayoutNodeSnapshot {
+        PaneLayoutNodeSnapshot::Pane {
+            pane_id: pane_id.to_owned(),
+        }
+    }
+
+    fn split(
+        first: PaneLayoutNodeSnapshot,
+        second: PaneLayoutNodeSnapshot,
+    ) -> PaneLayoutNodeSnapshot {
+        PaneLayoutNodeSnapshot::Split {
+            direction: PaneLayoutDirection::Right,
+            ratio: 0.5,
+            first: Box::new(first),
+            second: Box::new(second),
+        }
+    }
+
+    fn layout(root: PaneLayoutNodeSnapshot, focused_pane_id: &str) -> PaneLayoutSnapshot {
+        PaneLayoutSnapshot {
+            workspace_id: "w1".to_owned(),
+            tab_id: "w1:t1".to_owned(),
+            focused_pane_id: focused_pane_id.to_owned(),
+            zoomed: false,
+            root,
+        }
+    }
+
+    /// A split has exactly two children, so the one that stays takes the whole
+    /// rectangle rather than leaving a split with a hole in it.
+    #[test]
+    fn the_surviving_sibling_takes_the_splits_place() {
+        let before = layout(split(pane("w1:p1"), pane("w1:p2")), "w1:p1");
+        let after = before.removing("w1:p2").expect("a pane survives");
+        assert_eq!(after.root, pane("w1:p1"));
+        assert_eq!(after.pane_ids(), vec!["w1:p1"]);
+    }
+
+    /// A nested layout must lose only the named pane; every other split keeps
+    /// its shape, because the projection redraws from this tree.
+    #[test]
+    fn a_nested_layout_loses_only_the_named_pane() {
+        let before = layout(
+            split(pane("w1:p1"), split(pane("w1:p2"), pane("w1:p3"))),
+            "w1:p1",
+        );
+        let after = before.removing("w1:p2").expect("panes survive");
+        assert_eq!(after.root, split(pane("w1:p1"), pane("w1:p3")));
+    }
+
+    /// The shell reads `focused_pane_id` to route input, so a layout that no
+    /// longer holds the focused pane would describe a pane that is not in it.
+    #[test]
+    fn focus_moves_to_a_survivor_when_the_focused_pane_is_the_one_removed() {
+        let before = layout(split(pane("w1:p1"), pane("w1:p2")), "w1:p2");
+        let after = before.removing("w1:p2").expect("a pane survives");
+        assert_eq!(after.focused_pane_id, "w1:p1");
+    }
+
+    /// Closing the only pane leaves no layout at all, which is the case Herdr
+    /// answers by dropping the workspace, so the projection must not invent an
+    /// empty tab to stand in for it.
+    #[test]
+    fn removing_the_last_pane_leaves_no_layout() {
+        let before = layout(pane("w1:p1"), "w1:p1");
+        assert!(before.removing("w1:p1").is_none());
+    }
+
+    /// A pane that is not in this layout leaves it untouched, so a close
+    /// racing an authoritative update cannot reshape the wrong tab.
+    #[test]
+    fn a_pane_from_another_tab_changes_nothing() {
+        let before = layout(split(pane("w1:p1"), pane("w1:p2")), "w1:p1");
+        let after = before.removing("w2:p9").expect("panes survive");
+        assert_eq!(after, before);
+    }
 }
