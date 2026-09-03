@@ -506,18 +506,19 @@ fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
     }
 }
 
-/// Raises the focused pane's read record, drops records for panes that are
-/// gone, and sets every row's read axis and derived values.
+/// Raises the operator-focused pane's read record, drops records for panes
+/// that are gone, and sets every row's read axis and derived values.
 ///
-/// This is the whole read authority. Herdr marks every pane in a tab seen the
-/// moment the tab is focused, so nothing here reads Herdr's `done` or `idle`
-/// or a token's `_new` suffix to decide it. Running it twice over the same
-/// agents and the same focus changes nothing the second time (engineering
-/// rule 11).
+/// This is the whole read authority. `operator_pane_id` is the pane the
+/// operator chose to look at, never the pane Herdr happens to report focused:
+/// Herdr marks every pane in a tab seen the moment the tab is focused, so
+/// nothing here reads Herdr's `done` or `idle` or a token's `_new` suffix to
+/// decide it. Running it twice over the same agents and the same pane changes
+/// nothing the second time (engineering rule 11).
 pub fn apply_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &mut BTreeMap<String, PaneReadRecord>,
-    focused_pane_id: Option<&str>,
+    operator_pane_id: Option<&str>,
     scope: ReadRecordScope<'_>,
 ) -> Vec<ReadRecordChange> {
     let mut changes = Vec::new();
@@ -548,7 +549,7 @@ pub fn apply_read_state(
     }
 
     for agent in agents.iter_mut() {
-        if focused_pane_id != Some(agent.pane_id.as_str()) {
+        if operator_pane_id != Some(agent.pane_id.as_str()) {
             continue;
         }
         let current = read_fingerprint(agent);
@@ -562,7 +563,7 @@ pub fn apply_read_state(
         }
     }
 
-    derive_read_state(agents, records, focused_pane_id);
+    derive_read_state(agents, records, operator_pane_id);
     changes
 }
 
@@ -575,13 +576,13 @@ pub fn apply_read_state(
 fn derive_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &BTreeMap<String, PaneReadRecord>,
-    focused_pane_id: Option<&str>,
+    operator_pane_id: Option<&str>,
 ) {
     for agent in agents.iter_mut() {
-        // The focused pane is read as of now whether or not the ledger has
-        // caught up in this dispatch, so the two projections agree regardless
-        // of which one the runtime builds first.
-        let read = focused_pane_id == Some(agent.pane_id.as_str())
+        // The pane the operator is looking at is read as of now whether or not
+        // the ledger has caught up in this dispatch, so the two projections
+        // agree regardless of which one the runtime builds first.
+        let read = operator_pane_id == Some(agent.pane_id.as_str())
             || records.get(&agent.pane_id) == Some(&read_fingerprint(agent));
         agent.unread = !read;
         derive_from_axes(agent);

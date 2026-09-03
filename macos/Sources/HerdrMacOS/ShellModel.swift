@@ -629,7 +629,7 @@ final class ShellModel: ObservableObject {
             }
             HideLaunchTrace.mark("pane.selection", detail: "remote_\(paneID)")
         } else {
-            core.focusPane(paneID)
+            core.focusPane(paneID, origin: .operatorChoice)
             HideLaunchTrace.mark("pane.selection", detail: "local_\(paneID)")
         }
         focus(.terminal)
@@ -823,7 +823,7 @@ final class ShellModel: ObservableObject {
             core.focusRemotePane(targetID: targetID, paneID: agent.paneID)
         } else {
             core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
-            core.focusPane(agent.paneID)
+            core.focusPane(agent.paneID, origin: .operatorChoice)
         }
         focus(.terminal)
     }

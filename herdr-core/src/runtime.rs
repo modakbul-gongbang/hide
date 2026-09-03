@@ -177,6 +177,25 @@ struct FocusPanePayload {
     pane_id: String,
 }
 
+/// Why the shell asked for a pane focus.
+///
+/// The read axis needs the two apart. An operator focus is the act the whole
+/// read record rests on; a launch restore reinstates the selection the last
+/// session ended on, which says nothing about whether the operator has looked
+/// at what changed while the app was closed.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum PaneFocusOrigin {
+    Operator,
+    Restore,
+}
+
+#[derive(Debug, Deserialize)]
+struct FocusPaneRequestPayload {
+    pane_id: String,
+    origin: PaneFocusOrigin,
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenBrowserPayload {
     profile: String,
@@ -441,7 +460,12 @@ fn sync_pane_status(
 }
 
 /// Drops the text scale of a pane the server no longer reports, on the same
-/// pass that drops its read record, so neither map grows forever.
+/// pass that drops its read record, so neither map grows forever. Returns
+/// whether anything was dropped.
+///
+/// It runs on every pass that carries a fresh agent list rather than only when
+/// a read record moved: an operator who has looked at nothing moves no record,
+/// and gating on that left dead panes' zoom in the store forever.
 ///
 /// A pass only drops keys in the namespace it owns, for the same reason read
 /// record eviction does: a local sync holds no remote pane list, so unscoped it
@@ -451,7 +475,7 @@ fn prune_pane_text_scales(
     workspaces: &[WorkspaceSnapshot],
     agents: &[SidebarAgentSnapshot],
     scope: ReadRecordScope<'_>,
-) {
+) -> bool {
     let live = workspaces
         .iter()
         .flat_map(|workspace| workspace.checkouts.iter())
@@ -460,7 +484,9 @@ fn prune_pane_text_scales(
         .map(|pane| pane.id.as_str())
         .chain(agents.iter().map(|agent| agent.pane_id.as_str()))
         .collect::<HashSet<_>>();
+    let before = scales.len();
     scales.retain(|pane_id, _| !scope.owns(pane_id) || live.contains(pane_id.as_str()));
+    scales.len() != before
 }
 
 fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
@@ -680,7 +706,7 @@ enum ValidatedEvent {
     TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
     Click(ClickPayload),
-    FocusPane(FocusPanePayload),
+    FocusPane(FocusPaneRequestPayload),
     OpenBrowser(OpenBrowserPayload),
     BrowserStatus(BrowserStatusPayload),
     CreateWorkspace(CreateWorkspacePayload),
@@ -786,6 +812,19 @@ pub struct Runtime {
     pet_active_at_unix_ms: u64,
     pet_waking_until_unix_ms: u64,
     pet_dragging: bool,
+    /// The pane the operator chose to look at, and the only pane whose read
+    /// record may be raised.
+    ///
+    /// Herdr's focus is not the operator's attention. A tab carries the pane
+    /// it last had focused, so bringing a tab forward makes Herdr report a
+    /// focus nobody asked for; a spawned pane takes focus on its own; and a
+    /// relaunch inherits whatever focus the arriving session snapshot names.
+    /// Counting any of those as a look cleared rows the operator never saw
+    /// (one click on a Done row cleared two rows, and a restart cleared the
+    /// last unread one). Only a focus Hide itself dispatched on the
+    /// operator's behalf arms this, and it is memory only: a launch starts
+    /// with the operator having looked at nothing.
+    operator_focused_pane_id: Option<String>,
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
@@ -940,6 +979,7 @@ impl Runtime {
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
+            operator_focused_pane_id: None,
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
@@ -3162,22 +3202,24 @@ impl Runtime {
         self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
     }
 
-    /// Raises the focused pane's read record and sets the read axis on every
-    /// row, then persists the record when it actually moved.
+    /// Raises the operator-focused pane's read record and sets the read axis
+    /// on every row, then persists the record when it actually moved.
     ///
-    /// This is the only place the read axis is decided. Herdr marks every pane
-    /// in a tab seen the moment the tab is focused, so three finished agents
-    /// side by side would clear together; Hide keeps its own pane-level record
-    /// instead and never derives unread from Herdr's `done` or `idle`.
+    /// This is the only place the read axis is decided, and the pane it reads
+    /// is the one the operator chose, not the one Herdr reports focused.
+    /// Herdr marks every pane in a tab seen the moment the tab is focused, so
+    /// three finished agents side by side would clear together; Hide keeps its
+    /// own pane-level record instead and never derives unread from Herdr's
+    /// `done` or `idle`, nor from a focus it merely inherited.
     ///
-    /// The record moves on a real state change or a focus move, not on every
-    /// tick, so the save this triggers is not a per-tick disk write.
+    /// The record moves on a real state change or an operator focus, not on
+    /// every tick, so the save this triggers is not a per-tick disk write.
     fn apply_pane_read_state(
         &mut self,
         agents: &mut [SidebarAgentSnapshot],
         scope: ReadRecordScope<'_>,
     ) -> bool {
-        let focused = self.snapshot.focused.pane_id.clone();
+        let focused = self.operator_focused_pane_id.clone();
         let changes = crate::sidebar::apply_read_state(
             agents,
             &mut self.snapshot.ui_state.pane_read_records,
@@ -3185,15 +3227,15 @@ impl Runtime {
             scope,
         );
         let synced = self.sync_pane_status_from_agents(agents);
-        if changes.is_empty() {
-            return synced;
-        }
-        prune_pane_text_scales(
+        let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &self.snapshot.navigator.workspaces,
             agents,
             scope,
         );
+        if changes.is_empty() && !pruned {
+            return synced;
+        }
         self.record_read_record_changes(&changes);
         true
     }
@@ -3222,15 +3264,15 @@ impl Runtime {
             ReadRecordScope::Remote(&prefix),
         );
         let synced = sync_pane_status(&mut session.workspaces, &session.agents);
-        if changes.is_empty() {
-            return synced;
-        }
-        prune_pane_text_scales(
+        let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &session.workspaces,
             &session.agents,
             ReadRecordScope::Remote(&prefix),
         );
+        if changes.is_empty() && !pruned {
+            return synced;
+        }
         self.record_read_record_changes(&changes);
         true
     }
@@ -3291,7 +3333,13 @@ impl Runtime {
         }
     }
 
-    fn focus_pane(&mut self, pane_id: String) {
+    /// Focuses a pane in Herdr, and for an operator focus makes that pane the
+    /// one the read record follows.
+    ///
+    /// The record is raised here rather than when the resulting layout lands,
+    /// so one click on a Done row clears that row inside the same dispatch.
+    /// A focus that never reaches Herdr arms nothing.
+    fn focus_pane(&mut self, pane_id: String, origin: PaneFocusOrigin) {
         let Some(context) = self.live.as_ref().cloned() else {
             self.set_error(
                 "pane.control_unavailable",
@@ -3301,11 +3349,20 @@ impl Runtime {
             return;
         };
         self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
-        if let Err(message) =
-            live::spawn_pane_control(context, PaneControlAction::Focus { pane_id })
-        {
+        if let Err(message) = live::spawn_pane_control(
+            context,
+            PaneControlAction::Focus {
+                pane_id: pane_id.clone(),
+            },
+        ) {
             self.set_error("pane.focus_worker_failed", message, true);
+            return;
         }
+        if origin == PaneFocusOrigin::Restore {
+            return;
+        }
+        self.operator_focused_pane_id = Some(pane_id);
+        self.refresh_pane_read_state();
     }
 
     fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
@@ -3342,8 +3399,10 @@ impl Runtime {
 
         // Herdr owns focus and input routing. The shell never keeps a second,
         // hover- or click-local focus value alongside the authoritative layout.
+        let previous_focus = self.snapshot.focused.pane_id.clone();
         self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
         self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
+        self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
         self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
         self.snapshot.pane_layout = Some(layout);
         if self
@@ -3356,21 +3415,39 @@ impl Runtime {
             self.snapshot.status.last_error = None;
         }
         self.sync_focused_terminal_projection();
-        // Focus moved, so the newly focused pane is read as of now. Doing it
-        // here rather than waiting for the next agent poll is what makes one
-        // click on a Done row clear that row and only that row.
-        let read_changed = self.refresh_pane_read_state();
 
         if self.live.is_some() {
             for pane_id in pane_ids {
                 self.request_terminal_control(&pane_id);
             }
         }
-        layout_changed || read_changed
+        layout_changed
+    }
+
+    /// Drops the operator focus once Herdr moves focus off the pane the
+    /// operator chose.
+    ///
+    /// The pane has to have been focused before it can be moved away from.
+    /// Requiring that is what lets a requested focus survive the stale layout
+    /// a tab brings forward on its way: bringing a checkout forward to reach
+    /// its pane makes Herdr report that tab's remembered pane first, and
+    /// clearing on that would leave the clicked row unread.
+    fn release_operator_focus_if_moved(&mut self, previous: &Option<String>, arriving: &str) {
+        let Some(operator) = self.operator_focused_pane_id.as_deref() else {
+            return;
+        };
+        if arriving == operator || previous.as_deref() != Some(operator) {
+            return;
+        }
+        self.push_diagnostic(
+            "pane.read_focus.released",
+            format!("Herdr moved focus from {operator} to {arriving}"),
+        );
+        self.operator_focused_pane_id = None;
     }
 
     /// Re-runs the read axis over the agents already in the snapshot, for the
-    /// moment focus moves without a new agent list arriving.
+    /// moment the operator picks a pane without a new agent list arriving.
     fn refresh_pane_read_state(&mut self) -> bool {
         let before = self.snapshot.navigator.agents.clone();
         let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
@@ -4667,7 +4744,7 @@ impl Runtime {
                 true
             }
             ValidatedEvent::FocusPane(payload) => {
-                self.focus_pane(payload.pane_id);
+                self.focus_pane(payload.pane_id, payload.origin);
                 true
             }
             ValidatedEvent::ReconnectPane(payload) => {
@@ -6349,7 +6426,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
         "click" => decode!(ClickPayload, Click),
-        "focus_pane" => decode!(FocusPanePayload, FocusPane),
+        "focus_pane" => decode!(FocusPaneRequestPayload, FocusPane),
         "open_browser" => decode!(OpenBrowserPayload, OpenBrowser),
         "browser_status" => decode!(BrowserStatusPayload, BrowserStatus),
         "create_workspace" => decode!(CreateWorkspacePayload, CreateWorkspace),
@@ -7225,6 +7302,115 @@ mod tests {
             runtime.snapshot().status.last_error.as_ref().map(|error| error.kind.clone()),
             Some("pane.text_scale_unknown_direction".to_owned())
         );
+    }
+
+    /// A runtime with a live context pointed at a socket that does not exist.
+    ///
+    /// Pane focus needs a live connection to be dispatched at all, and the
+    /// worker it spawns fails on its own without touching this runtime, so a
+    /// test can drive the real focus event rather than a shortcut into the
+    /// read record.
+    fn live_runtime() -> Runtime {
+        let mut runtime = runtime();
+        let socket_path = std::env::temp_dir()
+            .join(format!(
+                "herdr-core-read-record-{}-{}.sock",
+                std::process::id(),
+                NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned();
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone().into(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+        runtime
+    }
+
+    /// The event the shell sends when the operator clicks an agent row, a
+    /// pane, or picks one from the switcher.
+    fn operator_focus_event(pane_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_pane",
+            "payload": {"pane_id": pane_id, "origin": "operator"}
+        }))
+        .expect("focus pane event")
+    }
+
+    /// The event the shell sends once on launch to put the terminal back on
+    /// the pane the last session ended on.
+    fn restore_focus_event(pane_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_pane",
+            "payload": {"pane_id": pane_id, "origin": "restore"}
+        }))
+        .expect("restore focus event")
+    }
+
+    /// The panes the sidebar still shows as unread, in snapshot order.
+    fn unread_panes(runtime: &Runtime) -> Vec<String> {
+        let mut panes = runtime
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .filter(|agent| agent.unread)
+            .map(|agent| agent.pane_id.clone())
+            .collect::<Vec<_>>();
+        panes.sort();
+        panes
+    }
+
+    /// Three finished panes side by side in one tab, the shape the operator
+    /// reported. `focused` is the pane Herdr names as that tab's focus, which
+    /// is a tab-scoped verdict Hide's read axis must not follow.
+    fn finished_tab_payload(panes: &[(&str, u64)], focused: &str) -> SessionSnapshotPayload {
+        let agents = panes
+            .iter()
+            .map(|(pane_id, seq)| {
+                serde_json::json!({
+                    "pane_id": pane_id,
+                    "workspace_label": "Fixture",
+                    "agent": "codex",
+                    "agent_status": "done",
+                    "state_change_seq": seq,
+                    "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(panes.len(), 3, "the fixture is three panes side by side");
+        let layout_panes = panes
+            .iter()
+            .enumerate()
+            .map(|(index, (pane_id, _))| {
+                serde_json::json!({
+                    "pane_id": pane_id,
+                    "rect": {"x": index * 30, "y": 0, "width": 30, "height": 24}
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(serde_json::json!({
+            "agents": agents,
+            "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
+            "layouts": [{
+                "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 90, "height": 24},
+                "focused_pane_id": focused,
+                "panes": layout_panes,
+                "splits": [
+                    {"direction": "right", "ratio": 0.333_333_34,
+                     "rect": {"x": 0, "y": 0, "width": 90, "height": 24}},
+                    {"direction": "right", "ratio": 0.5,
+                     "rect": {"x": 30, "y": 0, "width": 60, "height": 24}}
+                ]
+            }]
+        }))
+        .expect("session payload")
     }
 
     fn working_payload() -> SessionSnapshotPayload {
@@ -9858,21 +10044,27 @@ mod tests {
         assert_eq!(runtime.snapshot().pet.connection, "connected");
     }
 
-    /// AC2, AC4, SC3. Focusing a pane writes its read record to the store, and
-    /// a pane Herdr stops reporting is gone from the file on the next save, so
-    /// the record cannot grow without bound.
+    /// AC2, AC4, SC3. An operator focus writes the pane's read record to the
+    /// store, and a pane Herdr stops reporting is gone from the file on the
+    /// next save, so the record cannot grow without bound.
     #[test]
-    fn read_record_is_written_for_the_focused_pane_and_evicted_when_it_disappears() {
-        let mut runtime = runtime();
+    fn read_record_is_written_for_the_operator_focused_pane_and_evicted_when_it_disappears() {
+        let mut runtime = live_runtime();
         let state_path = runtime.state_path.clone();
         runtime.ingest_session(Ok(working_payload()));
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "the focus that arrived with the session is not a look the operator took"
+        );
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p1")));
         assert!(
             runtime
                 .snapshot()
                 .ui_state
                 .pane_read_records
                 .contains_key("w1:p1"),
-            "the focused pane is read"
+            "the pane the operator chose is read"
         );
         let stored = std::fs::read_to_string(&state_path).expect("state file");
         assert!(stored.contains("w1:p1"), "the record reached the file");
@@ -9889,6 +10081,101 @@ mod tests {
         let _ = std::fs::remove_file(&state_path);
     }
 
+    /// AC2, AC7, SC1. The defect the PRD was written against, from the other
+    /// side: one click on a Done row clears that row and nothing else, even
+    /// though Herdr reports the whole tab seen and names its own focused pane.
+    #[test]
+    fn read_record_follows_the_row_the_operator_clicked_and_no_other() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2", "w1:p3"],
+            "nothing is read before the operator looks at anything"
+        );
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2"],
+            "only the clicked row leaves Done"
+        );
+    }
+
+    /// AC2, SC1. Bringing a tab forward makes Herdr report the pane that tab
+    /// last had focused. Nobody chose that pane in this session, so no record
+    /// moves and the rows stay where they are.
+    #[test]
+    fn read_record_ignores_the_focus_a_tab_carries_when_it_comes_forward() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "a focus Hide only inherited is not a look the operator took"
+        );
+        assert_eq!(unread_panes(&runtime), vec!["w1:p1", "w1:p2", "w1:p3"]);
+    }
+
+    /// AC4, SC3. A launch inherits Herdr's focus and puts the terminal back on
+    /// the pane the last session ended on. Neither is the operator looking at
+    /// anything, so an item that was unread before the quit is still unread.
+    #[test]
+    fn read_record_survives_a_launch_that_inherits_a_focus() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&restore_focus_event("w1:p1")));
+
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "restoring the last session's selection reads nothing"
+        );
+        assert_eq!(unread_panes(&runtime), vec!["w1:p1", "w1:p2", "w1:p3"]);
+    }
+
+    /// AC3, R2. While the operator stays on the pane they chose, what the
+    /// agent does there is read as it happens, so the row does not come back.
+    #[test]
+    fn read_record_keeps_up_with_the_pane_the_operator_is_watching() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+
+        let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
+        runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p3")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2"],
+            "the watched pane stays read as its agent moves"
+        );
+    }
+
+    /// AC2, R2. Once Herdr moves focus off the pane the operator chose, that
+    /// pane stops counting as watched, so its next change comes back unread.
+    #[test]
+    fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        // The requested focus lands, then a spawned pane takes it away.
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
+        runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p1")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2", "w1:p3"],
+            "a pane nobody is watching comes back unread when it changes"
+        );
+    }
+
     /// AC2, AC3, AC4, R2. A pane is a pane: a remote pane earns a read record
     /// from the focus its own server reports, exactly as a local pane earns one
     /// from Hide's focus. The ledger is pruned by pane id namespace, so a local
@@ -9897,7 +10184,7 @@ mod tests {
     /// pane the operator had read still demanded a close confirmation.
     #[test]
     fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
-        let mut runtime = runtime();
+        let mut runtime = live_runtime();
         let state_path = runtime.state_path.clone();
         for target_id in ["mini", "build"] {
             runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
@@ -10019,6 +10306,7 @@ mod tests {
         };
 
         runtime.ingest_session(Ok(working_payload()));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p1")));
         assert!(runtime.snapshot.ui_state.pane_read_records.contains_key("w1:p1"));
 
         runtime.ingest_remote_session(
@@ -10198,7 +10486,7 @@ mod tests {
     /// ledger.
     #[test]
     fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
-        let mut runtime = runtime();
+        let mut runtime = live_runtime();
         let state_path = runtime.state_path.clone();
         let idle = |pane_id: &str| {
             serde_json::json!({
@@ -10255,6 +10543,7 @@ mod tests {
         }))
         .expect("session payload");
         runtime.ingest_session(Ok(payload));
+        assert!(runtime.dispatch_json(&operator_focus_event("plain:p1")));
 
         let snapshot = runtime.snapshot();
         let panes = snapshot

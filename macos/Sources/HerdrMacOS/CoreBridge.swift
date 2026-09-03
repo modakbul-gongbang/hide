@@ -1584,8 +1584,21 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func focusPane(_ paneID: String) {
-        dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
+    /// Why a pane focus is being asked for.
+    ///
+    /// The core raises a pane's read record only for an operator focus, so a
+    /// launch restore reinstating the last session's selection must say so:
+    /// the operator has not looked at what changed while the app was closed.
+    enum PaneFocusOrigin: String {
+        case operatorChoice = "operator"
+        case restore
+    }
+
+    func focusPane(_ paneID: String, origin: PaneFocusOrigin) {
+        dispatch(
+            kind: "focus_pane",
+            payload: ["pane_id": paneID, "origin": origin.rawValue]
+        )
     }
 
     /// The core owns the ladder and its bounds, so the shell sends a direction
@@ -2313,7 +2326,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         restoredPaneSelection = true
         guard decoded.terminal.paneID == nil,
               let persisted = decoded.uiState.selectedPaneID else { return }
-        focusPane(persisted)
+        focusPane(persisted, origin: .restore)
     }
 
     private func drainPendingTerminalBytes(for paneID: String) {

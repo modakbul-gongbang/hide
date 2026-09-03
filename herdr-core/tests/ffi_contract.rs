@@ -667,12 +667,13 @@ fn close_pane_requires_confirmation_only_while_working_or_unread() {
                 "agents": [
                     {"pane_id":"working","workspace_label":"Fixture","agent":"codex","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000003","summary":"Running task","elapsed":"1m"}},
                     {"pane_id":"attention","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_question_new":"?","activity":"0000000000002","summary":"Needs answer","elapsed":"2m"}},
-                    {"pane_id":"idle","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000001","summary":"Idle","elapsed":"3m"}}
+                    {"pane_id":"unknown","workspace_label":"Fixture","agent":"codex","agent_status":"unknown","tokens":{"status_unknown":"~","activity":"0000000000001","summary":"Unknown","elapsed":"3m"}}
                 ],
-                // Focusing the idle pane is what reads it. Without that it
-                // would still be an unread result, and closing an unread
-                // result asks first.
-                "layouts": [single_pane_layout("w1", "idle")]
+                // A pane whose activity nobody can name sits in Seen and
+                // closes without a prompt. Reading is not what puts it there:
+                // only an operator focus reads a pane, and this core has no
+                // live connection to focus one through.
+                "layouts": [single_pane_layout("w1", "unknown")]
             }
         }),
     );
@@ -691,11 +692,11 @@ fn close_pane_requires_confirmation_only_while_working_or_unread() {
 
     dispatch(
         core,
-        json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": "idle", "confirmed": false}}),
+        json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": "unknown", "confirmed": false}}),
     );
-    let idle = snapshot(core);
+    let seen = snapshot(core);
     assert_eq!(
-        idle["status"]["last_error"]["kind"],
+        seen["status"]["last_error"]["kind"],
         "pane.control_unavailable"
     );
 
