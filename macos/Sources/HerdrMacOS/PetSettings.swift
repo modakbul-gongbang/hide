@@ -107,17 +107,24 @@ struct PetShortcutCaptureField: NSViewRepresentable {
         }
 
         override func draw(_ dirtyRect: NSRect) {
-            let background = isCapturing
-                ? NSColor.controlAccentColor.withAlphaComponent(0.18)
-                : NSColor.textBackgroundColor
+            // The shell's own tokens: this view sits inside Settings, and the
+            // system's accent, text background, and separator read as a
+            // different application next to the rows around it.
+            let background = isCapturing ? HideTheme.Native.elevated : HideTheme.Native.panel
             background.setFill()
-            let path = NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5)
+            let path = NSBezierPath(
+                roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                xRadius: HideTheme.radiusSmall,
+                yRadius: HideTheme.radiusSmall
+            )
             path.fill()
-            NSColor.separatorColor.setStroke()
+            (isCapturing ? HideTheme.Native.secondary : HideTheme.Native.divider).setStroke()
             path.stroke()
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: isCapturing
+                    ? HideTheme.Native.secondary
+                    : HideTheme.Native.primary,
             ]
             let text = label as NSString
             let size = text.size(withAttributes: attributes)

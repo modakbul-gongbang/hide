@@ -528,7 +528,7 @@ private struct HidePetSettings: View {
                     .frame(width: 150, height: 24)
                     .accessibilityIdentifier("pet-shortcut-field")
                     Button(capturing ? "Cancel" : "Record") { capturing.toggle() }
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: !capturing))
+                        .buttonStyle(HideToolbarButtonStyle(isProminent: false))
                     Button("Clear") {
                         capturing = false
                         model.updatePetShortcut(nil)
@@ -707,7 +707,7 @@ private struct HideDeviceRow: View {
                     Text(device.label)
                         .hideFont(size: 12, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
-                    Text(device.sshAlias ?? "This Mac")
+                    Text(device.sshAlias ?? "local, no SSH alias")
                         .hideFont(size: 10, design: .monospaced)
                         .foregroundStyle(HideTheme.secondary)
                 }
