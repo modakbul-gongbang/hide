@@ -2638,11 +2638,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateFindPasteboard(term)
         let options = findBar?.options ?? SearchOptions()
         findBarTerm = term
-        if next {
-            _ = findNext(term, options: options)
-        } else {
-            _ = findPrevious(term, options: options)
-        }
+        findBarStepRequested(next, term: term, options: options)
         refreshFindState()
     }
 
@@ -2708,6 +2704,43 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func findBarDidLoad(_ bar: TerminalFindBarView) {
     }
 
+    /// The counter the bar shows, given what this view could find in the rows
+    /// it holds.
+    ///
+    /// A host whose scrollback lives somewhere else - a view that is handed
+    /// frames by a server that keeps the history - overrides this to report the
+    /// whole buffer. Left to itself this view can only count what it is
+    /// drawing, which reads as "1/1" while the buffer holds seven matches.
+    open func findBarSummary(term: String, index: Int, total: Int) -> String {
+        terminalFindBarSummary(term: term, index: index, total: total)
+    }
+
+    /// Called whenever the search term changes, after this view has searched
+    /// its own rows. A host that owns the scrollback starts its own search here.
+    open func findBarTermChanged(_ term: String, options: SearchOptions) {
+    }
+
+    /// Called when the operator asks for the next or previous match.
+    ///
+    /// The default moves within the rows this view holds. A host that owns the
+    /// scrollback overrides it to bring the match into view first, which is the
+    /// only way to reach a match that was never sent here.
+    open func findBarStepRequested(_ forward: Bool, term: String, options: SearchOptions) {
+        if forward {
+            _ = findNext(term, options: options)
+        } else {
+            _ = findPrevious(term, options: options)
+        }
+    }
+
+    /// Redraws the counter and the highlights from current state.
+    ///
+    /// A host calls this when the count it supplies through `findBarSummary`
+    /// has changed, since this view has no way to know that it did.
+    public func refreshFindBar() {
+        refreshFindState()
+    }
+
     /// Refreshes the bar's counter and the all-match highlight together, so
     /// the count and what is drawn can never disagree.
     private func refreshFindState() {
@@ -2717,7 +2750,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         let term = findBarTerm
         let summary = term.isEmpty ? (0, 0) : searchMatchSummary(term, options: findBarOptions)
-        findBar.summary = terminalFindBarSummary(
+        findBar.summary = findBarSummary(
             term: term,
             index: summary.0,
             total: summary.1
@@ -2796,6 +2829,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private func hideFindBar() {
         findBar?.isHidden = true
+        findBarTermChanged("", options: findBarOptions)
         clearSearch()
         clearSearchHighlights()
         window?.makeFirstResponder(self)
@@ -2805,11 +2839,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         findBarTerm = term
         if term.isEmpty {
             clearSearch()
+            findBarTermChanged(term, options: findBarOptions)
             refreshFindState()
             return
         }
         updateFindPasteboard(term)
         _ = findNext(term, options: findBarOptions)
+        findBarTermChanged(term, options: findBarOptions)
         refreshFindState()
     }
 

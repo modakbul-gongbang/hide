@@ -15,7 +15,8 @@ use crate::live::{
 };
 use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
-    FileTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, clamp_pane_text_scale,
+    FileTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
+    clamp_pane_text_scale,
     PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
     SCHEMA_VERSION, Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
@@ -409,6 +410,23 @@ struct RetryConnectPayload {
     target_id: String,
 }
 
+/// One pane search. An empty `term` clears the search rather than needing its
+/// own event, and `step` folds "search this" and "go to the next one" into one
+/// path: 0 searches and keeps the current match, +1 and -1 move.
+#[derive(Debug, Deserialize)]
+struct PaneFindPayload {
+    pane_id: String,
+    term: String,
+    #[serde(default)]
+    case_sensitive: bool,
+    #[serde(default)]
+    whole_word: bool,
+    #[serde(default)]
+    regex: bool,
+    #[serde(default)]
+    step: i64,
+}
+
 #[derive(Debug, Deserialize)]
 struct PaneTextScalePayload {
     pane_id: String,
@@ -492,6 +510,7 @@ enum ValidatedEvent {
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
+    PaneFind(PaneFindPayload),
     PaneTextScale(PaneTextScalePayload),
     ChangesSelect(ChangesSelectPayload),
     ReconnectPane(FocusPanePayload),
@@ -884,6 +903,7 @@ impl Runtime {
                     exit_code: self.snapshot.terminal.exit_code,
                     panes: &self.snapshot.terminal.panes,
                 },
+                find: &self.snapshot.find,
                 ui_state: &self.snapshot.ui_state,
                 ime: &self.snapshot.ime,
                 status: &self.snapshot.status,
@@ -2693,6 +2713,54 @@ impl Runtime {
                         }
                     }
                 }
+            }
+        }
+        changed
+    }
+
+    /// Stores what a pane search found and moves the viewport to the match.
+    ///
+    /// The scroll goes through the same terminal-control write the wheel uses,
+    /// because Herdr owns the pane's history and answers a viewport move with a
+    /// fresh frame either way.
+    pub fn ingest_pane_find(
+        &mut self,
+        pane_id: &str,
+        result: Result<live::PaneFindOutcome, String>,
+    ) -> bool {
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(message) => {
+                self.snapshot.find = PaneFindSnapshot {
+                    pane_id: Some(pane_id.to_owned()),
+                    unavailable_reason: Some(message),
+                    ..PaneFindSnapshot::default()
+                };
+                return true;
+            }
+        };
+        let next = PaneFindSnapshot {
+            pane_id: Some(pane_id.to_owned()),
+            term: outcome.term,
+            index: outcome.index,
+            total: outcome.total,
+            truncated: outcome.truncated,
+            unavailable_reason: None,
+        };
+        let changed = self.snapshot.find != next;
+        self.snapshot.find = next;
+        if let Some((direction, lines)) = outcome.scroll {
+            let (rows, cols) = self
+                .terminal_sizes
+                .get(pane_id)
+                .copied()
+                .unwrap_or((24, 80));
+            if let Some(session) = self.terminal_sessions.get_mut(pane_id)
+                && session.mode == TerminalSessionMode::Control
+                && let Err(message) = session.scroll(&direction, lines, rows, cols)
+            {
+                self.set_error("terminal.scroll_failed", message, true);
+                return true;
             }
         }
         changed
@@ -4602,6 +4670,51 @@ impl Runtime {
                 }
                 false
             }
+            ValidatedEvent::PaneFind(payload) => {
+                if payload.term.is_empty() {
+                    if self.snapshot.find == PaneFindSnapshot::default() {
+                        return false;
+                    }
+                    self.snapshot.find = PaneFindSnapshot::default();
+                    return true;
+                }
+                let Some(context) = self.live.as_ref().cloned() else {
+                    self.snapshot.find = PaneFindSnapshot {
+                        pane_id: Some(payload.pane_id.clone()),
+                        term: payload.term.clone(),
+                        unavailable_reason: Some(
+                            "Searching a pane's history needs a live Herdr connection".to_owned(),
+                        ),
+                        ..PaneFindSnapshot::default()
+                    };
+                    return true;
+                };
+                // A step continues from the match the operator is on, which is
+                // only the stored one when it belongs to this pane and term.
+                let current_index = if self.snapshot.find.pane_id.as_deref()
+                    == Some(payload.pane_id.as_str())
+                    && self.snapshot.find.term == payload.term
+                {
+                    self.snapshot.find.index
+                } else {
+                    0
+                };
+                let request = live::PaneFindRequest {
+                    pane_id: payload.pane_id.clone(),
+                    term: payload.term.clone(),
+                    options: crate::find::PaneFindOptions {
+                        case_sensitive: payload.case_sensitive,
+                        whole_word: payload.whole_word,
+                        regex: payload.regex,
+                    },
+                    step: payload.step,
+                    current_index,
+                };
+                if let Err(message) = live::spawn_pane_find(context, request) {
+                    self.set_error("pane.find_worker_failed", message, true);
+                }
+                false
+            }
             ValidatedEvent::PaneTextScale(payload) => {
                 let current = self
                     .snapshot
@@ -5211,6 +5324,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
+        "pane_find" => decode!(PaneFindPayload, PaneFind),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),

@@ -12,6 +12,7 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 anyhow = "=1.0.100"
 base64 = "=0.22.1"
+regex = "=1.13.1"
 russh = { version = "=0.63.1", default-features = false, features = ["ring", "rsa"] }
 russh-config = "=0.58.0"
 russh-sftp = "=2.4.0"

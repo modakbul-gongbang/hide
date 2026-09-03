@@ -48,6 +48,22 @@ struct PaneFindTests {
         )
     }
 
+        /// The counter that made the operator distrust the feature read "1/1" over
+    /// a buffer holding four matches, because it counted the rows on screen.
+    /// These assert the scope the count now comes from, including the case the
+    /// old one could not express: a history Herdr capped.
+    @Test func theCounterMarksACountTakenFromACappedHistory() {
+        #expect(PaneFindSummary.text(index: 1, total: 4, truncated: false) == "1/4")
+        #expect(PaneFindSummary.text(index: 1, total: 4, truncated: true) == "1/4+")
+        #expect(PaneFindSummary.text(index: 0, total: 4, truncated: false) == "4 matches")
+        #expect(PaneFindSummary.text(index: 0, total: 4, truncated: true) == "4+ matches")
+    }
+
+    @Test func aSearchThatFoundNothingSaysSoRatherThanShowingAZero() {
+        #expect(PaneFindSummary.text(index: 0, total: 0, truncated: false) == "No matches")
+        #expect(PaneFindSummary.text(index: 0, total: 0, truncated: true) == "No matches")
+    }
+
     @Test func theCounterReportsAQueryWithNoMatchInsteadOfStayingBlank() {
         #expect(terminalFindBarSummary(term: "", index: 0, total: 0) == "")
         #expect(terminalFindBarSummary(term: "needle", index: 0, total: 0) == "No matches")

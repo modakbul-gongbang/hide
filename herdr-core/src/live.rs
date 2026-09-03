@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
+use crate::find::PaneFindOptions;
 use crate::fork::{ForkRequest, fork_arguments};
 use crate::herdr_api::{ApiConnector, UnixSocketConnector, request_with_connector};
 #[cfg(test)]
@@ -591,6 +592,153 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
 /// set from the live context for the same reason every other spawned herdr
 /// process sets it - it is what keeps this build's commands on this build's
 /// server.
+/// How many lines of history a pane search asks Herdr for.
+///
+/// Herdr caps what it keeps; this is the ceiling on what is searched, and it
+/// is reported alongside the count so a truncated buffer is visible rather
+/// than quietly reported as the whole thing.
+const PANE_FIND_LINE_LIMIT: u32 = 10_000;
+
+/// What a pane search needs, gathered under the runtime mutex so the worker
+/// carries no reference back into runtime state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaneFindRequest {
+    pub pane_id: String,
+    pub term: String,
+    pub options: PaneFindOptions,
+    /// Which match to move to once the search lands: 0 keeps the current one,
+    /// and stepping is relative so a search and a step share one path.
+    pub step: i64,
+    /// The index the shell is on now, so a step continues from it rather than
+    /// restarting at the top every time.
+    pub current_index: usize,
+}
+
+/// What a pane search found, in the shape the runtime stores.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PaneFindOutcome {
+    pub term: String,
+    pub total: usize,
+    /// 1-based position of the current match, or 0 when there is none.
+    pub index: usize,
+    pub truncated: bool,
+    /// The viewport move that puts the current match on screen, as a direction
+    /// and a line count. `None` when it is already there.
+    pub scroll: Option<(String, u16)>,
+}
+
+/// Searches a pane's whole scrollback and moves the viewport to the match.
+///
+/// The two reads and the search happen on this thread, never under the runtime
+/// mutex: the buffer is thousands of lines and every shell snapshot read blocks
+/// on that mutex.
+pub fn spawn_pane_find(context: LiveContext, request: PaneFindRequest) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-pane-find".to_owned())
+        .spawn(move || {
+            let pane_id = request.pane_id.clone();
+            let result = run_pane_find(context.api_connector.as_ref(), &request);
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_pane_find(&pane_id, result),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("pane find worker could not be started: {error}"))
+}
+
+fn run_pane_find(
+    connector: &dyn ApiConnector,
+    request: &PaneFindRequest,
+) -> Result<PaneFindOutcome, String> {
+    if request.term.is_empty() {
+        return Ok(PaneFindOutcome {
+            term: String::new(),
+            ..PaneFindOutcome::default()
+        });
+    }
+    let buffer = read_pane_text(connector, &request.pane_id, "recent")?;
+    let matches = crate::find::find_matches(&buffer.text, &request.term, &request.options)?;
+    let total = matches.len();
+    if total == 0 {
+        return Ok(PaneFindOutcome {
+            term: request.term.clone(),
+            total: 0,
+            index: 0,
+            truncated: buffer.truncated,
+            scroll: None,
+        });
+    }
+
+    // Stepping wraps, because a search that stops at the end of the buffer
+    // makes the reader guess whether there is more or they have gone round.
+    let count = total as i64;
+    let current = request.current_index as i64;
+    let next = (current - 1 + request.step).rem_euclid(count);
+    let target = matches[next as usize];
+
+    let visible = read_pane_text(connector, &request.pane_id, "visible")?;
+    let viewport_rows = visible.text.lines().count();
+    let scroll = crate::find::viewport_anchor(&buffer.text, &visible.text)
+        .map(|top| crate::find::scroll_delta(target.line, top, viewport_rows))
+        .filter(|delta| *delta != 0)
+        .and_then(|delta| {
+            let lines = u16::try_from(delta.unsigned_abs()).ok()?;
+            Some((if delta > 0 { "up" } else { "down" }.to_owned(), lines))
+        });
+
+    Ok(PaneFindOutcome {
+        term: request.term.clone(),
+        total,
+        index: next as usize + 1,
+        truncated: buffer.truncated,
+        scroll,
+    })
+}
+
+struct PaneText {
+    text: String,
+    truncated: bool,
+}
+
+fn read_pane_text(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    source: &str,
+) -> Result<PaneText, String> {
+    let response = control_request(
+        connector,
+        "pane.read",
+        json!({
+            "pane_id": pane_id,
+            "source": source,
+            "lines": PANE_FIND_LINE_LIMIT,
+            "format": "text",
+        }),
+    )?;
+    let read = response
+        .get("read")
+        .ok_or_else(|| "pane.read returned no read section".to_owned())?;
+    Ok(PaneText {
+        text: read
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        truncated: read
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
 pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<(), String> {
     let herdr_bin = context.herdr_bin.clone().ok_or_else(|| {
         "herdr binary was not found; install herdr or set its path in the app options".to_owned()

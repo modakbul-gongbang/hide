@@ -31,6 +31,25 @@ enum PaneFindPolicy {
     }
 }
 
+/// The counter shown for a search over a pane's whole scrollback.
+///
+/// Separate from SwiftTerm's own summary because it says something that one
+/// cannot: Herdr caps the history it returns, so a capped count is marked
+/// rather than presented as the total. A number that silently means "of what
+/// we happened to look at" is the defect this whole path exists to fix.
+enum PaneFindSummary {
+    static func text(index: Int, total: Int, truncated: Bool) -> String {
+        if total == 0 {
+            return "No matches"
+        }
+        let count = truncated ? "\(total)+" : "\(total)"
+        if index == 0 {
+            return "\(count) matches"
+        }
+        return "\(index)/\(count)"
+    }
+}
+
 /// Sends AppKit's own find action down the responder chain.
 ///
 /// Both find bars are reached through `performTextFinderAction(_:)`, and both

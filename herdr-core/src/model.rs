@@ -35,11 +35,32 @@ pub struct Snapshot {
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
     pub changes: ChangesSnapshot,
+    pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub input_generation: u64,
     pub status: StatusSnapshot,
     pub pet: PetSnapshot,
+}
+
+/// What a pane search found, over the pane's whole scrollback.
+///
+/// The count is the reason this crosses the wire at all: the terminal view the
+/// shell draws holds only the visible rows, so a counter it computed itself
+/// would report what is on screen and call it the total.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct PaneFindSnapshot {
+    /// Which pane the result belongs to, so a result that lands after the
+    /// operator has moved on is ignored rather than shown over another pane.
+    pub pane_id: Option<String>,
+    pub term: String,
+    /// 1-based position of the current match, or 0 when there is none.
+    pub index: usize,
+    pub total: usize,
+    /// Herdr capped the history it returned, so `total` counts what was
+    /// searched rather than everything the pane has ever printed.
+    pub truncated: bool,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -846,6 +867,7 @@ impl Snapshot {
                 document: None,
             },
             changes: ChangesSnapshot::default(),
+            find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
                 marked_text: String::new(),
@@ -930,6 +952,7 @@ pub struct RestSections {
     pub terminal_closed: bool,
     pub terminal_exit_code: Option<i32>,
     pub terminal_panes: Vec<TerminalPaneSnapshot>,
+    pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
@@ -950,6 +973,7 @@ impl RestSections {
             terminal_closed: snapshot.terminal.closed,
             terminal_exit_code: snapshot.terminal.exit_code,
             terminal_panes: snapshot.terminal.panes.clone(),
+            find: snapshot.find.clone(),
             ui_state: snapshot.ui_state.clone(),
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
@@ -971,6 +995,7 @@ impl RestSections {
             && self.terminal_closed == snapshot.terminal.closed
             && self.terminal_exit_code == snapshot.terminal.exit_code
             && self.terminal_panes == snapshot.terminal.panes
+            && self.find == snapshot.find
             && self.ui_state == snapshot.ui_state
             && self.ime == snapshot.ime
             && self.status == snapshot.status
@@ -1006,6 +1031,7 @@ pub struct RestWire<'a> {
     pub focused: &'a FocusedSnapshot,
     pub pane_layout: &'a Option<PaneLayoutSnapshot>,
     pub terminal: TerminalMetaWire<'a>,
+    pub find: &'a PaneFindSnapshot,
     pub ui_state: &'a UiStateSnapshot,
     pub ime: &'a ImeSnapshot,
     pub status: &'a StatusSnapshot,

@@ -22,6 +22,7 @@ struct CoreSnapshot {
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let changes: CoreChangesSnapshot
+    let find: CorePaneFindSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
@@ -40,6 +41,7 @@ struct CoreSnapshot {
             terminal: terminal,
             editor: editor ?? self.editor,
             changes: changes ?? self.changes,
+            find: find,
             uiState: uiState,
             status: status,
             pet: pet
@@ -77,6 +79,7 @@ struct CoreRestSnapshot: Decodable {
     let zoomed: String?
     let paneLayout: CorePaneLayoutSnapshot?
     let terminal: CoreTerminalSnapshot
+    let find: CorePaneFindSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
@@ -86,9 +89,41 @@ struct CoreRestSnapshot: Decodable {
         case zoomed
         case paneLayout = "pane_layout"
         case terminal
+        case find
         case uiState = "ui_state"
         case status
         case pet
+    }
+}
+
+/// What the core's search of a pane's whole scrollback found.
+///
+/// The terminal view can only see the rows it is drawing, so the counter it
+/// shows comes from here rather than from its own buffer.
+struct CorePaneFindSnapshot: Decodable, Equatable {
+    let paneID: String?
+    let term: String
+    let index: Int
+    let total: Int
+    let truncated: Bool
+    let unavailableReason: String?
+
+    static let empty = CorePaneFindSnapshot(
+        paneID: nil,
+        term: "",
+        index: 0,
+        total: 0,
+        truncated: false,
+        unavailableReason: nil
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case term
+        case index
+        case total
+        case truncated
+        case unavailableReason = "unavailable_reason"
     }
 }
 
@@ -1413,6 +1448,34 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     /// The core owns the ladder and its bounds, so the shell sends a direction
     /// rather than a computed size and reads the result back off the snapshot.
+    var paneFind: CorePaneFindSnapshot { snapshot?.find ?? .empty }
+
+    /// Searches a pane's whole scrollback, or steps to the next or previous
+    /// match. An empty term clears the search.
+    ///
+    /// `step` is relative so that typing and stepping share one path: 0
+    /// searches and stays put, +1 and -1 move.
+    func findInPane(
+        paneID: String,
+        term: String,
+        caseSensitive: Bool = false,
+        wholeWord: Bool = false,
+        regex: Bool = false,
+        step: Int = 0
+    ) {
+        dispatch(
+            kind: "pane_find",
+            payload: [
+                "pane_id": paneID,
+                "term": term,
+                "case_sensitive": caseSensitive,
+                "whole_word": wholeWord,
+                "regex": regex,
+                "step": step,
+            ]
+        )
+    }
+
     func setPaneTextScale(paneID: String, direction: PaneTextScaleDirection) {
         dispatch(
             kind: "pane_text_scale",
@@ -1983,6 +2046,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     terminal: rest.terminal,
                     editor: editor,
                     changes: decoded.changes ?? snapshot?.changes ?? .empty,
+                    find: rest.find,
                     uiState: rest.uiState,
                     status: rest.status,
                     pet: rest.pet

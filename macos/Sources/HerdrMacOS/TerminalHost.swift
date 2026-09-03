@@ -10,6 +10,30 @@ struct TerminalHost: NSViewRepresentable {
     let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
 
+    /// Pushes the core's search result into this pane's find bar.
+    ///
+    /// The result is dropped unless it names this pane: a search runs per pane
+    /// and a stale answer would otherwise show its count over a different one.
+    private func applyPaneFind(to terminal: TerminalView) {
+        guard let terminal = terminal as? ImeTerminalView else { return }
+        let find = bridge.paneFind
+        guard find.paneID == paneID, !find.term.isEmpty else {
+            terminal.paneFindSummary = nil
+            terminal.refreshFindBar()
+            return
+        }
+        if let reason = find.unavailableReason {
+            terminal.paneFindSummary = reason
+        } else {
+            terminal.paneFindSummary = PaneFindSummary.text(
+                index: find.index,
+                total: find.total,
+                truncated: find.truncated
+            )
+        }
+        terminal.refreshFindBar()
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(bridge: bridge, paneID: paneID, onOpenLink: onOpenLink)
     }
@@ -31,6 +55,16 @@ struct TerminalHost: NSViewRepresentable {
         terminal.searchHighlightColor = HideTheme.Native.searchMatchHighlight
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
         terminal.onPointerFocus = onFocus
+        terminal.onPaneFind = { [weak bridge] term, options, step in
+            bridge?.findInPane(
+                paneID: paneID,
+                term: term,
+                caseSensitive: options.caseSensitive,
+                wholeWord: options.wholeWord,
+                regex: options.regex,
+                step: step
+            )
+        }
         context.coordinator.terminal = terminal
         context.coordinator.registrationID = bridge.registerTerminal(
             paneID: paneID,
@@ -55,6 +89,7 @@ struct TerminalHost: NSViewRepresentable {
         context.coordinator.bridge = bridge
         context.coordinator.onOpenLink = onOpenLink
         (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
+        applyPaneFind(to: terminal)
         // SwiftTerm's font setter recomputes the cell metrics and resizes the
         // grid, and its delegate reports the new size on to the PTY, so the
         // reflow follows from this assignment. It also clears the selection,

@@ -134,6 +134,33 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     /// SwiftTerm cannot see this shell's design system, so it hands the bar
     /// over and the shell paints it. Only the parts the vendor exposes are
     /// touched; the bar's layout stays the vendor's.
+    /// Told what the core's search of the whole scrollback found, so the
+    /// counter reports the buffer rather than the rows this view happens to
+    /// hold. `nil` means no result for this pane yet.
+    var paneFindSummary: String?
+
+    /// Asks the core to search this pane's scrollback, or to step through what
+    /// it found: 0 searches, +1 and -1 move.
+    var onPaneFind: (@MainActor @Sendable (String, SearchOptions, Int) -> Void)?
+
+    override func findBarSummary(term: String, index: Int, total: Int) -> String {
+        // Herdr keeps this pane's history and hands this view frames, so what
+        // it can count is only what is on screen. The core searched the buffer.
+        paneFindSummary ?? super.findBarSummary(term: term, index: index, total: total)
+    }
+
+    override func findBarTermChanged(_ term: String, options: SearchOptions) {
+        onPaneFind?(term, options, 0)
+    }
+
+    override func findBarStepRequested(_ forward: Bool, term: String, options: SearchOptions) {
+        // The local step still runs, so a match already on screen is selected
+        // without waiting for a round trip; the core's step moves the viewport
+        // when the next match is not among the rows this view holds.
+        super.findBarStepRequested(forward, term: term, options: options)
+        onPaneFind?(term, options, forward ? 1 : -1)
+    }
+
     override func findBarDidLoad(_ bar: TerminalFindBarView) {
         bar.material = .windowBackground
         bar.layer?.backgroundColor = HideTheme.Native.elevated.cgColor
