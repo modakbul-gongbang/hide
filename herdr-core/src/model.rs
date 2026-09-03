@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -239,6 +239,127 @@ pub struct CheckoutSnapshot {
     pub exists: bool,
     pub temporary: bool,
     pub tabs: Vec<TabSnapshot>,
+    /// The tab Herdr reports as active in this checkout, or `None` when the
+    /// workspace's active tab lives in a sibling checkout. A checkout never
+    /// substitutes its first tab for a missing one; an active id Herdr names
+    /// but the navigator cannot place is reported as a diagnostic instead.
+    pub active_tab_id: Option<String>,
+    /// The one ordered tab strip for this checkout: Herdr tabs and file tabs
+    /// in the order the operator sees them, which the shell draws as it is
+    /// given rather than joining two lists of its own.
+    pub strip: Vec<StripTabSnapshot>,
+    /// The label the next Herdr tab created here should carry. Decided by the
+    /// core from Herdr's raw labels, next to the function that formats them,
+    /// so the shell never has to read a number back out of a label it was
+    /// given to draw.
+    pub next_tab_label: String,
+}
+
+/// One entry in a checkout's tab strip.
+///
+/// It carries identity, kind, and the label to draw. The panes, the dirty
+/// mark, and the active mark stay on the snapshots the entry points at: those
+/// change on a keystroke, and the strip rides the revisioned navigator
+/// section, which must not be resent for every edited character.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct StripTabSnapshot {
+    /// Strip-wide identity, unique across kinds.
+    pub id: String,
+    pub kind: StripTabKind,
+    /// The Herdr tab id or the file tab id this entry stands for.
+    pub source_id: String,
+    pub label: String,
+}
+
+/// The kinds of tab a strip holds. Herdr tabs and file tabs are the two the
+/// product has; a kind is added when a surface that needs one is built.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StripTabKind {
+    Herdr,
+    File,
+}
+
+impl StripTabSnapshot {
+    pub fn herdr(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("herdr:{source_id}"),
+            kind: StripTabKind::Herdr,
+            source_id,
+            label: label.into(),
+        }
+    }
+
+    pub fn file(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("file:{source_id}"),
+            kind: StripTabKind::File,
+            source_id,
+            label: label.into(),
+        }
+    }
+
+    /// The Herdr half of a strip, in the order the tabs are given.
+    ///
+    /// A tab with no id has no identity to key a strip entry by, so it is
+    /// dropped rather than given a placeholder. Both the local strip and the
+    /// remote projection build their Herdr entries here, so the rule that
+    /// decides which tabs earn a slot and what an unlabelled one reads as has
+    /// one implementation to change.
+    pub fn from_herdr_tabs(tabs: &[TabSnapshot]) -> Vec<Self> {
+        tabs.iter()
+            .filter_map(|tab| {
+                Some(Self::herdr(
+                    tab.id.clone()?,
+                    tab.label.clone().unwrap_or_default(),
+                ))
+            })
+            .collect()
+    }
+}
+
+/// The label a tab is drawn by, derived from the tab's own identity.
+///
+/// Herdr numbers an unnamed tab, which reads as a bare "2" in a strip; that
+/// number becomes "Tab 2". A tab the operator named keeps its name. A tab
+/// Herdr reports without any label falls back to its id, never to its
+/// position in the strip: a position-derived label renames every tab when one
+/// of them moves.
+pub fn display_tab_label(raw_label: &str, tab_id: &str) -> String {
+    let trimmed = raw_label.trim();
+    if trimmed.is_empty() {
+        return tab_id.to_owned();
+    }
+    match trimmed.parse::<u32>() {
+        Ok(number) => format!("Tab {number}"),
+        Err(_) => trimmed.to_owned(),
+    }
+}
+
+/// The label to give the next Herdr tab created in a checkout.
+///
+/// Reads Herdr's raw labels, never the ones `display_tab_label` has already
+/// formatted. The two are one convention: that function decides how a tab's
+/// number is shown, this one decides which number is free. Deriving the free
+/// number from formatted text instead would write the convention down a second
+/// time, on the far side of the FFI boundary, where a change to either half
+/// breaks the other silently.
+///
+/// A tab Herdr labels with a bare number holds that number; a tab labelled
+/// anything else holds none. The answer is the lowest number no tab holds.
+pub fn next_tab_label<'a>(raw_labels: impl IntoIterator<Item = &'a str>) -> String {
+    let used = raw_labels
+        .into_iter()
+        .filter_map(|label| label.trim().parse::<u32>().ok())
+        .collect::<BTreeSet<_>>();
+    // Bounded rather than an open range: n labels cannot cover n + 1
+    // candidates, so a gap always exists in this span and the search is total.
+    let number = (1..=used.len() as u32 + 1)
+        .find(|candidate| !used.contains(candidate))
+        .expect("a set of n numbers leaves one of n + 1 candidates free");
+    format!("Tab {number}")
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

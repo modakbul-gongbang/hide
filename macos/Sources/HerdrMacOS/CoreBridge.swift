@@ -431,6 +431,17 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let exists: Bool
     let temporary: Bool
     let tabs: [CoreTabSnapshot]
+    /// The one ordered tab strip the core owns for this checkout. The shell
+    /// draws it in this order and never composes an order of its own.
+    let strip: [CoreStripTabSnapshot]
+    /// The tab Herdr reports as active here. `nil` means no tab is active in
+    /// this checkout, which the shell shows as such; it never promotes the
+    /// first tab in its place.
+    let activeTabID: String?
+    /// The label the next Herdr tab created here should carry. The core
+    /// decides it, next to the code that formats every other tab's label, so
+    /// the shell never reads a number back out of a label it was given to draw.
+    let nextTabLabel: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -442,6 +453,9 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case exists
         case temporary
         case tabs
+        case strip
+        case activeTabID = "active_tab_id"
+        case nextTabLabel = "next_tab_label"
     }
 
     init(
@@ -453,7 +467,10 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         isWorktree: Bool,
         exists: Bool,
         temporary: Bool,
-        tabs: [CoreTabSnapshot]
+        tabs: [CoreTabSnapshot],
+        strip: [CoreStripTabSnapshot] = [],
+        activeTabID: String? = nil,
+        nextTabLabel: String = "Tab 1"
     ) {
         self.id = id
         self.workspaceID = workspaceID
@@ -464,6 +481,38 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         self.exists = exists
         self.temporary = temporary
         self.tabs = tabs
+        self.strip = strip
+        self.activeTabID = activeTabID
+        self.nextTabLabel = nextTabLabel
+    }
+}
+
+/// One entry in the core's tab strip. It names what to draw and what it stands
+/// for; the panes, the dirty mark, and the active mark come from the snapshot
+/// the entry points at.
+struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
+    enum Kind: String, Decodable {
+        case herdr
+        case file
+    }
+
+    let id: String
+    let kind: Kind
+    let sourceID: String
+    let label: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case sourceID = "source_id"
+        case label
+    }
+
+    init(id: String, kind: Kind, sourceID: String, label: String) {
+        self.id = id
+        self.kind = kind
+        self.sourceID = sourceID
+        self.label = label
     }
 }
 
@@ -1159,6 +1208,7 @@ struct CoreDispatchRoutingPolicy {
         "focus_pane",
         "focus_checkout",
         "focus_tab",
+        "reorder_tab",
         "create_tab",
         "create_pane",
         "toggle_zoom",
@@ -1536,6 +1586,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
             "tab_id": tabID,
+        ])
+    }
+
+    /// Asks the core to put one strip entry at another place in the strip.
+    ///
+    /// `tabID` is the strip entry's id, which spans both kinds, and `toIndex`
+    /// is where it ends up in the resulting strip. The core decides whether
+    /// that needs anything from Herdr; the shell only reports the drop.
+    func reorderTab(workspaceID: String, checkoutID: String, tabID: String, toIndex: Int) {
+        dispatch(kind: "reorder_tab", payload: [
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID,
+            "tab_id": tabID,
+            "to_index": toIndex,
         ])
     }
 
@@ -2195,7 +2259,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "session_snapshot", payload: [
             "focused_pane_id": paneID,
             "agents": agents,
-            "workspaces": [["workspace_id": workspaceID, "label": "hide rebrand"]],
+            "workspaces": [[
+                "workspace_id": workspaceID,
+                "label": "hide rebrand",
+                "active_tab_id": tabID,
+            ]],
             "tabs": [["tab_id": tabID, "workspace_id": workspaceID, "label": "Round 3"]],
             "panes": [["pane_id": paneID, "cwd": workspaceRoot.path]],
             "layouts": [[

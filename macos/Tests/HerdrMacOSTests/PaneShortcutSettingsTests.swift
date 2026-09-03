@@ -192,11 +192,81 @@ struct PaneShortcutSettingsTests {
         ) == .blocked)
     }
 
-    @Test func herdrTabLabelsUseStableTabNumbersWithoutOverwritingCustomNames() {
-        #expect(HerdrTabLabelPresentation.displayLabel(rawLabel: "1", fallbackIndex: 4) == "Tab 1")
-        #expect(HerdrTabLabelPresentation.displayLabel(rawLabel: nil, fallbackIndex: 1) == "Tab 2")
-        #expect(HerdrTabLabelPresentation.displayLabel(rawLabel: "Review", fallbackIndex: 0) == "Review")
-        #expect(HerdrTabLabelPresentation.nextLabel(rawLabels: ["1", "Tab 2", "Review"]) == "Tab 3")
+
+    /// The core's strip has a file tab between two Herdr tabs. The strip is
+    /// drawn in that order, and the direct-select numbers count it, so ⌘2
+    /// reaches the file tab rather than the second Herdr tab.
+    @Test func theStripIsDrawnAndNumberedInTheOrderTheCoreOwns() {
+        let items = ShellTabStrip.items(
+            strip: [
+                CoreStripTabSnapshot(
+                    id: "herdr:w1:t1", kind: .herdr, sourceID: "w1:t1", label: "Tab 1"
+                ),
+                CoreStripTabSnapshot(
+                    id: "file:f1", kind: .file, sourceID: "f1", label: "notes.md"
+                ),
+                CoreStripTabSnapshot(
+                    id: "herdr:w1:t2", kind: .herdr, sourceID: "w1:t2", label: "Review"
+                ),
+            ],
+            herdrTabs: [
+                stripHerdrTab(id: "w1:t1", label: "Tab 1"),
+                stripHerdrTab(id: "w1:t2", label: "Review"),
+            ],
+            fileTabs: [stripFileTab(id: "f1", label: "notes.md", dirty: true)],
+            activeHerdrTabID: "w1:t2",
+            activeFileTabID: nil
+        )
+
+        #expect(items.map(\.id) == ["herdr:w1:t1", "file:f1", "herdr:w1:t2"])
+        // A bare Herdr number is drawn as a name and a named tab keeps its
+        // name; neither label comes from where the tab sits.
+        #expect(items.map(\.label) == ["Tab 1", "notes.md", "Review"])
+        #expect(items.map(\.dirty) == [false, true, false])
+        #expect(items.filter(\.active).map(\.id) == ["herdr:w1:t2"])
+        #expect(TabShortcutNumbering.tab(atNumber: 2, in: items)?.id == "file:f1")
+        #expect(TabShortcutNumbering.number(ofTabID: "herdr:w1:t2", in: items) == 3)
+    }
+
+    @Test func anActiveFileTabIsTheOnlyActiveEntryInTheStrip() {
+        let items = ShellTabStrip.items(
+            strip: [
+                CoreStripTabSnapshot(
+                    id: "herdr:w1:t1", kind: .herdr, sourceID: "w1:t1", label: "Tab 1"
+                ),
+                CoreStripTabSnapshot(
+                    id: "file:f1", kind: .file, sourceID: "f1", label: "notes.md"
+                ),
+            ],
+            herdrTabs: [stripHerdrTab(id: "w1:t1", label: "Tab 1")],
+            fileTabs: [stripFileTab(id: "f1", label: "notes.md", dirty: false)],
+            activeHerdrTabID: "w1:t1",
+            activeFileTabID: "f1"
+        )
+
+        #expect(items.filter(\.active).map(\.id) == ["file:f1"])
+    }
+
+    private func stripHerdrTab(id: String, label: String) -> CoreTabSnapshot {
+        CoreTabSnapshot(
+            id: id,
+            workspaceID: "w1",
+            checkoutID: "c1",
+            label: label,
+            empty: false,
+            panes: []
+        )
+    }
+
+    private func stripFileTab(id: String, label: String, dirty: Bool) -> CoreFileTabSnapshot {
+        CoreFileTabSnapshot(
+            id: id,
+            workspaceID: "w1",
+            checkoutID: "c1",
+            path: "/tmp/\(label)",
+            label: label,
+            dirty: dirty
+        )
     }
 
     @Test func nativeCloseWindowMenuReleasesCommandWForPaneRouting() {

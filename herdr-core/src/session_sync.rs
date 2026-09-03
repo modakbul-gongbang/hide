@@ -17,7 +17,7 @@ use crate::herdr_api::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, Ho
 use crate::live::{LiveContext, SessionFetchError};
 use crate::model::{
     CheckoutSnapshot, PaneSnapshot, RemotePaneLayoutFrame, RemotePaneLayoutSnapshot,
-    RemoteSessionSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
+    RemoteSessionSnapshot, StripTabSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
 };
 use crate::runtime::Runtime;
 use crate::sidebar::{
@@ -1007,11 +1007,16 @@ impl ProjectionState {
                 ),
             })
             .collect();
-        let workspaces = workspace_labels
-            .into_iter()
-            .map(|(workspace_id, label)| SessionWorkspacePayload {
-                workspace_id: workspace_id.to_owned(),
-                label: label.to_owned(),
+        // Herdr order, not map order: the active tab id rides with the
+        // workspace it belongs to, and the navigator reads it as the only
+        // authority for which tab is active.
+        let workspaces = self
+            .workspaces
+            .iter()
+            .map(|workspace| SessionWorkspacePayload {
+                workspace_id: workspace.workspace_id.clone(),
+                label: workspace.label.clone(),
+                active_tab_id: non_blank(Some(workspace.active_tab_id.as_str())),
             })
             .collect();
         SessionSnapshotPayload {
@@ -1201,6 +1206,13 @@ impl SessionReplica {
                     .as_ref()
                     .map(|worktree| worktree.repo_name.clone())
                     .unwrap_or_else(|| workspace.label.clone());
+                let next_tab_label = crate::model::next_tab_label(
+                    self.state
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.workspace_id == workspace.workspace_id)
+                        .map(|tab| tab.label.as_str()),
+                );
                 let tabs = self
                     .state
                     .tabs
@@ -1247,12 +1259,20 @@ impl SessionReplica {
                             id: Some(remote_tab_id(target_id, &tab.tab_id)),
                             workspace_id: Some(workspace_id.clone()),
                             checkout_id: Some(checkout_id.clone()),
-                            label: Some(tab.label.clone()),
+                            label: Some(crate::model::display_tab_label(
+                                &tab.label,
+                                &tab.tab_id,
+                            )),
                             empty: panes.is_empty(),
                             panes,
                         }
                     })
                     .collect::<Vec<_>>();
+                // A remote context has no file tabs, so its strip is the Herdr
+                // tab list in Herdr's order and nothing else.
+                let strip = StripTabSnapshot::from_herdr_tabs(&tabs);
+                let active_tab_id = Some(remote_tab_id(target_id, &workspace.active_tab_id))
+                    .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
                 WorkspaceSnapshot {
                     id: workspace_id.clone(),
                     label: workspace.label.clone(),
@@ -1279,6 +1299,9 @@ impl SessionReplica {
                         exists: !path.is_empty(),
                         temporary: false,
                         tabs,
+                        active_tab_id,
+                        strip,
+                        next_tab_label,
                     }],
                 }
             })
@@ -3003,6 +3026,110 @@ mod tests {
                 .iter()
                 .all(|tab| tab.tab_id != "w1:t1")
         );
+    }
+
+    /// The remote context browses Herdr's tabs and has no file tabs to mix in,
+    /// so its strip is the Herdr tab list in Herdr's order and nothing else.
+    #[test]
+    fn remote_projection_tab_list_and_order_are_herdr_only() {
+        let replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+        let (projected, _) = replica.project_remote("mini").expect("remote projection");
+        let checkout = projected
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .next()
+            .expect("the remote checkout");
+
+        assert_eq!(
+            checkout
+                .tabs
+                .iter()
+                .map(|tab| tab.id.clone().expect("a remote tab id"))
+                .collect::<Vec<_>>(),
+            vec![
+                remote_tab_id("mini", "w1:t1"),
+                remote_tab_id("mini", "w1:t2")
+            ]
+        );
+        assert_eq!(
+            checkout
+                .strip
+                .iter()
+                .map(|entry| (entry.kind, entry.source_id.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    crate::model::StripTabKind::Herdr,
+                    remote_tab_id("mini", "w1:t1")
+                ),
+                (
+                    crate::model::StripTabKind::Herdr,
+                    remote_tab_id("mini", "w1:t2")
+                )
+            ]
+        );
+        assert_eq!(
+            checkout.active_tab_id,
+            Some(remote_tab_id("mini", "w1:t1"))
+        );
+    }
+
+    #[test]
+    fn tab_order_from_a_move_event_reaches_the_projection() {
+        let mut replica =
+            SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+        assert_eq!(
+            replica
+                .project()
+                .tabs
+                .iter()
+                .map(|tab| tab.tab_id.clone())
+                .collect::<Vec<_>>(),
+            vec!["w1:t1".to_owned(), "w1:t2".to_owned()]
+        );
+
+        // Herdr moved the second tab in front of the first and reported the
+        // resulting order. The projection the navigator reads must carry that
+        // order, not the order the tabs were created in.
+        let moved = replica
+            .apply(event(
+                41,
+                "tab_moved",
+                json!({
+                    "type": "tab_moved",
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t2",
+                    "insert_index": 0,
+                    "tabs": [
+                        {"workspace_id": "w1", "tab_id": "w1:t2", "label": "2"},
+                        {"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}
+                    ]
+                }),
+            ))
+            .expect("tab move event");
+        assert!(moved.publish);
+        assert_eq!(
+            replica
+                .project()
+                .tabs
+                .iter()
+                .map(|tab| tab.tab_id.clone())
+                .collect::<Vec<_>>(),
+            vec!["w1:t2".to_owned(), "w1:t1".to_owned()]
+        );
+    }
+
+    #[test]
+    fn herdr_active_tab_rides_the_projection_with_its_workspace() {
+        let replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+        let projected = replica.project();
+        let workspace = projected
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == "w1")
+            .expect("the fixture workspace");
+        assert_eq!(workspace.active_tab_id.as_deref(), Some("w1:t1"));
     }
 
     #[test]

@@ -28,7 +28,9 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
             "repo_name":"same","is_git":true,"registered":true,"temporary":false,\
             "checkouts":[{"id":"\(id)-checkout","workspace_id":"\(id)","label":"main",\
             "path":"/tmp/\(id)","branch":"main","is_worktree":false,"exists":true,\
-            "temporary":false,"tabs":[{"id":"\(id)-tab","workspace_id":"\(id)",\
+            "temporary":false,\
+            "strip":[{"id":"herdr:\(id)-tab","kind":"herdr","source_id":"\(id)-tab","label":"Tab 1"}],"next_tab_label":"Tab 2",\
+            "tabs":[{"id":"\(id)-tab","workspace_id":"\(id)",\
             "checkout_id":"\(id)-checkout","label":"1","empty":false,\
             "panes":[{"id":"\(paneID)","label":"\(paneID)","cwd":"/tmp/\(id)","state":"working"}]}]}]}
             """.utf8
@@ -53,7 +55,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
     let workspace = try JSONDecoder().decode(
         CoreWorkspaceSnapshot.self,
         from: Data(
-            #"{"id":"workspace-1","label":"hide","path":"/tmp/hide","device_id":"local","repo_name":"hide","is_git":true,"registered":true,"temporary":false,"checkouts":[{"id":"checkout-1","workspace_id":"workspace-1","label":"main","path":"/tmp/hide","branch":"main","is_worktree":false,"exists":true,"temporary":false,"tabs":[]}]}"#.utf8
+            #"{"id":"workspace-1","label":"hide","path":"/tmp/hide","device_id":"local","repo_name":"hide","is_git":true,"registered":true,"temporary":false,"checkouts":[{"id":"checkout-1","workspace_id":"workspace-1","label":"main","path":"/tmp/hide","branch":"main","is_worktree":false,"exists":true,"temporary":false,"strip":[],"next_tab_label":"Tab 1","tabs":[]}]}"#.utf8
         )
     )
     let checkout = try #require(workspace.checkouts.first)

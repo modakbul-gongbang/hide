@@ -25,6 +25,11 @@ pub struct SessionWorkspacePayload {
     pub workspace_id: String,
     #[serde(default)]
     pub label: String,
+    /// The tab Herdr reports as active in this workspace. It is the only
+    /// authority for which tab is active; the navigator never falls back to a
+    /// position.
+    #[serde(default)]
+    pub active_tab_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

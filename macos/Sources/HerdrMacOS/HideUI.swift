@@ -78,6 +78,19 @@ enum HideTheme {
         /// draws, because a divider has to be easy to grab, not easy to see.
         static let resizeHandleGrabWidth: CGFloat = 20
         static let panelCollapseControlSize: CGFloat = 18
+        /// How far a press has to travel on a tab before it is a reorder
+        /// rather than a click. Below this a tremor while selecting a tab
+        /// would carry it out of its slot.
+        static let tabDragActivationDistance: CGFloat = 6
+        /// The window's first row. A tab, the new-tab control, and the strip
+        /// itself are all this tall, so the row cannot grow taller than the
+        /// thing inside it.
+        static let tabStripHeight: CGFloat = 32
+        /// How much of the window's first row the traffic lights own. They end
+        /// 61pt from the left edge, the zoom button spanning 47 to 61, so
+        /// whichever surface reaches that corner keeps this much clear: the
+        /// measurement plus one spacing step.
+        static let trafficLightInset: CGFloat = 69
         static let paneHeaderHeight: CGFloat = 28
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
@@ -149,6 +162,7 @@ struct ShellView: View {
             HSplitView {
                 if model.leftSidebarVisible {
                     HideSidebar()
+                        .drawsToWindowTopEdge()
                         .frame(
                             minWidth: HideTheme.Layout.sidebarMinWidth,
                             idealWidth: HideTheme.Layout.sidebarIdealWidth,
@@ -157,6 +171,7 @@ struct ShellView: View {
                         .frame(maxHeight: .infinity, alignment: .topLeading)
                 }
                 HideMainView()
+                    .drawsToWindowTopEdge()
                     .frame(
                         minWidth: HideTheme.Layout.terminalMinWidth,
                         idealWidth: HideTheme.Layout.terminalIdealWidth,
@@ -166,6 +181,7 @@ struct ShellView: View {
                     )
                 if model.rightPanelVisible {
                     RightPanel()
+                        .drawsToWindowTopEdge()
                         .frame(
                             minWidth: HideTheme.Layout.rightPanelMinWidth,
                             idealWidth: HideTheme.Layout.rightPanelIdealWidth,
@@ -988,7 +1004,7 @@ private struct HideBrandHeader: View {
     @EnvironmentObject private var model: ShellModel
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: HideTheme.spacingSM) {
             Text("hide")
                 .hideFont(size: 18, weight: .bold, design: .rounded)
                 .tracking(-0.6)
@@ -1015,8 +1031,15 @@ private struct HideBrandHeader: View {
             .accessibilityLabel("Hide left sidebar")
             .accessibilityIdentifier("hide-toggle-left-sidebar")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        // The wordmark starts after the traffic lights rather than under them.
+        .padding(.leading, HideTheme.Layout.trafficLightInset)
+        .padding(.trailing, HideTheme.spacingMD)
+        .padding(.vertical, HideTheme.spacingMD)
+        // This is the window's top left corner while the sidebar is open, and
+        // with the titlebar gone it is where the window is grabbed. The
+        // sidebar toggle takes its own clicks; everything else here is the
+        // handle.
+        .background(WindowDragArea())
         .accessibilityIdentifier("hide-brand")
     }
 }
@@ -1396,10 +1419,10 @@ private struct HideMainView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HideTerminalHeader()
+            HideTabStrip()
             Rectangle()
                 .fill(HideTheme.divider)
-                .frame(height: 1)
+                .frame(height: HideTheme.Layout.hairlineWidth)
             ZStack {
                 HideTerminalSurface()
                 if !model.isRemoteContext,
@@ -1418,67 +1441,55 @@ private struct HideMainView: View {
     }
 }
 
-private struct HideTerminalHeader: View {
+/// Each tab's drawn width, gathered so a drag knows what it is passing over.
+/// Tabs are as wide as their labels, so the destination of a drop cannot be
+/// worked out from an index alone.
+private struct TabWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+/// The tab strip, which is the window's first row.
+///
+/// Nothing sits above it: the system titlebar and the workspace header that
+/// used to repeat the sidebar's name, branch, and herdr version are both gone.
+/// What the header carried and this strip keeps are the two panel-restore
+/// controls, one at each end, each shown only while its panel is hidden. The
+/// connection warning and the remote target's state are the status bar's to
+/// report, and the herdr version the sidebar's brand header's.
+private struct HideTabStrip: View {
     @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
+    /// What the pointer is carrying right now. This is the only piece of the
+    /// strip the shell holds: the order itself belongs to the core, so a drop
+    /// is reported rather than applied here.
+    @State private var draggingTabID: String?
+    @State private var dragTranslation: CGFloat = 0
+    @State private var tabWidths: [String: CGFloat] = [:]
+
+    /// The traffic lights sit over whichever surface reaches the window's top
+    /// left corner. With the sidebar open that is the brand header and the
+    /// strip starts after it; with the sidebar collapsed the strip is that
+    /// surface and keeps its own first control clear of them.
+    private var leadingInset: CGFloat {
+        model.leftSidebarVisible ? HideTheme.spacingSM : HideTheme.Layout.trafficLightInset
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                if !model.leftSidebarVisible {
-                    Button {
-                        model.toggleLeftSidebar()
-                    } label: {
-                        Image(systemName: "rectangle.leftthird.inset.filled")
-                    }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    .help("Show left sidebar (⌘B)")
-                    .accessibilityLabel("Show left sidebar")
-                    .accessibilityIdentifier("hide-restore-left-sidebar")
+        HStack(spacing: HideTheme.spacingSM) {
+            if !model.leftSidebarVisible {
+                Button {
+                    model.toggleLeftSidebar()
+                } label: {
+                    Image(systemName: "rectangle.leftthird.inset.filled")
                 }
-                Image(systemName: "rectangle.3.group")
-                    .foregroundStyle(accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    // The same name the sidebar uses, so the header names the
-                    // space the user clicked rather than a directory.
-                    Text(model.focusedWorkspace?.label ?? (model.isRemoteContext ? model.remote.targetLabel : "No workspace"))
-                        .hideFont(size: 13, weight: .semibold)
-                        .foregroundStyle(HideTheme.primary)
-                    Text(model.focusedCheckout.map { checkout in
-                        checkout.branch.map { "\(checkout.label)  ·  \($0)" } ?? checkout.path
-                    } ?? (model.isRemoteContext ? model.remote.message : "Register a workspace to begin"))
-                        .hideFont(size: 10, design: .monospaced)
-                        .foregroundStyle(HideTheme.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if model.isRemoteContext {
-                    Label("mini \(model.remote.phase.rawValue)", systemImage: "externaldrive.connected.to.line.below")
-                        .hideFont(size: 10, weight: .medium)
-                        .foregroundStyle(model.herdrIsConnected ? HideTheme.success : HideTheme.warning)
-                } else if let selection = model.core.runtimeSelection {
-                    Label("herdr \(selection.version)", systemImage: "bolt.horizontal.circle")
-                        .hideFont(size: 10, weight: .medium)
-                        .foregroundStyle(HideTheme.secondary)
-                } else {
-                    Label("herdr unavailable", systemImage: "bolt.horizontal.circle")
-                        .hideFont(size: 10, weight: .medium)
-                        .foregroundStyle(HideTheme.warning)
-                }
-                if !model.rightPanelVisible {
-                    Button {
-                        model.toggleRightPanel()
-                    } label: {
-                        Image(systemName: "rectangle.rightthird.inset.filled")
-                    }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    .help("Show Right Panel (\(ShellMenuCommand.toggleRightPanel.displayShortcut))")
-                    .accessibilityLabel("Show Right Panel")
-                    .accessibilityIdentifier("hide-restore-right-panel")
-                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Show left sidebar (⌘B)")
+                .accessibilityLabel("Show left sidebar")
+                .accessibilityIdentifier("hide-restore-left-sidebar")
             }
-            .padding(.horizontal, 18)
-            .frame(height: 54)
 
             if model.focusedWorkspace != nil {
                 HStack(spacing: 0) {
@@ -1489,7 +1500,7 @@ private struct HideTerminalHeader: View {
                                     Button {
                                         model.focusUnifiedTab(tab)
                                     } label: {
-                                        HStack(spacing: 6) {
+                                        HStack(spacing: HideTheme.spacingSM) {
                                             Image(systemName: tabIcon(tab))
                                                 .font(.system(size: 10, weight: .medium))
                                             Text(tab.label)
@@ -1514,9 +1525,9 @@ private struct HideTerminalHeader: View {
                                             }
                                         }
                                         .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
-                                        .padding(.leading, 11)
-                                        .padding(.trailing, 7)
-                                        .frame(height: 32)
+                                        .padding(.leading, HideTheme.spacingMD)
+                                        .padding(.trailing, HideTheme.spacingSM)
+                                        .frame(height: HideTheme.Layout.tabStripHeight)
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
@@ -1534,41 +1545,117 @@ private struct HideTerminalHeader: View {
                                     .help("Close \(tab.label) (⌘W)")
                                     .accessibilityLabel("Close \(tab.label)")
                                 }
-                                .padding(.trailing, 4)
-                                .background(tab.active ? HideTheme.elevated : HideTheme.panel)
+                                .padding(.trailing, HideTheme.spacingXS)
+                                // A carried tab climbs to the top of the
+                                // surface ladder, which is how this system
+                                // says "closer" without a drop shadow.
+                                .background(
+                                    tab.active || draggingTabID == tab.id
+                                        ? HideTheme.elevated
+                                        : HideTheme.panel
+                                )
+                                .background(
+                                    GeometryReader { proxy in
+                                        Color.clear.preference(
+                                            key: TabWidthPreferenceKey.self,
+                                            value: [tab.id: proxy.size.width]
+                                        )
+                                    }
+                                )
                                 .overlay(alignment: .trailing) {
                                     Rectangle()
                                         .fill(HideTheme.divider)
-                                        .frame(width: 1)
+                                        .frame(width: HideTheme.Layout.hairlineWidth)
                                 }
+                                .overlay {
+                                    if draggingTabID == tab.id {
+                                        Rectangle()
+                                            .strokeBorder(
+                                                HideTheme.divider,
+                                                lineWidth: HideTheme.Layout.hairlineWidth
+                                            )
+                                    }
+                                }
+                                .offset(x: draggingTabID == tab.id ? dragTranslation : 0)
+                                .zIndex(draggingTabID == tab.id ? 1 : 0)
                                 .accessibilityIdentifier("hide-tab-\(tab.id)")
+                                .gesture(tabDragGesture(for: tab))
                             }
                         }
                         .animation(.easeOut(duration: 0.12), value: model.tabShortcutHintsVisible)
+                        // SwiftUI hands preference changes to a Sendable
+                        // closure, so the hop back to the main actor is what
+                        // lets the widths land in view state. It only fires
+                        // when a tab's drawn width actually changes.
+                        .onPreferenceChange(TabWidthPreferenceKey.self) { widths in
+                            Task { @MainActor in tabWidths = widths }
+                        }
                     }
                     Button {
                         model.addTab()
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 32, height: 32)
+                            .frame(
+                                width: HideTheme.Layout.tabStripHeight,
+                                height: HideTheme.Layout.tabStripHeight
+                            )
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(HideTheme.secondary)
                     .help("New Tab (⌘T)")
                     .accessibilityLabel("New Herdr tab")
                     .accessibilityIdentifier("hide-new-tab")
-                    Spacer(minLength: 0)
-                }
-                .frame(height: 32)
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(HideTheme.divider)
-                        .frame(height: 1)
                 }
             }
+
+            WindowDragArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if !model.rightPanelVisible {
+                Button {
+                    model.toggleRightPanel()
+                } label: {
+                    Image(systemName: "rectangle.rightthird.inset.filled")
+                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Show Right Panel (\(ShellMenuCommand.toggleRightPanel.displayShortcut))")
+                .accessibilityLabel("Show Right Panel")
+                .accessibilityIdentifier("hide-restore-right-panel")
+            }
         }
+        .padding(.leading, leadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
+        .frame(height: HideTheme.Layout.tabStripHeight)
         .background(HideTheme.panel)
+        .accessibilityIdentifier("hide-tab-strip")
+    }
+
+    /// Carries a tab under the pointer and reports where it was let go.
+    ///
+    /// The gesture only starts after the activation distance, so a click
+    /// still reaches the tab's own button, and a drag that starts on a tab is
+    /// always a reorder rather than anything the surface behind it does. The
+    /// order is not changed here: the drop is dispatched and the strip
+    /// redraws from the next snapshot.
+    private func tabDragGesture(for tab: ShellTabItem) -> some Gesture {
+        DragGesture(minimumDistance: HideTheme.Layout.tabDragActivationDistance)
+            .onChanged { value in
+                draggingTabID = tab.id
+                dragTranslation = value.translation.width
+            }
+            .onEnded { value in
+                let tabs = model.unifiedTabs
+                draggingTabID = nil
+                dragTranslation = 0
+                guard let from = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+                let destination = TabDragPlacement.destinationIndex(
+                    from: from,
+                    translation: value.translation.width,
+                    widths: tabs.map { tabWidths[$0.id] ?? 0 }
+                )
+                model.reorderUnifiedTab(tab, to: destination)
+            }
     }
 
     private func tabIcon(_ tab: ShellTabItem) -> String {

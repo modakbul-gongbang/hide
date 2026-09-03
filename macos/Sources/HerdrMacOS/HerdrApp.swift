@@ -55,7 +55,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "hide"
         window.paneCommandModel = model
         window.minSize = NSSize(
             width: ShellMetrics.windowMinWidth,
@@ -69,8 +68,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         // `applicationShouldHandleReopen` with EXC_BAD_ACCESS while retaining
         // it. The delegate owns the window's lifetime; AppKit does not.
         window.isReleasedWhenClosed = false
-        window.titlebarSeparatorStyle = .automatic
-        window.contentView = NSHostingView(rootView: content)
+        MainWindowChrome.apply(to: window, content: content)
         window.center()
         mainWindow = window
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in

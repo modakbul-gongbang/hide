@@ -107,24 +107,6 @@ enum CloseShortcutPolicy {
     }
 }
 
-enum HerdrTabLabelPresentation {
-    static func displayLabel(rawLabel: String?, fallbackIndex: Int) -> String {
-        let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if let number = Int(label) { return "Tab \(number)" }
-        return label.isEmpty ? "Tab \(fallbackIndex + 1)" : label
-    }
-
-    static func nextLabel(rawLabels: [String?]) -> String {
-        let used = Set(rawLabels.compactMap { rawLabel -> Int? in
-            let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if let number = Int(label) { return number }
-            guard label.lowercased().hasPrefix("tab ") else { return nil }
-            return Int(label.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines))
-        })
-        let number = (1...).first(where: { !used.contains($0) }) ?? (rawLabels.count + 1)
-        return "Tab \(number)"
-    }
-}
 
 enum ShellTabKind {
     case herdr(CoreTabSnapshot)
@@ -137,6 +119,49 @@ struct ShellTabItem: Identifiable {
     let dirty: Bool
     let active: Bool
     let kind: ShellTabKind
+}
+
+/// Resolves the core's ordered tab strip into what the strip draws.
+///
+/// The order is the core's and is used as given. This maps each entry onto the
+/// snapshot it stands for, which is where the panes, the dirty mark, and the
+/// active mark live: those change far more often than the strip does, so they
+/// do not ride the strip.
+enum ShellTabStrip {
+    static func items(
+        strip: [CoreStripTabSnapshot],
+        herdrTabs: [CoreTabSnapshot],
+        fileTabs: [CoreFileTabSnapshot],
+        activeHerdrTabID: String?,
+        activeFileTabID: String?
+    ) -> [ShellTabItem] {
+        strip.compactMap { entry in
+            switch entry.kind {
+            case .herdr:
+                // The core builds the strip from the same tabs it publishes,
+                // so an entry always has one to point at.
+                guard let tab = herdrTabs.first(where: { $0.id == entry.sourceID })
+                else { return nil }
+                return ShellTabItem(
+                    id: entry.id,
+                    label: entry.label,
+                    dirty: false,
+                    active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
+                    kind: .herdr(tab)
+                )
+            case .file:
+                guard let tab = fileTabs.first(where: { $0.id == entry.sourceID })
+                else { return nil }
+                return ShellTabItem(
+                    id: entry.id,
+                    label: entry.label,
+                    dirty: tab.dirty,
+                    active: entry.sourceID == activeFileTabID,
+                    kind: .file(tab)
+                )
+            }
+        }
+    }
 }
 
 /// Direct-select numbering for the tab strip. The number is the tab's
@@ -159,6 +184,43 @@ enum TabShortcutNumbering {
     static func tab(atNumber number: Int, in tabs: [ShellTabItem]) -> ShellTabItem? {
         guard number >= 1, number <= capacity, number <= tabs.count else { return nil }
         return tabs[number - 1]
+    }
+}
+
+/// Where a dragged tab lands when the operator lets go.
+///
+/// Tabs are as wide as their labels, so the destination cannot be a fixed
+/// step: it is decided by how far the drag has carried the tab across the
+/// neighbours beside it. A tab has taken a neighbour's slot once it has moved
+/// past the middle of that neighbour, which is the point where the two would
+/// visually trade places.
+enum TabDragPlacement {
+    static func destinationIndex(
+        from index: Int,
+        translation: CGFloat,
+        widths: [CGFloat]
+    ) -> Int {
+        guard widths.indices.contains(index) else { return index }
+        var destination = index
+        var travelled: CGFloat = 0
+        if translation > 0 {
+            var candidate = index + 1
+            while candidate < widths.count {
+                travelled += widths[candidate]
+                guard translation >= travelled - widths[candidate] / 2 else { break }
+                destination = candidate
+                candidate += 1
+            }
+        } else if translation < 0 {
+            var candidate = index - 1
+            while candidate >= 0 {
+                travelled += widths[candidate]
+                guard -translation >= travelled - widths[candidate] / 2 else { break }
+                destination = candidate
+                candidate -= 1
+            }
+        }
+        return destination
     }
 }
 
@@ -356,43 +418,26 @@ final class ShellModel: ObservableObject {
     var unifiedTabs: [ShellTabItem] {
         guard let checkout = focusedCheckout else { return [] }
         let activeFileID = isRemoteContext ? nil : core.snapshot?.editor.activeTabID
-        let herdrItems = focusedTabs.enumerated().map { index, tab in
-            return ShellTabItem(
-                id: "herdr:\(tab.stableID)",
-                label: HerdrTabLabelPresentation.displayLabel(
-                    rawLabel: tab.label,
-                    fallbackIndex: index
-                ),
-                dirty: false,
-                active: activeFileID == nil && tab.id == focusedTab?.id,
-                kind: .herdr(tab)
-            )
-        }
-        guard !isRemoteContext else { return herdrItems }
-        let fileItems = (core.snapshot?.editor.tabs ?? [])
-            .filter { $0.workspaceID == checkout.workspaceID && $0.checkoutID == checkout.id }
-            .map { tab in
-                ShellTabItem(
-                    id: "file:\(tab.id)",
-                    label: tab.label,
-                    dirty: tab.dirty,
-                    active: tab.id == activeFileID,
-                    kind: .file(tab)
-                )
-            }
-        return herdrItems + fileItems
+        return ShellTabStrip.items(
+            strip: checkout.strip,
+            herdrTabs: checkout.tabs,
+            fileTabs: core.snapshot?.editor.tabs ?? [],
+            activeHerdrTabID: focusedTab?.id,
+            activeFileTabID: activeFileID
+        )
     }
 
+    /// The active tab is the one the core names, and the core takes that name
+    /// from Herdr. A remote context browses its own selection, so it keeps its
+    /// navigation state. Neither falls back to the leftmost tab: reading
+    /// position as focus is what let a reordered strip look like a tab switch.
     var focusedTab: CoreTabSnapshot? {
         guard let checkout = focusedCheckout else { return nil }
-        let preferredTabID = isRemoteContext
+        let activeTabID = isRemoteContext
             ? remote.navigation?.focusedTabID
-            : core.snapshot?.paneLayout?.tabID
-        if let preferredTabID,
-           let tab = checkout.tabs.first(where: { $0.id == preferredTabID }) {
-            return tab
-        }
-        return checkout.tabs.first
+            : checkout.activeTabID
+        guard let activeTabID else { return nil }
+        return checkout.tabs.first(where: { $0.id == activeTabID })
     }
 
     var focusedPanes: [CorePaneSnapshot] {
@@ -1016,7 +1061,7 @@ final class ShellModel: ObservableObject {
             interactionNotice = "Select a checkout before adding a tab."
             return
         }
-        let label = nextHerdrTabLabel
+        let label = checkout.nextTabLabel
         if isRemoteContext {
             guard let targetID = remote.navigation?.deviceID
             else {
@@ -1036,10 +1081,6 @@ final class ShellModel: ObservableObject {
         } else {
             core.createTab(workspaceID: workspace.id, checkoutID: checkout.id, label: label)
         }
-    }
-
-    private var nextHerdrTabLabel: String {
-        HerdrTabLabelPresentation.nextLabel(rawLabels: focusedTabs.map(\.label))
     }
 
     func focusTab(_ tab: CoreTabSnapshot) {
@@ -1454,6 +1495,34 @@ final class ShellModel: ObservableObject {
 
     func tabShortcutNumber(tabID: String) -> Int? {
         TabShortcutNumbering.number(ofTabID: tabID, in: unifiedTabs)
+    }
+
+    /// Reports a tab the operator dropped at a new place in the strip.
+    ///
+    /// The shell does not reorder anything itself. It says which entry was
+    /// dropped where, and the core decides whether that is a slot it owns or
+    /// an order it has to ask Herdr for. The strip redraws from the next
+    /// snapshot either way.
+    func reorderUnifiedTab(_ item: ShellTabItem, to index: Int) {
+        guard let workspace = focusedWorkspace, let checkout = focusedCheckout else {
+            interactionNotice = "The dragged tab has no routable workspace context. No tab was moved."
+            return
+        }
+        guard !isRemoteContext else {
+            interactionNotice = "A remote target's tab order is Herdr's alone. No tab was moved."
+            return
+        }
+        let tabs = unifiedTabs
+        guard let from = tabs.firstIndex(where: { $0.id == item.id }),
+              tabs.indices.contains(index),
+              from != index
+        else { return }
+        core.reorderTab(
+            workspaceID: workspace.id,
+            checkoutID: checkout.id,
+            tabID: item.id,
+            toIndex: index
+        )
     }
 
     func closeUnifiedTab(_ item: ShellTabItem) {
