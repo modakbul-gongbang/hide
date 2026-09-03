@@ -8025,6 +8025,135 @@ mod tests {
         );
     }
 
+    /// Reads one view struct's body out of the shell's SwiftUI source.
+    ///
+    /// The two surfaces that make up the window's first row live in one file,
+    /// so a whole-file scan would answer for views this rule does not reach.
+    fn shell_view_body(source: &str, declaration: &str) -> String {
+        let start = source
+            .find(declaration)
+            .unwrap_or_else(|| panic!("the shell no longer declares {declaration}"));
+        let rest = &source[start..];
+        // Every view in this file closes at column zero, so the first such
+        // brace after the declaration ends the struct.
+        let end = rest
+            .find("\n}\n")
+            .unwrap_or_else(|| panic!("{declaration} has no closing brace"));
+        rest[..end].to_owned()
+    }
+
+    /// R2: the window draws no system titlebar and keeps its title string.
+    ///
+    /// What the window got is an AppKit answer, so the proof lives in the
+    /// Swift suite `MainWindowChromeTests`, which builds a window, applies the
+    /// chrome, and asks AppKit. `swift test --filter` exits zero when its
+    /// filter matches nothing, so a check bound to that suite would go green
+    /// if the suite were deleted. This is the guard that closes: it fails if
+    /// the chrome stops being applied, and it fails if the suite that proves
+    /// it is gone.
+    #[test]
+    fn main_window_hides_the_system_titlebar_and_keeps_its_title() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos");
+        let read = |relative: &str| {
+            std::fs::read_to_string(shell.join(relative))
+                .unwrap_or_else(|_| panic!("the shell no longer has {relative}"))
+        };
+
+        let chrome = read("Sources/HerdrMacOS/MainWindowChrome.swift");
+        for setting in [
+            "static let title = \"hide\"",
+            "window.styleMask.insert(.fullSizeContentView)",
+            "window.titlebarAppearsTransparent = true",
+            "window.titleVisibility = .hidden",
+            "hosting.safeAreaRegions = []",
+        ] {
+            assert!(
+                chrome.contains(setting),
+                "the window chrome no longer says `{setting}`"
+            );
+        }
+
+        let app = read("Sources/HerdrMacOS/HerdrApp.swift");
+        assert!(
+            app.contains("MainWindowChrome.apply(to: window"),
+            "the main window no longer takes its chrome from MainWindowChrome"
+        );
+        assert!(
+            !app.contains("window.title ="),
+            "the window title is set beside the chrome again, so the two can disagree"
+        );
+
+        let suite = read("Tests/HerdrMacOSTests/MainWindowChromeTests.swift");
+        for probe in [
+            "window.styleMask.contains(.fullSizeContentView)",
+            "window.titleVisibility == .hidden",
+            "window.title == \"hide\"",
+            "firstRow.origin.y == 0",
+        ] {
+            assert!(
+                suite.contains(probe),
+                "the window chrome suite no longer asks AppKit for `{probe}`"
+            );
+        }
+    }
+
+    /// R7: the strip's height, the traffic-light inset, and the spacing
+    /// between the first row's controls come from `HideTheme`.
+    ///
+    /// A number written at the call site is how two surfaces that should
+    /// match drift apart, and the traffic lights are the case where drifting
+    /// puts a control underneath a system button.
+    #[test]
+    fn first_row_metrics_come_from_theme_tokens_and_not_from_view_literals() {
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS/HideUI.swift"),
+        )
+        .expect("the shell's SwiftUI source");
+
+        for token in ["tabStripHeight", "trafficLightInset"] {
+            assert!(
+                source.contains(&format!("static let {token}: CGFloat")),
+                "HideTheme.Layout no longer declares {token}"
+            );
+        }
+
+        let mut offenders = Vec::new();
+        for declaration in [
+            "private struct HideTabStrip: View {",
+            "private struct HideBrandHeader: View {",
+        ] {
+            for line in shell_view_body(&source, declaration).lines() {
+                let trimmed = line.trim();
+                // Spacing between controls, the padding that clears the
+                // traffic lights, and the row's own height. A square control
+                // written `width:height:` is a control's size rather than one
+                // of those three, so it is not this rule's business.
+                let measured = trimmed
+                    .split_once(".padding(")
+                    .or_else(|| trimmed.split_once(".frame(height:"))
+                    .or_else(|| trimmed.split_once("HStack(spacing:"))
+                    .or_else(|| trimmed.split_once("VStack(spacing:"));
+                let Some((_, arguments)) = measured else {
+                    continue;
+                };
+                let head = arguments.split(')').next().unwrap_or(arguments);
+                let value = head.rsplit(',').next().unwrap_or(head).trim();
+                // Zero is the absence of spacing rather than a design value.
+                if value == "0" {
+                    continue;
+                }
+                if value.starts_with(|c: char| c.is_ascii_digit()) {
+                    offenders.push(format!("{declaration} -> {trimmed}"));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "the window's first row measures itself with literals: {offenders:#?}"
+        );
+    }
+
     #[test]
     fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
         let mut runtime = runtime();

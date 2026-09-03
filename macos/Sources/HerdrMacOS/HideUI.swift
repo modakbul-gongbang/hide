@@ -1500,7 +1500,7 @@ private struct HideTabStrip: View {
                                     Button {
                                         model.focusUnifiedTab(tab)
                                     } label: {
-                                        HStack(spacing: 6) {
+                                        HStack(spacing: HideTheme.spacingSM) {
                                             Image(systemName: tabIcon(tab))
                                                 .font(.system(size: 10, weight: .medium))
                                             Text(tab.label)
