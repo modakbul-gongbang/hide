@@ -78,6 +78,10 @@ enum HideTheme {
         /// draws, because a divider has to be easy to grab, not easy to see.
         static let resizeHandleGrabWidth: CGFloat = 20
         static let panelCollapseControlSize: CGFloat = 18
+        /// How far a press has to travel on a tab before it is a reorder
+        /// rather than a click. Below this a tremor while selecting a tab
+        /// would carry it out of its slot.
+        static let tabDragActivationDistance: CGFloat = 6
         static let paneHeaderHeight: CGFloat = 28
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
@@ -1418,9 +1422,26 @@ private struct HideMainView: View {
     }
 }
 
+/// Each tab's drawn width, gathered so a drag knows what it is passing over.
+/// Tabs are as wide as their labels, so the destination of a drop cannot be
+/// worked out from an index alone.
+private struct TabWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
 private struct HideTerminalHeader: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
+    /// What the pointer is carrying right now. This is the only piece of the
+    /// strip the shell holds: the order itself belongs to the core, so a drop
+    /// is reported rather than applied here.
+    @State private var draggingTabID: String?
+    @State private var dragTranslation: CGFloat = 0
+    @State private var tabWidths: [String: CGFloat] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1535,16 +1556,50 @@ private struct HideTerminalHeader: View {
                                     .accessibilityLabel("Close \(tab.label)")
                                 }
                                 .padding(.trailing, 4)
-                                .background(tab.active ? HideTheme.elevated : HideTheme.panel)
+                                // A carried tab climbs to the top of the
+                                // surface ladder, which is how this system
+                                // says "closer" without a drop shadow.
+                                .background(
+                                    tab.active || draggingTabID == tab.id
+                                        ? HideTheme.elevated
+                                        : HideTheme.panel
+                                )
+                                .background(
+                                    GeometryReader { proxy in
+                                        Color.clear.preference(
+                                            key: TabWidthPreferenceKey.self,
+                                            value: [tab.id: proxy.size.width]
+                                        )
+                                    }
+                                )
                                 .overlay(alignment: .trailing) {
                                     Rectangle()
                                         .fill(HideTheme.divider)
-                                        .frame(width: 1)
+                                        .frame(width: HideTheme.Layout.hairlineWidth)
                                 }
+                                .overlay {
+                                    if draggingTabID == tab.id {
+                                        Rectangle()
+                                            .strokeBorder(
+                                                HideTheme.divider,
+                                                lineWidth: HideTheme.Layout.hairlineWidth
+                                            )
+                                    }
+                                }
+                                .offset(x: draggingTabID == tab.id ? dragTranslation : 0)
+                                .zIndex(draggingTabID == tab.id ? 1 : 0)
                                 .accessibilityIdentifier("hide-tab-\(tab.id)")
+                                .gesture(tabDragGesture(for: tab))
                             }
                         }
                         .animation(.easeOut(duration: 0.12), value: model.tabShortcutHintsVisible)
+                        // SwiftUI hands preference changes to a Sendable
+                        // closure, so the hop back to the main actor is what
+                        // lets the widths land in view state. It only fires
+                        // when a tab's drawn width actually changes.
+                        .onPreferenceChange(TabWidthPreferenceKey.self) { widths in
+                            Task { @MainActor in tabWidths = widths }
+                        }
                     }
                     Button {
                         model.addTab()
@@ -1569,6 +1624,33 @@ private struct HideTerminalHeader: View {
             }
         }
         .background(HideTheme.panel)
+    }
+
+    /// Carries a tab under the pointer and reports where it was let go.
+    ///
+    /// The gesture only starts after the activation distance, so a click
+    /// still reaches the tab's own button, and a drag that starts on a tab is
+    /// always a reorder rather than anything the surface behind it does. The
+    /// order is not changed here: the drop is dispatched and the strip
+    /// redraws from the next snapshot.
+    private func tabDragGesture(for tab: ShellTabItem) -> some Gesture {
+        DragGesture(minimumDistance: HideTheme.Layout.tabDragActivationDistance)
+            .onChanged { value in
+                draggingTabID = tab.id
+                dragTranslation = value.translation.width
+            }
+            .onEnded { value in
+                let tabs = model.unifiedTabs
+                draggingTabID = nil
+                dragTranslation = 0
+                guard let from = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+                let destination = TabDragPlacement.destinationIndex(
+                    from: from,
+                    translation: value.translation.width,
+                    widths: tabs.map { tabWidths[$0.id] ?? 0 }
+                )
+                model.reorderUnifiedTab(tab, to: destination)
+            }
     }
 
     private func tabIcon(_ tab: ShellTabItem) -> String {

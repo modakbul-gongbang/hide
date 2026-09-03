@@ -1201,6 +1201,7 @@ struct CoreDispatchRoutingPolicy {
         "focus_pane",
         "focus_checkout",
         "focus_tab",
+        "reorder_tab",
         "create_tab",
         "create_pane",
         "toggle_zoom",
@@ -1578,6 +1579,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
             "tab_id": tabID,
+        ])
+    }
+
+    /// Asks the core to put one strip entry at another place in the strip.
+    ///
+    /// `tabID` is the strip entry's id, which spans both kinds, and `toIndex`
+    /// is where it ends up in the resulting strip. The core decides whether
+    /// that needs anything from Herdr; the shell only reports the drop.
+    func reorderTab(workspaceID: String, checkoutID: String, tabID: String, toIndex: Int) {
+        dispatch(kind: "reorder_tab", payload: [
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID,
+            "tab_id": tabID,
+            "to_index": toIndex,
         ])
     }
 

@@ -21,6 +21,7 @@ struct CoreDispatchRoutingPolicyTests {
             "focus_pane",
             "focus_checkout",
             "focus_tab",
+            "reorder_tab",
             "create_tab",
             "create_pane",
             "toggle_zoom",

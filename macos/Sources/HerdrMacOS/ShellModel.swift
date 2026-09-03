@@ -202,6 +202,43 @@ enum TabShortcutNumbering {
     }
 }
 
+/// Where a dragged tab lands when the operator lets go.
+///
+/// Tabs are as wide as their labels, so the destination cannot be a fixed
+/// step: it is decided by how far the drag has carried the tab across the
+/// neighbours beside it. A tab has taken a neighbour's slot once it has moved
+/// past the middle of that neighbour, which is the point where the two would
+/// visually trade places.
+enum TabDragPlacement {
+    static func destinationIndex(
+        from index: Int,
+        translation: CGFloat,
+        widths: [CGFloat]
+    ) -> Int {
+        guard widths.indices.contains(index) else { return index }
+        var destination = index
+        var travelled: CGFloat = 0
+        if translation > 0 {
+            var candidate = index + 1
+            while candidate < widths.count {
+                travelled += widths[candidate]
+                guard translation >= travelled - widths[candidate] / 2 else { break }
+                destination = candidate
+                candidate += 1
+            }
+        } else if translation < 0 {
+            var candidate = index - 1
+            while candidate >= 0 {
+                travelled += widths[candidate]
+                guard -translation >= travelled - widths[candidate] / 2 else { break }
+                destination = candidate
+                candidate -= 1
+            }
+        }
+        return destination
+    }
+}
+
 enum TerminalLayoutPolicy {
     static func belongs(
         layout: CorePaneLayoutSnapshot,
@@ -1477,6 +1514,34 @@ final class ShellModel: ObservableObject {
 
     func tabShortcutNumber(tabID: String) -> Int? {
         TabShortcutNumbering.number(ofTabID: tabID, in: unifiedTabs)
+    }
+
+    /// Reports a tab the operator dropped at a new place in the strip.
+    ///
+    /// The shell does not reorder anything itself. It says which entry was
+    /// dropped where, and the core decides whether that is a slot it owns or
+    /// an order it has to ask Herdr for. The strip redraws from the next
+    /// snapshot either way.
+    func reorderUnifiedTab(_ item: ShellTabItem, to index: Int) {
+        guard let workspace = focusedWorkspace, let checkout = focusedCheckout else {
+            interactionNotice = "The dragged tab has no routable workspace context. No tab was moved."
+            return
+        }
+        guard !isRemoteContext else {
+            interactionNotice = "A remote target's tab order is Herdr's alone. No tab was moved."
+            return
+        }
+        let tabs = unifiedTabs
+        guard let from = tabs.firstIndex(where: { $0.id == item.id }),
+              tabs.indices.contains(index),
+              from != index
+        else { return }
+        core.reorderTab(
+            workspaceID: workspace.id,
+            checkoutID: checkout.id,
+            tabID: item.id,
+            toIndex: index
+        )
     }
 
     func closeUnifiedTab(_ item: ShellTabItem) {
