@@ -162,3 +162,27 @@ private func presentationAgent(
     #expect(AgentShortcutNumbering.agent(atNumber: 4, in: agents) == nil)
     #expect(AgentShortcutNumbering.agent(atNumber: 0, in: agents) == nil)
 }
+
+@Test func shortcutCandidatesFollowTheVisibleSidebarView() {
+    let agents = (1...4).map {
+        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", state: "idle")
+    }
+    let checkout = presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-3", "pane-4"])
+
+    let agentsView = AgentShortcutNumbering.candidates(
+        for: .agents, agents: agents, focusedCheckout: checkout
+    )
+    let projectsView = AgentShortcutNumbering.candidates(
+        for: .projects, agents: agents, focusedCheckout: checkout
+    )
+    let noCheckout = AgentShortcutNumbering.candidates(
+        for: .projects, agents: agents, focusedCheckout: nil
+    )
+
+    #expect(agentsView.map(\.paneID) == ["pane-1", "pane-2", "pane-3", "pane-4"])
+    // ⌘1 in the Projects view is the checkout's first agent, not the global first.
+    #expect(projectsView.map(\.paneID) == ["pane-3", "pane-4"])
+    #expect(AgentShortcutNumbering.number(ofPaneID: "pane-3", in: projectsView) == 1)
+    #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: projectsView) == nil)
+    #expect(noCheckout.isEmpty)
+}

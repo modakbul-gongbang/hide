@@ -82,11 +82,25 @@ struct SidebarWorkspacePresentation: Equatable {
     }
 }
 
-/// Direct-select numbering for the sidebar agent list. The number is a
-/// property of the agent's position in the runtime's own agent projection, not
-/// of whichever sidebar view is showing, so the Projects view and the Agents
-/// view label the same agent identically.
+/// Direct-select numbering for the sidebar. The number is the agent's
+/// position in the list the visible view shows: the Agents view numbers the
+/// runtime's whole agent projection, the Projects view numbers the agents in
+/// the selected checkout, so ⌘1 always reaches the first row the user can see.
 enum AgentShortcutNumbering {
+    static func candidates(
+        for content: SidebarContent,
+        agents: [SidebarAgent],
+        focusedCheckout: CoreCheckoutSnapshot?
+    ) -> [SidebarAgent] {
+        switch content {
+        case .agents:
+            return agents
+        case .projects:
+            guard let focusedCheckout else { return [] }
+            return SidebarGrouping.agents(agents, in: focusedCheckout)
+        }
+    }
+
     /// Only the first nine agents get a number: ⌘0 is not a tenth slot, it is
     /// a different key, and a two-digit chord is not a shortcut anyone reaches
     /// for without looking.

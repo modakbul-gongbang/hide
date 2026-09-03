@@ -726,17 +726,29 @@ final class ShellModel: ObservableObject {
     }
 
     /// ⌘1…⌘9 select the nth agent in the same order the sidebar lists them.
+    /// The agents ⌘1-⌘9 reach, in the order the visible sidebar view lists
+    /// them: the whole agent list in the Agents view, the selected checkout's
+    /// agents in the Projects view.
+    var shortcutAgents: [SidebarAgent] {
+        AgentShortcutNumbering.candidates(
+            for: sidebarContent,
+            agents: agents,
+            focusedCheckout: focusedCheckout
+        )
+    }
+
     /// A number past the end of the list is a miss, not an error: the user is
     /// reaching for a slot that is simply empty right now.
     func selectAgent(shortcutNumber: Int) {
-        guard let agent = AgentShortcutNumbering.agent(atNumber: shortcutNumber, in: agents) else {
+        guard let agent = AgentShortcutNumbering.agent(atNumber: shortcutNumber, in: shortcutAgents)
+        else {
             return
         }
         selectAgent(agent)
     }
 
     func agentShortcutNumber(paneID: String) -> Int? {
-        AgentShortcutNumbering.number(ofPaneID: paneID, in: agents)
+        AgentShortcutNumbering.number(ofPaneID: paneID, in: shortcutAgents)
     }
 
     /// Command held past the reveal delay shows the keycaps; releasing it
