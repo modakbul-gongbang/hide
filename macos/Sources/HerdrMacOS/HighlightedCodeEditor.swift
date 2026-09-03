@@ -24,6 +24,17 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         layoutManager.addTextContainer(container)
 
         let textView = NSTextView(frame: .zero, textContainer: container)
+        // A text view inside a scroll view has to be told it may grow, and how
+        // far. Without this AppKit keeps it at its frame height, the scroll
+        // view sizes its document to that, and a long file stops scrolling
+        // partway down with the rest of the text laid out below the clip.
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
         textView.autoresizingMask = [NSView.AutoresizingMask.width]
         textView.delegate = context.coordinator
         textView.font = NSFont.monospacedSystemFont(
@@ -42,7 +53,9 @@ struct HighlightedCodeEditor: NSViewRepresentable {
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        // The container tracks the text view's width, so lines wrap and there
+        // is never anything to scroll horizontally. The scroller was inert.
+        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.documentView = textView
