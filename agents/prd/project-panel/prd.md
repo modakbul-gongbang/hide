@@ -47,7 +47,7 @@ Approval checklist:
   Primary path: 프로젝트를 펼치면 모든 worktree가 행으로 보이고(pane 없는 행은 흐리게), 각 행에 PR 배지·dirty 점·agent 수가 있다. 행을 선택하면 우측 상단 카드에 브랜치, PR base 대비 ahead/behind, 미push 커밋 수, 변경 수, PR 배지와 갱신 시각, agent/포트, 용량과 가장 큰 하위 폴더가 기호·숫자 위주로 보인다. 첫 조회 중인 줄은 스피너다. PR 줄을 클릭하면 브라우저에서 PR이 열린다.
   Failure state: gh가 없거나 미로그인이면 PR 줄과 배지가 비고 카드에 `gh auth login` 안내 한 줄만 있다. gh 조회가 실패하거나 오프라인이면 마지막 성공값이 갱신 시각과 함께 남고 배지는 흐려지며 실패 사유는 카드에서만 보인다. git 저장소가 아닌 폴더 프로젝트는 브랜치/PR/변경 줄이 없고 이름·용량·agent/포트만 있다.
   Recovery: 카드의 새로고침 버튼, 그 checkout의 agent가 working에서 벗어날 때의 자동 재조회, 5분 주기 재조회.
-  Reach: 픽스처 저장소에 worktree 3개(PR 없음, open PR, merged PR)와 로컬에서만 커밋한 브랜치 하나를 만들고 앱에 등록한다. gh 로그아웃 상태와 네트워크 차단 상태는 각각 `gh auth logout`과 gh 호출 실패 주입으로 만든다.
+  Reach: 픽스처 저장소에 worktree 3개(PR 없음, open PR, merged PR), `-u`로 push한 뒤 로컬 커밋 1개를 더한 브랜치 하나, 한 번도 push하지 않은 브랜치 하나를 만들고 앱에 등록한다. gh 로그아웃 상태와 네트워크 차단 상태는 각각 `gh auth logout`과 gh 호출 실패 주입으로 만든다.
 
 - SC2. 머지된 worktree 정리: 배지가 merged 또는 closed로 바뀐 worktree를 카드에서 삭제한다.
   Actors: 사용자.
@@ -68,7 +68,8 @@ Approval checklist:
 포함:
 
 - Projects 트리의 checkout 행 확장: `git worktree list` 기반으로 저장소의 모든 worktree를 행으로 표시, pane 없는 행은 흐리게 + Start new terminal, 행 배지 3종(PR 상태, dirty 점, agent 수), merged/closed 행 흐림.
-- 우측 패널 상단 요약 카드(선택된 checkout 기준): 브랜치, PR base 대비 ahead/behind, 미push 커밋 수(`↑N`), 변경 파일 수, PR 번호·상태·갱신 시각, agent 수와 상태, 열린 포트, 용량과 가장 큰 하위 폴더, 새로고침, Open PR(브라우저), Remove worktree(merged/closed에서만).
+- Changes 섹션 개편: UNCOMMITTED / COMMITTED ON BRANCH 두 그룹, 파일 행에 디렉터리·줄 델타·상태 글자.
+- 우측 패널 상단 요약 카드(선택된 checkout 기준): 두 줄 헤더(브랜치 + 총 델타, → base + ↑↓), 브랜치, PR base 대비 ahead/behind, 미push 커밋 수(`↑N`), 변경 파일 수, PR 번호·상태·갱신 시각, agent 수와 상태, 열린 포트, 용량과 가장 큰 하위 폴더, 새로고침, Open PR(브라우저), Remove worktree(merged/closed에서만).
 - `gh` CLI를 통한 PR 조회와 갱신 규칙, 기준 브랜치(PR base, 없으면 저장소 기본 브랜치).
 - gh 없음/미로그인, gh 실패/오프라인, 비-git 폴더, 첫 조회 중 로딩, worktree 경로 missing 상태.
 - 디스크 용량 측정(선택 checkout 1개, 잠금 밖, 재선택/삭제 확인창에서 재측정).
@@ -122,7 +123,7 @@ Decision Register (qa-log D#) 처리:
 - D-14 (user, 비-git 폴더 카드): R4, AC9.
 - D-15 (user, 오프라인/실패 stale 표시): R9, AC8.
 - D-16 (user, 자동 테스트 + 실제 GitHub e2e): 9장.
-- D-17, D-26 (user, 비공개 픽스처 저장소, 검증 후 유지): 4.1, T9, V5.
+- D-17, D-26 (user, 비공개 픽스처 저장소, 검증 후 유지): 4.1, T10, V5.
 - D-18 (assumption, 이름 `hide-e2e-fixture`, 비공개): 4.2 승인 항목. 가정으로 유지.
 - D-19 (assumption, 모든 조회는 잠금 밖): G4. 저장소 Performance Guide 사실.
 - D-20 (assumption, deferred, 긴 트리): 비목표.
@@ -136,13 +137,14 @@ Decision Register (qa-log D#) 처리:
 - D-29 (assumption, 첫 조회 스피너): R9, AC8.
 - D-30 (assumption, gh 필드와 `--limit 200`): R7. 게이트 참고를 반영해 `baseRefName,number`를 추가했다.
 - D-31 (assumption, 경계 상태 증명 단계): V3, V4.
+- 후속 사용자 요청(2026-09-03, 소스 컨트롤 패널 캡처를 참고로 제시): 카드 두 줄 헤더 배치(R4)와 Changes 두 그룹·파일 행 구성(R12, AC13, T8)으로 반영. 캡처의 Message 입력과 Publish Branch는 D-07 비목표에 따라 거절.
 
 감사 게이트 P2 참고의 처리(agent 가정, 사용자 결정으로 승격하지 않음):
 
 - `↑N` 두 지표 구분: PR base 대비는 `↑2 ↓0 main`처럼 base 브랜치 이름을 뒤에 붙이고, 미push는 `↑N origin`처럼 리모트 이름을 붙인다 (R4).
 - 배지 tie-break: 같은 브랜치에 PR이 여럿이면 OPEN이 MERGED/CLOSED보다 우선, 남으면 최신 `updatedAt`. draft는 reviewDecision과 무관하게 `open` (R7).
 - upstream 없는 브랜치: 미push 항목 자체를 생략한다 (R4).
-- `↑N > 0` 증명 단계: V5에 로컬 커밋만 있는 브랜치를 포함한다.
+- `↑N > 0` 증명 단계: V5에 `-u` push 후 로컬 커밋 1개를 더한 브랜치와, push한 적 없는 브랜치(항목 생략)를 포함한다.
 
 사용자가 거절하거나 유보한 것: Branches 뷰(Q3 b), 우측 패널 전용 Worktrees 섹션(Q3 c), 앱 내 커밋/PR 생성(Q5), 브랜치 함께 삭제(Q6 c), 행마다 용량 표시(Q7 c), 수동 새로고침만(Q8 c), 선택 checkout만 갱신(Q8 a), pushed 배지(Q9), push 감지 트리거(Q9), 로컬 main 대비 merge-base 판정(Q10 b), herdr-ide 자체를 픽스처로 쓰기(Q13 a).
 
@@ -163,12 +165,13 @@ Principles intake: `~/projects/oh-my-principle` (commit `35ab76c`)의 `engineeri
 - R1. 프로젝트를 펼치면 저장소의 모든 worktree(`git worktree list`)가 checkout 행으로 보인다. pane이 없는 행은 흐리게 표시되고, 선택하면 본문 빈 상태의 Start new terminal로 pane을 만들 수 있다. 경로가 없는 worktree는 `missing` 배지를 단다.
 - R2. 각 checkout 행은 PR 상태 배지(있을 때), 커밋 안 된 변경이 있으면 점, agent 수(있을 때)만 싣는다. PR 상태가 merged 또는 closed인 행은 흐리게 표시된다.
 - R3. 행 선택은 기존과 같이 그 checkout을 focus하고 우측 패널의 기준 경로를 바꾼다.
-- R4. 우측 패널 상단 카드는 선택된 로컬 checkout에 대해 다음을 보여준다: 브랜치 이름(worktree 경로는 툴팁), 기준 브랜치 대비 `↑A ↓B <base>`, upstream이 있을 때 미push 커밋 `↑N <remote>`, 변경 파일 수(클릭하면 Changes 섹션), PR 번호와 배지와 마지막 갱신 시각(클릭하면 브라우저로 PR), agent 수와 상태 점, 열린 포트(클릭하면 브라우저), 용량과 가장 큰 하위 폴더. git 저장소가 아닌 폴더는 이름, 용량, agent/포트만 보인다.
+- R4. 우측 패널 상단 카드는 선택된 로컬 checkout에 대해 다음을 보여준다. 헤더는 두 줄이다: 1행 브랜치 이름(worktree 경로는 툴팁)과 오른쪽 끝에 기준 브랜치 대비 커밋된 변경만의 총 줄 수 델타 `+A -D`(`git diff --shortstat <base>...HEAD`, 작업 트리 변경은 제외, 초록/빨강), 2행 `→ <base>`와 오른쪽 끝에 `↑A ↓B`. 그 아래에 upstream이 있을 때 미push 커밋 `↑N <remote>`, 변경 파일 수(클릭하면 Changes 섹션), PR 번호와 배지와 마지막 갱신 시각(클릭하면 브라우저로 PR), agent 수와 상태 점, 열린 포트(클릭하면 브라우저), 용량과 가장 큰 하위 폴더. git 저장소가 아닌 폴더는 이름, 용량, agent/포트만 보인다.
 - R5. 카드는 PR 상태가 merged 또는 closed일 때만 Remove worktree 버튼을 보인다. 그 worktree에 agent가 실행 중이거나 커밋 안 된 변경이 있으면 버튼이 비활성화되고 이유가 한 줄로 보인다. 누르면 기존 worktree 삭제 확인창(용량 포함)이 뜨고, 확인 시 worktree만 삭제되며 로컬 브랜치는 남는다. merged/closed가 아닌 worktree의 삭제는 기존 checkout 우클릭 메뉴 `Delete worktree…` 경로가 그대로 남아 있고 이 변경은 그 경로를 바꾸지 않는다.
 - R6. 카드의 PR 항목과 포트는 시스템 기본 라우팅(기존 링크 열기 규칙)으로 브라우저를 연다.
 - R7. PR 정보는 `gh pr list --state all --limit 200 --json number,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt`을 프로젝트(저장소)당 1회 호출해 worktree 브랜치에 매핑한다. 배지 매핑: `merged`=MERGED; `closed`=CLOSED; `review`=OPEN이고 draft가 아니며 reviewDecision이 REVIEW_REQUIRED/CHANGES_REQUESTED/APPROVED(셋은 색으로 구분); `open`=OPEN이고 리뷰 없음 또는 draft; 없음=해당 브랜치 PR 없음. 한 브랜치에 PR이 여럿이면 OPEN 우선, 남으면 최신 `updatedAt`. 기준 브랜치는 PR의 base, PR이 없으면 `gh repo view --json defaultBranchRef`의 기본 브랜치, gh 불가 시 로컬 기본 브랜치.
 - R8. 용량은 선택 checkout 1개만, 카드가 열릴 때 백그라운드에서 측정하며 측정 중에는 `measuring…`을 보인다. 재선택하거나 삭제 확인창을 열 때 다시 잰다. 가장 큰 1단계 하위 폴더 이름과 크기를 함께 보인다.
 - R9. 갱신과 상태: PR 조회는 프로젝트당 5분 주기, 그 프로젝트의 checkout에서 agent가 working에서 벗어날 때 즉시, 카드의 새로고침 버튼으로 즉시. 첫 조회 중인 항목은 스피너. gh가 없거나 미로그인이면 PR 항목과 배지를 비우고 카드에 `gh auth login` 안내 한 줄. 조회 실패나 오프라인이면 마지막 성공값을 `as of N min ago`와 함께 유지하고 배지는 흐리게, 실패 사유는 카드에서만 보인다. 실패와 빈 결과는 구조화 로그로 남긴다.
+- R12. Changes 섹션은 두 그룹으로 나뉜다: `UNCOMMITTED N`(현재 `git status`, 기존 동작)과 `COMMITTED ON BRANCH N`(기준 브랜치 대비 `git diff --stat <base>...HEAD`의 파일). 각 그룹은 헤더에 이름·개수·접기를 가지며, 파일 행은 파일명(밝게)·디렉터리(흐리게)·오른쪽 `+N -M`(초록/빨강)·상태 글자 `A/M/D`(색)로 구성된다. 파일 클릭은 기존처럼 diff를 연다(COMMITTED 그룹은 base 대비 diff). 기준 브랜치가 없는 경우(비-git 폴더)에는 UNCOMMITTED 그룹만 보인다. gh가 불가해도 R7의 로컬 기본 브랜치 대비로 COMMITTED 그룹은 계속 보인다. 사용자가 제시한 소스 컨트롤 패널 캡처(2026-09-03)를 배치 참고로 삼되 Message 입력과 Publish Branch는 비목표(D-07)에 따라 가져오지 않는다.
 - R10. 행과 카드의 텍스트는 최소로 하고 상태는 기호·색·숫자로 표시한다. 문장형 안내는 gh 미로그인/실패 사유 같은 예외 상태에 한 줄만 허용한다. 색과 기호에는 툴팁 또는 접근성 라벨이 붙는다.
 - R11. worktree, PR, 용량 조회는 모두 런타임 뮤텍스 밖에서 실행되고 결과만 잠금 안으로 전달된다. 어떤 조회도 매 틱 서브프로세스를 만들지 않는다.
 
@@ -179,7 +182,7 @@ Principles intake: `~/projects/oh-my-principle` (commit `35ab76c`)의 `engineeri
 | AC1 | pane이 없는 worktree와 있는 worktree가 모두 프로젝트 아래 행으로 보이고, pane 없는 행만 흐리며, 경로가 없는 worktree는 missing 배지를 단다 | judged | 스크립트 실행: 픽스처 저장소에 worktree 3개(그중 1개는 경로 삭제)를 두고 앱에서 프로젝트를 펼친 화면 캡처 |
 | AC2 | 행에는 PR 배지, dirty 점, agent 수 외의 텍스트가 없고, merged/closed 행은 흐리다 | judged | 스크립트 실행: open/merged/closed/없음 네 상태의 worktree 행 캡처와 접근성 라벨 목록 |
 | AC3 | gh 출력의 state/reviewDecision/isDraft 조합이 R7 매핑표대로 다섯 배지 값으로 결정되고, 한 브랜치에 PR이 여럿이면 OPEN 우선·최신 updatedAt 순이다 | machine | - |
-| AC4 | 카드의 ahead/behind는 PR base(없으면 기본 브랜치) 기준이고, 미push 항목은 upstream이 있을 때만 `↑N <remote>`로 보이며 로컬 커밋만 있는 브랜치에서 N이 0보다 크다 | judged | 스크립트 실행: base 대비 2 ahead, 로컬 커밋 1개 미push 상태의 카드 캡처와 같은 시점의 git 카운트 |
+| AC4 | 카드의 ahead/behind와 총 줄 델타 `+A -D`는 PR base(없으면 기본 브랜치) 대비 커밋된 변경 기준이고, 미push 항목은 upstream이 있을 때만 `↑N <remote>`로 보이며 upstream에 push한 뒤 로컬 커밋 1개를 더한 브랜치에서 N이 1이고, upstream이 없는 브랜치에서는 항목이 없다 | judged | 스크립트 실행: base 대비 2 ahead·upstream 대비 1 미push 상태의 카드 캡처와 같은 시점의 `git rev-list --count`, `git diff --shortstat` 값; upstream 없는 브랜치의 카드 캡처 |
 | AC5 | Remove worktree 버튼은 merged/closed 카드에만 있고, agent 실행 중이거나 변경이 있으면 비활성이며 이유가 한 줄로 보이고, 활성 상태에서 확인하면 worktree 폴더만 사라지고 로컬 브랜치는 남는다 | judged | 스크립트 실행: open PR 카드(버튼 없음) → merged + dirty(비활성) → merged + agent 실행(비활성) → 정리 후 활성 → 삭제 후 폴더 부재와 브랜치 존재 확인 |
 | AC6 | 카드의 PR 항목을 클릭하면 그 PR URL이 브라우저로 열린다 | judged | 스크립트 실행: 클릭 후 열린 브라우저 탭의 URL 기록 |
 | AC7 | 용량은 선택 checkout에 대해서만 측정되어 크기와 가장 큰 하위 폴더가 보이고, 측정 중에는 measuring 표시가 있다 | judged | 스크립트 실행: 큰 하위 폴더를 둔 worktree 선택 직후(measuring)와 측정 완료 후의 카드 캡처, 다른 checkout으로 옮겼을 때 그 checkout의 값이 따로 측정되는 캡처 |
@@ -187,7 +190,8 @@ Principles intake: `~/projects/oh-my-principle` (commit `35ab76c`)의 `engineeri
 | AC9 | git 저장소가 아닌 폴더 프로젝트의 카드에는 브랜치·PR·변경 항목이 없고 이름·용량·agent/포트만 있다 | judged | 스크립트 실행: 비-git 폴더 프로젝트를 선택한 카드 캡처 |
 | AC10 | worktree·PR·용량 조회는 잠금 밖에서 실행되고 요청이 같으면 주기 안에서 다시 실행되지 않는다 | machine | - |
 | AC11 | 흐린 worktree 행을 선택하고 Start new terminal을 누르면 그 worktree 경로에 pane이 생기고 행이 정상 밝기로 바뀐다 | judged | 스크립트 실행: pane 없는 worktree 선택 → 시작 → pane 생성 후 행과 헤더 경로 캡처 |
-| AC12 | 기존 Explorer와 Changes 섹션의 동작이 카드 추가 후에도 그대로이며, 카드는 두 섹션 모두에서 상단에 보인다 | judged | 스크립트 실행: Explorer/Changes 각 섹션에서 카드가 상단에 있는 캡처와 Changes의 파일 diff 열림 확인 |
+| AC12 | 기존 Explorer 동작이 카드 추가 후에도 그대로이며, 카드는 두 섹션 모두에서 상단에 보인다 | judged | 스크립트 실행: Explorer/Changes 각 섹션에서 카드가 상단에 있는 캡처와 Explorer 파일 열림 확인 |
+| AC13 | Changes 섹션이 UNCOMMITTED와 COMMITTED ON BRANCH 두 그룹으로 나뉘어 각 그룹 헤더에 개수가 있고, 파일 행에 디렉터리·`+N -M`·상태 글자가 보이며, COMMITTED 그룹의 파일을 클릭하면 base 대비 diff가 열리고, 비-git 폴더에서는 UNCOMMITTED 그룹만 보이며, gh가 PATH에 없어도 로컬 기본 브랜치 대비 COMMITTED 그룹이 보인다 | judged | 스크립트 실행: 커밋 2개와 미커밋 파일 1개가 있는 worktree의 Changes 캡처, COMMITTED 파일 클릭 후 diff 캡처, 비-git 폴더의 Changes 캡처, gh를 PATH에서 뺀 상태의 Changes 캡처 |
 
 ## 8. PRD-Level Tasks
 
@@ -197,10 +201,11 @@ Principles intake: `~/projects/oh-my-principle` (commit `35ab76c`)의 `engineeri
 - T4. 갱신 트리거: agent 상태 전이(working → 그 외)와 카드 새로고침 이벤트를 core가 PR 리더 요청 갱신으로 연결한다. Covers R9, AC8. Depends on: T3.
 - T5. 디스크 용량 리더: 선택 checkout의 총 용량과 가장 큰 1단계 하위 폴더를 잠금 밖에서 측정하고, 재선택·삭제 확인창 열림에 재측정한다. Covers R8, R11, AC7, AC10. Depends on: none.
 - T6. 사이드바 행: 모든 worktree 행 렌더링(흐림, missing, 배지 3종, merged/closed 흐림), 접근성 라벨과 툴팁, 텍스트 최소 규칙. Covers R1, R2, R3, R10, AC1, AC2, AC11. Depends on: T2.
-- T7. 요약 카드: 우측 패널 상단 카드 렌더링(모든 항목, 스피너, stale/미로그인/비-git 상태, Open PR, 포트, 새로고침), 카드 스냅샷 필드를 `rest` 채널에 추가. Covers R4, R6, R9, R10, AC4, AC6, AC8, AC9, AC12. Depends on: T2, T3, T5.
-- T8. Remove worktree: 카드 버튼의 노출·비활성 규칙, 기존 확인창에 용량 표시, 삭제 후 카탈로그 갱신. Covers R5, AC5. Depends on: T7.
-- T9. 검증 픽스처: 로그인된 `gh`로 비공개 저장소 `hide-e2e-fixture`를 만들고(이미 있으면 재사용), worktree 3개(PR 없음/open/merged), closed PR 1개, 로컬 커밋만 있는 브랜치 1개, 큰 하위 폴더 1개, 비-git 폴더 프로젝트 1개를 준비하는 스크립트를 둔다. 저장소는 검증 후 유지한다. Covers 9.2 V5, AC1-AC9. Depends on: none.
-- T10. 자동 테스트: gh 출력 파싱·매핑·tie-break, worktree porcelain 파싱과 카운트, 리더 주기·요청 동일성, 카드/행 표시 정책(배지·흐림·버튼 노출·비활성 이유)에 대한 단위 테스트. Covers AC3, AC10, R2, R5, R7. Depends on: T1, T3, T5, T6, T8.
+- T7. 요약 카드: 우측 패널 상단 카드 렌더링(두 줄 헤더와 모든 항목, 스피너, stale/미로그인/비-git 상태, Open PR, 포트, 새로고침), 카드 스냅샷 필드를 `rest` 채널에 추가. Covers R4, R6, R9, R10, AC4, AC6, AC8, AC9, AC12. Depends on: T2, T3, T5.
+- T8. Changes 두 그룹: 기존 `ChangesReader`를 확장해 base 대비 커밋된 파일 목록과 파일별 줄 델타를 읽고, Changes 뷰를 UNCOMMITTED/COMMITTED ON BRANCH 그룹과 새 파일 행 구성으로 바꾼다. Covers R12, R10, AC13. Depends on: T1.
+- T9. Remove worktree: 카드 버튼의 노출·비활성 규칙, 기존 확인창에 용량 표시, 삭제 후 카탈로그 갱신. Covers R5, AC5. Depends on: T7.
+- T10. 검증 픽스처: 로그인된 `gh`로 비공개 저장소 `hide-e2e-fixture`를 만들고(이미 있으면 재사용), worktree 3개(PR 없음/open/merged), closed PR 1개, `-u` push 후 로컬 커밋 1개를 더한 브랜치 1개, push한 적 없는 브랜치 1개, 큰 하위 폴더 1개, 비-git 폴더 프로젝트 1개를 준비하는 스크립트를 둔다. 저장소는 검증 후 유지한다. Covers 9.2 V5, AC1-AC9. Depends on: none.
+- T11. 자동 테스트: gh 출력 파싱·매핑·tie-break, worktree porcelain 파싱과 카운트, `git diff --stat` 파싱과 그룹 분리, 리더 주기·요청 동일성, 카드/행 표시 정책(배지·흐림·버튼 노출·비활성 이유)에 대한 단위 테스트. Covers AC3, AC10, R2, R5, R7, R12. Depends on: T1, T3, T5, T6, T8, T9.
 
 ## 9. Verification Contract
 
@@ -217,14 +222,14 @@ Principles intake: `~/projects/oh-my-principle` (commit `35ab76c`)의 `engineeri
 
 | ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
 | --- | --- | --- | --- | --- | --- |
-| V1 | build/static | R1-R11 | Rust와 Swift 빌드, 기존 계약 체크 스크립트(shortcut, right panel sections)가 회귀하지 않는다 | yes | no |
-| V2 | automated behavior | R2, R5, R7, R9, R11, AC3, AC10 | gh 출력의 매핑과 tie-break(review 상태 포함), worktree porcelain 파싱, 리더가 같은 요청을 주기 안에 재실행하지 않음, 행·카드 표시 정책이 고정 입력으로 검증된다. 보호하는 회귀: 매핑표 이탈, 잠금 안 서브프로세스, 배지/버튼 규칙 붕괴 | yes | no |
-| V3 | browser/runtime | R1-R6, R8, R10, AC1, AC2, AC4-AC7, AC9, AC11, AC12, SC1, SC2, SC3 | 설치된 dev 인스턴스에서 픽스처 프로젝트를 펼쳐 행 상태, 카드 항목, Open PR, Remove worktree의 노출·비활성·삭제, pane 없는 worktree 시작, 비-git 카드, Explorer/Changes 공존이 스크린샷과 상태 기록으로 증명된다. 각 SC의 primary·failure·recovery를 모두 거친다 | yes | no |
+| V1 | build/static | R1-R12 | Rust와 Swift 빌드, 기존 계약 체크 스크립트(shortcut, right panel sections)가 회귀하지 않는다 | yes | no |
+| V2 | automated behavior | R2, R5, R7, R9, R11, R12, AC3, AC10 | gh 출력의 매핑과 tie-break(review 상태 포함), worktree porcelain 파싱, diff --stat 파싱과 두 그룹 분리, 리더가 같은 요청을 주기 안에 재실행하지 않음, 행·카드 표시 정책이 고정 입력으로 검증된다. 보호하는 회귀: 매핑표 이탈, 잠금 안 서브프로세스, 배지/버튼 규칙 붕괴 | yes | no |
+| V3 | browser/runtime | R1-R6, R8, R10, R12, AC1, AC2, AC4-AC7, AC9, AC11, AC12, AC13, SC1, SC2, SC3 | 설치된 dev 인스턴스에서 픽스처 프로젝트를 펼쳐 행 상태, 카드 항목, Open PR, Remove worktree의 노출·비활성·삭제, pane 없는 worktree 시작, 비-git 카드, Explorer/Changes 공존, Changes 두 그룹과 파일 행 구성이 스크린샷과 상태 기록으로 증명된다. 각 SC의 primary·failure·recovery를 모두 거친다 | yes | no |
 | V4 | browser/runtime | R7, R9, AC8, SC1 failure/recovery | gh가 PATH에 없는 상태, gh 로그아웃 상태, gh 실패 주입 상태 각각에서 카드와 배지가 규칙대로 보이고(없음/미로그인 안내, 로컬 기본 브랜치 대비 ahead/behind, stale 표시), 새로고침·agent 종료·주기 세 트리거가 각각 재조회를 일으키는 것이 로그로 남는다 | yes | no |
 
 | ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Allowed Side Effect | Sensitive Data Policy |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| V5 | live external API | R7, AC3, AC4, AC5, SC1, SC2 | 픽스처 저장소에서 PR을 열고(open), 머지하고(merged), 다른 PR을 닫아(closed) 실제 gh 조회 결과가 배지와 카드에 반영되며, 로컬 커밋만 있는 브랜치에서 `↑N`이 0보다 큰 것이 증명된다. review 상태는 두 번째 계정이 없어 V2의 고정 출력으로만 증명한다 | yes | yes: gh 미로그인이나 네트워크 불가 시 | 사용자 계정의 비공개 픽스처 저장소에 브랜치·PR·머지 생성, 저장소는 유지 | gh 토큰은 앱과 증거에 절대 기록하지 않음, 계정명 외 개인정보 없음 |
+| V5 | live external API | R7, AC3, AC4, AC5, SC1, SC2 | 픽스처 저장소에서 PR을 열고(open), 머지하고(merged), 다른 PR을 닫아(closed) 실제 gh 조회 결과가 배지와 카드에 반영되며, upstream에 push한 뒤 로컬 커밋 1개를 더한 브랜치에서 `↑1`이, push한 적 없는 브랜치에서 항목 생략이 증명된다. review 상태는 두 번째 계정이 없어 V2의 고정 출력으로만 증명한다 | yes | yes: gh 미로그인이나 네트워크 불가 시 | 사용자 계정의 비공개 픽스처 저장소에 브랜치·PR·머지 생성, 저장소는 유지 | gh 토큰은 앱과 증거에 절대 기록하지 않음, 계정명 외 개인정보 없음 |
 
 ### 9.3 Human Verification
 
@@ -264,7 +269,7 @@ Principles intake: `~/projects/oh-my-principle` (commit `35ab76c`)의 `engineeri
 - 사용자에게 보이는 변경(행, 카드, 삭제 흐름, 상태 표시).
 - 변경된 주요 모듈·스냅샷 필드·이벤트(리더 3개, 카탈로그, 카드 채널, 트리거).
 - 구현 중 선택한 파일/모듈 구조와 각 책임 경계, 5장의 구조를 따랐는지.
-- T1-T10 완료 상태.
+- T1-T11 완료 상태.
 - R/AC/V 커버리지와 모드별 검증 증거(빌드, 자동 테스트, 앱 스크린샷, 픽스처 PR URL과 gh 조회 기록).
 - 추가·수정한 자동 테스트와 각각이 막는 회귀.
 - 픽스처 저장소 이름·URL·유지 여부.
