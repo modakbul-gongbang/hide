@@ -199,6 +199,7 @@ None required.
 - R7. pane 닫기 확인이 필요한지는 core가 유도값으로 내리며, 작업 중이거나 Needs You 또는 Done에 든 pane이 대상이다.
   셸의 리터럴 상태 배열은 삭제된다.
 - R8. 규칙 `INV-herdr-unseen-token`은 `rules` CLI를 통해 본문이 hide의 pane 단위 읽음 권위를 말하도록, 트리거 경로가 현재 core 경로를 가리키도록 갱신된다.
+  `docs/status-model.md`도 확인된 herdr 상태가 목록에서 빠진다는 문장 대신 hide의 pane 단위 읽음 권위와 Done 그룹을 말하도록 갱신된다.
 
 ## 7. Acceptance Criteria
 
@@ -214,7 +215,7 @@ None required.
 | AC8 | herdr가 blocked로 보고하는 pane은 포커스가 다녀간 뒤에도 blocked가 풀릴 때까지 Needs You에 남는다 | judged | throwaway pane에 blocked를 보고하고, 포커스를 주었다 뺀 뒤, blocked를 idle로 바꾸기 전후의 Needs You 캡처 |
 | AC9 | pet 배지의 act now 수와 done 수가 각각 Needs You와 Done의 항목 수와 같고, 연결이 끊기면 수를 세지 않는다 | machine | - |
 | AC10 | pane 닫기 확인은 작업 중이거나 Needs You 또는 Done에 든 pane에만 요구되고, 셸에 상태 문자열 리터럴 배열이 남아 있지 않다 | machine | - |
-| AC11 | `agents/rules/invariants/INV-herdr-unseen-token.md`의 본문이 hide의 pane 단위 읽음 권위를 말하고 트리거 경로가 현재 core 경로를 가리키며, 규칙 원장이 `rules` CLI로 갱신되어 있다 | machine | - |
+| AC11 | `agents/rules/invariants/INV-herdr-unseen-token.md`의 본문이 hide의 pane 단위 읽음 권위를 말하고 트리거 경로가 현재 core 경로를 가리키며, 규칙 원장이 `rules` CLI로 갱신되어 있으며, `docs/status-model.md`가 hide의 pane 단위 읽음 권위와 Done 그룹을 말한다 | machine | - |
 
 ## 8. PRD-Level Tasks
 
@@ -224,7 +225,7 @@ None required.
 - T4. 에이전트 행을 컴포넌트 하나로 통일해 기호, 색, 상태 낱말을 core의 유도값에서 그리고, 다섯 표면이 그 행을 쓰게 한다. Covers R5, AC6, AC7, AC8, SC1, SC2, SC4. Depends on: T3.
 - T5. pet 배지와 대시보드가 core의 그룹을 쓰게 하고 pet 모듈의 자체 버킷을 삭제한다. Covers R6, AC9, SC5. Depends on: T3.
 - T6. 검증 픽스처를 준비한다: throwaway herdr 워크스페이스에 한 탭 pane 셋과 별도 pane, 네 그룹을 채우는 상태 보고 스크립트, blocked 전환 스크립트, 재시작 전후 비교 절차. Covers SC1, SC2, SC3, SC4, SC5. Depends on: none.
-- T7. `rules` CLI로 `INV-herdr-unseen-token`의 본문과 트리거 경로를 갱신한다. Covers R8, AC11. Depends on: T2.
+- T7. `rules` CLI로 `INV-herdr-unseen-token`의 본문과 트리거 경로를 갱신하고, `docs/status-model.md`를 같은 상태 모델로 고친다. Covers R8, AC11. Depends on: T2.
 
 ## 9. Verification Contract
 
