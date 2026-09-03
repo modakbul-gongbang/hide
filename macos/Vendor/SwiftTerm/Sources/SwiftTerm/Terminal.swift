@@ -7447,8 +7447,13 @@ open class Terminal {
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
-        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
+        // NOTE: Ghostty lets a path run across spaces, so `a/b c/d` is one link.
+        // Hide drops that on purpose. Its terminals carry agent transcripts, where
+        // a path is nearly always followed by prose rather than by more path, and
+        // ICU's `\w` is Unicode-aware, so `shot.png 가나다라 는` matched whole and
+        // the click reported that whole run as unopenable. A path now ends at
+        // whitespace. The cost is a real path containing a space
+        // (`/Users/me/My Documents/x.txt`), which now links only up to `My`.
 
         // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
         // run of N body characters could be split across iterations in exponentially many ways.
@@ -7472,19 +7477,25 @@ open class Terminal {
             schemeURLToken + "+" +
             noTrailingPunctuation
 
-        let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/))"#
+        // NOTE: the bare-root alternative used to be `(?<![\w~\/])\/(?!\/)`, which
+        // made every slash command a link: `/gen-prd`, `/clear`, `/model` all read
+        // as absolute paths, and clicking one raised a modal saying hide could not
+        // resolve it. A leading `/` now has to be followed by a second separator or
+        // a dot before the run ends, so `/Users/…` and `/etc/hosts` and `/foo.txt`
+        // still match while a single bare segment does not. The cost is that a
+        // top-level directory named alone (`/tmp`) no longer links.
+        let secondSeparatorOrDotAhead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*[\/.])"#
+        let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/)"# + secondSeparatorOrDotAhead + ")"
         let rootedOrRelativePathBranch =
             rootedOrRelativePathPrefix +
             "(?:" +
             dottedPathLookahead +
             pathChars + "+" +
-            dottedPathSpaceSegments +
             noTrailingColon +
             trailingSpacesAtEOL +
             "|" +
             nonDottedPathLookahead +
             pathChars + "+" +
-            anyPathSpaceSegments +
             noTrailingColon +
             trailingSpacesAtEOL +
             ")"
@@ -7496,7 +7507,6 @@ open class Terminal {
             dottedPathLookahead +
             bareRelativePathPrefix +
             pathChars + "+" +
-            dottedPathSpaceSegments +
             noTrailingColon +
             trailingSpacesAtEOL
 
