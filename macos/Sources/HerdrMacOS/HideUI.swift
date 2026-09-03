@@ -82,6 +82,10 @@ enum HideTheme {
         /// rather than a click. Below this a tremor while selecting a tab
         /// would carry it out of its slot.
         static let tabDragActivationDistance: CGFloat = 6
+        /// The window's first row. A tab, the new-tab control, and the strip
+        /// itself are all this tall, so the row cannot grow taller than the
+        /// thing inside it.
+        static let tabStripHeight: CGFloat = 32
         static let paneHeaderHeight: CGFloat = 28
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
@@ -1400,10 +1404,10 @@ private struct HideMainView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HideTerminalHeader()
+            HideTabStrip()
             Rectangle()
                 .fill(HideTheme.divider)
-                .frame(height: 1)
+                .frame(height: HideTheme.Layout.hairlineWidth)
             ZStack {
                 HideTerminalSurface()
                 if !model.isRemoteContext,
@@ -1433,9 +1437,16 @@ private struct TabWidthPreferenceKey: PreferenceKey {
     }
 }
 
-private struct HideTerminalHeader: View {
+/// The tab strip, which is the window's first row.
+///
+/// Nothing sits above it: the system titlebar and the workspace header that
+/// used to repeat the sidebar's name, branch, and herdr version are both gone.
+/// What the header carried and this strip keeps are the two panel-restore
+/// controls, one at each end, each shown only while its panel is hidden. The
+/// connection warning and the remote target's state are the status bar's to
+/// report, and the herdr version the sidebar's brand header's.
+private struct HideTabStrip: View {
     @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
     /// What the pointer is carrying right now. This is the only piece of the
     /// strip the shell holds: the order itself belongs to the core, so a drop
     /// is reported rather than applied here.
@@ -1444,62 +1455,18 @@ private struct HideTerminalHeader: View {
     @State private var tabWidths: [String: CGFloat] = [:]
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                if !model.leftSidebarVisible {
-                    Button {
-                        model.toggleLeftSidebar()
-                    } label: {
-                        Image(systemName: "rectangle.leftthird.inset.filled")
-                    }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    .help("Show left sidebar (⌘B)")
-                    .accessibilityLabel("Show left sidebar")
-                    .accessibilityIdentifier("hide-restore-left-sidebar")
+        HStack(spacing: HideTheme.spacingSM) {
+            if !model.leftSidebarVisible {
+                Button {
+                    model.toggleLeftSidebar()
+                } label: {
+                    Image(systemName: "rectangle.leftthird.inset.filled")
                 }
-                Image(systemName: "rectangle.3.group")
-                    .foregroundStyle(accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    // The same name the sidebar uses, so the header names the
-                    // space the user clicked rather than a directory.
-                    Text(model.focusedWorkspace?.label ?? (model.isRemoteContext ? model.remote.targetLabel : "No workspace"))
-                        .hideFont(size: 13, weight: .semibold)
-                        .foregroundStyle(HideTheme.primary)
-                    Text(model.focusedCheckout.map { checkout in
-                        checkout.branch.map { "\(checkout.label)  ·  \($0)" } ?? checkout.path
-                    } ?? (model.isRemoteContext ? model.remote.message : "Register a workspace to begin"))
-                        .hideFont(size: 10, design: .monospaced)
-                        .foregroundStyle(HideTheme.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if model.isRemoteContext {
-                    Label("mini \(model.remote.phase.rawValue)", systemImage: "externaldrive.connected.to.line.below")
-                        .hideFont(size: 10, weight: .medium)
-                        .foregroundStyle(model.herdrIsConnected ? HideTheme.success : HideTheme.warning)
-                } else if let selection = model.core.runtimeSelection {
-                    Label("herdr \(selection.version)", systemImage: "bolt.horizontal.circle")
-                        .hideFont(size: 10, weight: .medium)
-                        .foregroundStyle(HideTheme.secondary)
-                } else {
-                    Label("herdr unavailable", systemImage: "bolt.horizontal.circle")
-                        .hideFont(size: 10, weight: .medium)
-                        .foregroundStyle(HideTheme.warning)
-                }
-                if !model.rightPanelVisible {
-                    Button {
-                        model.toggleRightPanel()
-                    } label: {
-                        Image(systemName: "rectangle.rightthird.inset.filled")
-                    }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    .help("Show Right Panel (\(ShellMenuCommand.toggleRightPanel.displayShortcut))")
-                    .accessibilityLabel("Show Right Panel")
-                    .accessibilityIdentifier("hide-restore-right-panel")
-                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Show left sidebar (⌘B)")
+                .accessibilityLabel("Show left sidebar")
+                .accessibilityIdentifier("hide-restore-left-sidebar")
             }
-            .padding(.horizontal, 18)
-            .frame(height: 54)
 
             if model.focusedWorkspace != nil {
                 HStack(spacing: 0) {
@@ -1535,9 +1502,9 @@ private struct HideTerminalHeader: View {
                                             }
                                         }
                                         .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
-                                        .padding(.leading, 11)
-                                        .padding(.trailing, 7)
-                                        .frame(height: 32)
+                                        .padding(.leading, HideTheme.spacingMD)
+                                        .padding(.trailing, HideTheme.spacingSM)
+                                        .frame(height: HideTheme.Layout.tabStripHeight)
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
@@ -1555,7 +1522,7 @@ private struct HideTerminalHeader: View {
                                     .help("Close \(tab.label) (⌘W)")
                                     .accessibilityLabel("Close \(tab.label)")
                                 }
-                                .padding(.trailing, 4)
+                                .padding(.trailing, HideTheme.spacingXS)
                                 // A carried tab climbs to the top of the
                                 // surface ladder, which is how this system
                                 // says "closer" without a drop shadow.
@@ -1606,24 +1573,37 @@ private struct HideTerminalHeader: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 32, height: 32)
+                            .frame(
+                                width: HideTheme.Layout.tabStripHeight,
+                                height: HideTheme.Layout.tabStripHeight
+                            )
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(HideTheme.secondary)
                     .help("New Tab (⌘T)")
                     .accessibilityLabel("New Herdr tab")
                     .accessibilityIdentifier("hide-new-tab")
-                    Spacer(minLength: 0)
-                }
-                .frame(height: 32)
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(HideTheme.divider)
-                        .frame(height: 1)
                 }
             }
+
+            Spacer(minLength: 0)
+
+            if !model.rightPanelVisible {
+                Button {
+                    model.toggleRightPanel()
+                } label: {
+                    Image(systemName: "rectangle.rightthird.inset.filled")
+                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Show Right Panel (\(ShellMenuCommand.toggleRightPanel.displayShortcut))")
+                .accessibilityLabel("Show Right Panel")
+                .accessibilityIdentifier("hide-restore-right-panel")
+            }
         }
+        .padding(.horizontal, HideTheme.spacingSM)
+        .frame(height: HideTheme.Layout.tabStripHeight)
         .background(HideTheme.panel)
+        .accessibilityIdentifier("hide-tab-strip")
     }
 
     /// Carries a tab under the pointer and reports where it was let go.
