@@ -2088,6 +2088,9 @@ impl Runtime {
         let order = &mut self.checkout_tab_order;
         let pending = &mut self.pending_tab_move;
         let mut live_checkouts = BTreeSet::new();
+        // Checkouts whose held arrangement became unreachable. The diagnostic
+        // is pushed after the loop, which is where the snapshot is free again.
+        let mut dropped_moves = Vec::new();
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() {
                 continue;
@@ -2125,6 +2128,7 @@ impl Runtime {
                         .collect::<BTreeSet<_>>();
                     if held.herdr_order.iter().cloned().collect::<BTreeSet<_>>() != live_herdr {
                         pending.remove(&checkout.id);
+                        dropped_moves.push(checkout.id.clone());
                     } else if held
                         .herdr_order
                         .iter()
@@ -2140,6 +2144,14 @@ impl Runtime {
         }
         order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
         pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        for checkout_id in dropped_moves {
+            self.push_diagnostic(
+                "tab.move.dropped",
+                format!(
+                    "The tab arrangement held for {checkout_id} was abandoned: its tabs changed before Herdr reported the order"
+                ),
+            );
+        }
     }
 
     /// Reconciles the focused checkout, its owning workspace, root path, and
