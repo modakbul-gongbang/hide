@@ -27,6 +27,10 @@ enum HideTheme {
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
     static let success = Color(red: 0.37, green: 0.90, blue: 0.62)
+    /// How far a status mark is dimmed once the operator has read it. The mark
+    /// keeps its shape and its hue so the row still says what it is; only its
+    /// urgency drops (DESIGN.md, R5).
+    static let readStatusOpacity: Double = 0.55
     /// Diff line tints, named here so the changes view and any later diff
     /// surface cannot drift apart. They lean on the semantic pair above
     /// rather than introducing hues of their own.
@@ -491,19 +495,45 @@ private struct PetCountTile: View {
     }
 }
 
+/// The one place an agent's mark color is decided.
+///
+/// It reads the axes the core publishes, never a state name, so the pet
+/// dashboard, the sidebar rows, and anything added later cannot drift apart.
+/// A row the operator has already read keeps its hue and loses its urgency.
+enum AgentStatusStyle {
+    static func color(
+        demand: String,
+        activity: String,
+        emphasized: Bool,
+        accent: Color
+    ) -> Color {
+        let base: Color = switch demand {
+        case "error": HideTheme.danger
+        case "question", "approval": HideTheme.warning
+        default:
+            switch activity {
+            case "working": accent
+            case "stopped": emphasized ? HideTheme.success : HideTheme.secondary
+            default: HideTheme.secondary
+            }
+        }
+        guard !emphasized, demand != "none" else { return base }
+        return base.opacity(HideTheme.readStatusOpacity)
+    }
+}
+
 private struct PetDashboardAgentRow: View {
     let agent: PetDashboardRow
     let action: () -> Void
 
     private var statusColor: Color {
-        switch agent.status {
-        case "working": HideTheme.accent
-        case "done", "unseen_completion": HideTheme.success
-        case "error": HideTheme.danger
-        case "blocked", "question", "approval": HideTheme.warning
-        case "disconnected": HideTheme.warning
-        default: HideTheme.secondary
-        }
+        guard agent.group != "disconnected" else { return HideTheme.warning }
+        return AgentStatusStyle.color(
+            demand: agent.demand,
+            activity: agent.activity,
+            emphasized: agent.emphasized,
+            accent: HideTheme.accent
+        )
     }
 
     var body: some View {
@@ -541,7 +571,7 @@ private struct PetDashboardAgentRow: View {
                         .foregroundStyle(HideTheme.warning)
                 }
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(agent.status.uppercased())
+                    Text(agent.statusLabel.uppercased())
                         .hideFont(size: 9, weight: .bold)
                         .foregroundStyle(statusColor)
                     Text(agent.connection)
@@ -1310,13 +1340,12 @@ private struct AgentNavigatorRow: View {
     let showsWorkspace: Bool
 
     private var stateColor: Color {
-        switch agent.state {
-        case "working": accent
-        case "blocked", "question", "approval": HideTheme.warning
-        case "error": HideTheme.danger
-        case "done", "unseen_completion": HideTheme.success
-        default: HideTheme.secondary
-        }
+        AgentStatusStyle.color(
+            demand: agent.demand,
+            activity: agent.activity,
+            emphasized: agent.emphasized,
+            accent: accent
+        )
     }
 
     private var isFocused: Bool {
@@ -1332,7 +1361,7 @@ private struct AgentNavigatorRow: View {
     }
 
     private var stateLabel: String {
-        agent.state.replacingOccurrences(of: "_", with: " ").capitalized
+        agent.statusLabel
     }
 
     private var ambientLabel: String? {
@@ -1375,7 +1404,7 @@ private struct AgentNavigatorRow: View {
                             .foregroundStyle(HideTheme.secondary)
                             .lineLimit(2)
                         HStack(spacing: 5) {
-                            Text(agent.state.replacingOccurrences(of: "_", with: " "))
+                            Text(agent.statusLabel)
                                 .hideFont(size: 9, weight: .medium)
                                 .foregroundStyle(stateColor)
                             if let checkoutQualifier = agent.checkoutQualifier {
@@ -1409,7 +1438,7 @@ private struct AgentNavigatorRow: View {
         .buttonStyle(.plain)
         .animation(.easeOut(duration: 0.12), value: model.agentShortcutHintsVisible)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
-        .accessibilityLabel("\(agent.contextLabel), \(agent.agentKind), \(agent.state)")
+        .accessibilityLabel("\(agent.contextLabel), \(agent.agentKind), \(agent.statusLabel)")
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
     }
 }

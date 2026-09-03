@@ -6,7 +6,7 @@ private func presentationPane(id: String) -> CorePaneSnapshot {
     CorePaneSnapshot(
         id: id,
         cwd: "/tmp/hide",
-        state: "idle",
+        statusLabel: "Idle",
         summary: nil,
         activityAt: nil
     )
@@ -63,19 +63,23 @@ private func presentationWorkspace(
 private func presentationAgent(
     id: String,
     paneID: String,
-    state: String
+    group: String,
+    demand: String = "none"
 ) -> SidebarAgent {
     SidebarAgent(
         id: id,
         paneID: paneID,
         workspaceLabel: "hide",
         agentKind: "codex",
-        state: state,
-        symbol: "●",
+        demand: demand,
+        activity: group == "working" ? "working" : "stopped",
+        unread: group == "needs_you" || group == "done",
+        group: group,
+        symbol: "\u{25cf}",
         summary: "Agent \(id)",
         elapsed: "1m",
         sortRank: "01",
-        activity: state,
+        lastActivity: "0000000000001",
         ambient: nil
     )
 }
@@ -87,7 +91,7 @@ private func presentationAgent(
         paneIDs: ["pane-1", "pane-2"]
     )
     let workspace = presentationWorkspace(checkouts: [checkout])
-    let agents = [presentationAgent(id: "agent-1", paneID: "pane-1", state: "working")]
+    let agents = [presentationAgent(id: "agent-1", paneID: "pane-1", group: "working")]
 
     let presentation = SidebarCheckoutPresentation(
         workspace: workspace,
@@ -130,8 +134,8 @@ private func presentationAgent(
     )
     let workspace = presentationWorkspace(checkouts: [root, worktree])
     let agents = [
-        presentationAgent(id: "inside", paneID: "pane-2", state: "idle"),
-        presentationAgent(id: "outside", paneID: "pane-9", state: "working"),
+        presentationAgent(id: "inside", paneID: "pane-2", group: "seen"),
+        presentationAgent(id: "outside", paneID: "pane-9", group: "working"),
     ]
 
     let presentation = SidebarWorkspacePresentation(workspace: workspace, agents: agents)
@@ -144,7 +148,7 @@ private func presentationAgent(
 
 @Test func agentShortcutNumbersFollowListOrderAndStopAtNine() {
     let agents = (1...11).map {
-        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", state: "idle")
+        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", group: "seen")
     }
 
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: agents) == 1)
@@ -155,7 +159,7 @@ private func presentationAgent(
 
 @Test func agentLookupByNumberRejectsSlotsPastTheList() {
     let agents = (1...3).map {
-        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", state: "idle")
+        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", group: "seen")
     }
 
     #expect(AgentShortcutNumbering.agent(atNumber: 2, in: agents)?.paneID == "pane-2")
@@ -165,7 +169,7 @@ private func presentationAgent(
 
 @Test func shortcutCandidatesFollowTheVisibleSidebarView() {
     let agents = (1...4).map {
-        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", state: "idle")
+        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", group: "seen")
     }
     let checkout = presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-3", "pane-4"])
 
@@ -188,7 +192,7 @@ private func presentationAgent(
 }
 
 @Test func agentContextLabelNamesTheProjectAndItsCheckout() {
-    var agent = presentationAgent(id: "agent-1", paneID: "pane-1", state: "idle")
+    var agent = presentationAgent(id: "agent-1", paneID: "pane-1", group: "seen")
     #expect(agent.contextLabel == agent.workspaceLabel)
     agent.checkoutLabel = "main"
     #expect(agent.contextLabel == "\(agent.workspaceLabel) › main")
@@ -197,7 +201,7 @@ private func presentationAgent(
 }
 
 @Test func agentCheckoutQualifierIsAbsentWhenItRepeatsTheProject() {
-    var agent = presentationAgent(id: "agent-1", paneID: "pane-1", state: "idle")
+    var agent = presentationAgent(id: "agent-1", paneID: "pane-1", group: "seen")
     // The sidebar row draws this on its own small line, so a qualifier that
     // only repeats the row's title has to read as nothing at all.
     #expect(agent.checkoutQualifier == nil)

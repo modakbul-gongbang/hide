@@ -170,7 +170,7 @@ import Testing
         id: "pane-existing",
         herdrLabel: "terminal",
         cwd: "/tmp/hide-existing-checkout",
-        state: "attached",
+        statusLabel: "Attached",
         summary: nil,
         activityAt: nil
     )
@@ -238,7 +238,7 @@ import Testing
             panes: [CorePaneSnapshot(
                 id: "pane-b",
                 cwd: "/tmp/hide-workspace-b",
-                state: "attached",
+                statusLabel: "Attached",
                 summary: nil,
                 activityAt: nil
             )]
@@ -293,7 +293,7 @@ import Testing
               "id": "w1:p1",
               "label": "remote-repo",
               "cwd": "/private/tmp/hide-remote-repo",
-              "state": "attached"
+              "status_label": "Attached", "requires_close_confirmation": false
             }]
           }]
         }]
@@ -425,7 +425,8 @@ import Testing
     let target = DestructiveTarget(
         id: "herdr-ide-verify-working",
         label: "Verification",
-        state: "working",
+        statusLabel: "Working",
+        requiresCloseConfirmation: true,
         summary: "Long-running fixture"
     )
     let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
@@ -438,7 +439,8 @@ import Testing
     let target = DestructiveTarget(
         id: "herdr-ide-verify-idle",
         label: "Verification",
-        state: "idle",
+        statusLabel: "Idle",
+        requiresCloseConfirmation: false,
         summary: "Completed fixture"
     )
     let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
@@ -446,12 +448,13 @@ import Testing
     #expect(notice.affected == [target])
 }
 
-@Test func everyAttentionPaneStateRequiresCloseConfirmation() {
-    for state in ["blocked", "question", "approval", "error", "unseen_completion"] {
+@Test func everyPaneTheCoreMarksRiskyRequiresCloseConfirmation() {
+    for label in ["Approval", "Question", "Error", "Done", "Working"] {
         let target = DestructiveTarget(
-            id: "herdr-ide-verify-\(state)",
+            id: "herdr-ide-verify-\(label)",
             label: "Verification",
-            state: state,
+            statusLabel: label,
+            requiresCloseConfirmation: true,
             summary: "Attention fixture"
         )
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
@@ -462,9 +465,18 @@ import Testing
 
 @Test func workspaceAndTabWarningsAggregateOnlyActiveOrAttentionPanes() {
     let targets = [
-        DestructiveTarget(id: "w", label: "A", state: "working", summary: "Build"),
-        DestructiveTarget(id: "q", label: "B", state: "question", summary: "Needs input"),
-        DestructiveTarget(id: "i", label: "C", state: "idle", summary: "Done"),
+        DestructiveTarget(
+            id: "w", label: "A", statusLabel: "Working",
+            requiresCloseConfirmation: true, summary: "Build"
+        ),
+        DestructiveTarget(
+            id: "q", label: "B", statusLabel: "Question",
+            requiresCloseConfirmation: true, summary: "Needs input"
+        ),
+        DestructiveTarget(
+            id: "i", label: "C", statusLabel: "Idle",
+            requiresCloseConfirmation: false, summary: "Done"
+        ),
     ]
     let workspace = ConsequencePolicy.notice(kind: .workspace, targets: targets)
     let tab = ConsequencePolicy.notice(kind: .tab, targets: targets)

@@ -13,7 +13,17 @@ struct PetDashboardRow: Identifiable, Equatable {
     let id: String
     let paneID: String
     let agentKind: String
-    let status: String
+    /// The core's group for this row: `needs_you`, `done`, `working`, `seen`,
+    /// or `disconnected` when the server stopped answering.
+    let group: String
+    /// What the agent needs from the operator, for the row's mark and color.
+    let demand: String
+    /// Whether the agent is running.
+    let activity: String
+    /// Whether the row is drawn bright rather than subdued.
+    let emphasized: Bool
+    let symbol: String
+    let statusLabel: String
     let summary: String
     let elapsed: String
     let unseen: Bool
@@ -44,16 +54,20 @@ enum PetDashboardProjector {
         let connected = connection == "connected"
         var rowsByPaneID: [String: PetDashboardRow] = [:]
         for agent in agents {
-            let agentConnected = connected && agent.state != "disconnected"
-            let status = agentConnected ? agent.state : "disconnected"
+            let agentConnected = connected
             rowsByPaneID[agent.paneID] = PetDashboardRow(
                 id: agent.paneID,
                 paneID: agent.paneID,
                 agentKind: agent.agentKind,
-                status: status,
+                group: agentConnected ? agent.group : "disconnected",
+                demand: agentConnected ? agent.demand : "none",
+                activity: agentConnected ? agent.activity : "unknown",
+                emphasized: agentConnected && agent.emphasized,
+                symbol: agent.symbol,
+                statusLabel: agentConnected ? agent.statusLabel : "Disconnected",
                 summary: agent.summary,
                 elapsed: agent.elapsed,
-                unseen: isUnseen(agent.state),
+                unseen: agentConnected && agent.group == "needs_you",
                 connection: agentConnected ? "connected" : "disconnected",
                 ambient: agentConnected ? agent.ambient : nil
             )
@@ -93,11 +107,11 @@ enum PetDashboardProjector {
         let rows = groups.flatMap { $0.agents }
         let counts = PetDashboardCounts(
             total: rows.count,
-            working: rows.count { statusBucket($0.status) == "working" },
-            done: rows.count { statusBucket($0.status) == "done" },
-            idle: rows.count { statusBucket($0.status) == "idle" },
-            error: rows.count { statusBucket($0.status) == "error" },
-            disconnected: rows.count { statusBucket($0.status) == "disconnected" }
+            working: rows.count { $0.group == "working" },
+            done: rows.count { $0.group == "done" },
+            idle: rows.count { $0.group == "seen" },
+            error: rows.count { $0.group == "needs_you" && $0.demand == "error" },
+            disconnected: rows.count { $0.group == "disconnected" }
         )
         return PetDashboardProjection(
             counts: counts,
@@ -107,17 +121,4 @@ enum PetDashboardProjector {
         )
     }
 
-    private static func statusBucket(_ state: String) -> String {
-        switch state {
-        case "working": "working"
-        case "done", "unseen_completion": "done"
-        case "error": "error"
-        case "disconnected": "disconnected"
-        default: "idle"
-        }
-    }
-
-    private static func isUnseen(_ state: String) -> Bool {
-        SidebarGrouping.attentionStates.contains(state)
-    }
 }

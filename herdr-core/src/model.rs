@@ -172,6 +172,14 @@ pub struct DeviceSnapshot {
     pub agent_count: u32,
 }
 
+/// An agent's state on three independent axes, plus the values the shell draws
+/// from them.
+///
+/// The axes answer three different questions that a single flat state string
+/// used to mix: what the agent needs from the operator (`demand`), whether it
+/// is running (`activity`), and whether the operator has looked at it since it
+/// last changed (`unread`). Everything below `unread` is derived here so the
+/// shell only draws (design rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub id: String,
@@ -181,12 +189,38 @@ pub struct SidebarAgentSnapshot {
     #[serde(default)]
     pub checkout_label: Option<String>,
     pub agent_kind: String,
-    pub state: String,
+    /// What the agent needs from the operator: `question`, `approval`, `error`,
+    /// or `none`. Herdr's `blocked` lifecycle is an approval.
+    pub demand: String,
+    /// Whether the agent is running: `working`, `stopped`, or `unknown`.
+    /// Herdr's `done` and `idle` are the same activity; the difference between
+    /// them is a read judgment Herdr makes per tab, and Hide does not use it.
+    pub activity: String,
+    /// Whether this pane has changed since the operator last had it focused.
+    /// Owned by Hide per pane, never by Herdr's tab-scoped seen.
+    pub unread: bool,
+    /// Herdr reports an approval prompt on this pane right now. It holds the
+    /// row in Needs You whether or not the operator has read it.
+    pub blocked: bool,
+    /// Derived: `needs_you`, `done`, `working`, or `seen`.
+    pub group: String,
     pub symbol: String,
+    /// Derived: rows in Needs You and Done are drawn bright, the rest subdued.
+    pub emphasized: bool,
+    /// Derived: the short human word for this row. No view shows an axis value.
+    pub status_label: String,
+    /// Derived: closing this pane would interrupt work or discard a result the
+    /// operator has not read.
+    pub requires_close_confirmation: bool,
     pub summary: String,
     pub elapsed: String,
     pub sort_rank: String,
-    pub activity: String,
+    /// The ordering key: the label plugin's activity timestamp when it has one,
+    /// otherwise Herdr's state change sequence zero-padded to the same width.
+    pub last_activity: String,
+    /// Herdr's own state change sequence, one of the three inputs to a pane's
+    /// read record.
+    pub state_change_seq: Option<u64>,
     pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
@@ -398,7 +432,13 @@ pub struct PaneSnapshot {
     pub terminal_title: Option<String>,
     pub workspace_label: Option<String>,
     pub cwd: String,
-    pub state: String,
+    /// The one short human word for the agent in this pane, from the same
+    /// derivation the sidebar row uses.
+    pub status_label: String,
+    /// Whether closing this pane needs the operator to confirm first. Derived
+    /// with the agent row's own value so the header and the core cannot
+    /// disagree about it.
+    pub requires_close_confirmation: bool,
     pub summary: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
@@ -625,6 +665,31 @@ pub struct UiStateSnapshot {
     /// the size of what the user actually changed.
     #[serde(default)]
     pub pane_text_scales: BTreeMap<String, f32>,
+    /// What the operator had already seen on each pane, keyed by pane id.
+    ///
+    /// This is Hide's own record and the only authority for the read axis.
+    /// Herdr marks every pane in a tab seen the moment that tab is focused, so
+    /// three finished agents side by side would clear together; a pane-level
+    /// record is what keeps them separate. It rides the existing store rather
+    /// than a second file (engineering rule 7), and a store written before it
+    /// existed loads with an empty record, which reads as everything unread.
+    #[serde(default)]
+    pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+}
+
+/// One pane's read mark: the state the operator was looking at the last time
+/// the pane held keyboard focus.
+///
+/// A pane is unread when its current state does not match this record, so a
+/// missing record means unread. Equality rather than "newer than" is
+/// deliberate: a Herdr server restart can reset the sequence, and showing a
+/// pane as unread is the safe answer when the record can no longer be trusted.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PaneReadRecord {
+    #[serde(default)]
+    pub state_change_seq: Option<u64>,
+    pub demand: String,
+    pub activity: String,
 }
 
 /// The scale a pane has until the user zooms it.
@@ -670,6 +735,7 @@ impl Default for UiStateSnapshot {
             accent_hex: default_accent_hex(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
+            pane_read_records: BTreeMap::new(),
         }
     }
 }

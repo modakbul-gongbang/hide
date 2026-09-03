@@ -558,7 +558,7 @@ final class ShellModel: ObservableObject {
 
     func paneStatus(for paneID: String) -> String {
         if isRemoteContext {
-            return paneMetadata(for: paneID)?.state ?? "unavailable"
+            return paneMetadata(for: paneID)?.statusLabel ?? "Unavailable"
         }
         guard let pane = core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID }) else {
             return "idle"
@@ -1553,14 +1553,16 @@ final class ShellModel: ObservableObject {
             ? [DestructiveTarget(
                 id: tabID,
                 label: tab.label ?? tabID,
-                state: "idle",
+                statusLabel: "Idle",
+                requiresCloseConfirmation: false,
                 summary: "No working or attention state is reported for this tab."
             )]
             : affectedAgents.map {
                 DestructiveTarget(
                     id: $0.paneID,
                     label: $0.workspaceLabel,
-                    state: $0.state,
+                    statusLabel: $0.statusLabel,
+                    requiresCloseConfirmation: $0.requiresCloseConfirmation,
                     summary: $0.summary
                 )
             }
@@ -1638,7 +1640,8 @@ final class ShellModel: ObservableObject {
         let target = DestructiveTarget(
             id: paneID,
             label: paneID,
-            state: agent?.state ?? "idle",
+            statusLabel: agent?.statusLabel ?? "Idle",
+            requiresCloseConfirmation: agent?.requiresCloseConfirmation ?? false,
             summary: agent?.summary ?? "No working or attention state is reported for this pane."
         )
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
@@ -1747,7 +1750,13 @@ final class ShellModel: ObservableObject {
         pendingTabCloseTarget = nil
         let agents = core.snapshot?.navigator.agents ?? []
         let targets = agents.map {
-            DestructiveTarget(id: $0.paneID, label: $0.workspaceLabel, state: $0.state, summary: $0.summary)
+            DestructiveTarget(
+                id: $0.paneID,
+                label: $0.workspaceLabel,
+                statusLabel: $0.statusLabel,
+                requiresCloseConfirmation: $0.requiresCloseConfirmation,
+                summary: $0.summary
+            )
         }
         consequenceNotice = ConsequencePolicy.notice(kind: kind, targets: targets)
         consequenceResult = nil

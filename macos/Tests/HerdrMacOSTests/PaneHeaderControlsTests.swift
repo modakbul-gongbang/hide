@@ -19,14 +19,21 @@ struct PaneHeaderControlsTests {
         #expect(PaneHeaderControls.forkMark(CorePaneFork(forkedFromPaneID: "  ")) == nil)
     }
 
-    @Test func closingAWorkingPaneStatesTheConsequenceFirst() {
-        // The same states the core refuses to close unconfirmed. If these two
-        // lists drift, the header offers a close the core then rejects.
-        for state in ["working", "blocked", "question", "approval", "error", "unseen_completion"] {
-            #expect(PaneHeaderControls.closeRequiresConfirmation(paneState: state))
-        }
-        #expect(!PaneHeaderControls.closeRequiresConfirmation(paneState: "idle"))
-        #expect(!PaneHeaderControls.closeRequiresConfirmation(paneState: "attached"))
+    @Test func closingAWorkingPaneStatesTheConsequenceFirst() throws {
+        // The core decides. The header used to keep its own list of state
+        // names, which is how the header came to offer a close the core then
+        // rejected; now there is one answer and the header reads it.
+        #expect(PaneHeaderControls.closeRequiresConfirmation(try pane(risky: true)))
+        #expect(!PaneHeaderControls.closeRequiresConfirmation(try pane(risky: false)))
+    }
+
+    private func pane(risky: Bool) throws -> CorePaneSnapshot {
+        let json = """
+        {"id":"w1:p1","cwd":"/checkout","status_label":"Working",
+         "requires_close_confirmation":\(risky),"summary":null,
+         "activity_at_unix_ms":null,"fork":{"available":false,"forked_from_pane_id":null}}
+        """
+        return try JSONDecoder().decode(CorePaneSnapshot.self, from: Data(json.utf8))
     }
 
     @Test func aPortIndicatorOpensTheLoopbackAddressOverHttp() {
@@ -40,7 +47,8 @@ struct PaneHeaderControlsTests {
         // Every pane the core ships carries the section, but a pane snapshot
         // written before it must not decode into a header offering a fork.
         let json = """
-        {"id":"w1:p1","cwd":"/checkout","state":"attached","summary":null,
+        {"id":"w1:p1","cwd":"/checkout","status_label":"Attached",
+         "requires_close_confirmation":false,"summary":null,
          "activity_at_unix_ms":null,"fork":{"available":false,"forked_from_pane_id":null}}
         """
         let pane = try JSONDecoder().decode(CorePaneSnapshot.self, from: Data(json.utf8))

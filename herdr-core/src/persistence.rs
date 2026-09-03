@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PetOriginSnapshot, RightPanelSection, UiStateSnapshot,
+    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, UiStateSnapshot,
     WorkspaceRegistration, default_accent_hex, default_font_size, default_panel_visible,
 };
 
@@ -48,6 +48,11 @@ struct StoredUiState {
     font_size: f32,
     #[serde(default)]
     pane_text_scales: BTreeMap<String, f32>,
+    /// Absent in a store written before Hide owned the read axis. It loads as
+    /// an empty map, which reads as everything unread, rather than bumping the
+    /// schema version and discarding the rest of the operator's state.
+    #[serde(default)]
+    pane_read_records: BTreeMap<String, PaneReadRecord>,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -100,6 +105,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             accent_hex: stored.accent_hex,
             font_size: stored.font_size,
             pane_text_scales: stored.pane_text_scales,
+            pane_read_records: stored.pane_read_records,
         },
         LoadDisposition::Loaded,
     )
@@ -132,6 +138,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         accent_hex: state.accent_hex.clone(),
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),
+        pane_read_records: state.pane_read_records.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -158,6 +165,55 @@ fn temporary_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AC4, SC3. A read record written before a restart is the same after it,
+    /// so an item the operator read stays read and one they did not stays in
+    /// Needs You or Done.
+    #[test]
+    fn read_records_survive_a_restart() {
+        let root = std::env::temp_dir().join(format!("herdr-core-read-{}", std::process::id()));
+        let path = root.join("state.json");
+        let _ = fs::remove_dir_all(&root);
+        let mut state = UiStateSnapshot::default();
+        state.pane_read_records.insert(
+            "w1:p1".to_owned(),
+            PaneReadRecord {
+                state_change_seq: Some(7),
+                demand: "question".to_owned(),
+                activity: "stopped".to_owned(),
+            },
+        );
+        save(&path, &state).expect("state saves");
+
+        let (reloaded, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(reloaded.pane_read_records, state.pane_read_records);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// AC4. A store written before Hide owned the read axis still loads. Its
+    /// missing record reads as everything unread, which is the honest answer,
+    /// rather than discarding the operator's other settings.
+    #[test]
+    fn read_records_default_to_empty_on_an_older_store() {
+        let source = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
+        let (state, disposition) = decode(source);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(state.pane_read_records.is_empty());
+    }
+
+    /// AC4, SC3. A damaged store loads empty and says so through the
+    /// disposition the runtime turns into a diagnostic. Nothing is silently
+    /// treated as read.
+    #[test]
+    fn read_records_load_empty_from_a_corrupt_store() {
+        let (state, disposition) = decode(b"{\"schema_version\":1,\"pane_read_records\":\"not-a-map\"}");
+        assert_eq!(disposition, LoadDisposition::Corrupt);
+        assert!(
+            state.pane_read_records.is_empty(),
+            "a damaged record is emptied, never read"
+        );
+    }
 
     #[test]
     fn valid_state_round_trips_through_the_stable_schema() {

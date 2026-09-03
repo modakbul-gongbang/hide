@@ -338,8 +338,9 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     assert_eq!(working["pet"]["badges"]["error"], 0);
     assert_eq!(working["pet"]["connection"], "connected");
 
-    // An unseen question outranks the working panes and joins the queue; the
-    // acknowledged one on the same snapshot does not.
+    // A question outranks the working panes and joins the queue. Herdr's own
+    // acknowledgment of the second one does not read it: only Hide's pane
+    // record can, and no pane here has been focused.
     dispatch(
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
@@ -359,11 +360,14 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     );
     let asked = snapshot(core);
     assert_eq!(asked["pet"]["pose"], "notification");
-    assert_eq!(asked["pet"]["badges"]["attention"], 1);
+    assert_eq!(
+        asked["pet"]["badges"]["attention"], 2,
+        "Herdr dropping a question to its read token does not read it for Hide"
+    );
     assert_eq!(
         asked["pet"]["attention_pane_ids"],
-        json!(["asked"]),
-        "only the unseen question is jumpable"
+        json!(["asked", "acknowledged"]),
+        "both questions are jumpable until their panes are focused"
     );
 
     herdr_core_destroy(core);
@@ -522,16 +526,20 @@ fn official_agent_statuses_survive_without_optional_plugin_tokens() {
         .as_array()
         .expect("agents array");
     assert_eq!(agents.len(), 3);
-    let state_for = |pane_id: &str| {
-        agents
+    let axes_for = |pane_id: &str| {
+        let agent = agents
             .iter()
             .find(|agent| agent["pane_id"] == pane_id)
-            .and_then(|agent| agent["state"].as_str())
-            .expect("projected agent state")
+            .expect("projected agent");
+        (
+            agent["demand"].as_str().expect("demand"),
+            agent["activity"].as_str().expect("activity"),
+            agent["group"].as_str().expect("group"),
+        )
     };
-    assert_eq!(state_for("working"), "working");
-    assert_eq!(state_for("blocked"), "blocked");
-    assert_eq!(state_for("done"), "unseen_completion");
+    assert_eq!(axes_for("working"), ("none", "working", "working"));
+    assert_eq!(axes_for("blocked"), ("approval", "unknown", "needs_you"));
+    assert_eq!(axes_for("done"), ("none", "stopped", "done"));
     assert_eq!(projected["pet"]["badges"]["working"], 1);
     assert_eq!(projected["pet"]["badges"]["attention"], 1);
     assert_eq!(projected["pet"]["badges"]["done"], 1);
@@ -648,7 +656,7 @@ fn session_sync_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
 }
 
 #[test]
-fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
+fn close_pane_requires_confirmation_only_while_working_or_unread() {
     let core = create();
     dispatch(
         core,
@@ -660,7 +668,11 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
                     {"pane_id":"working","workspace_label":"Fixture","agent":"codex","agent_status":"working","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000003","summary":"Running task","elapsed":"1m"}},
                     {"pane_id":"attention","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_question_new":"?","sort_rank":"01","activity":"0000000000002","summary":"Needs answer","elapsed":"2m"}},
                     {"pane_id":"idle","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"Idle","elapsed":"3m"}}
-                ]
+                ],
+                // Focusing the idle pane is what reads it. Without that it
+                // would still be an unread result, and closing an unread
+                // result asks first.
+                "layouts": [single_pane_layout("w1", "idle")]
             }
         }),
     );
@@ -1252,7 +1264,9 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
     assert_eq!(agents[0]["pane_id"], "blocked");
     assert_eq!(agents[1]["pane_id"], "seen-new");
     assert_eq!(agents[2]["pane_id"], "seen-old");
-    assert_eq!(agents[0]["state"], "question");
+    assert_eq!(agents[0]["demand"], "question");
+    assert_eq!(agents[0]["group"], "needs_you");
+    assert_eq!(agents[0]["status_label"], "Question");
     assert_eq!(agents[0]["symbol"], "?");
 
     herdr_core_destroy(core);

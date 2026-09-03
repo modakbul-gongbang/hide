@@ -181,11 +181,14 @@ pub fn summarize(agents: &[SidebarAgentSnapshot], connected: bool) -> PetSummary
             summary.disconnected += 1;
             continue;
         }
-        match agent.state.as_str() {
-            "error" => summary.error += 1,
-            "question" | "approval" | "blocked" => summary.attention += 1,
+        // The groups are decided once, in the projection. The pet counts them
+        // rather than reading tokens or axes a second time, so the badge and
+        // the sidebar can never disagree about what is waiting.
+        match agent.group.as_str() {
+            "needs_you" if agent.demand == "error" => summary.error += 1,
+            "needs_you" => summary.attention += 1,
             "working" => summary.working += 1,
-            "unseen_completion" => summary.done += 1,
+            "done" => summary.done += 1,
             _ => summary.idle += 1,
         }
     }
@@ -212,12 +215,9 @@ pub fn ambient_totals(agents: &[SidebarAgentSnapshot], connected: bool) -> Ambie
     totals
 }
 
-/// Whether this agent is one the user has not looked at yet.
+/// Whether this agent is one the operator still has to act on.
 pub fn is_unseen(agent: &SidebarAgentSnapshot) -> bool {
-    matches!(
-        agent.state.as_str(),
-        "question" | "approval" | "blocked" | "error"
-    )
+    agent.group == "needs_you"
 }
 
 /// The unseen panes in click order: the pane whose unseen state was observed
@@ -271,19 +271,35 @@ mod tests {
     use super::*;
     use crate::model::AmbientSignal;
 
-    fn agent(pane_id: &str, state: &str) -> SidebarAgentSnapshot {
+    /// A projected row named by the group it landed in. `needs_you` rows carry
+    /// a question unless the name says error, which is the one demand the pet
+    /// counts separately.
+    fn agent(pane_id: &str, group: &str) -> SidebarAgentSnapshot {
+        let (group, demand) = match group {
+            "error" => ("needs_you", "error"),
+            "needs_you" => ("needs_you", "question"),
+            other => (other, "none"),
+        };
         SidebarAgentSnapshot {
             id: pane_id.to_owned(),
             pane_id: pane_id.to_owned(),
             workspace_label: "Fixture".to_owned(),
             checkout_label: None,
             agent_kind: "codex".to_owned(),
-            state: state.to_owned(),
-            symbol: "○".to_owned(),
+            demand: demand.to_owned(),
+            activity: if group == "working" { "working" } else { "stopped" }.to_owned(),
+            unread: group != "seen",
+            blocked: false,
+            group: group.to_owned(),
+            symbol: "\u{25cb}".to_owned(),
+            emphasized: false,
+            status_label: "Idle".to_owned(),
+            requires_close_confirmation: false,
             summary: "summary".to_owned(),
             elapsed: "1s".to_owned(),
             sort_rank: "10".to_owned(),
-            activity: "0000000000001".to_owned(),
+            last_activity: "0000000000001".to_owned(),
+            state_change_seq: None,
             ambient: None,
             session_id: None,
             spawned_from_pane_id: None,
@@ -357,13 +373,13 @@ mod tests {
     fn badge_buckets_follow_the_projected_agent_states() {
         let agents = [
             agent("a", "error"),
-            agent("b", "question"),
-            agent("c", "approval"),
-            agent("d", "blocked"),
+            agent("b", "needs_you"),
+            agent("c", "needs_you"),
+            agent("d", "needs_you"),
             agent("e", "working"),
-            agent("f", "unseen_completion"),
-            agent("g", "idle"),
-            agent("h", "unknown"),
+            agent("f", "done"),
+            agent("g", "seen"),
+            agent("h", "seen"),
         ];
         let summary = summarize(&agents, true);
         assert_eq!(summary.error, 1);
@@ -414,13 +430,13 @@ mod tests {
         assert!(!totals.is_empty());
 
         assert!(ambient_totals(&agents, false).is_empty());
-        assert!(ambient_totals(&[agent("c", "idle")], true).is_empty());
+        assert!(ambient_totals(&[agent("c", "seen")], true).is_empty());
     }
 
     #[test]
     fn the_oldest_observed_unseen_pane_is_selected_before_later_ones() {
         let agents = [
-            agent("later", "question"),
+            agent("later", "needs_you"),
             agent("working", "working"),
             agent("earlier", "error"),
         ];
@@ -431,10 +447,10 @@ mod tests {
     #[test]
     fn without_observations_snapshot_order_decides_and_seen_panes_never_qualify() {
         let agents = [
-            agent("first", "question"),
+            agent("first", "needs_you"),
             agent("second", "error"),
-            agent("acknowledged", "idle"),
-            agent("done", "unseen_completion"),
+            agent("acknowledged", "seen"),
+            agent("done", "done"),
         ];
         assert_eq!(
             attention_order(&agents, &BTreeMap::new()),
@@ -444,7 +460,7 @@ mod tests {
 
     #[test]
     fn observing_the_same_snapshot_twice_keeps_the_first_moment() {
-        let agents = [agent("a", "question"), agent("b", "idle")];
+        let agents = [agent("a", "needs_you"), agent("b", "seen")];
         let mut observed = BTreeMap::new();
         observe_unseen(&mut observed, &agents, 1_000);
         observe_unseen(&mut observed, &agents, 5_000);
@@ -453,7 +469,7 @@ mod tests {
 
         // Once the user acknowledges it, the pane is forgotten and a later
         // unseen state starts a fresh observation.
-        observe_unseen(&mut observed, &[agent("a", "idle")], 6_000);
+        observe_unseen(&mut observed, &[agent("a", "seen")], 6_000);
         assert!(observed.is_empty());
         observe_unseen(&mut observed, &agents, 7_000);
         assert_eq!(observed.get("a"), Some(&7_000));

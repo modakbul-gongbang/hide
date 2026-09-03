@@ -1235,9 +1235,11 @@ impl SessionReplica {
                                     ),
                                     workspace_label: non_blank(Some(workspace.label.as_str())),
                                     cwd: pane.cwd.clone().unwrap_or_else(|| path.clone()),
-                                    state: agent
-                                        .map(|agent| agent.state.clone())
-                                        .unwrap_or_else(|| "attached".to_owned()),
+                                    status_label: agent
+                                        .map(|agent| agent.status_label.clone())
+                                        .unwrap_or_else(|| "Attached".to_owned()),
+                                    requires_close_confirmation: agent
+                                        .is_some_and(|agent| agent.requires_close_confirmation),
                                     summary: agent.map(|agent| agent.summary.clone()),
                                     activity_at_unix_ms: self
                                         .state
@@ -2766,7 +2768,8 @@ mod tests {
             "remote:mini:pane:w1:p1"
         );
         assert_eq!(projected.agents[0].pane_id, "remote:mini:pane:w1:p1");
-        assert_eq!(projected.agents[0].state, "working");
+        assert_eq!(projected.agents[0].demand, "none");
+        assert_eq!(projected.agents[0].activity, "working");
         assert_eq!(projected.agents[0].sort_rank, "99");
         assert_eq!(projected.pane_layouts[0].frames[0].x, 0.0);
         assert_eq!(projected.pane_layouts[0].frames[0].width, 1.0);

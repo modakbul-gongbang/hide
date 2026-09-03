@@ -8,18 +8,21 @@ import Testing
     #expect(SidebarContent.agents.alternate == .projects)
 }
 
-private func agent(id: String, paneID: String, state: String) -> SidebarAgent {
+private func agent(id: String, paneID: String, group: String) -> SidebarAgent {
     SidebarAgent(
         id: id,
         paneID: paneID,
         workspaceLabel: "hide",
         agentKind: "codex",
-        state: state,
-        symbol: "●",
+        demand: group == "needs_you" ? "question" : "none",
+        activity: group == "working" ? "working" : "stopped",
+        unread: group != "seen",
+        group: group,
+        symbol: "\u{25cf}",
         summary: "Summary for \(id)",
         elapsed: "2m",
         sortRank: "01",
-        activity: "working",
+        lastActivity: "0000000000001",
         ambient: nil
     )
 }
@@ -27,7 +30,7 @@ private func agent(id: String, paneID: String, state: String) -> SidebarAgent {
 private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnapshot {
     let panes = paneIDs
         .map { paneID in
-            #"{"id":"\#(paneID)","label":"\#(paneID)","cwd":"/tmp/hide","state":"idle"}"#
+            #"{"id":"\#(paneID)","label":"\#(paneID)","cwd":"/tmp/hide","status_label":"Idle","requires_close_confirmation":false}"#
         }
         .joined(separator: ",")
     let json = """
@@ -40,29 +43,25 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
     return try JSONDecoder().decode(CoreCheckoutSnapshot.self, from: Data(json.utf8))
 }
 
-@Test func onlyBlockedAgentsAreListedAsNeedingTheUser() {
+@Test func onlyAgentsInNeedsYouAreListedAsNeedingTheUser() {
     let agents = [
-        agent(id: "a", paneID: "w1:p1", state: "working"),
-        agent(id: "b", paneID: "w1:p2", state: "idle"),
-        agent(id: "c", paneID: "w1:p3", state: "question"),
-        agent(id: "d", paneID: "w1:p4", state: "approval"),
-        agent(id: "e", paneID: "w1:p5", state: "error"),
-        agent(id: "f", paneID: "w1:p6", state: "unseen_completion"),
-        agent(id: "g", paneID: "w1:p7", state: "blocked"),
+        agent(id: "a", paneID: "w1:p1", group: "working"),
+        agent(id: "b", paneID: "w1:p2", group: "seen"),
+        agent(id: "c", paneID: "w1:p3", group: "needs_you"),
+        agent(id: "d", paneID: "w1:p4", group: "done"),
+        agent(id: "e", paneID: "w1:p5", group: "needs_you"),
     ]
 
-    // A working or idle agent is visible in its space and is asking the user
-    // for nothing, so it never reaches the attention list.
-    #expect(SidebarGrouping.needingAttention(agents).map(\.id) == ["c", "d", "e", "f", "g"])
-    #expect(SidebarGrouping.requiresCloseConfirmation("working"))
-    #expect(SidebarGrouping.requiresCloseConfirmation("blocked"))
-    #expect(!SidebarGrouping.requiresCloseConfirmation("idle"))
+    // Membership is the core's group and nothing else. A working, read, or
+    // merely finished agent is visible in its space and is asking the user for
+    // nothing, so it never reaches the attention list.
+    #expect(SidebarGrouping.needingAttention(agents).map(\.id) == ["c", "e"])
 }
 
 @Test func nothingBlockedLeavesTheAttentionListEmpty() {
     let agents = [
-        agent(id: "a", paneID: "w1:p1", state: "working"),
-        agent(id: "b", paneID: "w1:p2", state: "idle"),
+        agent(id: "a", paneID: "w1:p1", group: "working"),
+        agent(id: "b", paneID: "w1:p2", group: "seen"),
     ]
 
     #expect(SidebarGrouping.needingAttention(agents).isEmpty)
@@ -70,8 +69,8 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
 
 @Test func agentsAreGroupedByThePanesTheirCheckoutOwns() throws {
     let agents = [
-        agent(id: "a", paneID: "w1:p1", state: "working"),
-        agent(id: "b", paneID: "w1:p9", state: "working"),
+        agent(id: "a", paneID: "w1:p1", group: "working"),
+        agent(id: "b", paneID: "w1:p9", group: "working"),
     ]
     let mine = try checkout(id: "checkout-1", paneIDs: ["w1:p1"])
 

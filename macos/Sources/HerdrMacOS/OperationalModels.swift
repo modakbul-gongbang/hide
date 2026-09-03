@@ -764,7 +764,11 @@ enum DestructiveTargetKind: String, Sendable {
 struct DestructiveTarget: Identifiable, Equatable, Sendable {
     let id: String
     let label: String
-    let state: String
+    /// The short human word for what this target is doing right now.
+    let statusLabel: String
+    /// Whether stopping this target interrupts work or discards an unread
+    /// result. Decided by the core, never by a list of state names here.
+    let requiresCloseConfirmation: Bool
     let summary: String
 }
 
@@ -779,9 +783,7 @@ struct ConsequenceNotice: Equatable, Identifiable, Sendable {
 
 enum ConsequencePolicy {
     static func notice(kind: DestructiveTargetKind, targets: [DestructiveTarget]) -> ConsequenceNotice {
-        let risky = targets.filter { target in
-            SidebarGrouping.requiresCloseConfirmation(target.state)
-        }
+        let risky = targets.filter(\.requiresCloseConfirmation)
         switch kind {
         case .pane:
             return ConsequenceNotice(
@@ -807,7 +809,7 @@ enum ConsequencePolicy {
     }
 
     private static func aggregate(_ title: String, _ consequence: String, _ targets: [DestructiveTarget]) -> ConsequenceNotice {
-        let affected = targets.filter { SidebarGrouping.requiresCloseConfirmation($0.state) }
+        let affected = targets.filter(\.requiresCloseConfirmation)
         return ConsequenceNotice(
             title: title,
             consequence: consequence,

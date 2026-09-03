@@ -1447,7 +1447,7 @@ impl Runtime {
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
                     && session.agents.iter().any(|agent| {
                         agent.pane_id == pane_id
-                            && crate::sidebar::requires_close_confirmation(&agent.state)
+                            && agent.requires_close_confirmation
                     });
             if needs_confirmation && !payload.request.confirmed() {
                 self.set_error(
@@ -1592,7 +1592,7 @@ impl Runtime {
                     .collect::<HashSet<_>>();
                 let needs_confirmation = session.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str())
-                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                        && agent.requires_close_confirmation
                 });
                 if needs_confirmation && !confirmed {
                     self.set_error(
@@ -1853,13 +1853,16 @@ impl Runtime {
                         terminal_title: source.and_then(|source| source.terminal_title.clone()),
                         workspace_label: agent.map(|agent| agent.workspace_label.clone()),
                         cwd,
-                        state: agent
-                            .map(|agent| agent.state.clone())
-                            .unwrap_or_else(|| "unknown".to_owned()),
+                        status_label: agent
+                            .map(|agent| agent.status_label.clone())
+                            .unwrap_or_else(|| "Unknown".to_owned()),
+                        requires_close_confirmation: agent
+                            .is_some_and(|agent| agent.requires_close_confirmation),
                         summary: agent
                             .map(|agent| agent.summary.clone())
                             .filter(|summary| summary != crate::sidebar::MISSING_SUMMARY),
-                        activity_at_unix_ms: agent.and_then(|agent| agent.activity.parse().ok()),
+                        activity_at_unix_ms: agent
+                            .and_then(|agent| agent.last_activity.parse().ok()),
                         fork: pane_fork_snapshot(agent),
                         ports,
                     }
@@ -2916,6 +2919,7 @@ impl Runtime {
         self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
+            changed |= self.apply_pane_read_state(&mut agents, true);
             if self.snapshot.navigator.agents != agents {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
@@ -3060,6 +3064,71 @@ impl Runtime {
         self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
     }
 
+    /// Raises the focused pane's read record and sets the read axis on every
+    /// row, then persists the record when it actually moved.
+    ///
+    /// This is the only place the read axis is decided. Herdr marks every pane
+    /// in a tab seen the moment the tab is focused, so three finished agents
+    /// side by side would clear together; Hide keeps its own pane-level record
+    /// instead and never derives unread from Herdr's `done` or `idle`.
+    ///
+    /// The record moves on a real state change or a focus move, not on every
+    /// tick, so the save this triggers is not a per-tick disk write.
+    fn apply_pane_read_state(
+        &mut self,
+        agents: &mut [SidebarAgentSnapshot],
+        evict_missing_panes: bool,
+    ) -> bool {
+        let focused = self.snapshot.focused.pane_id.clone();
+        let changes = crate::sidebar::apply_read_state(
+            agents,
+            &mut self.snapshot.ui_state.pane_read_records,
+            focused.as_deref(),
+            evict_missing_panes,
+        );
+        if changes.is_empty() {
+            return false;
+        }
+        for change in &changes {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "session",
+                    "kind": "pane.read_record",
+                    "pane_id": change.pane_id,
+                    "state_change_seq": change.record.state_change_seq,
+                    "demand": change.record.demand,
+                    "activity": change.record.activity,
+                })
+            );
+        }
+        if evict_missing_panes {
+            self.prune_pane_text_scales(agents);
+        }
+        self.persist_ui_state();
+        true
+    }
+
+    /// Drops the text scale of a pane Herdr no longer reports, on the same
+    /// pass that drops its read record, so neither map grows forever.
+    fn prune_pane_text_scales(&mut self, agents: &[SidebarAgentSnapshot]) {
+        let live = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .map(|pane| pane.id.as_str())
+            .chain(agents.iter().map(|agent| agent.pane_id.as_str()))
+            .collect::<HashSet<_>>();
+        self.snapshot
+            .ui_state
+            .pane_text_scales
+            .retain(|pane_id, _| live.contains(pane_id.as_str()));
+    }
+
     /// Saves the current UI state and surfaces a write failure instead of
     /// dropping it.
     fn persist_ui_state(&mut self) {
@@ -3133,13 +3202,28 @@ impl Runtime {
             self.snapshot.status.last_error = None;
         }
         self.sync_focused_terminal_projection();
+        // Focus moved, so the newly focused pane is read as of now. Doing it
+        // here rather than waiting for the next agent poll is what makes one
+        // click on a Done row clear that row and only that row.
+        let read_changed = self.refresh_pane_read_state();
 
         if self.live.is_some() {
             for pane_id in pane_ids {
                 self.request_terminal_control(&pane_id);
             }
         }
-        layout_changed
+        layout_changed || read_changed
+    }
+
+    /// Re-runs the read axis over the agents already in the snapshot, for the
+    /// moment focus moves without a new agent list arriving.
+    fn refresh_pane_read_state(&mut self) -> bool {
+        let before = self.snapshot.navigator.agents.clone();
+        let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
+        self.apply_pane_read_state(&mut agents, false);
+        let changed = before != agents;
+        self.snapshot.navigator.agents = agents;
+        changed
     }
 
     fn ensure_terminal_pane(&mut self, pane_id: &str) {
@@ -4989,7 +5073,7 @@ impl Runtime {
                     .collect::<HashSet<_>>();
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str())
-                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                        && agent.requires_close_confirmation
                 });
                 if requires_confirmation && !payload.confirmed {
                     self.set_error(
@@ -5022,7 +5106,7 @@ impl Runtime {
             ValidatedEvent::ClosePane(payload) => {
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     agent.pane_id == payload.pane_id
-                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                        && agent.requires_close_confirmation
                 });
                 if requires_confirmation && !payload.confirmed {
                     self.set_error(
@@ -5612,6 +5696,7 @@ impl Runtime {
                     // save must not erase it, for the same reason the pet
                     // fields above are carried through.
                     pane_text_scales: current.pane_text_scales,
+                    pane_read_records: current.pane_read_records,
                 };
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
@@ -7016,7 +7101,8 @@ mod tests {
             terminal_title: None,
             workspace_label: None,
             cwd: cwd.to_owned(),
-            state: "attached".to_owned(),
+            status_label: "Attached".to_owned(),
+            requires_close_confirmation: false,
             summary: None,
             activity_at_unix_ms: None,
             fork: PaneForkSnapshot::default(),
@@ -9615,6 +9701,37 @@ mod tests {
         runtime.ingest_session(Ok(working_payload()));
         assert_eq!(runtime.snapshot().pet.pose, "carrying");
         assert_eq!(runtime.snapshot().pet.connection, "connected");
+    }
+
+    /// AC2, AC4, SC3. Focusing a pane writes its read record to the store, and
+    /// a pane Herdr stops reporting is gone from the file on the next save, so
+    /// the record cannot grow without bound.
+    #[test]
+    fn read_record_is_written_for_the_focused_pane_and_evicted_when_it_disappears() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        runtime.ingest_session(Ok(working_payload()));
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .pane_read_records
+                .contains_key("w1:p1"),
+            "the focused pane is read"
+        );
+        let stored = std::fs::read_to_string(&state_path).expect("state file");
+        assert!(stored.contains("w1:p1"), "the record reached the file");
+
+        let empty: SessionSnapshotPayload =
+            serde_json::from_value(serde_json::json!({"agents": []})).expect("empty payload");
+        runtime.ingest_session(Ok(empty));
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "a pane Herdr stopped reporting leaves no record behind"
+        );
+        let stored = std::fs::read_to_string(&state_path).expect("state file");
+        assert!(!stored.contains("w1:p1"), "the record left the file too");
+        let _ = std::fs::remove_file(&state_path);
     }
 
     #[test]

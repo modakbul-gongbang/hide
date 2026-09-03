@@ -37,13 +37,11 @@ struct SidebarCheckoutPresentation: Equatable {
 
         if !checkout.exists {
             activity = .missing
-        } else if checkoutAgents.contains(where: { $0.state == "error" }) {
+        } else if checkoutAgents.contains(where: { $0.demand == "error" }) {
             activity = .error
-        } else if checkoutAgents.contains(where: {
-            SidebarGrouping.attentionStates.contains($0.state)
-        }) {
+        } else if checkoutAgents.contains(where: { $0.group == "needs_you" }) {
             activity = .needsAttention
-        } else if checkoutAgents.contains(where: { $0.state == "working" }) {
+        } else if checkoutAgents.contains(where: { $0.group == "working" }) {
             activity = .working
         } else if paneCount > 0 {
             activity = .idle

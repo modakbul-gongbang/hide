@@ -572,7 +572,12 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let terminalTitle: String?
     let workspaceLabel: String?
     let cwd: String
-    let state: String
+    /// The one short human word for the agent in this pane. The core derives
+    /// it; no view builds a label out of a state name.
+    let statusLabel: String
+    /// Whether closing this pane needs confirmation first, as the core derived
+    /// it for the same agent the sidebar row shows.
+    let requiresCloseConfirmation: Bool
     let summary: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
@@ -587,7 +592,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case terminalTitle = "terminal_title"
         case workspaceLabel = "workspace_label"
         case cwd
-        case state
+        case statusLabel = "status_label"
+        case requiresCloseConfirmation = "requires_close_confirmation"
         case summary
         case activityAt = "activity_at_unix_ms"
     }
@@ -598,7 +604,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         terminalTitle: String? = nil,
         workspaceLabel: String? = nil,
         cwd: String,
-        state: String,
+        statusLabel: String,
+        requiresCloseConfirmation: Bool = false,
         summary: String?,
         activityAt: UInt64?,
         fork: CorePaneFork = CorePaneFork(),
@@ -609,7 +616,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.terminalTitle = terminalTitle
         self.workspaceLabel = workspaceLabel
         self.cwd = cwd
-        self.state = state
+        self.statusLabel = statusLabel
+        self.requiresCloseConfirmation = requiresCloseConfirmation
         self.summary = summary
         self.activityAt = activityAt
         self.fork = fork
@@ -628,7 +636,10 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
         workspaceLabel = try container.decodeIfPresent(String.self, forKey: .workspaceLabel)
         cwd = try container.decode(String.self, forKey: .cwd)
-        state = try container.decode(String.self, forKey: .state)
+        statusLabel = try container.decode(String.self, forKey: .statusLabel)
+        requiresCloseConfirmation = try container.decode(
+            Bool.self, forKey: .requiresCloseConfirmation
+        )
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
@@ -664,13 +675,74 @@ struct SidebarAgent: Decodable, Identifiable {
     /// project. Absent for a pane the navigator does not hold.
     var checkoutLabel: String? = nil
     let agentKind: String
-    let state: String
+    /// What the agent needs from the operator: `question`, `approval`,
+    /// `error`, or `none`.
+    let demand: String
+    /// Whether the agent is running: `working`, `stopped`, or `unknown`.
+    let activity: String
+    /// Whether this pane has changed since the operator last focused it. Hide
+    /// owns this per pane; Herdr's seen is tab-scoped and is never used here.
+    let unread: Bool
+    /// Herdr reports an approval prompt on this pane right now.
+    let blocked: Bool
+    /// Which of the four sidebar groups this row belongs to.
+    let group: String
     let symbol: String
+    /// Whether the row is drawn bright rather than subdued.
+    let emphasized: Bool
+    /// The one short human word this row shows.
+    let statusLabel: String
+    /// Whether closing this pane needs confirmation first.
+    let requiresCloseConfirmation: Bool
     let summary: String
     let elapsed: String
     let sortRank: String
-    let activity: String
+    let lastActivity: String
     let ambient: CoreAmbientSignal?
+
+    /// Fixtures and tests build a row directly. Every derived value defaults
+    /// to the quiet reading, so a fixture states only what it is exercising.
+    init(
+        id: String,
+        paneID: String,
+        workspaceLabel: String,
+        checkoutLabel: String? = nil,
+        agentKind: String,
+        demand: String = "none",
+        activity: String = "unknown",
+        unread: Bool = false,
+        blocked: Bool = false,
+        group: String = "seen",
+        symbol: String,
+        emphasized: Bool = false,
+        statusLabel: String = "Idle",
+        requiresCloseConfirmation: Bool = false,
+        summary: String,
+        elapsed: String,
+        sortRank: String,
+        lastActivity: String,
+        ambient: CoreAmbientSignal?
+    ) {
+        self.id = id
+        self.paneID = paneID
+        self.workspaceLabel = workspaceLabel
+        self.checkoutLabel = checkoutLabel
+        self.agentKind = agentKind
+        self.demand = demand
+        self.activity = activity
+        self.unread = unread
+        self.blocked = blocked
+        self.group = group
+        self.symbol = symbol
+        self.emphasized = emphasized
+        self.statusLabel = statusLabel
+        self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.summary = summary
+        self.elapsed = elapsed
+        self.sortRank = sortRank
+        self.lastActivity = lastActivity
+        self.ambient = ambient
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -678,12 +750,19 @@ struct SidebarAgent: Decodable, Identifiable {
         case workspaceLabel = "workspace_label"
         case checkoutLabel = "checkout_label"
         case agentKind = "agent_kind"
-        case state
+        case demand
+        case activity
+        case unread
+        case blocked
+        case group
         case symbol
+        case emphasized
+        case statusLabel = "status_label"
+        case requiresCloseConfirmation = "requires_close_confirmation"
         case summary
         case elapsed
         case sortRank = "sort_rank"
-        case activity
+        case lastActivity = "last_activity"
         case ambient
     }
 }

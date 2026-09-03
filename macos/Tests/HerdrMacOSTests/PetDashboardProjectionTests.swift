@@ -11,12 +11,12 @@ struct PetDashboardProjectionTests {
             backgroundFailed: 0
         )
         let agents = [
-            agent("p1", state: "working", ambient: ambient),
-            agent("p2", state: "unseen_completion"),
-            agent("p3", state: "idle"),
-            agent("p4", state: "error"),
-            agent("p5", state: "question"),
-            agent("p6", state: "blocked"),
+            agent("p1", group: "working", ambient: ambient),
+            agent("p2", group: "done"),
+            agent("p3", group: "seen"),
+            agent("p4", group: "needs_you", demand: "error"),
+            agent("p5", group: "needs_you", demand: "question"),
+            agent("p6", group: "needs_you", demand: "approval"),
         ]
         let projection = PetDashboardProjector.project(
             agents: agents,
@@ -29,7 +29,7 @@ struct PetDashboardProjectionTests {
             total: 6,
             working: 1,
             done: 1,
-            idle: 3,
+            idle: 1,
             error: 1,
             disconnected: 0
         ))
@@ -38,17 +38,19 @@ struct PetDashboardProjectionTests {
         #expect(projection.groups[1].agents.map(\.paneID) == ["p5", "p6"])
         #expect(projection.groups[0].agents[0].ambient == ambient)
         #expect(projection.groups[0].agents[1].ambient == nil)
-        #expect(projection.groups[0].agents[1].status == "unseen_completion")
-        #expect(projection.groups[0].agents[1].unseen)
-        #expect(projection.groups[1].agents[0].status == "question")
+        #expect(projection.groups[0].agents[1].group == "done")
+        #expect(projection.groups[0].agents[1].statusLabel == "Done")
+        #expect(projection.groups[0].agents[1].unseen == false)
+        #expect(projection.groups[1].agents[0].group == "needs_you")
         #expect(projection.groups[0].agents[3].unseen)
         #expect(projection.groups[1].agents[0].unseen)
-        #expect(projection.groups[1].agents[1].status == "blocked")
+        #expect(projection.groups[1].agents[1].demand == "approval")
         #expect(projection.groups[1].agents[1].unseen)
 
         let rowFields = Set(Mirror(reflecting: projection.groups[0].agents[0]).children.compactMap(\.label))
         #expect(rowFields == [
-            "id", "paneID", "agentKind", "status", "summary", "elapsed",
+            "id", "paneID", "agentKind", "group", "demand", "activity",
+            "emphasized", "symbol", "statusLabel", "summary", "elapsed",
             "unseen", "connection", "ambient",
         ])
     }
@@ -58,14 +60,14 @@ struct PetDashboardProjectionTests {
             agents: [
                 agent(
                     "p1",
-                    state: "working",
+                    group: "working",
                     ambient: CoreAmbientSignal(
                         subagentsActive: 3,
                         backgroundRunning: 2,
                         backgroundFailed: 1
                     )
                 ),
-                agent("p2", state: "disconnected"),
+                agent("p2", group: "seen"),
             ],
             workspaces: [workspace("w1", label: "Workspace A", paneIDs: ["p1", "p2"])],
             connection: "unavailable",
@@ -80,7 +82,8 @@ struct PetDashboardProjectionTests {
             error: 0,
             disconnected: 2
         ))
-        #expect(projection.groups[0].agents.allSatisfy { $0.status == "disconnected" })
+        #expect(projection.groups[0].agents.allSatisfy { $0.group == "disconnected" })
+        #expect(projection.groups[0].agents.allSatisfy { $0.statusLabel == "Disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.connection == "disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.ambient == nil })
         #expect(projection.connectionMessage == "Herdr server is not answering")
@@ -88,7 +91,7 @@ struct PetDashboardProjectionTests {
 
     @Test func duplicatePaneProjectionIsIdempotentAndEmptySnapshotStaysEmpty() {
         let duplicate = PetDashboardProjector.project(
-            agents: [agent("p1", state: "working")],
+            agents: [agent("p1", group: "working")],
             workspaces: [
                 workspace("w1", label: "First", paneIDs: ["p1", "p1"]),
                 workspace("w2", label: "Second", paneIDs: ["p1"]),
@@ -119,7 +122,8 @@ struct PetDashboardProjectionTests {
 
     private func agent(
         _ paneID: String,
-        state: String,
+        group: String,
+        demand: String = "none",
         ambient: CoreAmbientSignal? = nil
     ) -> SidebarAgent {
         SidebarAgent(
@@ -127,12 +131,17 @@ struct PetDashboardProjectionTests {
             paneID: paneID,
             workspaceLabel: "Workspace A",
             agentKind: paneID == "p2" ? "claude" : "codex",
-            state: state,
+            demand: demand,
+            activity: group == "working" ? "working" : "stopped",
+            unread: group == "needs_you" || group == "done",
+            group: group,
             symbol: "-",
+            emphasized: group == "needs_you" || group == "done",
+            statusLabel: group == "done" ? "Done" : "Idle",
             summary: "Agent \(paneID)",
             elapsed: "2m",
             sortRank: paneID,
-            activity: state,
+            lastActivity: "0000000000001",
             ambient: ambient
         )
     }
@@ -146,7 +155,7 @@ struct PetDashboardProjectionTests {
             CorePaneSnapshot(
                 id: paneID,
                 cwd: "/tmp/\(id)",
-                state: "active",
+                statusLabel: "Idle",
                 summary: nil,
                 activityAt: nil
             )
