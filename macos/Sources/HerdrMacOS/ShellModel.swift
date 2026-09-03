@@ -110,11 +110,12 @@ enum CloseShortcutPolicy {
 enum HerdrTabLabelPresentation {
     /// The label to give a tab the operator is about to create. What an
     /// existing tab is drawn by comes from the core, which derives it from the
-    /// tab's own identity.
+    /// tab's own identity: `display_tab_label` gives a bare Herdr number the
+    /// "Tab N" form before it ever reaches here, so that is the only shape a
+    /// label arrives in and the only one this reads a number back out of.
     static func nextLabel(rawLabels: [String?]) -> String {
         let used = Set(rawLabels.compactMap { rawLabel -> Int? in
             let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if let number = Int(label) { return number }
             guard label.lowercased().hasPrefix("tab ") else { return nil }
             return Int(label.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines))
         })
