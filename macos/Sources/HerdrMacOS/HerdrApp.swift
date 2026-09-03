@@ -125,7 +125,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                event.keyCode == 48,
                activeSwitchers.tab
             {
-                // A real Control release arrives as flagsChanged below. Some
+                // A real Option release arrives as flagsChanged below. Some
                 // accessibility synthesizers omit that event, so re-check the
                 // authoritative global flags after their chord finishes.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
@@ -154,7 +154,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             }
             if event.type == .flagsChanged,
                activeSwitchers.tab,
-               !event.modifierFlags.contains(.control)
+               !event.modifierFlags.contains(.option)
             {
                 MainActor.assumeIsolated {
                     self.model.commitTabSwitcher()
@@ -163,7 +163,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             }
             if event.type == .flagsChanged,
                activeSwitchers.agent,
-               !event.modifierFlags.contains(.option)
+               !event.modifierFlags.contains(.control)
             {
                 MainActor.assumeIsolated {
                     self.model.commitAgentSwitcher()

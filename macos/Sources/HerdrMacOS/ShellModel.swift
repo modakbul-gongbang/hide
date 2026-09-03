@@ -76,6 +76,7 @@ enum CheckoutStartState {
 
 enum CloseShortcutAction: Equatable {
     case closeFile
+    case closePane
     case closeHerdr
     case nothingToClose
     case blocked
@@ -84,17 +85,23 @@ enum CloseShortcutAction: Equatable {
 enum CloseShortcutPolicy {
     /// Closing the last tab used to close the window, which is how the
     /// operator lost the whole application by pressing `⌘W` one time too many.
-    /// The close shortcut closes what it names - a file tab or a Herdr tab -
-    /// and when nothing is left it says so. Closing the window stays on the
-    /// window's own close control, where the operator means it.
+    /// The close shortcut closes what the operator is looking at: a file tab,
+    /// or the focused terminal pane. Closing a whole Herdr tab from ⌘W took
+    /// every pane in it at once, which read as one pane dragging the others
+    /// down; a tab now closes from its own close control, and closing the
+    /// last pane in a tab closes the tab through Herdr anyway. When nothing
+    /// is left it says so. Closing the window stays on the window's own close
+    /// control, where the operator means it.
     static func action(
         hasWorkspace: Bool,
         hasActiveFileTab: Bool,
         hasActiveHerdrTab: Bool,
+        hasFocusedPane: Bool = false,
         tabCount: Int
     ) -> CloseShortcutAction {
         if hasActiveFileTab { return .closeFile }
         if !hasWorkspace { return .nothingToClose }
+        if hasActiveHerdrTab && hasFocusedPane { return .closePane }
         if hasActiveHerdrTab { return .closeHerdr }
         return tabCount == 0 ? .nothingToClose : .blocked
     }
@@ -1324,12 +1331,23 @@ final class ShellModel: ObservableObject {
         let activeFile = core.snapshot?.editor.activeTabID.flatMap { activeID in
             core.snapshot?.editor.tabs.first(where: { $0.id == activeID })
         }
+        let focusedPane = focusedPaneID.flatMap { paneID in
+            focusedPanes.first(where: { $0.id == paneID })
+        }
         switch CloseShortcutPolicy.action(
             hasWorkspace: focusedWorkspace != nil,
             hasActiveFileTab: activeFile != nil,
             hasActiveHerdrTab: focusedTab?.id != nil,
+            hasFocusedPane: focusedPane != nil,
             tabCount: unifiedTabs.count
         ) {
+        case .closePane:
+            guard let pane = focusedPane else {
+                interactionNotice = "The focused pane could not be resolved. Nothing was closed."
+                return
+            }
+            HideLaunchTrace.mark("tab.close_shortcut.pane", detail: pane.id)
+            closePaneFromHeader(pane.id)
         case .closeFile:
             guard let tab = activeFile else {
                 interactionNotice = "The active file tab could not be resolved. Nothing was closed."

@@ -304,46 +304,49 @@ enum PaneKeyEventPolicy {
             && event.modifierFlags.intersection(chordModifiers) == .command
     }
 
+    /// Control+Tab walks the most recently used agents across every project.
+    /// It has the lighter chord because it is the switch reached for most;
+    /// the checkout-local tab switcher sits on Option+Tab.
     static func isAgentSwitcherAdvance(_ event: NSEvent) -> Bool {
-        event.type == .keyDown
-            && event.keyCode == 48
-            && event.modifierFlags.intersection(chordModifiers) == .option
-    }
-
-    /// Option+Shift+Tab, the reverse of the chord above. Shift is the only
-    /// added modifier, so Command or Control still falls through to whatever
-    /// owns that chord.
-    static func isAgentSwitcherRetreat(_ event: NSEvent) -> Bool {
-        event.type == .keyDown
-            && event.keyCode == 48
-            && event.modifierFlags.intersection(chordModifiers) == [.option, .shift]
-    }
-
-    static func isTabSwitcherAdvance(_ event: NSEvent) -> Bool {
         event.type == .keyDown
             && event.keyCode == 48
             && event.modifierFlags.intersection(chordModifiers) == .control
     }
 
-    /// Control+Shift+Tab is the reverse checkout-local tab chord. Command or
-    /// Option keeps ownership of its own shortcut instead of being swallowed.
-    static func isTabSwitcherRetreat(_ event: NSEvent) -> Bool {
+    /// Control+Shift+Tab, the reverse of the chord above. Shift is the only
+    /// added modifier, so Command or Option still falls through to whatever
+    /// owns that chord.
+    static func isAgentSwitcherRetreat(_ event: NSEvent) -> Bool {
         event.type == .keyDown
             && event.keyCode == 48
             && event.modifierFlags.intersection(chordModifiers) == [.control, .shift]
     }
 
-    /// Accessibility synthesizers can emit the Tab key pair with Control in
-    /// each event but omit the later Control flagsChanged event. The global
+    static func isTabSwitcherAdvance(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 48
+            && event.modifierFlags.intersection(chordModifiers) == .option
+    }
+
+    /// Option+Shift+Tab is the reverse checkout-local tab chord. Command or
+    /// Control keeps ownership of its own shortcut instead of being swallowed.
+    static func isTabSwitcherRetreat(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && event.keyCode == 48
+            && event.modifierFlags.intersection(chordModifiers) == [.option, .shift]
+    }
+
+    /// Accessibility synthesizers can emit the Tab key pair with Option in
+    /// each event but omit the later Option flagsChanged event. The global
     /// modifier state is authoritative for that release fallback. A physical
-    /// user holding Control keeps the switcher open and continues cycling.
+    /// user holding Option keeps the switcher open and continues cycling.
     static func shouldCommitTabSwitcherAfterKeyUp(
         _ event: NSEvent,
         currentModifiers: NSEvent.ModifierFlags
     ) -> Bool {
         event.type == .keyUp
             && event.keyCode == 48
-            && !currentModifiers.contains(.control)
+            && !currentModifiers.contains(.option)
     }
 }
 

@@ -157,6 +157,15 @@ struct PaneShortcutSettingsTests {
             hasActiveHerdrTab: true,
             tabCount: 2
         ) == .closeFile)
+        // A focused pane is what the operator is looking at, so ⌘W closes
+        // it rather than the whole tab with every pane in it.
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: true,
+            hasActiveFileTab: false,
+            hasActiveHerdrTab: true,
+            hasFocusedPane: true,
+            tabCount: 1
+        ) == .closePane)
         #expect(CloseShortcutPolicy.action(
             hasWorkspace: true,
             hasActiveFileTab: false,
@@ -206,20 +215,20 @@ struct PaneShortcutSettingsTests {
         #expect(!PaneMenuPolicy.reserveCloseShortcut(in: mainMenu))
     }
 
-    @Test func optionTabIgnoresCapsLockButRejectsExtraChordModifiers() {
-        let capsLockOptionTab = keyEvent(
+    @Test func controlTabIgnoresCapsLockButRejectsExtraChordModifiers() {
+        let capsLockControlTab = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.option, .capsLock]
+            modifiers: [.control, .capsLock]
         )
-        #expect(PaneKeyEventPolicy.isAgentSwitcherAdvance(capsLockOptionTab))
+        #expect(PaneKeyEventPolicy.isAgentSwitcherAdvance(capsLockControlTab))
 
-        let commandOptionTab = keyEvent(
+        let commandControlTab = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.command, .option]
+            modifiers: [.command, .control]
         )
-        #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(commandOptionTab))
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(commandControlTab))
     }
 
     @Test func commandEIsReservedForSidebarNavigationAcrossFocusedEditors() {
@@ -244,15 +253,15 @@ struct PaneShortcutSettingsTests {
         // The reverse chord is the forward chord plus Shift, so an event must
         // answer to exactly one of them or the monitor would swallow Shift+Tab
         // as a plain advance.
-        let optionTab = keyEvent(characters: "\t", keyCode: 48, modifiers: [.option])
+        let controlTab = keyEvent(characters: "\t", keyCode: 48, modifiers: [.control])
         let optionShiftTab = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.option, .shift]
+            modifiers: [.control, .shift]
         )
 
-        #expect(PaneKeyEventPolicy.isAgentSwitcherAdvance(optionTab))
-        #expect(!PaneKeyEventPolicy.isAgentSwitcherRetreat(optionTab))
+        #expect(PaneKeyEventPolicy.isAgentSwitcherAdvance(controlTab))
+        #expect(!PaneKeyEventPolicy.isAgentSwitcherRetreat(controlTab))
 
         #expect(PaneKeyEventPolicy.isAgentSwitcherRetreat(optionShiftTab))
         #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(optionShiftTab))
@@ -262,14 +271,14 @@ struct PaneShortcutSettingsTests {
         let capsLocked = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.option, .shift, .capsLock]
+            modifiers: [.control, .shift, .capsLock]
         )
         #expect(PaneKeyEventPolicy.isAgentSwitcherRetreat(capsLocked))
 
         let withCommand = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.command, .option, .shift]
+            modifiers: [.command, .control, .shift]
         )
         #expect(!PaneKeyEventPolicy.isAgentSwitcherRetreat(withCommand))
     }
@@ -278,36 +287,36 @@ struct PaneShortcutSettingsTests {
         let forward = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.control, .capsLock]
+            modifiers: [.option, .capsLock]
         )
         let backward = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.control, .shift]
+            modifiers: [.option, .shift]
         )
-        let withOption = keyEvent(
+        let withControl = keyEvent(
             characters: "\t",
             keyCode: 48,
-            modifiers: [.control, .option]
+            modifiers: [.option, .control]
         )
 
         #expect(PaneKeyEventPolicy.isTabSwitcherAdvance(forward))
         #expect(!PaneKeyEventPolicy.isTabSwitcherRetreat(forward))
         #expect(PaneKeyEventPolicy.isTabSwitcherRetreat(backward))
         #expect(!PaneKeyEventPolicy.isTabSwitcherAdvance(backward))
-        #expect(!PaneKeyEventPolicy.isTabSwitcherAdvance(withOption))
-        #expect(!PaneKeyEventPolicy.isTabSwitcherRetreat(withOption))
+        #expect(!PaneKeyEventPolicy.isTabSwitcherAdvance(withControl))
+        #expect(!PaneKeyEventPolicy.isTabSwitcherRetreat(withControl))
         #expect(!PaneKeyEventPolicy.isAgentSwitcherAdvance(forward))
     }
 
-    @Test func tabKeyUpFallbackCommitsOnlyAfterTheGlobalControlFlagClears() {
-        // Accessibility synthesis can leave Control on the Tab keyUp event
+    @Test func tabKeyUpFallbackCommitsOnlyAfterTheGlobalOptionFlagClears() {
+        // Accessibility synthesis can leave Option on the Tab keyUp event
         // while the actual global modifier state is already released.
         let tabKeyUp = keyEvent(
             type: .keyUp,
             characters: "\t",
             keyCode: 48,
-            modifiers: [.control]
+            modifiers: [.option]
         )
         #expect(PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
             tabKeyUp,
@@ -315,10 +324,10 @@ struct PaneShortcutSettingsTests {
         ))
         #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
             tabKeyUp,
-            currentModifiers: [.control]
+            currentModifiers: [.option]
         ))
 
-        let tabKeyDown = keyEvent(characters: "\t", keyCode: 48, modifiers: [.control])
+        let tabKeyDown = keyEvent(characters: "\t", keyCode: 48, modifiers: [.option])
         let anotherKeyUp = keyEvent(
             type: .keyUp,
             characters: "a",
