@@ -1498,14 +1498,17 @@ private struct HideTerminalHeader: View {
                                                     .fill(HideTheme.secondary)
                                                     .frame(width: 5, height: 5)
                                             }
-                                            if model.tabShortcutHintsVisible,
-                                               let shortcutNumber = model.tabShortcutNumber(tabID: tab.id)
-                                            {
+                                            // The keycap holds its slot whether
+                                            // or not it is shown, so revealing
+                                            // the hints fades them in without
+                                            // resizing the tab under the
+                                            // pointer.
+                                            if let shortcutNumber = model.tabShortcutNumber(tabID: tab.id) {
                                                 SidebarBadge(
                                                     label: "⌘\(shortcutNumber)",
                                                     color: HideTheme.secondary
                                                 )
-                                                .transition(.opacity)
+                                                .opacity(model.tabShortcutHintsVisible ? 1 : 0)
                                             }
                                         }
                                         .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)

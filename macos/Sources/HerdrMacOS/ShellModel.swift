@@ -1430,7 +1430,13 @@ final class ShellModel: ObservableObject {
         }
     }
 
+    /// Selecting the tab that is already active is a no-op, not a re-focus:
+    /// re-sending the focus command makes the core hand focus to that tab's
+    /// first pane, so the chord moved the caret off whatever pane the user was
+    /// working in. Reaching for the tab you are already on must change
+    /// nothing.
     func focusUnifiedTab(_ item: ShellTabItem) {
+        guard !item.active else { return }
         switch item.kind {
         case .herdr(let tab): focusTab(tab)
         case .file(let tab): focusFileTab(tab)
