@@ -614,8 +614,13 @@ final class ShellModel: ObservableObject {
             interactionNotice = nil
             HideLaunchTrace.mark("terminal.link.opened", detail: "local_file")
         case .unresolved(let message):
-            interactionNotice = message
-            HideLaunchTrace.mark("terminal.link.failed", detail: "unresolved_target")
+            // A click that resolves to nothing does nothing. Detection is a
+            // guess made over arbitrary terminal output, so a wrong guess is
+            // ordinary, and a modal makes the operator dismiss a dialog for a
+            // mis-click they can simply repeat elsewhere. The reason still
+            // leaves the process through the trace, so the case stays
+            // answerable without putting it on screen.
+            HideLaunchTrace.mark("terminal.link.failed", detail: message)
         }
     }
 

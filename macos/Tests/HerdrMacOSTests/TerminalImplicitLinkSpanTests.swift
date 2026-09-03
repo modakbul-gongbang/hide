@@ -1,6 +1,7 @@
 import Foundation
 import SwiftTerm
 import Testing
+@testable import HerdrMacOS
 
 /// What a click in a pane offers as a link.
 ///
@@ -62,6 +63,29 @@ struct TerminalImplicitLinkSpanTests {
             link(in: relative, atColumn: column(of: "./", in: relative))
                 == "./scripts/build_dev_app.sh"
         )
+    }
+
+    /// The whole route for the case the operator asked for: a real README.md
+    /// printed with prose after it has to come back as the file alone, and
+    /// that token has to resolve to the file the editor opens.
+    @Test func aRealReadmePrintedWithProseAfterItResolvesToThatFile() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hide-readme-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let readme = root.appendingPathComponent("README.md")
+        try "# hide\n".write(to: readme, atomically: true, encoding: .utf8)
+
+        let line = "wrote \(readme.path) 가나다라 확인해줘"
+        let token = link(in: line, atColumn: column(of: readme.path, in: line))
+        #expect(token == readme.path)
+
+        let resolved = TerminalLinkResolver.route(
+            try #require(token),
+            paneCWD: root.path,
+            checkoutRoot: root
+        )
+        #expect(resolved == .file(readme))
     }
 
     @Test func aRootedPathStillNeedsMoreThanOneSegmentButAWebAddressIsUntouched() {
