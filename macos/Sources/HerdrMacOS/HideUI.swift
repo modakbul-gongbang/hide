@@ -205,7 +205,7 @@ struct ShellView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.showSettings) {
-            HideSettingsView(model: model)
+            HideSettingsView(model: model, showsCloseButton: true)
         }
         .sheet(isPresented: $model.showPetDashboard) {
             PetDashboardView()

@@ -11,6 +11,10 @@ import SwiftUI
 /// hairline borders, no shadows, and the spacing and radius scales.
 struct HideSettingsView: View {
     @ObservedObject var model: ShellModel
+    /// The sheet has no title bar, so it carries its own close button. The
+    /// Settings scene the menu bar opens has the window's own controls, and
+    /// `dismiss` does not govern that window, so it does not show one.
+    var showsCloseButton = false
     @Environment(\.dismiss) private var dismiss
     @State private var tab: HideSettingsTab = .general
     @State private var accentHex = HideSettingsView.fallbackAccentHex
@@ -71,14 +75,16 @@ struct HideSettingsView: View {
                     .foregroundStyle(HideTheme.secondary)
             }
             Spacer(minLength: 0)
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+            if showsCloseButton {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .help("Close Settings")
+                .accessibilityLabel("Close Settings")
+                .accessibilityIdentifier("hide-settings-close")
             }
-            .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-            .help("Close Settings")
-            .accessibilityLabel("Close Settings")
-            .accessibilityIdentifier("hide-settings-close")
         }
         .padding(.horizontal, HideTheme.spacingXL)
         .padding(.vertical, HideTheme.spacingLG)
