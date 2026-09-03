@@ -21,7 +21,7 @@ use crate::model::{
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
     SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
     TerminalPaneSnapshot,
-    UiStateSnapshot,
+    UiStateSnapshot, WorkspaceSnapshot,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
@@ -390,6 +390,54 @@ fn remote_tab_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'
 /// for that target, so the two cannot disagree about which panes are its own.
 fn remote_pane_id_prefix(target_id: &str) -> String {
     format!("remote:{target_id}:pane:")
+}
+
+/// Copies each pane's status word and close-confirmation answer from the agent
+/// rows that carry the read axis.
+///
+/// A pane tree is projected separately from the agent rows, by a pass that
+/// cannot see the read record ledger and does not know which pane is focused.
+/// Left alone it publishes `Done` and demands a close confirmation for every
+/// pane the operator has already read. One owner decides the answer; every
+/// tree copies it, local and remote alike, because a pane is a pane.
+fn sync_pane_status(
+    workspaces: &mut [WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+) -> bool {
+    let by_pane = agents
+        .iter()
+        .map(|agent| {
+            (
+                agent.pane_id.as_str(),
+                (
+                    agent.status_label.as_str(),
+                    agent.requires_close_confirmation,
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut changed = false;
+    for pane in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        let Some((status_label, requires_close_confirmation)) =
+            by_pane.get(pane.id.as_str()).copied()
+        else {
+            continue;
+        };
+        if pane.status_label != status_label {
+            pane.status_label = status_label.to_owned();
+            changed = true;
+        }
+        if pane.requires_close_confirmation != requires_close_confirmation {
+            pane.requires_close_confirmation = requires_close_confirmation;
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
@@ -3123,6 +3171,9 @@ impl Runtime {
     /// never focuses a remote pane itself. Eviction is scoped to this target's
     /// pane id prefix, so a local sync cannot drop what this pass wrote and
     /// this pass cannot drop another target's records.
+    ///
+    /// The remote pane tree arrives freshly projected on every sync, with no
+    /// read axis applied, so it is synced whether or not the ledger moved.
     fn apply_remote_read_state(
         &mut self,
         target_id: &str,
@@ -3136,8 +3187,9 @@ impl Runtime {
             focused.as_deref(),
             ReadRecordScope::Remote(&prefix),
         );
+        let synced = sync_pane_status(&mut session.workspaces, &session.agents);
         if changes.is_empty() {
-            return false;
+            return synced;
         }
         self.record_read_record_changes(&changes);
         true
@@ -3166,52 +3218,10 @@ impl Runtime {
         self.persist_ui_state();
     }
 
-    /// Copies each pane's status word and close-confirmation answer from the
-    /// agent rows that just had the read axis applied.
-    ///
-    /// The catalog reconcile builds the pane tree from its own `project_agents`
-    /// call, which cannot see the read record ledger and cannot know which pane
-    /// is focused. Left alone it published `Done` and demanded a close
-    /// confirmation for every pane the operator had already read. One owner
-    /// decides the answer; the tree copies it.
+    /// Copies each local pane's status word and close-confirmation answer from
+    /// the agent rows that just had the read axis applied.
     fn sync_pane_status_from_agents(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
-        let by_pane = agents
-            .iter()
-            .map(|agent| {
-                (
-                    agent.pane_id.as_str(),
-                    (
-                        agent.status_label.as_str(),
-                        agent.requires_close_confirmation,
-                    ),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let mut changed = false;
-        for pane in self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter_mut()
-            .flat_map(|workspace| workspace.checkouts.iter_mut())
-            .flat_map(|checkout| checkout.tabs.iter_mut())
-            .flat_map(|tab| tab.panes.iter_mut())
-        {
-            let Some((status_label, requires_close_confirmation)) =
-                by_pane.get(pane.id.as_str()).copied()
-            else {
-                continue;
-            };
-            if pane.status_label != status_label {
-                pane.status_label = status_label.to_owned();
-                changed = true;
-            }
-            if pane.requires_close_confirmation != requires_close_confirmation {
-                pane.requires_close_confirmation = requires_close_confirmation;
-                changed = true;
-            }
-        }
-        changed
+        sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
     }
 
     /// Drops the text scale of a pane Herdr no longer reports, on the same
@@ -9878,8 +9888,33 @@ mod tests {
                 agent.pane_id = remote_pane_id_prefix(target_id) + &agent.pane_id;
                 agent.id = agent.pane_id.clone();
             }
+            // The pane tree arrives freshly projected with no read axis
+            // applied, which is what a remote sync actually delivers.
+            let panes = agents
+                .iter()
+                .map(|agent| {
+                    let mut projected = pane(&agent.pane_id, "/tmp/hide-remote-tree");
+                    projected.status_label = agent.status_label.clone();
+                    projected.requires_close_confirmation = agent.requires_close_confirmation;
+                    projected
+                })
+                .collect::<Vec<_>>();
+            let mut remote_workspace = workspace(
+                "remote:ws",
+                "Remote",
+                "/tmp/hide-remote-tree",
+                vec![checkout("remote:ws", "remote:checkout", "/tmp/hide-remote-tree", None)],
+            );
+            remote_workspace.checkouts[0].tabs = vec![TabSnapshot {
+                id: Some("remote:tab".to_owned()),
+                workspace_id: Some("remote:ws".to_owned()),
+                checkout_id: Some("remote:checkout".to_owned()),
+                label: Some("Session".to_owned()),
+                empty: false,
+                panes,
+            }];
             RemoteSessionSnapshot {
-                workspaces: Vec::new(),
+                workspaces: vec![remote_workspace],
                 agents,
                 active_tab_ids: BTreeMap::new(),
                 focused_workspace_id: None,
@@ -9916,6 +9951,31 @@ mod tests {
                 })
                 .expect("remote session")
         };
+        let tree_panes = |runtime: &Runtime, target_id: &str| {
+            runtime
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == target_id)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| {
+                    session
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .flat_map(|checkout| checkout.tabs.iter())
+                        .flat_map(|tab| tab.panes.iter())
+                        .map(|pane| {
+                            (
+                                pane.id.clone(),
+                                (pane.status_label.clone(), pane.requires_close_confirmation),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .expect("remote session")
+        };
 
         runtime.ingest_session(Ok(working_payload()));
         assert!(runtime.snapshot.ui_state.pane_read_records.contains_key("w1:p1"));
@@ -9942,6 +10002,19 @@ mod tests {
             mini["remote:mini:pane:w9:p2"],
             ("Done".to_owned(), true, "done".to_owned()),
             "the pane beside it is still unread"
+        );
+        // The pane tree is what the remote pane surface reads, so the read
+        // axis has to reach it and not only the agent rows.
+        let tree = tree_panes(&runtime, "mini");
+        assert_eq!(
+            tree["remote:mini:pane:w9:p1"],
+            ("Idle".to_owned(), false),
+            "the remote pane tree carries the read pane's answer, not the projected one"
+        );
+        assert_eq!(
+            tree["remote:mini:pane:w9:p2"],
+            ("Done".to_owned(), true),
+            "the unread pane beside it still says so"
         );
 
         runtime.ingest_session(Ok(working_payload()));
