@@ -57,7 +57,8 @@ pub const REMOTE_PROCESS_ENVIRONMENT: &[EnvironmentContract] = &[
         key: "SSH_AUTH_SOCK",
         value: None,
         requirement: "optional",
-        missing_behavior: "agent authentication reports an explicit action-required failure",
+        missing_behavior:
+            "agent authentication uses the ssh config IdentityAgent, and reports an explicit action-required failure when neither is set",
     },
 ];
 
@@ -192,7 +193,40 @@ pub struct SshAlias {
     pub user: String,
     pub port: u16,
     pub identity_file: Option<PathBuf>,
+    /// Where agent authentication looks for its socket, resolved from the SSH
+    /// config the same way OpenSSH resolves it.
+    pub agent_socket: AgentSocket,
     pub known_hosts_file: PathBuf,
+}
+
+/// The agent socket an alias authenticates through.
+///
+/// OpenSSH resolves this from `IdentityAgent` and only falls back to
+/// `SSH_AUTH_SOCK` when no directive matched. Reading `SSH_AUTH_SOCK` alone
+/// reaches whichever agent the launching process happened to carry, which for a
+/// Finder launch is the empty launchd agent rather than the one the user
+/// configured.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum AgentSocket {
+    /// No `IdentityAgent` matched the alias, so `SSH_AUTH_SOCK` decides.
+    Environment,
+    /// `IdentityAgent none`: this host authenticates without an agent.
+    Disabled,
+    /// `IdentityAgent <path>`: this socket, whatever the environment holds.
+    Path(PathBuf),
+}
+
+impl AgentSocket {
+    /// Names the source in diagnostics. The socket path itself never appears,
+    /// because it is a routing value the environment contract keeps out of
+    /// diagnostics.
+    fn source(&self) -> &'static str {
+        match self {
+            Self::Environment => "SSH_AUTH_SOCK",
+            Self::Disabled => "IdentityAgent none",
+            Self::Path(_) => "the ssh config IdentityAgent",
+        }
+    }
 }
 
 impl SshAlias {
@@ -240,6 +274,7 @@ impl SshAlias {
             .as_ref()
             .and_then(|files| files.first())
             .cloned();
+        let agent_socket = parse_identity_agent(alias, contents)?;
         Ok(Self {
             host_id: format!("ssh:{alias}"),
             alias: alias.to_owned(),
@@ -247,6 +282,7 @@ impl SshAlias {
             user,
             port: config.port(),
             identity_file,
+            agent_socket,
             known_hosts_file: known_hosts_file.into(),
         })
     }
@@ -349,6 +385,153 @@ fn scan_alias_names(contents: &str) -> Vec<String> {
         }
     }
     names.into_iter().collect()
+}
+
+/// Resolves `IdentityAgent` for one alias.
+///
+/// `russh_config` drops the directive, so the `Host` block matching that
+/// already decides hostname and user is repeated here. `Match` blocks are
+/// ignored, exactly as they are for every other directive this module reads.
+fn parse_identity_agent(alias: &str, contents: &str) -> RemoteResult<AgentSocket> {
+    let mut applies = false;
+    for line in contents.lines() {
+        let Some((keyword, value)) = split_config_line(line) else {
+            continue;
+        };
+        if keyword.eq_ignore_ascii_case("host") {
+            applies = host_patterns_match(alias, value);
+        } else if keyword.eq_ignore_ascii_case("match") {
+            applies = false;
+        } else if applies && keyword.eq_ignore_ascii_case("identityagent") {
+            // OpenSSH keeps the first value it obtains for a keyword.
+            return resolve_identity_agent(alias, value);
+        }
+    }
+    Ok(AgentSocket::Environment)
+}
+
+fn split_config_line(line: &str) -> Option<(&str, &str)> {
+    let line = line.split('#').next().unwrap_or_default().trim();
+    let index = line.find(|character: char| character.is_whitespace() || character == '=')?;
+    let (keyword, remainder) = line.split_at(index);
+    let value = remainder
+        .trim_start_matches(|character: char| character.is_whitespace() || character == '=')
+        .trim_end();
+    (!value.is_empty()).then_some((keyword, value))
+}
+
+/// OpenSSH `Host` matching: one positive pattern has to match and no negated
+/// pattern may.
+fn host_patterns_match(alias: &str, patterns: &str) -> bool {
+    let mut matched = false;
+    for pattern in patterns.split_whitespace() {
+        if let Some(negated) = pattern.strip_prefix('!') {
+            if matches_host_pattern(alias, negated) {
+                return false;
+            }
+        } else if matches_host_pattern(alias, pattern) {
+            matched = true;
+        }
+    }
+    matched
+}
+
+fn matches_host_pattern(candidate: &str, pattern: &str) -> bool {
+    let candidate: Vec<char> = candidate.chars().collect();
+    let pattern: Vec<char> = pattern.chars().collect();
+    // Iterative wildcard match: `star` remembers the last `*` so a failed tail
+    // can retry one character later without recursing.
+    let (mut c, mut p) = (0usize, 0usize);
+    let (mut star, mut retry) = (None, 0usize);
+    while c < candidate.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == candidate[c]) {
+            c += 1;
+            p += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some(p);
+            retry = c;
+            p += 1;
+        } else if let Some(star) = star {
+            p = star + 1;
+            retry += 1;
+            c = retry;
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(|character| *character == '*')
+}
+
+fn resolve_identity_agent(alias: &str, value: &str) -> RemoteResult<AgentSocket> {
+    let value = value.trim_matches('"');
+    if value.eq_ignore_ascii_case("none") {
+        return Ok(AgentSocket::Disabled);
+    }
+    if value == "SSH_AUTH_SOCK" || value == "$SSH_AUTH_SOCK" {
+        return Ok(AgentSocket::Environment);
+    }
+    if value.starts_with('$') {
+        return Err(alias_error(
+            alias,
+            "IdentityAgent names an environment variable outside the declared remote environment contract",
+        ));
+    }
+    let socket = expand_identity_agent_path(alias, value)?;
+    if !socket.is_absolute() {
+        return Err(alias_error(
+            alias,
+            "IdentityAgent must resolve to an absolute Unix-domain socket path",
+        ));
+    }
+    Ok(AgentSocket::Path(socket))
+}
+
+fn expand_identity_agent_path(alias: &str, value: &str) -> RemoteResult<PathBuf> {
+    if let Some(rest) = value.strip_prefix("~/").or(value.strip_prefix("%d/")) {
+        let home = read_remote_environment("HOME")
+            .map_err(|error| alias_error(alias, error))?
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                alias_error(
+                    alias,
+                    "IdentityAgent is home-relative and HOME is not set, so it cannot be resolved",
+                )
+            })?;
+        return Ok(home.join(expand_percent_escapes(alias, rest)?));
+    }
+    Ok(PathBuf::from(expand_percent_escapes(alias, value)?))
+}
+
+fn expand_percent_escapes(alias: &str, value: &str) -> RemoteResult<String> {
+    let mut expanded = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            expanded.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('%') => expanded.push('%'),
+            _ => {
+                return Err(alias_error(
+                    alias,
+                    "IdentityAgent carries a percent token this shell does not expand",
+                ));
+            }
+        }
+    }
+    Ok(expanded)
+}
+
+fn alias_error(alias: &str, cause: impl fmt::Display) -> RemoteError {
+    remote_error(
+        "ssh-alias-import",
+        alias,
+        RemoteStage::Alias,
+        cause,
+        false,
+        true,
+    )
 }
 
 fn validate_alias(alias: &str) -> RemoteResult<()> {
@@ -2618,27 +2801,41 @@ async fn authenticate(session: &mut Handle<KnownHostHandler>, host: &SshAlias) -
         }
     }
 
-    let socket = read_remote_environment("SSH_AUTH_SOCK")
-        .map_err(|error| {
-            remote_error(
+    let source = host.agent_socket.source();
+    let socket = match &host.agent_socket {
+        AgentSocket::Disabled => {
+            return Err(remote_error(
                 "remote-auth",
                 &host.host_id,
                 RemoteStage::Auth,
-                error,
+                "the ssh config sets IdentityAgent none and no IdentityFile authenticated",
                 false,
                 true,
-            )
-        })?
-        .ok_or_else(|| {
-            remote_error(
-                "remote-auth",
-                &host.host_id,
-                RemoteStage::Auth,
-                "no IdentityFile and SSH_AUTH_SOCK is not set",
-                false,
-                true,
-            )
-        })?;
+            ));
+        }
+        AgentSocket::Path(socket) => socket.clone().into_os_string(),
+        AgentSocket::Environment => read_remote_environment("SSH_AUTH_SOCK")
+            .map_err(|error| {
+                remote_error(
+                    "remote-auth",
+                    &host.host_id,
+                    RemoteStage::Auth,
+                    error,
+                    false,
+                    true,
+                )
+            })?
+            .ok_or_else(|| {
+                remote_error(
+                    "remote-auth",
+                    &host.host_id,
+                    RemoteStage::Auth,
+                    "no IdentityFile, no IdentityAgent, and SSH_AUTH_SOCK is not set",
+                    false,
+                    true,
+                )
+            })?,
+    };
     let mut agent = AgentClient::connect_uds(socket).await.map_err(|error| {
         remote_error(
             "remote-auth",
@@ -2659,12 +2856,42 @@ async fn authenticate(session: &mut Handle<KnownHostHandler>, host: &SshAlias) -
             true,
         )
     })?;
+    if identities.is_empty() {
+        // An agent that holds nothing is a different repair from an agent whose
+        // keys the server refused: one is "load a key", the other is "authorize
+        // this key".
+        return Err(remote_error(
+            "remote-auth",
+            &host.host_id,
+            RemoteStage::Auth,
+            format!("the SSH agent reached through {source} holds no identities"),
+            false,
+            true,
+        ));
+    }
+    let offered = identities.len();
+    // Without the server's preferred hash an RSA identity is signed as ssh-rsa
+    // (SHA-1), which every current sshd refuses.
+    let hash = session
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|error| {
+            remote_error(
+                "remote-auth",
+                &host.host_id,
+                RemoteStage::Auth,
+                error,
+                true,
+                true,
+            )
+        })?
+        .flatten();
     for identity in identities {
         let result = session
             .authenticate_publickey_with(
                 host.user.clone(),
                 identity.public_key().into_owned(),
-                None,
+                hash,
                 &mut agent,
             )
             .await
@@ -2686,7 +2913,9 @@ async fn authenticate(session: &mut Handle<KnownHostHandler>, host: &SshAlias) -
         "remote-auth",
         &host.host_id,
         RemoteStage::Auth,
-        "SSH agent did not authenticate any configured identity",
+        format!(
+            "the SSH agent reached through {source} offered {offered} identities and the server rejected every one"
+        ),
         true,
         true,
     ))
@@ -4047,6 +4276,91 @@ mod tests {
         );
         let encoded = serde_json::to_string(&alias).unwrap();
         assert!(!encoded.contains("PRIVATE KEY"));
+    }
+
+    #[test]
+    fn wildcard_identity_agent_reaches_the_alias_it_covers() {
+        let alias = SshAlias::from_config_contents(
+            "mini",
+            "Host *\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User grab\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
+        assert_eq!(
+            alias.agent_socket,
+            AgentSocket::Path(PathBuf::from("/private/tmp/hide-remote-home/agent.sock"))
+        );
+    }
+
+    #[test]
+    fn the_first_matching_identity_agent_wins() {
+        let alias = SshAlias::from_config_contents(
+            "mini",
+            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent /private/tmp/hide-remote-home/first.sock\n\nHost *\n  IdentityAgent /private/tmp/hide-remote-home/second.sock\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
+        assert_eq!(
+            alias.agent_socket,
+            AgentSocket::Path(PathBuf::from("/private/tmp/hide-remote-home/first.sock"))
+        );
+    }
+
+    #[test]
+    fn an_identity_agent_for_another_host_does_not_reach_this_alias() {
+        let alias = SshAlias::from_config_contents(
+            "mini",
+            "Host github.com\n  IdentityAgent /private/tmp/hide-remote-home/github.sock\n\nHost mini\n  HostName mini.example.test\n  User grab\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
+        assert_eq!(alias.agent_socket, AgentSocket::Environment);
+    }
+
+    #[test]
+    fn identity_agent_none_and_the_environment_spelling_are_distinct() {
+        let disabled = SshAlias::from_config_contents(
+            "mini",
+            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent none\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
+        assert_eq!(disabled.agent_socket, AgentSocket::Disabled);
+        let environment = SshAlias::from_config_contents(
+            "mini",
+            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent SSH_AUTH_SOCK\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
+        assert_eq!(environment.agent_socket, AgentSocket::Environment);
+    }
+
+    #[test]
+    fn an_identity_agent_this_shell_cannot_resolve_fails_visibly() {
+        let error = SshAlias::from_config_contents(
+            "mini",
+            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent $HIDE_AGENT_SOCK\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap_err();
+        assert_eq!(error.stage(), RemoteStage::Alias);
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains("action_required=true"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("outside the declared remote environment contract"),
+            "{diagnostic}"
+        );
+    }
+
+    #[test]
+    fn a_negated_host_pattern_keeps_its_identity_agent_away() {
+        let alias = SshAlias::from_config_contents(
+            "mini",
+            "Host * !mini\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User grab\n",
+            "/tmp/known_hosts",
+        )
+        .unwrap();
+        assert_eq!(alias.agent_socket, AgentSocket::Environment);
     }
 
     #[test]
