@@ -75,12 +75,15 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
-            // The keycap hints track Command wherever it is pressed, so this
-            // observes the flag change and lets the event continue to the
-            // switcher-commit branches below.
+            // The keycap hints track Control and Command wherever they are
+            // pressed, so this observes the flag change and lets the event
+            // continue to the switcher-commit branches below.
             if event.type == .flagsChanged {
                 MainActor.assumeIsolated {
-                    self.model.setCommandModifierHeld(event.modifierFlags.contains(.command))
+                    self.model.setShortcutModifiersHeld(
+                        control: event.modifierFlags.contains(.control),
+                        command: event.modifierFlags.contains(.command)
+                    )
                 }
             }
             if PaneKeyEventPolicy.isSidebarViewToggle(event) {
@@ -263,7 +266,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         // Command-Tab releases Command while another app is frontmost, so the
         // flagsChanged release never reaches this monitor and the keycap hints
         // would stay on screen.
-        model.setCommandModifierHeld(false)
+        model.setShortcutModifiersHeld(control: false, command: false)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -401,11 +404,20 @@ struct ShellCommands: Commands {
         CommandMenu("Navigate") {
             // Titles stay static so the menu does not rebuild on every
             // snapshot tick; an empty slot is a no-op inside the model.
+            ForEach(1...TabShortcutNumbering.capacity, id: \.self) { number in
+                Button("Select Tab \(number)") {
+                    model.selectTab(shortcutNumber: number)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
+            }
+
+            Divider()
+
             ForEach(1...AgentShortcutNumbering.capacity, id: \.self) { number in
                 Button("Select Agent \(number)") {
                     model.selectAgent(shortcutNumber: number)
                 }
-                .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
+                .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .control)
             }
 
             Divider()

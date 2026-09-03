@@ -180,7 +180,7 @@ private func presentationAgent(
     )
 
     #expect(agentsView.map(\.paneID) == ["pane-1", "pane-2", "pane-3", "pane-4"])
-    // ⌘1 in the Projects view is the checkout's first agent, not the global first.
+    // ⌃1 in the Projects view is the checkout's first agent, not the global first.
     #expect(projectsView.map(\.paneID) == ["pane-3", "pane-4"])
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-3", in: projectsView) == 1)
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: projectsView) == nil)
@@ -194,4 +194,46 @@ private func presentationAgent(
     #expect(agent.contextLabel == "\(agent.workspaceLabel) › main")
     agent.checkoutLabel = agent.workspaceLabel
     #expect(agent.contextLabel == agent.workspaceLabel)
+}
+
+@Test func agentCheckoutQualifierIsAbsentWhenItRepeatsTheProject() {
+    var agent = presentationAgent(id: "agent-1", paneID: "pane-1", state: "idle")
+    // The sidebar row draws this on its own small line, so a qualifier that
+    // only repeats the row's title has to read as nothing at all.
+    #expect(agent.checkoutQualifier == nil)
+    agent.checkoutLabel = "main"
+    #expect(agent.checkoutQualifier == "main")
+    agent.checkoutLabel = agent.workspaceLabel
+    #expect(agent.checkoutQualifier == nil)
+    agent.checkoutLabel = ""
+    #expect(agent.checkoutQualifier == nil)
+}
+
+@Test func tabLookupByNumberFollowsTheStripOrderAndStopsAtNine() {
+    let tabs = (1...10).map { index in
+        ShellTabItem(
+            id: "tab-\(index)",
+            label: "Tab \(index)",
+            dirty: false,
+            active: index == 1,
+            kind: .file(
+                CoreFileTabSnapshot(
+                    id: "file-\(index)",
+                    workspaceID: "w1",
+                    checkoutID: "c1",
+                    path: "/tmp/file-\(index)",
+                    label: "Tab \(index)",
+                    dirty: false
+                )
+            )
+        )
+    }
+
+    #expect(TabShortcutNumbering.number(ofTabID: "tab-1", in: tabs) == 1)
+    #expect(TabShortcutNumbering.number(ofTabID: "tab-9", in: tabs) == 9)
+    #expect(TabShortcutNumbering.number(ofTabID: "tab-10", in: tabs) == nil)
+    #expect(TabShortcutNumbering.number(ofTabID: "tab-absent", in: tabs) == nil)
+    #expect(TabShortcutNumbering.tab(atNumber: 2, in: tabs)?.id == "tab-2")
+    #expect(TabShortcutNumbering.tab(atNumber: 0, in: tabs) == nil)
+    #expect(TabShortcutNumbering.tab(atNumber: 11, in: tabs) == nil)
 }

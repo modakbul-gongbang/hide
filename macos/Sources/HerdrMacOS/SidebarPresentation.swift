@@ -87,17 +87,25 @@ extension SidebarAgent {
     /// when the core has placed the pane, its checkout. The Agents view and
     /// the Projects view then call one agent's home by the same words.
     var contextLabel: String {
+        guard let checkoutQualifier else { return workspaceLabel }
+        return "\(workspaceLabel) › \(checkoutQualifier)"
+    }
+
+    /// The checkout half of `contextLabel`, present only when it names
+    /// something the project name does not already say. The sidebar row draws
+    /// it as its own small line so the project name stays the row's title.
+    var checkoutQualifier: String? {
         guard let checkoutLabel, !checkoutLabel.isEmpty, checkoutLabel != workspaceLabel else {
-            return workspaceLabel
+            return nil
         }
-        return "\(workspaceLabel) › \(checkoutLabel)"
+        return checkoutLabel
     }
 }
 
 /// Direct-select numbering for the sidebar. The number is the agent's
 /// position in the list the visible view shows: the Agents view numbers the
 /// runtime's whole agent projection, the Projects view numbers the agents in
-/// the selected checkout, so ⌘1 always reaches the first row the user can see.
+/// the selected checkout, so ⌃1 always reaches the first row the user can see.
 enum AgentShortcutNumbering {
     static func candidates(
         for content: SidebarContent,
@@ -113,7 +121,7 @@ enum AgentShortcutNumbering {
         }
     }
 
-    /// Only the first nine agents get a number: ⌘0 is not a tenth slot, it is
+    /// Only the first nine agents get a number: ⌃0 is not a tenth slot, it is
     /// a different key, and a two-digit chord is not a shortcut anyone reaches
     /// for without looking.
     static let capacity = 9

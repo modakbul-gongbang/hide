@@ -1329,7 +1329,7 @@ private struct AgentNavigatorRow: View {
                 )
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
-                        Text(showsWorkspace ? agent.contextLabel : agent.summary)
+                        Text(showsWorkspace ? agent.workspaceLabel : agent.summary)
                             .hideFont(size: 11, weight: showsWorkspace ? .semibold : .regular)
                             .foregroundStyle(showsWorkspace ? HideTheme.primary : HideTheme.secondary)
                             .lineLimit(1)
@@ -1337,7 +1337,7 @@ private struct AgentNavigatorRow: View {
                         if model.agentShortcutHintsVisible,
                            let shortcutNumber = model.agentShortcutNumber(paneID: agent.paneID)
                         {
-                            SidebarBadge(label: "⌘\(shortcutNumber)", color: HideTheme.secondary)
+                            SidebarBadge(label: "⌃\(shortcutNumber)", color: HideTheme.secondary)
                                 .transition(.opacity)
                         }
                         Text(agent.elapsed)
@@ -1349,9 +1349,17 @@ private struct AgentNavigatorRow: View {
                             .hideFont(size: 10)
                             .foregroundStyle(HideTheme.secondary)
                             .lineLimit(2)
-                        Text(agent.state.replacingOccurrences(of: "_", with: " "))
-                            .hideFont(size: 9, weight: .medium)
-                            .foregroundStyle(stateColor)
+                        HStack(spacing: 5) {
+                            Text(agent.state.replacingOccurrences(of: "_", with: " "))
+                                .hideFont(size: 9, weight: .medium)
+                                .foregroundStyle(stateColor)
+                            if let checkoutQualifier = agent.checkoutQualifier {
+                                Text(checkoutQualifier)
+                                    .hideFont(size: 9)
+                                    .foregroundStyle(HideTheme.muted)
+                                    .lineLimit(1)
+                            }
+                        }
                     } else {
                         HStack(spacing: 6) {
                             Text(providerLabel)
@@ -1490,6 +1498,15 @@ private struct HideTerminalHeader: View {
                                                     .fill(HideTheme.secondary)
                                                     .frame(width: 5, height: 5)
                                             }
+                                            if model.tabShortcutHintsVisible,
+                                               let shortcutNumber = model.tabShortcutNumber(tabID: tab.id)
+                                            {
+                                                SidebarBadge(
+                                                    label: "⌘\(shortcutNumber)",
+                                                    color: HideTheme.secondary
+                                                )
+                                                .transition(.opacity)
+                                            }
                                         }
                                         .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
                                         .padding(.leading, 11)
@@ -1522,6 +1539,7 @@ private struct HideTerminalHeader: View {
                                 .accessibilityIdentifier("hide-tab-\(tab.id)")
                             }
                         }
+                        .animation(.easeOut(duration: 0.12), value: model.tabShortcutHintsVisible)
                     }
                     Button {
                         model.addTab()

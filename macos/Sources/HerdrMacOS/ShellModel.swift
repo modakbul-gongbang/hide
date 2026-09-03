@@ -139,6 +139,29 @@ struct ShellTabItem: Identifiable {
     let kind: ShellTabKind
 }
 
+/// Direct-select numbering for the tab strip. The number is the tab's
+/// position in the strip as drawn, so ⌘1 always reaches the leftmost tab.
+/// It mirrors `AgentShortcutNumbering`, which does the same for Control and
+/// the agent rows.
+enum TabShortcutNumbering {
+    /// Only the first nine tabs get a number: ⌘0 is not a tenth slot, it is a
+    /// different key, and a two-digit chord is not a shortcut anyone reaches
+    /// for without looking.
+    static let capacity = 9
+
+    static func number(ofTabID tabID: String, in tabs: [ShellTabItem]) -> Int? {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }),
+              index < capacity
+        else { return nil }
+        return index + 1
+    }
+
+    static func tab(atNumber number: Int, in tabs: [ShellTabItem]) -> ShellTabItem? {
+        guard number >= 1, number <= capacity, number <= tabs.count else { return nil }
+        return tabs[number - 1]
+    }
+}
+
 enum TerminalLayoutPolicy {
     static func belongs(
         layout: CorePaneLayoutSnapshot,
@@ -207,9 +230,11 @@ final class ShellModel: ObservableObject {
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
     @Published private(set) var checkoutStartState: CheckoutStartState = .idle
-    /// True once Command has been held past the reveal delay, which is what
-    /// draws the ⌘n keycaps on the agent rows.
+    /// True once Control has been held past the reveal delay, which is what
+    /// draws the ⌃n keycaps on the agent rows.
     @Published private(set) var agentShortcutHintsVisible = false
+    /// The same reveal for Command, which draws the ⌘n keycaps on the tabs.
+    @Published private(set) var tabShortcutHintsVisible = false
     let core: CoreBridge
     let browser: BrowserRuntimeModel
     let remote: RemoteRuntimeModel
@@ -222,8 +247,10 @@ final class ShellModel: ObservableObject {
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
     private var agentMRU = AgentMRU()
+    private var controlModifierHeld = false
     private var commandModifierHeld = false
     private var agentShortcutHintTask: Task<Void, Never>?
+    private var tabShortcutHintTask: Task<Void, Never>?
     private var tabMRU = TabMRU()
 
     init(
@@ -739,8 +766,8 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    /// ⌘1…⌘9 select the nth agent in the same order the sidebar lists them.
-    /// The agents ⌘1-⌘9 reach, in the order the visible sidebar view lists
+    /// ⌃1…⌃9 select the nth agent in the same order the sidebar lists them.
+    /// The agents ⌃1-⌃9 reach, in the order the visible sidebar view lists
     /// them: the whole agent list in the Agents view, the selected checkout's
     /// agents in the Projects view.
     var shortcutAgents: [SidebarAgent] {
@@ -765,12 +792,18 @@ final class ShellModel: ObservableObject {
         AgentShortcutNumbering.number(ofPaneID: paneID, in: shortcutAgents)
     }
 
-    /// Command held past the reveal delay shows the keycaps; releasing it
-    /// hides them at once. The delay exists so that every ordinary ⌘ chord -
-    /// ⌘K, ⌘W, ⌘C - does not flash the whole sidebar on its way through.
-    func setCommandModifierHeld(_ held: Bool) {
-        guard held != commandModifierHeld else { return }
-        commandModifierHeld = held
+    /// A modifier held past the reveal delay shows its keycaps; releasing it
+    /// hides them at once. The delay exists so that every ordinary chord -
+    /// ⌘K, ⌘W, ⌃C - does not flash the sidebar or the tab strip on its way
+    /// through. Control numbers the agents, Command numbers the tabs.
+    func setShortcutModifiersHeld(control: Bool, command: Bool) {
+        setControlModifierHeld(control)
+        setCommandModifierHeld(command)
+    }
+
+    private func setControlModifierHeld(_ held: Bool) {
+        guard held != controlModifierHeld else { return }
+        controlModifierHeld = held
         agentShortcutHintTask?.cancel()
         agentShortcutHintTask = nil
         guard held else {
@@ -778,13 +811,29 @@ final class ShellModel: ObservableObject {
             return
         }
         agentShortcutHintTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: ShellModel.agentShortcutHintDelayNanoseconds)
-            guard !Task.isCancelled, let self, self.commandModifierHeld else { return }
+            try? await Task.sleep(nanoseconds: ShellModel.shortcutHintDelayNanoseconds)
+            guard !Task.isCancelled, let self, self.controlModifierHeld else { return }
             self.agentShortcutHintsVisible = true
         }
     }
 
-    static let agentShortcutHintDelayNanoseconds: UInt64 = 150_000_000
+    private func setCommandModifierHeld(_ held: Bool) {
+        guard held != commandModifierHeld else { return }
+        commandModifierHeld = held
+        tabShortcutHintTask?.cancel()
+        tabShortcutHintTask = nil
+        guard held else {
+            tabShortcutHintsVisible = false
+            return
+        }
+        tabShortcutHintTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: ShellModel.shortcutHintDelayNanoseconds)
+            guard !Task.isCancelled, let self, self.commandModifierHeld else { return }
+            self.tabShortcutHintsVisible = true
+        }
+    }
+
+    static let shortcutHintDelayNanoseconds: UInt64 = 150_000_000
 
     func loadRemoteFiles(path: String) {
         guard isRemoteContext,
@@ -1381,6 +1430,19 @@ final class ShellModel: ObservableObject {
         case .herdr(let tab): focusTab(tab)
         case .file(let tab): focusFileTab(tab)
         }
+    }
+
+    /// ⌘1…⌘9 select the nth tab in the strip, in the order the strip draws
+    /// it. A number past the end is a miss, not an error: the user reached
+    /// for a slot that is simply empty right now.
+    func selectTab(shortcutNumber: Int) {
+        guard let tab = TabShortcutNumbering.tab(atNumber: shortcutNumber, in: unifiedTabs)
+        else { return }
+        focusUnifiedTab(tab)
+    }
+
+    func tabShortcutNumber(tabID: String) -> Int? {
+        TabShortcutNumbering.number(ofTabID: tabID, in: unifiedTabs)
     }
 
     func closeUnifiedTab(_ item: ShellTabItem) {
