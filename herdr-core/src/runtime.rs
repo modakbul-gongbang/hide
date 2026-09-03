@@ -9958,6 +9958,15 @@ mod tests {
             "build",
             Ok(remote_session("build", &["w2:p1"], Some("w2:p1"))),
         );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .pane_read_records
+                .contains_key("remote:mini:pane:w9:p1"),
+            "one target's sync never prunes another target's record"
+        );
+
         runtime.ingest_remote_session("mini", Ok(remote_session("mini", &["w9:p2"], None)));
         let records = runtime
             .snapshot
