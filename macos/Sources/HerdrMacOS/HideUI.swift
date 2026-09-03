@@ -1755,17 +1755,17 @@ private struct HideEmptyCheckoutState: View {
                         // started: nothing calls `startTerminal` from here.
                         // The empty state now carries the control that starts
                         // one, and says only what pressing it does.
-                        Text("No panes open")
+                        Text("No terminal open")
                             .hideFont(size: 17, weight: .semibold)
                             .foregroundStyle(HideTheme.primary)
-                        Text("This checkout has no terminal pane. Create one to start working in it.")
+                        Text("This checkout has no terminal pane. Start one to fill the workspace at its path.")
                             .hideFont(size: 12)
                             .foregroundStyle(HideTheme.secondary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 360)
-                        Button("New Pane") { model.addTab() }
+                        Button("Start new terminal") { model.addTab() }
                             .buttonStyle(HideToolbarButtonStyle(isProminent: true))
-                            .accessibilityIdentifier("hide-empty-state-new-pane")
+                            .accessibilityIdentifier("hide-empty-state-start-terminal")
                     }
                 }
             }

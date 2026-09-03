@@ -240,6 +240,7 @@ final class ShellModel: ObservableObject {
             self.observeAgentFocus(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
             self.observeTabFocus()
+            self.settleCheckoutStart()
             self.objectWillChange.send()
         }
         browserSubscription = browser.objectWillChange.sink { [weak self] _ in
@@ -1124,6 +1125,15 @@ final class ShellModel: ObservableObject {
                 HideLaunchTrace.mark("checkout.terminal_start.failed", detail: checkoutID)
             }
         }
+    }
+
+    /// A launched terminal is "starting" only until its pane is in the
+    /// checkout. Leaving the state at `.started` afterwards made the empty
+    /// state read "Terminal is starting" the next time that checkout had no
+    /// panes, which is exactly when the user needs the start control instead.
+    private func settleCheckoutStart() {
+        guard case .started = checkoutStartState, !focusedPanes.isEmpty else { return }
+        checkoutStartState = .idle
     }
 
     var selectedAgentCheckout: CoreCheckoutSnapshot? {
