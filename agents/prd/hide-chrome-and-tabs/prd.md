@@ -1,7 +1,7 @@
 ---
 topic: "Hide chrome and tabs: header and titlebar removal, herdr-ordered tabs, one core-owned tab list"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-03 verbatim: PRD 이거 3개는 그냥 하나의 worktree 에서 다 작업해주면 되고 세개 PRD가 모두 완료되면 순차적으로 하나씩 작업해서 반영해줘 implementor는 opus5로 해서 작업해주고 context 50% 차면 implementor 새로 띄워서 계속 진행하게 해. 결과적으로 AC 들 다 수행하고 마지막에 다 완료됐으면 메인 머지까지해서최종 빌드하고 설치까지해줘. 나자러 가니까 이제 너가 알아서 저 PRD 완벽하게 수행해줘!
 review_profile: "standard"
 review_rationale: "User-visible shell layout and a new core-owned tab model; the only external effect is a herdr tab move confined to a throwaway workspace, with no data, credential, billing, or destructive action involved."
 source_intake: "current conversation"
