@@ -488,10 +488,13 @@ fn execute_pane_control(
             direction,
             cwd,
         } => {
+            // The user split to work in the new pane, so Herdr focuses it as
+            // part of the split and the pane_focused event lands the shell's
+            // selection there with no second round trip.
             let mut params = json!({
                 "target_pane_id": pane_id,
                 "direction": direction.as_str(),
-                "focus": false,
+                "focus": true,
             });
             if let Some(cwd) = cwd.as_deref().filter(|value| !value.trim().is_empty()) {
                 params["cwd"] = Value::String(cwd.to_owned());
@@ -2095,7 +2098,7 @@ mod tests {
                     json!({
                         "target_pane_id": "w1:p1",
                         "direction": "right",
-                        "focus": false,
+                        "focus": true,
                         "cwd": "/tmp/herdr-ide-verify-shortcuts"
                     }),
                 ),
@@ -2104,7 +2107,7 @@ mod tests {
                     json!({
                         "target_pane_id": "w1:p1",
                         "direction": "down",
-                        "focus": false
+                        "focus": true
                     }),
                 ),
                 ("pane.zoom", json!({"pane_id": "w1:p1", "mode": "toggle"})),
