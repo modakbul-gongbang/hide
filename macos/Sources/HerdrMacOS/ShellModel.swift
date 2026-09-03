@@ -383,16 +383,17 @@ final class ShellModel: ObservableObject {
         return herdrItems + fileItems
     }
 
+    /// The active tab is the one the core names, and the core takes that name
+    /// from Herdr. A remote context browses its own selection, so it keeps its
+    /// navigation state. Neither falls back to the leftmost tab: reading
+    /// position as focus is what let a reordered strip look like a tab switch.
     var focusedTab: CoreTabSnapshot? {
         guard let checkout = focusedCheckout else { return nil }
-        let preferredTabID = isRemoteContext
+        let activeTabID = isRemoteContext
             ? remote.navigation?.focusedTabID
-            : core.snapshot?.paneLayout?.tabID
-        if let preferredTabID,
-           let tab = checkout.tabs.first(where: { $0.id == preferredTabID }) {
-            return tab
-        }
-        return checkout.tabs.first
+            : checkout.activeTabID
+        guard let activeTabID else { return nil }
+        return checkout.tabs.first(where: { $0.id == activeTabID })
     }
 
     var focusedPanes: [CorePaneSnapshot] {

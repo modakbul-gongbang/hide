@@ -447,6 +447,7 @@ fn checkout(
         exists: path.exists(),
         temporary,
         tabs: Vec::<TabSnapshot>::new(),
+        active_tab_id: None,
     }
 }
 

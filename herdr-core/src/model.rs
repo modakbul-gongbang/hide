@@ -239,6 +239,29 @@ pub struct CheckoutSnapshot {
     pub exists: bool,
     pub temporary: bool,
     pub tabs: Vec<TabSnapshot>,
+    /// The tab Herdr reports as active in this checkout, or `None` when the
+    /// workspace's active tab lives in a sibling checkout. A checkout never
+    /// substitutes its first tab for a missing one; an active id Herdr names
+    /// but the navigator cannot place is reported as a diagnostic instead.
+    pub active_tab_id: Option<String>,
+}
+
+/// The label a tab is drawn by, derived from the tab's own identity.
+///
+/// Herdr numbers an unnamed tab, which reads as a bare "2" in a strip; that
+/// number becomes "Tab 2". A tab the operator named keeps its name. A tab
+/// Herdr reports without any label falls back to its id, never to its
+/// position in the strip: a position-derived label renames every tab when one
+/// of them moves.
+pub fn display_tab_label(raw_label: &str, tab_id: &str) -> String {
+    let trimmed = raw_label.trim();
+    if trimmed.is_empty() {
+        return tab_id.to_owned();
+    }
+    match trimmed.parse::<u32>() {
+        Ok(number) => format!("Tab {number}"),
+        Err(_) => trimmed.to_owned(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

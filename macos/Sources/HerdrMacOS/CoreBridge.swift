@@ -431,6 +431,10 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let exists: Bool
     let temporary: Bool
     let tabs: [CoreTabSnapshot]
+    /// The tab Herdr reports as active here. `nil` means no tab is active in
+    /// this checkout, which the shell shows as such; it never promotes the
+    /// first tab in its place.
+    let activeTabID: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -442,6 +446,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case exists
         case temporary
         case tabs
+        case activeTabID = "active_tab_id"
     }
 
     init(
@@ -453,7 +458,8 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         isWorktree: Bool,
         exists: Bool,
         temporary: Bool,
-        tabs: [CoreTabSnapshot]
+        tabs: [CoreTabSnapshot],
+        activeTabID: String? = nil
     ) {
         self.id = id
         self.workspaceID = workspaceID
@@ -464,6 +470,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         self.exists = exists
         self.temporary = temporary
         self.tabs = tabs
+        self.activeTabID = activeTabID
     }
 }
 

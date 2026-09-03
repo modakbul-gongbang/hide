@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Weak};
 use std::thread;
@@ -597,6 +597,11 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    /// Workspace/active-tab pairs Herdr named that the navigator could not
+    /// place, as `<workspace id>/<tab id>`. Session sync reconciles once a
+    /// second, so the diagnostic is emitted when the set changes rather than
+    /// on every tick.
+    unresolved_active_tabs: BTreeSet<String>,
     /// Panes whose fork has been started and not yet answered. `herdr agent
     /// new` blocks until the agent has started, so without this a second
     /// activation during that wait would bill a second session.
@@ -713,6 +718,7 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashSet::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
@@ -1599,7 +1605,20 @@ impl Runtime {
         let projected_agents = project_agents(payload.clone()).agents;
         let listening_ports = self.listening_ports.entries.clone();
 
-        for layout in &payload.layouts {
+        // Herdr's tab order is the navigator's tab order. A layout is the
+        // per-tab detail looked up by tab id, never what decides where a tab
+        // sits: layouts arrive in the order each tab was first drawn, so a tab
+        // Herdr moved kept its original place forever and a tab that redrew
+        // never moved back.
+        let mut placed_tabs: BTreeMap<&str, usize> = BTreeMap::new();
+        for session_tab in &payload.tabs {
+            let Some(layout) = payload
+                .layouts
+                .iter()
+                .find(|layout| layout.tab_id == session_tab.tab_id)
+            else {
+                continue;
+            };
             // A plain terminal pane is not necessarily represented in the
             // agent list. Its cwd is still authoritative for attaching the
             // live layout to the registered checkout. Falling back to the
@@ -1684,19 +1703,14 @@ impl Runtime {
                     }
                 })
                 .collect::<Vec<_>>();
-            let tab_label = payload
-                .tabs
-                .iter()
-                .find(|tab| tab.tab_id == layout.tab_id)
-                .map(|tab| tab.label.trim())
-                .filter(|label| !label.is_empty())
-                .map(str::to_owned)
-                .unwrap_or_else(|| layout.tab_id.clone());
             let tab = TabSnapshot {
-                id: Some(layout.tab_id.clone()),
+                id: Some(session_tab.tab_id.clone()),
                 workspace_id: Some(workspace_snapshot.id.clone()),
                 checkout_id: Some(checkout.id.clone()),
-                label: Some(tab_label),
+                label: Some(crate::model::display_tab_label(
+                    &session_tab.label,
+                    &session_tab.tab_id,
+                )),
                 empty: panes.is_empty(),
                 panes,
             };
@@ -1709,7 +1723,54 @@ impl Runtime {
             } else {
                 checkout.tabs.push(tab);
             }
+            *placed_tabs
+                .entry(layout.workspace_id.as_str())
+                .or_default() += 1;
         }
+
+        // Herdr names one active tab per workspace, and that name is the only
+        // authority for which tab is active. A workspace whose panes are split
+        // across checkouts leaves the sibling checkouts with none rather than
+        // letting each promote its own first tab.
+        let mut unresolved_active_tabs = BTreeSet::new();
+        for session_workspace in &payload.workspaces {
+            let Some(active_tab_id) = session_workspace
+                .active_tab_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|active_tab_id| !active_tab_id.is_empty())
+            else {
+                continue;
+            };
+            let mut resolved = false;
+            for workspace in &mut workspaces {
+                for checkout in &mut workspace.checkouts {
+                    if checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(active_tab_id))
+                    {
+                        checkout.active_tab_id = Some(active_tab_id.to_owned());
+                        resolved = true;
+                    }
+                }
+            }
+            // A workspace none of whose tabs reached the navigator is not a
+            // contradiction, only a workspace outside every registered
+            // checkout. An active tab missing from a workspace that did place
+            // tabs is the state worth reporting.
+            if !resolved
+                && placed_tabs
+                    .get(session_workspace.workspace_id.as_str())
+                    .is_some_and(|placed| *placed > 0)
+            {
+                unresolved_active_tabs.insert(format!(
+                    "{}/{active_tab_id}",
+                    session_workspace.workspace_id
+                ));
+            }
+        }
+        self.report_unresolved_active_tabs(unresolved_active_tabs);
 
         let previous = self.snapshot.navigator.clone();
         self.snapshot.navigator.workspaces = workspaces;
@@ -1821,14 +1882,27 @@ impl Runtime {
             };
             return;
         };
-        if let Some(tab) = checkout.tabs.first() {
+        // The active tab is the one Herdr named, looked up by id. The first
+        // tab is not a stand-in for a missing one: reading position as focus
+        // is what made a tab move look like a focus change.
+        let active = checkout.active_tab_id.as_deref().and_then(|active_tab_id| {
+            checkout
+                .tabs
+                .iter()
+                .find(|tab| tab.id.as_deref() == Some(active_tab_id))
+        });
+        if let Some(tab) = active {
             self.snapshot.tab = tab.clone();
         } else {
             self.snapshot.tab = TabSnapshot {
                 id: None,
                 workspace_id: Some(workspace_id),
                 checkout_id: Some(checkout.id.clone()),
-                label: Some("No tabs".to_owned()),
+                label: Some(if checkout.tabs.is_empty() {
+                    "No tabs".to_owned()
+                } else {
+                    "No active tab".to_owned()
+                }),
                 empty: true,
                 panes: Vec::new(),
             };
@@ -3265,6 +3339,29 @@ impl Runtime {
         true
     }
 
+    /// Reports the workspaces whose Herdr-named active tab the navigator
+    /// could not place. Reconcile runs once a second, so only a change in the
+    /// set is worth a diagnostic; repeating it every tick would grow the
+    /// status section without saying anything new.
+    fn report_unresolved_active_tabs(&mut self, current: BTreeSet<String>) {
+        let added = current
+            .difference(&self.unresolved_active_tabs)
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in &added {
+            let (workspace_id, tab_id) = entry
+                .split_once('/')
+                .expect("unresolved active tab entries carry both ids");
+            self.push_diagnostic(
+                "tab.active_unresolved",
+                format!(
+                    "Herdr workspace {workspace_id} reports active tab {tab_id}, which is not in any checkout's tab list"
+                ),
+            );
+        }
+        self.unresolved_active_tabs = current;
+    }
+
     fn push_diagnostic(&mut self, kind: impl Into<String>, message: impl Into<String>) {
         self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
             kind: kind.into(),
@@ -4007,15 +4104,14 @@ impl Runtime {
                     );
                     return true;
                 };
-                if index != 0 {
-                    let tab = checkout.tabs.remove(index);
-                    checkout.tabs.insert(0, tab);
-                }
                 let checkout_path = checkout.path.clone();
-                let next_pane_id = checkout
-                    .tabs
+                // Focusing a tab does not reorder the strip. Herdr owns the
+                // order and the active mark alike, and it confirms this focus
+                // with `tab_focused`; moving the tab here made every switch
+                // look like a reorder until the next catalog rebuild undid it.
+                let next_pane_id = checkout.tabs[index]
+                    .panes
                     .first()
-                    .and_then(|tab| tab.panes.first())
                     .map(|pane| pane.id.clone());
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id);
@@ -6327,6 +6423,7 @@ mod tests {
                 "tokens": {"status_working": "\u{25cf}", "sort_rank": "05",
                            "activity": "0000000000001"}
             }],
+            "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
                 "area": {"x": 0, "y": 0, "width": 80, "height": 24},
@@ -6384,6 +6481,7 @@ mod tests {
                 .clone()
                 .map(|pane| vec![tab(workspace_id, checkout_id, Some(pane))])
                 .unwrap_or_default(),
+            active_tab_id: pane.map(|_| format!("{checkout_id}:tab")),
         }
     }
 
@@ -6543,6 +6641,281 @@ mod tests {
         assert!(runtime.snapshot().terminal.panes.is_empty());
     }
 
+    /// One Herdr workspace whose tabs each hold one pane inside
+    /// `checkout_path`. `tab_order` is the order Herdr reports its tabs in and
+    /// `layout_order` is the order the layouts arrive in, so a test can hand
+    /// the two orders apart and see which one the navigator follows.
+    fn tab_order_payload(
+        checkout_path: &str,
+        tab_order: &[&str],
+        layout_order: &[&str],
+        active_tab_id: &str,
+    ) -> SessionSnapshotPayload {
+        let tabs = tab_order
+            .iter()
+            .map(|tab_id| {
+                serde_json::json!({
+                    "workspace_id": "w-order", "tab_id": tab_id, "label": ""
+                })
+            })
+            .collect::<Vec<_>>();
+        let panes = layout_order
+            .iter()
+            .map(|tab_id| {
+                serde_json::json!({"pane_id": format!("{tab_id}:p"), "cwd": checkout_path})
+            })
+            .collect::<Vec<_>>();
+        let layouts = layout_order
+            .iter()
+            .map(|tab_id| {
+                serde_json::json!({
+                    "workspace_id": "w-order",
+                    "tab_id": tab_id,
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": format!("{tab_id}:p"),
+                    "panes": [{
+                        "pane_id": format!("{tab_id}:p"),
+                        "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                    }],
+                    "splits": []
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "workspaces": [{
+                "workspace_id": "w-order",
+                "label": "order",
+                "active_tab_id": active_tab_id
+            }],
+            "tabs": tabs,
+            "panes": panes,
+            "layouts": layouts
+        }))
+        .expect("ordered session payload")
+    }
+
+    /// A runtime with one registered checkout focused, ready to ingest
+    /// [`tab_order_payload`]. Returns the checkout id the navigator gave it.
+    fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
+        let mut runtime = runtime();
+        runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+            id: "workspace:order".to_owned(),
+            label: "order".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        }];
+        runtime.rebuild_catalog();
+        let checkout_id =
+            workspace::checkout_id_for_path("workspace:order", Path::new(checkout_path));
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:order".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        // A selection the operator made, so the first live session keeps it
+        // instead of retiring it with the restore hint.
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.reset_terminal_projection(None);
+        (runtime, checkout_id)
+    }
+
+    fn ordered_tab_ids(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.id == checkout_id)
+            .expect("the registered checkout")
+            .tabs
+            .iter()
+            .map(|tab| tab.id.clone().expect("a Herdr tab always has an id"))
+            .collect()
+    }
+
+    fn checkout_active_tab_id(runtime: &Runtime, checkout_id: &str) -> Option<String> {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.id == checkout_id)
+            .expect("the registered checkout")
+            .active_tab_id
+            .clone()
+    }
+
+    #[test]
+    fn tab_order_follows_herdr_and_not_layout_arrival() {
+        let checkout_path = "/private/tmp/hide-tab-order-arrival";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        // Herdr reports t1, t2, t3; the layouts arrive in the order the tabs
+        // were first drawn, which is the order the navigator used to take.
+        let payload = tab_order_payload(
+            checkout_path,
+            &["w-order:t1", "w-order:t2", "w-order:t3"],
+            &["w-order:t3", "w-order:t1", "w-order:t2"],
+            "w-order:t1",
+        );
+        assert!(runtime.ingest_session(Ok(payload)));
+        assert_eq!(
+            ordered_tab_ids(&runtime, &checkout_id),
+            vec![
+                "w-order:t1".to_owned(),
+                "w-order:t2".to_owned(),
+                "w-order:t3".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn tab_order_follows_a_move_and_ignores_a_layout_redraw() {
+        let checkout_path = "/private/tmp/hide-tab-order-moved";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        // Herdr moved the second tab in front of the first.
+        let moved = ["w-order:t2", "w-order:t1", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &moved,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            ordered_tab_ids(&runtime, &checkout_id),
+            moved.map(str::to_owned).to_vec()
+        );
+
+        // A layout redraw for an existing tab is detail, not order.
+        assert!(!runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &moved,
+            &["w-order:t3", "w-order:t2", "w-order:t1"],
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            ordered_tab_ids(&runtime, &checkout_id),
+            moved.map(str::to_owned).to_vec()
+        );
+    }
+
+    #[test]
+    fn tab_order_is_unchanged_by_a_tab_switch() {
+        let checkout_path = "/private/tmp/hide-tab-order-focus";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        let focus = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_tab",
+            "payload": {
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id,
+                "tab_id": "w-order:t3"
+            }
+        }))
+        .expect("focus event");
+        assert!(runtime.dispatch_json(&focus));
+
+        assert_eq!(
+            ordered_tab_ids(&runtime, &checkout_id),
+            tabs.map(str::to_owned).to_vec(),
+            "a tab switch must not move the tab it switched to"
+        );
+        // Herdr has not confirmed the switch yet, so the active mark has not
+        // moved either. It is never inferred from position.
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t1")
+        );
+    }
+
+    #[test]
+    fn herdr_active_tab_names_the_projected_tab() {
+        let checkout_path = "/private/tmp/hide-tab-order-active";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        ))));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t2")
+        );
+        assert_eq!(
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t2"),
+            "the active tab projection follows the id Herdr named"
+        );
+    }
+
+    #[test]
+    fn herdr_active_tab_unresolved_is_reported_not_replaced() {
+        let checkout_path = "/private/tmp/hide-tab-order-unplaceable";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t9"
+        ))));
+
+        assert_eq!(checkout_active_tab_id(&runtime, &checkout_id), None);
+        assert_eq!(
+            runtime.snapshot().tab.id,
+            None,
+            "no tab stands in for the one Herdr named"
+        );
+        assert_eq!(
+            runtime.snapshot().tab.label.as_deref(),
+            Some("No active tab")
+        );
+        let unresolved = runtime
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == "tab.active_unresolved")
+            .count();
+        assert_eq!(unresolved, 1);
+
+        // Session sync reconciles once a second; the same unresolved state
+        // must not append a diagnostic on every tick.
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t9"
+        )));
+        let unresolved = runtime
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == "tab.active_unresolved")
+            .count();
+        assert_eq!(unresolved, 1);
+    }
+
     #[test]
     fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
         let mut runtime = runtime();
@@ -6611,7 +6984,9 @@ mod tests {
             "plain pane layout should create one checkout tab"
         );
         assert_eq!(checkout.tabs[0].panes[0].id, "plain:p1");
-        assert_eq!(checkout.tabs[0].label.as_deref(), Some("2"));
+        // Herdr's bare tab number reads as a label only after the display
+        // rule turns it into a name.
+        assert_eq!(checkout.tabs[0].label.as_deref(), Some("Tab 2"));
         assert_eq!(checkout.tabs[0].panes[0].cwd, checkout_path);
         assert_eq!(
             runtime.snapshot().terminal.pane_id.as_deref(),
@@ -6653,6 +7028,7 @@ mod tests {
             "agents": [],
             "workspaces": [{"workspace_id": "w3M", "label": "herdr-ide"}],
             "panes": [{"pane_id": "w3M:p1", "cwd": checkout_path}],
+            "tabs": [{"workspace_id": "w3M", "tab_id": "w3M:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w3M",
                 "tab_id": "w3M:t1",
@@ -6730,6 +7106,7 @@ mod tests {
                 {"pane_id": "w3P:p1", "cwd": checkout_path},
                 {"pane_id": "w3Z:p1", "cwd": checkout_path}
             ],
+            "tabs": [{"workspace_id": "w3P", "tab_id": "w3P:t1", "label": ""}, {"workspace_id": "w3Z", "tab_id": "w3Z:t1", "label": ""}],
             "layouts": [
                 {
                     "workspace_id": "w3P",
@@ -6798,6 +7175,7 @@ mod tests {
                 {"pane_id": "w2W:p1", "cwd": "/private/tmp/hide-modakbul"},
                 {"pane_id": "w2W:pM", "cwd": "/"}
             ],
+            "tabs": [{"workspace_id": "w2W", "tab_id": "w2W:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w2W",
                 "tab_id": "w2W:t1",
@@ -7010,6 +7388,7 @@ mod tests {
                 {"pane_id": "w2X:pB", "cwd": checkout_path},
                 {"pane_id": selected_pane, "cwd": checkout_path}
             ],
+            "tabs": [{"workspace_id": "w2X", "tab_id": "w2X:t1", "label": ""}, {"workspace_id": "w3V", "tab_id": "w3V:t1", "label": ""}],
             "layouts": [
                 {
                     "workspace_id": "w2X",
@@ -7122,6 +7501,7 @@ mod tests {
             "agents": [],
             "panes": [{"pane_id": "w-close:p2", "cwd": checkout_path}],
             "focused_pane_id": "w-close:p2",
+            "tabs": [{"workspace_id": "w-close", "tab_id": "w-close:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w-close",
                 "tab_id": "w-close:t1",
@@ -7296,6 +7676,7 @@ mod tests {
             "agents": [],
             "panes": [{"pane_id": "w-focused:p2", "cwd": checkout_path}],
             "focused_pane_id": "w-focused:p2",
+            "tabs": [{"workspace_id": "w-focused", "tab_id": "w-focused:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w-focused",
                 "tab_id": "w-focused:t1",
@@ -7365,6 +7746,7 @@ mod tests {
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
             "panes": [{"pane_id": "old:p1", "cwd": checkout_path}],
+            "tabs": [{"workspace_id": "old-workspace", "tab_id": "old-workspace:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "old-workspace",
                 "tab_id": "old-workspace:t1",
@@ -7439,6 +7821,7 @@ mod tests {
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
             "panes": [{"pane_id": "wL:p1", "cwd": checkout_path}],
+            "tabs": [{"workspace_id": "wL", "tab_id": "wL:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "wL",
                 "tab_id": "wL:t1",
@@ -7481,6 +7864,7 @@ mod tests {
             "agents": [],
             "panes": [{"pane_id": "w19:p1", "cwd": "/tmp/hide-restored"}],
             "focused_pane_id": "w19:p1",
+            "tabs": [{"workspace_id": "w19", "tab_id": "w19:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w19",
                 "tab_id": "w19:t1",
@@ -7545,6 +7929,7 @@ mod tests {
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
             "panes": [{"pane_id": "w3P:p1", "cwd": "/tmp/old-context"}],
+            "tabs": [{"workspace_id": "w3P", "tab_id": "w3P:t1", "label": ""}],
             "layouts": [{
                 "workspace_id": "w3P",
                 "tab_id": "w3P:t1",
