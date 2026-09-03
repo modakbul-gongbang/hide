@@ -31,7 +31,8 @@ struct CoreSnapshot {
     /// that arrived, so a delta carrying one of them leaves the rest alone.
     func replacing(
         editor: CoreEditorSnapshot?,
-        changes: CoreChangesSnapshot?
+        changes: CoreChangesSnapshot?,
+        find: CorePaneFindSnapshot
     ) -> CoreSnapshot {
         CoreSnapshot(
             schemaVersion: schemaVersion,
@@ -58,6 +59,10 @@ struct CoreSnapshotDelta: Decodable {
     let rest: CoreRestSnapshot?
     let editor: CoreEditorSnapshot?
     let changes: CoreChangesSnapshot?
+    /// Find state rides top-level because it changes on every keystroke while a
+    /// search is open; in `rest` each keystroke would resend every other
+    /// section with it.
+    let find: CorePaneFindSnapshot
     let terminalSequence: UInt64
     let chunks: [CoreTerminalChunk]
     let chunksDropped: Bool
@@ -68,6 +73,7 @@ struct CoreSnapshotDelta: Decodable {
         case rest
         case editor
         case changes
+        case find
         case terminalSequence = "terminal_sequence"
         case chunks
         case chunksDropped = "chunks_dropped"
@@ -79,7 +85,6 @@ struct CoreRestSnapshot: Decodable {
     let zoomed: String?
     let paneLayout: CorePaneLayoutSnapshot?
     let terminal: CoreTerminalSnapshot
-    let find: CorePaneFindSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
@@ -89,7 +94,6 @@ struct CoreRestSnapshot: Decodable {
         case zoomed
         case paneLayout = "pane_layout"
         case terminal
-        case find
         case uiState = "ui_state"
         case status
         case pet
@@ -2046,19 +2050,27 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     terminal: rest.terminal,
                     editor: editor,
                     changes: decoded.changes ?? snapshot?.changes ?? .empty,
-                    find: rest.find,
+                    find: decoded.find,
                     uiState: rest.uiState,
                     status: rest.status,
                     pet: rest.pet
                 ))
-            } else if decoded.editor != nil || decoded.changes != nil {
+            } else if decoded.editor != nil
+                || decoded.changes != nil
+                || decoded.find != snapshot?.find
+            {
                 guard let current = snapshot else {
                     bridgeError = "delta.protocol: a section arrived before the first full snapshot"
                     return
                 }
+                // Find state arrives on every response, so it is compared
+                // rather than applied: republishing on each one would rebuild
+                // the view for every terminal chunk, which is the invariant
+                // chunk-only deltas exist to protect.
                 snapshot = current.replacing(
                     editor: decoded.editor,
-                    changes: decoded.changes
+                    changes: decoded.changes,
+                    find: decoded.find
                 )
             }
             haveRevision = decoded.revision

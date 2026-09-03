@@ -13,6 +13,14 @@ import Testing
         "rest": null,
         "editor": null,
         "input_generation": 3,
+        "find": {
+            "pane_id": null,
+            "term": "",
+            "index": 0,
+            "total": 0,
+            "truncated": false,
+            "unavailable_reason": null
+        },
         "terminal_sequence": 42,
         "chunks": [
             {"pane_id": "w1:p1", "sequence": 41, "bytes_base64": "aGk="},
@@ -35,6 +43,8 @@ import Testing
     #expect(decoded.chunks.map(\.sequence) == [41, 42])
     #expect(decoded.chunks.first?.paneID == "w1:p1")
     #expect(decoded.chunks.first?.bytesBase64 == "aGk=")
+    #expect(decoded.find.term == "")
+    #expect(decoded.find.total == 0)
 }
 
 @Test func laggingCursorDeltaSurfacesTheDropMarker() throws {
@@ -49,6 +59,14 @@ import Testing
             "document": null
         },
         "input_generation": 0,
+        "find": {
+            "pane_id": "w1:p1",
+            "term": "needle",
+            "index": 2,
+            "total": 7,
+            "truncated": true,
+            "unavailable_reason": null
+        },
         "terminal_sequence": 600,
         "chunks": [],
         "chunks_dropped": true
@@ -62,4 +80,11 @@ import Testing
     #expect(decoded.chunksDropped)
     #expect(decoded.editor != nil)
     #expect(decoded.chunks.isEmpty)
+    // Find state rides the top-level per-event channel, so it arrives on a
+    // response that carries no `rest` at all.
+    #expect(decoded.rest == nil)
+    #expect(decoded.find.term == "needle")
+    #expect(decoded.find.index == 2)
+    #expect(decoded.find.total == 7)
+    #expect(decoded.find.truncated)
 }

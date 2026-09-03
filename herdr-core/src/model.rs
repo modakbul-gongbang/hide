@@ -936,7 +936,7 @@ impl PetSnapshot {
 /// The sections of [`Snapshot`] that ride the revisioned `rest` channel of
 /// the delta wire: everything except the editor and the changes view (each
 /// with its own revision), the terminal chunk ring (sequence cursor), and the
-/// per-event scalars.
+/// per-event scalars, which now include find state.
 /// Owned copy retained by the runtime to stamp revisions by comparison, so
 /// no mutation site needs dirty-tracking discipline.
 #[derive(Clone, Debug, PartialEq)]
@@ -952,7 +952,6 @@ pub struct RestSections {
     pub terminal_closed: bool,
     pub terminal_exit_code: Option<i32>,
     pub terminal_panes: Vec<TerminalPaneSnapshot>,
-    pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
@@ -973,7 +972,6 @@ impl RestSections {
             terminal_closed: snapshot.terminal.closed,
             terminal_exit_code: snapshot.terminal.exit_code,
             terminal_panes: snapshot.terminal.panes.clone(),
-            find: snapshot.find.clone(),
             ui_state: snapshot.ui_state.clone(),
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
@@ -995,7 +993,6 @@ impl RestSections {
             && self.terminal_closed == snapshot.terminal.closed
             && self.terminal_exit_code == snapshot.terminal.exit_code
             && self.terminal_panes == snapshot.terminal.panes
-            && self.find == snapshot.find
             && self.ui_state == snapshot.ui_state
             && self.ime == snapshot.ime
             && self.status == snapshot.status
@@ -1015,6 +1012,12 @@ pub struct SnapshotDeltaWire<'a> {
     pub rest: Option<RestWire<'a>>,
     pub editor: Option<&'a EditorSnapshot>,
     pub changes: Option<&'a ChangesSnapshot>,
+    /// Find state rides top-level rather than in `rest`, because it changes on
+    /// every keystroke while a search is open. In `rest` each keystroke would
+    /// restamp that revision and resend the whole navigator, ui state, and pet
+    /// sections with it - the wire would be sized by total state instead of by
+    /// what changed. Six scalars on every response cost far less.
+    pub find: &'a PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
     pub chunks: Vec<&'a TerminalChunk>,
@@ -1031,7 +1034,6 @@ pub struct RestWire<'a> {
     pub focused: &'a FocusedSnapshot,
     pub pane_layout: &'a Option<PaneLayoutSnapshot>,
     pub terminal: TerminalMetaWire<'a>,
-    pub find: &'a PaneFindSnapshot,
     pub ui_state: &'a UiStateSnapshot,
     pub ime: &'a ImeSnapshot,
     pub status: &'a StatusSnapshot,

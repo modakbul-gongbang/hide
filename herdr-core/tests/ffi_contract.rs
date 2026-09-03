@@ -140,6 +140,7 @@ fn snapshot(core: *mut HerdrCore) -> Value {
     full["editor"] = delta["editor"].clone();
     full["schema_version"] = delta["schema_version"].clone();
     full["input_generation"] = delta["input_generation"].clone();
+    full["find"] = delta["find"].clone();
     full["terminal"]["chunks"] = delta["chunks"].clone();
     full["terminal"]["sequence"] = delta["terminal_sequence"].clone();
     full
@@ -218,6 +219,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
         [
             "connection",
             "editor",
+            "find",
             "focused",
             "ime",
             "input_generation",
@@ -1252,6 +1254,36 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
     assert_eq!(agents[2]["pane_id"], "seen-old");
     assert_eq!(agents[0]["state"], "question");
     assert_eq!(agents[0]["symbol"], "?");
+
+    herdr_core_destroy(core);
+}
+
+/// Find state changes on every keystroke while a search is open, so it rides
+/// the top-level per-event channel rather than the revisioned `rest` one. In
+/// `rest` a keystroke would restamp that revision and resend the navigator,
+/// ui state, pet and status sections along with it - the wire would be sized
+/// by total state instead of by what changed.
+#[test]
+fn a_find_result_rides_top_level_without_restamping_the_rest_revision() {
+    let core = create();
+    let full = snapshot_delta(core, 0, 0);
+    let revision = full["revision"].as_u64().expect("revision");
+    let sequence = full["terminal_sequence"].as_u64().expect("sequence");
+    assert_eq!(full["find"]["term"], "");
+    assert_eq!(full["find"]["total"], 0);
+
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "pane_find", "payload": {"pane_id": "local-loopback", "term": "needle"}}),
+    );
+
+    let after = snapshot_delta(core, revision, sequence);
+    assert!(
+        after["rest"].is_null(),
+        "a find result must not restamp the rest revision: {after}"
+    );
+    assert_eq!(after["revision"].as_u64(), Some(revision));
+    assert_eq!(after["find"]["term"], "needle");
 
     herdr_core_destroy(core);
 }

@@ -903,7 +903,6 @@ impl Runtime {
                     exit_code: self.snapshot.terminal.exit_code,
                     panes: &self.snapshot.terminal.panes,
                 },
-                find: &self.snapshot.find,
                 ui_state: &self.snapshot.ui_state,
                 ime: &self.snapshot.ime,
                 status: &self.snapshot.status,
@@ -912,6 +911,7 @@ impl Runtime {
             editor: (self.delta.editor_revision > have_revision).then_some(&self.snapshot.editor),
             changes: (self.delta.changes_revision > have_revision)
                 .then_some(&self.snapshot.changes),
+            find: &self.snapshot.find,
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,
             chunks,
