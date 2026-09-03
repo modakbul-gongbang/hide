@@ -487,6 +487,7 @@ struct PaneTerminalCell<Content: View>: View {
     let status: String
     let statusMessage: String?
     let isFocused: Bool
+    let isZoomed: Bool
     let showsFork: Bool
     let onFocus: () -> Void
     let onReconnect: () -> Void
@@ -500,6 +501,7 @@ struct PaneTerminalCell<Content: View>: View {
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
+        isZoomed: Bool = false,
         showsFork: Bool = false,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
@@ -512,6 +514,7 @@ struct PaneTerminalCell<Content: View>: View {
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
+        self.isZoomed = isZoomed
         self.showsFork = showsFork
         self.onFocus = onFocus
         self.onReconnect = onReconnect
@@ -526,6 +529,7 @@ struct PaneTerminalCell<Content: View>: View {
             paneID: pane.id,
             title: PaneHeaderPresentation.title(
                 herdrLabel: pane.herdrLabel,
+                agentSummary: pane.summary,
                 terminalTitle: pane.terminalTitle,
                 workspaceLabel: pane.workspaceLabel,
                 paneID: pane.id
@@ -533,6 +537,7 @@ struct PaneTerminalCell<Content: View>: View {
             status: status,
             statusMessage: statusMessage,
             isFocused: isFocused,
+            isZoomed: isZoomed,
             forkedFrom: PaneHeaderControls.forkMark(pane.fork),
             showsFork: showsFork,
             ports: pane.ports,
@@ -584,17 +589,21 @@ enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
     /// A Herdr label is a name the user chose for this pane, so it outranks
-    /// everything. A terminal title is what the running program calls itself,
-    /// which distinguishes two panes in the same project. The workspace label
-    /// names the project, which every pane in it shares. The pane id is the
-    /// last resort and is never empty.
+    /// everything. The agent summary is the context label the sidebar already
+    /// shows for this agent, so the header and the sidebar name one pane the
+    /// same way. A terminal title is what the running program calls itself;
+    /// Claude Code flips it between the session name and a status line such
+    /// as "Claude is waiting for…", which is why it ranks below the summary.
+    /// The workspace label names the project, which every pane in it shares.
+    /// The pane id is the last resort and is never empty.
     static func title(
         herdrLabel: String?,
+        agentSummary: String? = nil,
         terminalTitle: String?,
         workspaceLabel: String?,
         paneID: String
     ) -> String {
-        for candidate in [herdrLabel, terminalTitle, workspaceLabel] {
+        for candidate in [herdrLabel, agentSummary, terminalTitle, workspaceLabel] {
             let normalized = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !normalized.isEmpty { return normalized }
         }
@@ -613,6 +622,8 @@ struct HideTerminalPaneCard<Content: View>: View {
     let status: String
     let statusMessage: String?
     let isFocused: Bool
+    /// Herdr is showing only this pane; its siblings in the tab are hidden.
+    let isZoomed: Bool
     /// The pane this one was forked from, when Herdr's lineage says so.
     let forkedFrom: String?
     let showsFork: Bool
@@ -631,6 +642,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
+        isZoomed: Bool = false,
         forkedFrom: String? = nil,
         showsFork: Bool = false,
         ports: [UInt16] = [],
@@ -646,6 +658,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
+        self.isZoomed = isZoomed
         self.forkedFrom = forkedFrom
         self.showsFork = showsFork
         self.ports = ports
@@ -671,6 +684,28 @@ struct HideTerminalPaneCard<Content: View>: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+
+                if isZoomed {
+                    // A zoomed pane looks like a one-pane tab, so the state
+                    // has to be said here or the hidden siblings look lost.
+                    // Same pill as a port indicator, in chrome colors rather
+                    // than accent: it is state, not something to act on.
+                    HStack(spacing: HideTheme.spacingXXS) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .hideFont(size: 8, weight: .bold)
+                        Text("Zoomed")
+                            .hideFont(size: 9, weight: .semibold)
+                    }
+                    .foregroundStyle(HideTheme.secondary)
+                    .padding(.horizontal, HideTheme.spacingXS)
+                    .frame(height: HideTheme.Layout.panelCollapseControlSize)
+                    .background(
+                        RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
+                            .fill(HideTheme.elevated)
+                    )
+                    .help("Zoomed: the other panes in this tab are hidden. Toggle zoom to bring them back.")
+                    .accessibilityLabel("Pane \(paneID) is zoomed")
+                }
 
                 ForEach(ports, id: \.self) { port in
                     Button { onOpenPort(port) } label: {

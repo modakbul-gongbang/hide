@@ -22,6 +22,14 @@ struct PaneGridPresentationTests {
             workspaceLabel: "hide",
             paneID: "w1:p1"
         ) == "claude")
+        // The sidebar's context label beats Claude Code's status title.
+        #expect(PaneHeaderPresentation.title(
+            herdrLabel: nil,
+            agentSummary: "운영 DB 마이그레이션 실행",
+            terminalTitle: "🍃 Claude is waiting fo",
+            workspaceLabel: "hide",
+            paneID: "w1:p1"
+        ) == "운영 DB 마이그레이션 실행")
         #expect(PaneHeaderPresentation.title(
             herdrLabel: "   ",
             terminalTitle: "  ",

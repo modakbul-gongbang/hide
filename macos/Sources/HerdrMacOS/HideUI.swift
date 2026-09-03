@@ -1596,6 +1596,7 @@ private struct HideTerminalSurface: View {
                             status: model.paneStatus(for: pane.id),
                             statusMessage: model.paneTransportMessage(for: pane.id),
                             isFocused: item.isFocused,
+                            isZoomed: model.focusedPaneLayout?.zoomed == true,
                             showsFork: model.canForkPane(pane),
                             onFocus: { model.focusPane(pane.id) },
                             onReconnect: { model.reconnectPane(pane.id) },
