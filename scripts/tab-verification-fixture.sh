@@ -11,8 +11,15 @@
 # refuses to run against a fixture that already exists rather than creating a
 # second one, and teardown closes exactly the workspace whose id it recorded.
 #
+# `setup --split` builds the same workspace with its tabs split across two
+# checkouts: the workspace's own first tab sits in a linked worktree of the
+# fixture repository, and the three tabs after it sit in the repository. That
+# is the arrangement where the strip a drag happens in does not start at the
+# workspace's first tab, which is what makes the insertion index a workspace
+# index rather than a strip index.
+#
 # Usage:
-#   zsh scripts/tab-verification-fixture.sh setup
+#   zsh scripts/tab-verification-fixture.sh setup [--split]
 #   zsh scripts/tab-verification-fixture.sh status
 #   zsh scripts/tab-verification-fixture.sh refuse [tab-id]
 #   zsh scripts/tab-verification-fixture.sh teardown
@@ -21,6 +28,9 @@ set -eu
 
 FIXTURE_LABEL="tab-verify-fixture"
 FIXTURE_ROOT="/tmp/herdr-ide-verify/fixtures/tab-verify"
+# A sibling directory, not one inside the repository, so the worktree is a
+# second checkout of the project rather than a path within the first.
+FIXTURE_WORKTREE="/tmp/herdr-ide-verify/fixtures/tab-verify-feature"
 FIXTURE_FILE="notes.md"
 STATE_FILE="${FIXTURE_ROOT}/.fixture-workspace-id"
 SOCKET_PATH="${HERDR_SOCKET_PATH:-${HOME}/.config/herdr/herdr.sock}"
@@ -64,6 +74,8 @@ require_socket() {
 
 cmd_setup() {
   require_socket
+  local split="no"
+  [[ "${1:-}" != "--split" ]] || split="yes"
   local existing
   existing="$(workspace_id_by_label)"
   # Rule 11: a second run must not stand up a second workspace.
@@ -77,7 +89,17 @@ cmd_setup() {
   git -C "$FIXTURE_ROOT" add "$FIXTURE_FILE" >/dev/null
   git -C "$FIXTURE_ROOT" -c user.email=fixture@local -c user.name=fixture commit -qm 'Add the fixture file' >/dev/null 2>&1 || true
 
-  herdr workspace create --cwd "$FIXTURE_ROOT" --label "$FIXTURE_LABEL" --no-focus >/dev/null
+  # The workspace's first tab decides where the split checkout's tab sits in
+  # Herdr's list, and Herdr appends every tab after it, so the worktree has to
+  # be created and named as the workspace's cwd before the other three tabs.
+  local first_cwd="$FIXTURE_ROOT"
+  if [[ "$split" == "yes" ]]; then
+    rm -rf "$FIXTURE_WORKTREE"
+    git -C "$FIXTURE_ROOT" worktree add -q -b tab-verify-feature "$FIXTURE_WORKTREE" >/dev/null
+    first_cwd="$FIXTURE_WORKTREE"
+  fi
+
+  herdr workspace create --cwd "$first_cwd" --label "$FIXTURE_LABEL" --no-focus >/dev/null
   local workspace
   workspace="$(workspace_id_by_label)"
   [[ -n "$workspace" ]] || die "workspace create reported no ${FIXTURE_LABEL} workspace"
@@ -85,10 +107,13 @@ cmd_setup() {
 
   herdr tab create --workspace "$workspace" --cwd "$FIXTURE_ROOT" --label two --no-focus >/dev/null
   herdr tab create --workspace "$workspace" --cwd "$FIXTURE_ROOT" --label three --no-focus >/dev/null
+  [[ "$split" != "yes" ]] || \
+    herdr tab create --workspace "$workspace" --cwd "$FIXTURE_ROOT" --label four --no-focus >/dev/null
 
   print -- "workspace: ${workspace}"
   print -- "root:      ${FIXTURE_ROOT}"
   print -- "file:      ${FIXTURE_ROOT}/${FIXTURE_FILE}"
+  [[ "$split" != "yes" ]] || print -- "worktree:  ${FIXTURE_WORKTREE} (holds the workspace's first tab)"
   cmd_status
 }
 
@@ -127,13 +152,19 @@ cmd_teardown() {
   herdr workspace close "$workspace" >/dev/null
   after="$(herdr workspace list | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["result"]["workspaces"]))')"
   rm -f "$STATE_FILE"
+  # The worktree is registered inside the repository, so it goes before the
+  # repository does; a `setup --split` that left one behind would make the next
+  # `git worktree add` refuse the same path.
+  [[ ! -d "$FIXTURE_WORKTREE" ]] || \
+    git -C "$FIXTURE_ROOT" worktree remove --force "$FIXTURE_WORKTREE" >/dev/null 2>&1 || true
+  rm -rf "$FIXTURE_WORKTREE"
   rm -rf "$FIXTURE_ROOT"
   print -- "closed ${workspace}; workspaces ${before} -> ${after}"
   [[ "$after" -eq $((before - 1)) ]] || die "expected exactly one workspace to close"
 }
 
 case "${1:-}" in
-  setup) cmd_setup ;;
+  setup) shift; cmd_setup "$@" ;;
   status) cmd_status ;;
   refuse) shift; cmd_refuse "$@" ;;
   teardown) cmd_teardown ;;
