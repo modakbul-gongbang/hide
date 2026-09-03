@@ -2197,12 +2197,23 @@ impl Runtime {
                     .iter()
                     .map(String::as_str)
                     .collect::<HashSet<_>>();
+                // A `remote:` id names a pane on another machine, which this
+                // local session can never hold, so it is not a local selection
+                // that has gone missing. Reading it as one is what left the
+                // shell stuck on "Selected pane remote:...:pane:w59:p2 is not
+                // available for the selected checkout" after a trip to a
+                // remote device and back: every local sync tick compared the
+                // leftover remote id against local layouts, never matched, and
+                // re-raised the same error. Dropping it here means no path
+                // that leaves a remote id in the selection can poison local
+                // projection, rather than fixing the one navigation that did.
                 let selected_pane_id = self
                     .snapshot
                     .terminal
                     .pane_id
                     .clone()
-                    .or_else(|| self.snapshot.ui_state.selected_pane_id.clone());
+                    .or_else(|| self.snapshot.ui_state.selected_pane_id.clone())
+                    .filter(|pane_id| !pane_id.starts_with("remote:"));
                 let selected_still_exists = selected_pane_id.as_deref().is_some_and(|pane_id| {
                     payload
                         .layouts
@@ -7427,6 +7438,75 @@ mod tests {
                 .as_ref()
                 .map(|error| error.kind.as_str()),
             Some("pane.projection_unavailable")
+        );
+    }
+
+    /// Returning from a remote device left `remote:<target>:pane:<id>` in the
+    /// selection, and every local sync tick then compared it against local
+    /// layouts, never matched, and re-raised the same projection error. A
+    /// remote id names a pane this session can never hold, so it is not a
+    /// local selection that has gone missing.
+    #[test]
+    fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
+        let mut runtime = runtime();
+        let checkout_path = "/tmp/hide-remote-selection-leak";
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
+        let registration = WorkspaceRegistration {
+            id: workspace_id.clone(),
+            label: "Remote selection leak".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        };
+        let local_pane = pane("wL:p1", checkout_path);
+        let selected_workspace = workspace(
+            &workspace_id,
+            "Remote selection leak",
+            checkout_path,
+            vec![checkout(
+                &workspace_id,
+                &checkout_id,
+                checkout_path,
+                Some(local_pane),
+            )],
+        );
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.snapshot.navigator.workspaces = vec![selected_workspace.clone()];
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        // What a trip to the remote device and back leaves behind.
+        runtime.snapshot.ui_state.selected_pane_id = Some("remote:mini:pane:w59:p2".to_owned());
+        runtime.snapshot.terminal.pane_id = Some("remote:mini:pane:w59:p2".to_owned());
+        runtime.restore_hint_pending = false;
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "panes": [{"pane_id": "wL:p1", "cwd": checkout_path}],
+            "layouts": [{
+                "workspace_id": "wL",
+                "tab_id": "wL:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "wL:p1",
+                "panes": [{"pane_id": "wL:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("local session payload");
+        let catalog = session_sync::PrecomputedCatalog {
+            registrations: vec![registration],
+            workspaces: vec![selected_workspace],
+        };
+
+        assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+        assert_eq!(runtime.snapshot().status.last_error, None);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layout
+                .as_ref()
+                .map(|layout| layout.focused_pane_id.as_str()),
+            Some("wL:p1")
         );
     }
 
