@@ -2173,16 +2173,7 @@ impl Runtime {
             }
             for checkout in &mut workspace.checkouts {
                 live_checkouts.insert(checkout.id.clone());
-                let herdr = checkout
-                    .tabs
-                    .iter()
-                    .filter_map(|tab| {
-                        Some(StripTabSnapshot::herdr(
-                            tab.id.clone()?,
-                            tab.label.clone().unwrap_or_default(),
-                        ))
-                    })
-                    .collect::<Vec<_>>();
+                let herdr = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
                 let files = file_tabs
                     .iter()
                     .filter(|tab| {

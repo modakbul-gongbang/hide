@@ -295,6 +295,24 @@ impl StripTabSnapshot {
             label: label.into(),
         }
     }
+
+    /// The Herdr half of a strip, in the order the tabs are given.
+    ///
+    /// A tab with no id has no identity to key a strip entry by, so it is
+    /// dropped rather than given a placeholder. Both the local strip and the
+    /// remote projection build their Herdr entries here, so the rule that
+    /// decides which tabs earn a slot and what an unlabelled one reads as has
+    /// one implementation to change.
+    pub fn from_herdr_tabs(tabs: &[TabSnapshot]) -> Vec<Self> {
+        tabs.iter()
+            .filter_map(|tab| {
+                Some(Self::herdr(
+                    tab.id.clone()?,
+                    tab.label.clone().unwrap_or_default(),
+                ))
+            })
+            .collect()
+    }
 }
 
 /// The label a tab is drawn by, derived from the tab's own identity.

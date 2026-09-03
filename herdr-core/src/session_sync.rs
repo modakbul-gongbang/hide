@@ -1263,15 +1263,7 @@ impl SessionReplica {
                     .collect::<Vec<_>>();
                 // A remote context has no file tabs, so its strip is the Herdr
                 // tab list in Herdr's order and nothing else.
-                let strip = tabs
-                    .iter()
-                    .filter_map(|tab| {
-                        Some(StripTabSnapshot::herdr(
-                            tab.id.clone()?,
-                            tab.label.clone().unwrap_or_default(),
-                        ))
-                    })
-                    .collect::<Vec<_>>();
+                let strip = StripTabSnapshot::from_herdr_tabs(&tabs);
                 let active_tab_id = Some(remote_tab_id(target_id, &workspace.active_tab_id))
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
                 WorkspaceSnapshot {
