@@ -655,15 +655,28 @@ pub struct UiStateSnapshot {
     pub accent_hex: String,
     /// The interface font size, in points, that the Appearance slider sets.
     /// It scales the shell's own chrome - every `hideFont` call site - and
-    /// nothing else. A pane's terminal bytes and the editor's code are sized by
-    /// `pane_text_scales` instead, so the two never apply to the same text.
+    /// nothing else. A pane's terminal bytes are sized by `pane_text_scales`
+    /// and the editor's code by `editor_text_scale`, so no two of the three
+    /// ever apply to the same text.
     #[serde(default = "default_font_size")]
     pub font_size: f32,
     /// Text scale for one pane's own content, keyed by pane id. A pane at the
     /// default scale is absent rather than present at 1.0, so the map stays
     /// the size of what the user actually changed.
+    ///
+    /// Every key here is a pane id Herdr reports, which is what lets a pane
+    /// that goes away take its entry with it. Nothing else may be stored here.
     #[serde(default)]
     pub pane_text_scales: BTreeMap<String, f32>,
+    /// Text scale for the file editor's code, which is one surface rather than
+    /// one per document.
+    ///
+    /// It is its own field and not a row in `pane_text_scales` because the
+    /// editor is not a pane: keyed into that map it had no pane id to be
+    /// reported under, so the pass that drops a departed pane's scale dropped
+    /// the editor's zoom on every agent state change.
+    #[serde(default = "default_pane_text_scale")]
+    pub editor_text_scale: f32,
     /// What the operator had already seen on each pane, keyed by pane id.
     ///
     /// This is Hide's own record and the only authority for the read axis.
@@ -711,6 +724,10 @@ pub fn clamp_pane_text_scale(scale: f32) -> f32 {
     stepped.clamp(MIN_PANE_TEXT_SCALE, MAX_PANE_TEXT_SCALE)
 }
 
+pub(crate) fn default_pane_text_scale() -> f32 {
+    DEFAULT_PANE_TEXT_SCALE
+}
+
 impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
@@ -734,6 +751,7 @@ impl Default for UiStateSnapshot {
             accent_hex: default_accent_hex(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
+            editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             pane_read_records: BTreeMap::new(),
         }
     }

@@ -918,6 +918,10 @@ struct CoreUIStateSnapshot: Decodable {
     /// Per-pane content text scale. A pane the user has not zoomed is absent,
     /// so a lookup miss means the default rather than an error.
     let paneTextScales: [String: Double]
+    /// The file editor's own zoom. The editor is one surface rather than one
+    /// per document, and it is not a pane, so it carries a scale of its own
+    /// instead of a row in the pane-keyed map.
+    let editorTextScale: Double
 
     enum CodingKeys: String, CodingKey {
         case leftSidebarVisible = "left_sidebar_visible"
@@ -935,6 +939,7 @@ struct CoreUIStateSnapshot: Decodable {
         case accentHex = "accent_hex"
         case fontSize = "font_size"
         case paneTextScales = "pane_text_scales"
+        case editorTextScale = "editor_text_scale"
     }
 
     init(from decoder: Decoder) throws {
@@ -972,6 +977,7 @@ struct CoreUIStateSnapshot: Decodable {
             [String: Double].self,
             forKey: .paneTextScales
         ) ?? [:]
+        editorTextScale = try container.decodeIfPresent(Double.self, forKey: .editorTextScale) ?? 1
     }
 }
 
@@ -1614,6 +1620,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             kind: "pane_text_scale",
             payload: ["pane_id": paneID, "direction": direction.rawValue]
         )
+    }
+
+    func setEditorTextScale(direction: PaneTextScaleDirection) {
+        dispatch(kind: "editor_text_scale", payload: ["direction": direction.rawValue])
     }
 
     var pet: CorePetSnapshot? { snapshot?.pet }

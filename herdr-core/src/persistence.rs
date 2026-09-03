@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, UiStateSnapshot,
-    WorkspaceRegistration, default_accent_hex, default_font_size, default_panel_visible,
+    WorkspaceRegistration, default_accent_hex, default_font_size, default_pane_text_scale,
+    default_panel_visible,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -48,6 +49,11 @@ struct StoredUiState {
     font_size: f32,
     #[serde(default)]
     pane_text_scales: BTreeMap<String, f32>,
+    /// Absent in a store written while the editor's zoom still lived in
+    /// `pane_text_scales`, where the pane prune kept deleting it. It loads at
+    /// the default scale, so the operator's editor opens unzoomed once.
+    #[serde(default = "default_pane_text_scale")]
+    editor_text_scale: f32,
     /// Absent in a store written before Hide owned the read axis. It loads as
     /// an empty map, which reads as everything unread, rather than bumping the
     /// schema version and discarding the rest of the operator's state.
@@ -105,6 +111,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             accent_hex: stored.accent_hex,
             font_size: stored.font_size,
             pane_text_scales: stored.pane_text_scales,
+            editor_text_scale: stored.editor_text_scale,
             pane_read_records: stored.pane_read_records,
         },
         LoadDisposition::Loaded,
@@ -138,6 +145,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         accent_hex: state.accent_hex.clone(),
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),
+        editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)

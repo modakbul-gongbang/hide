@@ -476,7 +476,7 @@ pub enum ReadRecordScope<'a> {
 
 impl ReadRecordScope<'_> {
     /// Whether this pass owns the record keyed by `pane_id` and may drop it.
-    fn owns(self, pane_id: &str) -> bool {
+    pub(crate) fn owns(self, pane_id: &str) -> bool {
         match self {
             Self::Retain => false,
             Self::Local => !pane_id.starts_with(REMOTE_PANE_ID_PREFIX),

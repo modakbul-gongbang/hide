@@ -440,6 +440,29 @@ fn sync_pane_status(
     changed
 }
 
+/// Drops the text scale of a pane the server no longer reports, on the same
+/// pass that drops its read record, so neither map grows forever.
+///
+/// A pass only drops keys in the namespace it owns, for the same reason read
+/// record eviction does: a local sync holds no remote pane list, so unscoped it
+/// deleted every remote pane's zoom the moment any local agent changed state.
+fn prune_pane_text_scales(
+    scales: &mut BTreeMap<String, f32>,
+    workspaces: &[WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+    scope: ReadRecordScope<'_>,
+) {
+    let live = workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .map(|pane| pane.id.as_str())
+        .chain(agents.iter().map(|agent| agent.pane_id.as_str()))
+        .collect::<HashSet<_>>();
+    scales.retain(|pane_id, _| !scope.owns(pane_id) || live.contains(pane_id.as_str()));
+}
+
 fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
     projected_id
         .strip_prefix(&remote_pane_id_prefix(target_id))
@@ -604,6 +627,13 @@ struct PaneTextScalePayload {
     direction: String,
 }
 
+/// The editor is one surface, not one per document, so its zoom carries a
+/// direction and nothing to key it by.
+#[derive(Debug, Deserialize)]
+struct EditorTextScalePayload {
+    direction: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct PetVisibilityPayload {
     visible: bool,
@@ -684,6 +714,7 @@ enum ValidatedEvent {
     TerminalScroll(TerminalScrollPayload),
     PaneFind(PaneFindPayload),
     PaneTextScale(PaneTextScalePayload),
+    EditorTextScale(EditorTextScalePayload),
     ChangesSelect(ChangesSelectPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
@@ -3157,9 +3188,12 @@ impl Runtime {
         if changes.is_empty() {
             return synced;
         }
-        if scope != ReadRecordScope::Retain {
-            self.prune_pane_text_scales(agents);
-        }
+        prune_pane_text_scales(
+            &mut self.snapshot.ui_state.pane_text_scales,
+            &self.snapshot.navigator.workspaces,
+            agents,
+            scope,
+        );
         self.record_read_record_changes(&changes);
         true
     }
@@ -3191,6 +3225,12 @@ impl Runtime {
         if changes.is_empty() {
             return synced;
         }
+        prune_pane_text_scales(
+            &mut self.snapshot.ui_state.pane_text_scales,
+            &session.workspaces,
+            &session.agents,
+            ReadRecordScope::Remote(&prefix),
+        );
         self.record_read_record_changes(&changes);
         true
     }
@@ -3224,25 +3264,24 @@ impl Runtime {
         sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
     }
 
-    /// Drops the text scale of a pane Herdr no longer reports, on the same
-    /// pass that drops its read record, so neither map grows forever.
-    fn prune_pane_text_scales(&mut self, agents: &[SidebarAgentSnapshot]) {
-        let live = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .flat_map(|checkout| checkout.tabs.iter())
-            .flat_map(|tab| tab.panes.iter())
-            .map(|pane| pane.id.as_str())
-            .chain(agents.iter().map(|agent| agent.pane_id.as_str()))
-            .collect::<HashSet<_>>();
-        self.snapshot
-            .ui_state
-            .pane_text_scales
-            .retain(|pane_id, _| live.contains(pane_id.as_str()));
+    /// Steps one text scale by a direction the shell sent, or names the
+    /// direction it could not read and answers `None`.
+    fn stepped_text_scale(&mut self, current: f32, direction: &str) -> Option<f32> {
+        match direction {
+            "in" => Some(clamp_pane_text_scale(current + PANE_TEXT_SCALE_STEP)),
+            "out" => Some(clamp_pane_text_scale(current - PANE_TEXT_SCALE_STEP)),
+            "reset" => Some(DEFAULT_PANE_TEXT_SCALE),
+            other => {
+                self.set_error(
+                    "pane.text_scale_unknown_direction",
+                    format!("{other} is not a text scale direction; expected in, out, or reset"),
+                    true,
+                );
+                None
+            }
+        }
     }
+
 
     /// Saves the current UI state and surfaces a write failure instead of
     /// dropping it.
@@ -5720,20 +5759,8 @@ impl Runtime {
                     .get(&payload.pane_id)
                     .copied()
                     .unwrap_or(DEFAULT_PANE_TEXT_SCALE);
-                let next = match payload.direction.as_str() {
-                    "in" => clamp_pane_text_scale(current + PANE_TEXT_SCALE_STEP),
-                    "out" => clamp_pane_text_scale(current - PANE_TEXT_SCALE_STEP),
-                    "reset" => DEFAULT_PANE_TEXT_SCALE,
-                    other => {
-                        self.set_error(
-                            "pane.text_scale_unknown_direction",
-                            format!(
-                                "{other} is not a text scale direction; expected in, out, or reset"
-                            ),
-                            true,
-                        );
-                        return true;
-                    }
+                let Some(next) = self.stepped_text_scale(current, &payload.direction) else {
+                    return true;
                 };
                 // A pane at the default is absent rather than stored at 1.0,
                 // so resetting every pane leaves an empty map rather than a
@@ -5755,6 +5782,18 @@ impl Runtime {
                     self.persist_ui_state();
                 }
                 changed
+            }
+            ValidatedEvent::EditorTextScale(payload) => {
+                let current = self.snapshot.ui_state.editor_text_scale;
+                let Some(next) = self.stepped_text_scale(current, &payload.direction) else {
+                    return true;
+                };
+                if next == current {
+                    return false;
+                }
+                self.snapshot.ui_state.editor_text_scale = next;
+                self.persist_ui_state();
+                true
             }
             ValidatedEvent::ChangesSelect(payload) => {
                 if self.snapshot.changes.selected_path == payload.path {
@@ -5811,6 +5850,7 @@ impl Runtime {
                     // save must not erase it, for the same reason the pet
                     // fields above are carried through.
                     pane_text_scales: current.pane_text_scales,
+                    editor_text_scale: current.editor_text_scale,
                     pane_read_records: current.pane_read_records,
                 };
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
@@ -6343,6 +6383,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
         "pane_find" => decode!(PaneFindPayload, PaneFind),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
+        "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
@@ -10055,6 +10096,98 @@ mod tests {
                 "w1:p1".to_owned(),
             ],
             "a target prunes only its own namespace"
+        );
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    /// R2, AC2. The read record pass prunes text scales on the same tick, and
+    /// it may only drop what it has the authority to drop. Unscoped it deleted
+    /// every remote pane's zoom on the next local sync, and it deleted the file
+    /// editor's zoom on every agent state change, because the editor's scale
+    /// was keyed into the pane map under a name no pane is ever reported under.
+    #[test]
+    fn read_record_change_leaves_remote_and_editor_zoom_alone() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        let zoom_pane = |runtime: &mut Runtime, pane_id: &str| {
+            let event = serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "pane_text_scale",
+                "payload": {"pane_id": pane_id, "direction": "in"}
+            }))
+            .expect("pane text scale event");
+            assert!(runtime.dispatch_json(&event));
+        };
+        let idle_payload = || -> SessionSnapshotPayload {
+            serde_json::from_value(serde_json::json!({
+                "agents": [{
+                    "pane_id": "w1:p1",
+                    "workspace_label": "Fixture",
+                    "agent": "codex",
+                    "agent_status": "idle",
+                    "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000002"}
+                }],
+                "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
+                "layouts": [{
+                    "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{"pane_id": "w1:p1",
+                               "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }]
+            }))
+            .expect("idle payload")
+        };
+
+        runtime.ingest_session(Ok(working_payload()));
+        zoom_pane(&mut runtime, "w1:p1");
+        zoom_pane(&mut runtime, "remote:mini:pane:w9:p1");
+        zoom_pane(&mut runtime, "w1:p9");
+        let editor_zoom = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "editor_text_scale",
+            "payload": {"direction": "in"}
+        }))
+        .expect("editor text scale event");
+        assert!(runtime.dispatch_json(&editor_zoom));
+        assert_eq!(runtime.snapshot().ui_state.editor_text_scale, 1.1);
+
+        // The focused pane's state moves, so the read record moves and the
+        // prune runs. This is the tick that used to lose both zooms.
+        runtime.ingest_session(Ok(idle_payload()));
+        let scales = runtime.snapshot().ui_state.pane_text_scales.clone();
+        assert_eq!(
+            scales.get("remote:mini:pane:w9:p1"),
+            Some(&1.1),
+            "a local sync holds no remote pane list and must not prune remote keys"
+        );
+        assert_eq!(scales.get("w1:p1"), Some(&1.1), "a live pane keeps its zoom");
+        assert!(
+            !scales.contains_key("w1:p9"),
+            "a local pane the server stopped reporting still loses its zoom"
+        );
+        assert_eq!(
+            runtime.snapshot().ui_state.editor_text_scale,
+            1.1,
+            "the editor is not a pane, so a pane prune cannot reach its zoom"
+        );
+
+        // A navigator or keyboard save carries the editor zoom through for the
+        // same reason it carries the pane map through.
+        let ui_state_update = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {"left_sidebar_visible": false}
+        }))
+        .expect("ui state update event");
+        runtime.dispatch_json(&ui_state_update);
+        assert_eq!(runtime.snapshot().ui_state.editor_text_scale, 1.1);
+
+        let stored = std::fs::read_to_string(&state_path).expect("state file");
+        assert!(
+            stored.contains("editor_text_scale"),
+            "the editor zoom is persisted, so it survives a restart"
         );
         let _ = std::fs::remove_file(&state_path);
     }
