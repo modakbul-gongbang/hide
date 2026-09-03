@@ -1265,7 +1265,7 @@ impl SessionReplica {
                     default_branch: None,
                     registered: true,
                     temporary: false,
-                    session_workspace_ids: vec![workspace_id.clone()],
+                    session_workspace_ids: vec![workspace.workspace_id.clone()],
                     checkouts: vec![CheckoutSnapshot {
                         id: checkout_id,
                         workspace_id,

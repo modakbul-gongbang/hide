@@ -188,6 +188,11 @@ pub fn build_catalog(
             })
         });
         match occupied {
+            // A project already carrying a registration keeps it; a second
+            // registration inside the same project (a repository a
+            // multi-repository Herdr workspace also has a pane in) is not a
+            // second row, and it must not rename the first.
+            Some(index) if result[index].registered => continue,
             Some(index) => adopt_registration(&mut result[index], registration),
             None => result.push(inspect_registered(registration)),
         }
@@ -654,6 +659,33 @@ mod tests {
         assert_eq!(occupied[0].session_workspace_ids, vec!["w7".to_owned()]);
         assert!(released[0].session_workspace_ids.is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_first_registration_covering_a_space_keeps_its_identity() {
+        let first = temp_dir("first-repo");
+        let second = temp_dir("second-repo");
+        let space = SessionSpace {
+            id: "w9".to_owned(),
+            label: "both".to_owned(),
+            cwds: vec![
+                first.to_string_lossy().into_owned(),
+                second.to_string_lossy().into_owned(),
+            ],
+        };
+        let registrations = [
+            registration(first.to_str().unwrap(), "First", LOCAL_DEVICE_ID).expect("first"),
+            registration(second.to_str().unwrap(), "Second", LOCAL_DEVICE_ID).expect("second"),
+        ];
+
+        let catalog = build_catalog(&registrations, &[space]);
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].id, registrations[0].id);
+        assert_eq!(catalog[0].label, "First");
+        assert_eq!(catalog[0].checkouts.len(), 2);
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
     }
 
     #[test]

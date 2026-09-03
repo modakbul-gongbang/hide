@@ -3337,7 +3337,9 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .push(registration);
-        self.rebuild_catalog();
+        // The project id is path-keyed, so registering changes nothing the
+        // sidebar shows right now; the sync that follows Herdr's
+        // workspace_closed rebuilds the catalog off the runtime lock.
         self.persist_current_ui_state();
     }
 
