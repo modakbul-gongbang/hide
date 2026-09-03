@@ -216,6 +216,12 @@ pub struct WorkspaceSnapshot {
     pub default_branch: Option<String>,
     pub registered: bool,
     pub temporary: bool,
+    /// The Herdr workspaces whose panes sit in this project, in Herdr order.
+    /// Project identity is the repository path, not a Herdr workspace id, so
+    /// Herdr dropping its workspace when the last pane closes leaves the row
+    /// and the persisted focus in place. Commands that need a Herdr workspace
+    /// target the first entry; an empty list means Herdr has none here yet.
+    pub session_workspace_ids: Vec<String>,
     pub checkouts: Vec<CheckoutSnapshot>,
 }
 

@@ -1715,6 +1715,9 @@ impl Runtime {
             &self.remote_targets,
             &self.snapshot.ui_state.device_registrations,
         );
+        // An agent belongs to the device whose project holds its pane. The
+        // project label is no longer Herdr's workspace label once a
+        // registration covers the repository, so labels cannot be the key.
         for device in &mut self.snapshot.navigator.devices {
             device.agent_count = projected_agents
                 .iter()
@@ -1723,8 +1726,11 @@ impl Runtime {
                         .navigator
                         .workspaces
                         .iter()
-                        .find(|workspace| workspace.label == agent.workspace_label)
-                        .is_some_and(|workspace| workspace.device_id == device.id)
+                        .filter(|workspace| workspace.device_id == device.id)
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .flat_map(|checkout| checkout.tabs.iter())
+                        .flat_map(|tab| tab.panes.iter())
+                        .any(|pane| pane.id == agent.pane_id)
                 })
                 .count() as u32;
         }
@@ -3809,6 +3815,22 @@ impl Runtime {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
                     return true;
                 }
+                // Herdr closes a workspace with its last pane, so a project
+                // can be listed with no Herdr workspace behind it. A tab
+                // needs one; the shell starts a terminal (which creates the
+                // workspace) for a checkout with no panes instead.
+                let Some(session_workspace_id) =
+                    workspace_snapshot.session_workspace_ids.first().cloned()
+                else {
+                    self.set_error(
+                        "tab.no_live_workspace",
+                        format!(
+                            "Project {workspace_id} has no Herdr workspace; start a terminal in it first"
+                        ),
+                        false,
+                    );
+                    return true;
+                };
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.set_error(
                         "tab.control_unavailable",
@@ -3823,7 +3845,7 @@ impl Runtime {
                 self.deactivate_file_tab();
                 self.persist_current_ui_state();
                 let action = RemoteControlAction::CreateTab {
-                    workspace_id,
+                    workspace_id: session_workspace_id,
                     cwd,
                     label: label.to_owned(),
                 };
@@ -5218,14 +5240,16 @@ fn find_workspace_for_context<'a>(
             .position(|workspace| workspace.id == session_workspace_id)
             .and_then(|index| workspaces.get_mut(index));
     };
-    // Navigator workspaces carry Herdr's own workspace ids, so the layout
-    // names its owner exactly. The path comparisons below are the fallback for
-    // a registration Herdr has no workspace for, and for a catalog precomputed
-    // from a slightly older session.
-    if let Some(index) = workspaces
-        .iter()
-        .position(|workspace| workspace.id == session_workspace_id)
-    {
+    // A navigator project records the Herdr workspaces occupying it, so the
+    // layout names its owner exactly. The path comparisons below are the
+    // fallback for a registration Herdr has no workspace for, and for a
+    // catalog precomputed from a slightly older session.
+    if let Some(index) = workspaces.iter().position(|workspace| {
+        workspace
+            .session_workspace_ids
+            .iter()
+            .any(|id| id == session_workspace_id)
+    }) {
         return workspaces.get_mut(index);
     }
     let path = Path::new(raw_path);
@@ -5251,10 +5275,9 @@ fn find_workspace_for_context<'a>(
     }) {
         return workspaces.get_mut(index);
     }
-    workspaces.push(workspace::inspect_temporary(
-        Path::new(&root),
-        workspace::LOCAL_DEVICE_ID,
-    ));
+    let mut temporary = workspace::inspect_temporary(Path::new(&root), workspace::LOCAL_DEVICE_ID);
+    temporary.session_workspace_ids = vec![session_workspace_id.to_owned()];
+    workspaces.push(temporary);
     workspaces.last_mut()
 }
 
@@ -6257,6 +6280,7 @@ mod tests {
             default_branch: None,
             registered: true,
             temporary: false,
+            session_workspace_ids: Vec::new(),
             checkouts,
         }
     }
@@ -6406,8 +6430,8 @@ mod tests {
         }];
         runtime.rebuild_catalog();
         let checkout_id =
-            workspace::checkout_id_for_path("herdr-workspace", Path::new(checkout_path));
-        runtime.snapshot.navigator.focused_workspace_id = Some("herdr-workspace".to_owned());
+            workspace::checkout_id_for_path("workspace:registered", Path::new(checkout_path));
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:registered".to_owned());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
         runtime.reset_terminal_projection(None);
@@ -6436,15 +6460,19 @@ mod tests {
         assert_eq!(runtime.snapshot.navigator.workspaces.len(), 1);
         assert_eq!(runtime.snapshot.navigator.workspaces[0].checkouts.len(), 1);
         assert!(runtime.ingest_session(Ok(payload)));
-        // Once Herdr has a workspace in that directory the row is that
-        // workspace, not a second entry beside it.
+        // Once Herdr has a workspace in that directory the registration's
+        // row carries it, not a second entry beside it.
         assert_eq!(runtime.snapshot().navigator.workspaces.len(), 1);
+        assert_eq!(
+            runtime.snapshot().navigator.workspaces[0].session_workspace_ids,
+            vec!["herdr-workspace".to_owned()]
+        );
         let checkout = runtime
             .snapshot()
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == "herdr-workspace")
+            .find(|workspace| workspace.id == "workspace:registered")
             .and_then(|workspace| {
                 workspace
                     .checkouts
@@ -6479,17 +6507,19 @@ mod tests {
         let mut runtime = runtime();
         let repository_path = "/private/tmp/hide-rebrand/herdr-ide";
         let checkout_path = "/private/tmp/hide-rebrand/worktrees/hide-rebrand";
-        // Herdr owns the workspace axis, so the navigator workspace is the
+        // Herdr owns the workspace axis, so the navigator project mirrors the
         // Herdr workspace and its checkouts are the directories its panes are
-        // actually in.
+        // actually in. The project id is the repository path, so it is the
+        // same before and after Herdr's workspace exists.
         let spaces = vec![workspace::SessionSpace {
             id: "w3M".to_owned(),
             label: "herdr-ide".to_owned(),
             cwds: vec![repository_path.to_owned(), checkout_path.to_owned()],
         }];
-        let checkout_id = workspace::checkout_id_for_path("w3M", Path::new(checkout_path));
+        let workspace_id = workspace::workspace_id_for_path(Path::new(repository_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
         runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
-        runtime.snapshot.navigator.focused_workspace_id = Some("w3M".to_owned());
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
         runtime.reset_terminal_projection(None);
@@ -6520,9 +6550,10 @@ mod tests {
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == "w3M")
+            .find(|workspace| workspace.id == workspace_id)
             .expect("the Herdr workspace")
             .clone();
+        assert_eq!(workspace_snapshot.session_workspace_ids, vec!["w3M".to_owned()]);
         // Only the directories panes occupy, not every worktree the
         // repository has.
         assert_eq!(workspace_snapshot.checkouts.len(), 2);
@@ -6555,17 +6586,18 @@ mod tests {
                 cwds: vec![checkout_path.to_owned()],
             },
         ];
-        let checkout_id = workspace::checkout_id_for_path("w3Z", Path::new(checkout_path));
+        // Two Herdr workspaces in one directory are one project; the selected
+        // pane, not the Herdr workspace id, decides which layout is projected.
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
         runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
-        runtime.snapshot.navigator.focused_workspace_id = Some("w3Z".to_owned());
+        runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.ui_state.selected_pane_id = Some("w3Z:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w3Z:p1".to_owned());
         runtime.restore_hint_pending = false;
 
-        // Two Herdr workspaces sit in the same directory, so only the
-        // workspace id tells them apart.
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
             "agents": [],
             "workspaces": [
@@ -6609,7 +6641,7 @@ mod tests {
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == "w3Z")
+            .find(|workspace| workspace.id == workspace_id)
             .and_then(|workspace| {
                 workspace
                     .checkouts
@@ -6685,8 +6717,13 @@ mod tests {
 
         let catalog = workspace::build_catalog(&registrations, &spaces);
 
+        // The registration is the row's identity; the Herdr workspace is
+        // attached to it rather than replacing it.
         assert_eq!(catalog.len(), 1);
-        assert_eq!(catalog[0].id, "w41");
+        assert_eq!(catalog[0].id, registrations[0].id);
+        assert_eq!(catalog[0].label, "Duplicate");
+        assert!(catalog[0].registered);
+        assert_eq!(catalog[0].session_workspace_ids, vec!["w41".to_owned()]);
     }
 
     #[test]

@@ -153,25 +153,44 @@ pub fn build_catalog(
     registrations: &[WorkspaceRegistration],
     spaces: &[SessionSpace],
 ) -> Vec<WorkspaceSnapshot> {
-    let mut result = spaces.iter().map(inspect_space).collect::<Vec<_>>();
-    let occupied_roots = result
-        .iter()
-        .flat_map(|workspace| workspace.checkouts.iter())
-        .map(|checkout| normalized_for_comparison(Path::new(&checkout.path)))
-        .collect::<HashSet<_>>();
+    // Project identity is the repository root. Two Herdr workspaces in one
+    // repository are one project with both Herdr ids attached, and a Herdr
+    // workspace that comes and goes (Herdr closes it with its last pane) never
+    // changes which row the user is looking at.
+    let mut result: Vec<WorkspaceSnapshot> = Vec::new();
+    for space in spaces {
+        let projected = inspect_space(space);
+        if projected.checkouts.is_empty() {
+            continue;
+        }
+        match result
+            .iter_mut()
+            .find(|existing| existing.id == projected.id)
+        {
+            Some(existing) => merge_space(existing, projected),
+            None => result.push(projected),
+        }
+    }
 
     // A registration Herdr has no workspace for is somewhere the user can
-    // still start work, so it stays listed. One Herdr already occupies would
-    // otherwise appear twice under two different ids.
+    // still start work, so it stays listed. One Herdr already occupies keeps
+    // the registration's identity and label with Herdr's workspace attached,
+    // so the row survives Herdr closing that workspace.
     for registration in registrations {
         let root = git_root(Path::new(&registration.path)).unwrap_or_else(|| {
             normalized_path(Path::new(&registration.path))
                 .unwrap_or_else(|_| PathBuf::from(&registration.path))
         });
-        if occupied_roots.contains(&normalized_for_comparison(&root)) {
-            continue;
+        let comparison = normalized_for_comparison(&root);
+        let occupied = result.iter().position(|workspace| {
+            workspace.checkouts.iter().any(|checkout| {
+                normalized_for_comparison(Path::new(&checkout.path)) == comparison
+            })
+        });
+        match occupied {
+            Some(index) => adopt_registration(&mut result[index], registration),
+            None => result.push(inspect_registered(registration)),
         }
-        result.push(inspect_registered(registration));
     }
 
     result.sort_by(|left, right| {
@@ -183,6 +202,45 @@ pub fn build_catalog(
     result
 }
 
+/// Folds a second Herdr workspace in the same repository into the project
+/// that already represents it.
+fn merge_space(existing: &mut WorkspaceSnapshot, incoming: WorkspaceSnapshot) {
+    for id in incoming.session_workspace_ids {
+        if !existing.session_workspace_ids.contains(&id) {
+            existing.session_workspace_ids.push(id);
+        }
+    }
+    for checkout in incoming.checkouts {
+        let comparison = normalized_for_comparison(Path::new(&checkout.path));
+        if !existing
+            .checkouts
+            .iter()
+            .any(|known| normalized_for_comparison(Path::new(&known.path)) == comparison)
+        {
+            existing.checkouts.push(checkout);
+        }
+    }
+}
+
+/// Gives a Herdr-occupied project the identity and label of the registration
+/// that covers it. Checkout ids embed the project id, so they are re-keyed
+/// too; persisted focus on a registered checkout then resolves whether or not
+/// Herdr currently has a workspace there.
+fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &WorkspaceRegistration) {
+    workspace.id = registration.id.clone();
+    workspace.label = registration.label.clone();
+    workspace.registered = true;
+    workspace.temporary = false;
+    workspace.device_id = registration.device_id.clone();
+    workspace.remote_target_id =
+        (registration.device_id != LOCAL_DEVICE_ID).then(|| registration.device_id.clone());
+    for checkout in &mut workspace.checkouts {
+        checkout.id = checkout_id_for_path(&registration.id, Path::new(&checkout.path));
+        checkout.workspace_id = registration.id.clone();
+        checkout.temporary = false;
+    }
+}
+
 /// Projects one Herdr workspace, with a checkout per distinct repository its
 /// panes sit in.
 ///
@@ -190,38 +248,50 @@ pub fn build_catalog(
 /// listed every branch the repository has ever had a worktree for, each with
 /// no tabs. A checkout earns a row by having a pane in it.
 fn inspect_space(space: &SessionSpace) -> WorkspaceSnapshot {
-    let mut checkouts: Vec<CheckoutSnapshot> = Vec::new();
+    // The project id comes from the first pane's repository root, so it is
+    // the same id `inspect_temporary` and a registration of that root derive.
+    let mut roots: Vec<(PathBuf, Option<String>, bool)> = Vec::new();
     for cwd in &space.cwds {
         let path = Path::new(cwd);
         let root =
             git_root(path).unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
         let comparison = normalized_for_comparison(&root);
-        if checkouts
+        if roots
             .iter()
-            .any(|existing| normalized_for_comparison(Path::new(&existing.path)) == comparison)
+            .any(|(existing, _, _)| normalized_for_comparison(existing) == comparison)
         {
             continue;
         }
         let branch = current_branch(&root);
-        let label = branch.clone().unwrap_or_else(|| {
-            root.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Checkout")
-                .to_owned()
-        });
         let is_worktree = git_root(&root).is_some_and(|resolved| {
             main_worktree_root(&resolved)
                 .is_some_and(|main| normalized_for_comparison(&main) != comparison)
         });
-        checkouts.push(checkout(
-            &space.id,
-            &root,
-            &label,
-            branch,
-            is_worktree,
-            false,
-        ));
+        roots.push((root, branch, is_worktree));
     }
+    let workspace_id = roots
+        .first()
+        .map(|(root, _, _)| workspace_id_for_path(root))
+        .unwrap_or_else(|| workspace_id_for_path(Path::new(&space.id)));
+    let checkouts = roots
+        .iter()
+        .map(|(root, branch, is_worktree)| {
+            let label = branch.clone().unwrap_or_else(|| {
+                root.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Checkout")
+                    .to_owned()
+            });
+            checkout(
+                &workspace_id,
+                root,
+                &label,
+                branch.clone(),
+                *is_worktree,
+                false,
+            )
+        })
+        .collect::<Vec<CheckoutSnapshot>>();
 
     let primary = checkouts
         .first()
@@ -235,7 +305,7 @@ fn inspect_space(space: &SessionSpace) -> WorkspaceSnapshot {
         .to_owned();
 
     WorkspaceSnapshot {
-        id: space.id.clone(),
+        id: workspace_id,
         label: space.label.clone(),
         path: primary,
         remote_target_id: None,
@@ -248,6 +318,7 @@ fn inspect_space(space: &SessionSpace) -> WorkspaceSnapshot {
             .and_then(|checkout| checkout.branch.clone()),
         registered: false,
         temporary: false,
+        session_workspace_ids: vec![space.id.clone()],
         checkouts,
     }
 }
@@ -339,6 +410,7 @@ fn inspect(
         default_branch: branch,
         registered,
         temporary,
+        session_workspace_ids: Vec::new(),
         checkouts,
     }
 }
@@ -548,10 +620,78 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         }];
 
-        let catalog = build_catalog(&[registration], &spaces);
+        let catalog = build_catalog(&[registration.clone()], &spaces);
 
         assert_eq!(catalog.len(), 1);
-        assert_eq!(catalog[0].id, "w1");
+        assert_eq!(catalog[0].id, registration.id);
+        assert_eq!(catalog[0].label, "Registered");
+        assert!(catalog[0].registered);
+        assert_eq!(catalog[0].session_workspace_ids, vec!["w1".to_owned()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Herdr closes a workspace together with its last pane. The project and
+    /// checkout the user had selected must be the same rows afterwards, so a
+    /// persisted focus keeps resolving and the checkout offers to start a new
+    /// terminal instead of the app falling back to "no workspace".
+    #[test]
+    fn a_project_keeps_its_identity_when_herdr_closes_its_workspace() {
+        let root = temp_dir("identity");
+        let registration = registration(root.to_str().unwrap(), "Identity", LOCAL_DEVICE_ID)
+            .expect("registration");
+        let space = SessionSpace {
+            id: "w7".to_owned(),
+            label: "hide main".to_owned(),
+            cwds: vec![root.to_string_lossy().into_owned()],
+        };
+
+        let occupied = build_catalog(&[registration.clone()], &[space]);
+        let released = build_catalog(&[registration.clone()], &[]);
+
+        assert_eq!(occupied[0].id, released[0].id);
+        assert_eq!(occupied[0].label, released[0].label);
+        assert_eq!(occupied[0].checkouts[0].id, released[0].checkouts[0].id);
+        assert_eq!(occupied[0].session_workspace_ids, vec!["w7".to_owned()]);
+        assert!(released[0].session_workspace_ids.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_unregistered_space_is_keyed_by_its_repository_path() {
+        let root = temp_dir("unregistered-space");
+        let space = SessionSpace {
+            id: "w8".to_owned(),
+            label: "scratch".to_owned(),
+            cwds: vec![root.to_string_lossy().into_owned()],
+        };
+
+        let catalog = build_catalog(&[], &[space]);
+
+        assert_eq!(catalog.len(), 1);
+        let canonical = fs::canonicalize(&root).expect("canonical root");
+        assert_eq!(catalog[0].id, workspace_id_for_path(&canonical));
+        assert_eq!(catalog[0].session_workspace_ids, vec!["w8".to_owned()]);
+        assert!(!catalog[0].registered);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn two_spaces_in_one_repository_are_one_project() {
+        let root = temp_dir("shared-root");
+        let cwd = root.to_string_lossy().into_owned();
+        let spaces = [
+            SessionSpace { id: "w1".to_owned(), label: "first".to_owned(), cwds: vec![cwd.clone()] },
+            SessionSpace { id: "w2".to_owned(), label: "second".to_owned(), cwds: vec![cwd] },
+        ];
+
+        let catalog = build_catalog(&[], &spaces);
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].checkouts.len(), 1);
+        assert_eq!(
+            catalog[0].session_workspace_ids,
+            vec!["w1".to_owned(), "w2".to_owned()]
+        );
         let _ = fs::remove_dir_all(root);
     }
 
