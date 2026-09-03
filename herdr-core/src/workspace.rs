@@ -363,6 +363,36 @@ pub fn git_root(path: &Path) -> Option<PathBuf> {
     (!root.is_empty()).then(|| PathBuf::from(root))
 }
 
+/// A base directory for tests that assert what the catalog says about a
+/// directory which is not a checkout.
+///
+/// `std::env::temp_dir()` is not always outside a repository. The verification
+/// sandbox points `TMPDIR` inside this repository, and git discovery walks up
+/// from a directory created there and finds it, so a test that means "a folder
+/// with no repository" gets the enclosing repository instead. Picking the base
+/// by asking git, rather than assuming, keeps those tests measuring the product
+/// instead of the environment they happen to run in.
+#[cfg(test)]
+pub(crate) fn temp_base_outside_any_repository() -> &'static Path {
+    use std::sync::OnceLock;
+
+    static BASE: OnceLock<PathBuf> = OnceLock::new();
+    BASE.get_or_init(|| {
+        let preferred = std::env::temp_dir();
+        for candidate in [preferred.clone(), PathBuf::from("/tmp")] {
+            if candidate.is_dir() && git_root(&candidate).is_none() {
+                return candidate;
+            }
+        }
+        panic!(
+            "these tests need a temporary directory outside every git repository; \
+             both {} and /tmp are inside one",
+            preferred.display()
+        )
+    })
+    .as_path()
+}
+
 pub fn initialize_git(path: &Path) -> Result<(), String> {
     if git_root(path).is_some() {
         return Ok(());
@@ -520,7 +550,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("hide-workspace-{name}-{stamp}"));
+        let path =
+            temp_base_outside_any_repository().join(format!("hide-workspace-{name}-{stamp}"));
         fs::create_dir_all(&path).expect("temp directory");
         path
     }
