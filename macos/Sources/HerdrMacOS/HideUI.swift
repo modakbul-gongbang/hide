@@ -86,6 +86,11 @@ enum HideTheme {
         /// itself are all this tall, so the row cannot grow taller than the
         /// thing inside it.
         static let tabStripHeight: CGFloat = 32
+        /// How much of the window's first row the traffic lights own. They end
+        /// 61pt from the left edge, the zoom button spanning 47 to 61, so
+        /// whichever surface reaches that corner keeps this much clear: the
+        /// measurement plus one spacing step.
+        static let trafficLightInset: CGFloat = 69
         static let paneHeaderHeight: CGFloat = 28
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
@@ -157,6 +162,7 @@ struct ShellView: View {
             HSplitView {
                 if model.leftSidebarVisible {
                     HideSidebar()
+                        .drawsToWindowTopEdge()
                         .frame(
                             minWidth: HideTheme.Layout.sidebarMinWidth,
                             idealWidth: HideTheme.Layout.sidebarIdealWidth,
@@ -165,6 +171,7 @@ struct ShellView: View {
                         .frame(maxHeight: .infinity, alignment: .topLeading)
                 }
                 HideMainView()
+                    .drawsToWindowTopEdge()
                     .frame(
                         minWidth: HideTheme.Layout.terminalMinWidth,
                         idealWidth: HideTheme.Layout.terminalIdealWidth,
@@ -174,6 +181,7 @@ struct ShellView: View {
                     )
                 if model.rightPanelVisible {
                     RightPanel()
+                        .drawsToWindowTopEdge()
                         .frame(
                             minWidth: HideTheme.Layout.rightPanelMinWidth,
                             idealWidth: HideTheme.Layout.rightPanelIdealWidth,
@@ -996,7 +1004,7 @@ private struct HideBrandHeader: View {
     @EnvironmentObject private var model: ShellModel
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: HideTheme.spacingSM) {
             Text("hide")
                 .hideFont(size: 18, weight: .bold, design: .rounded)
                 .tracking(-0.6)
@@ -1023,8 +1031,15 @@ private struct HideBrandHeader: View {
             .accessibilityLabel("Hide left sidebar")
             .accessibilityIdentifier("hide-toggle-left-sidebar")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        // The wordmark starts after the traffic lights rather than under them.
+        .padding(.leading, HideTheme.Layout.trafficLightInset)
+        .padding(.trailing, HideTheme.spacingMD)
+        .padding(.vertical, HideTheme.spacingMD)
+        // This is the window's top left corner while the sidebar is open, and
+        // with the titlebar gone it is where the window is grabbed. The
+        // sidebar toggle takes its own clicks; everything else here is the
+        // handle.
+        .background(WindowDragArea())
         .accessibilityIdentifier("hide-brand")
     }
 }
@@ -1454,6 +1469,14 @@ private struct HideTabStrip: View {
     @State private var dragTranslation: CGFloat = 0
     @State private var tabWidths: [String: CGFloat] = [:]
 
+    /// The traffic lights sit over whichever surface reaches the window's top
+    /// left corner. With the sidebar open that is the brand header and the
+    /// strip starts after it; with the sidebar collapsed the strip is that
+    /// surface and keeps its own first control clear of them.
+    private var leadingInset: CGFloat {
+        model.leftSidebarVisible ? HideTheme.spacingSM : HideTheme.Layout.trafficLightInset
+    }
+
     var body: some View {
         HStack(spacing: HideTheme.spacingSM) {
             if !model.leftSidebarVisible {
@@ -1586,7 +1609,8 @@ private struct HideTabStrip: View {
                 }
             }
 
-            Spacer(minLength: 0)
+            WindowDragArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if !model.rightPanelVisible {
                 Button {
@@ -1600,7 +1624,8 @@ private struct HideTabStrip: View {
                 .accessibilityIdentifier("hide-restore-right-panel")
             }
         }
-        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.leading, leadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
         .frame(height: HideTheme.Layout.tabStripHeight)
         .background(HideTheme.panel)
         .accessibilityIdentifier("hide-tab-strip")
