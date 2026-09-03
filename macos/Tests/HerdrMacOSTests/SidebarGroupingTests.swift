@@ -33,7 +33,7 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
     let json = """
         {"id":"\(id)","workspace_id":"w1","label":"main","path":"/tmp/hide","branch":"main",\
         "is_worktree":false,"exists":true,"temporary":false,\
-        "strip":[{"id":"herdr:w1:t1","kind":"herdr","source_id":"w1:t1","label":"Tab 1"}],\
+        "strip":[{"id":"herdr:w1:t1","kind":"herdr","source_id":"w1:t1","label":"Tab 1"}],"next_tab_label":"Tab 2",\
         "tabs":[{"id":"w1:t1","workspace_id":"w1","checkout_id":"\(id)","label":"1",\
         "empty":false,"panes":[\(panes)]}]}
         """

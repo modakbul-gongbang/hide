@@ -192,12 +192,6 @@ struct PaneShortcutSettingsTests {
         ) == .blocked)
     }
 
-    @Test func aNewHerdrTabTakesTheFirstNumberNoOpenTabHolds() {
-        // The labels are the ones the core hands the shell, so a numbered tab
-        // arrives already written as "Tab N"; "Review" holds no number at all.
-        #expect(HerdrTabLabelPresentation.nextLabel(rawLabels: ["Tab 1", "Tab 2", "Review"]) == "Tab 3")
-        #expect(HerdrTabLabelPresentation.nextLabel(rawLabels: ["Tab 2"]) == "Tab 1")
-    }
 
     /// The core's strip has a file tab between two Herdr tabs. The strip is
     /// drawn in that order, and the direct-select numbers count it, so ⌘2

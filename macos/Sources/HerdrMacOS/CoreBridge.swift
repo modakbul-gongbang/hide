@@ -438,6 +438,10 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     /// this checkout, which the shell shows as such; it never promotes the
     /// first tab in its place.
     let activeTabID: String?
+    /// The label the next Herdr tab created here should carry. The core
+    /// decides it, next to the code that formats every other tab's label, so
+    /// the shell never reads a number back out of a label it was given to draw.
+    let nextTabLabel: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -451,6 +455,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case tabs
         case strip
         case activeTabID = "active_tab_id"
+        case nextTabLabel = "next_tab_label"
     }
 
     init(
@@ -464,7 +469,8 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         temporary: Bool,
         tabs: [CoreTabSnapshot],
         strip: [CoreStripTabSnapshot] = [],
-        activeTabID: String? = nil
+        activeTabID: String? = nil,
+        nextTabLabel: String = "Tab 1"
     ) {
         self.id = id
         self.workspaceID = workspaceID
@@ -477,6 +483,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         self.tabs = tabs
         self.strip = strip
         self.activeTabID = activeTabID
+        self.nextTabLabel = nextTabLabel
     }
 }
 

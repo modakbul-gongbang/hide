@@ -438,6 +438,9 @@ fn checkout(
     temporary: bool,
 ) -> CheckoutSnapshot {
     CheckoutSnapshot {
+        // A checkout with no Herdr tabs yet: the first one the operator makes
+        // here is Tab 1. Reconcile overwrites this the moment Herdr reports any.
+        next_tab_label: crate::model::next_tab_label(std::iter::empty()),
         id: checkout_id_for_path(workspace_id, path),
         workspace_id: workspace_id.to_owned(),
         label: label.to_owned(),

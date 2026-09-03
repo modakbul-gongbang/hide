@@ -1206,6 +1206,13 @@ impl SessionReplica {
                     .as_ref()
                     .map(|worktree| worktree.repo_name.clone())
                     .unwrap_or_else(|| workspace.label.clone());
+                let next_tab_label = crate::model::next_tab_label(
+                    self.state
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.workspace_id == workspace.workspace_id)
+                        .map(|tab| tab.label.as_str()),
+                );
                 let tabs = self
                     .state
                     .tabs
@@ -1294,6 +1301,7 @@ impl SessionReplica {
                         tabs,
                         active_tab_id,
                         strip,
+                        next_tab_label,
                     }],
                 }
             })

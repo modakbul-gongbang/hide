@@ -1769,6 +1769,10 @@ impl Runtime {
         // Herdr moved kept its original place forever and a tab that redrew
         // never moved back.
         let mut placed_tabs: BTreeMap<&str, usize> = BTreeMap::new();
+        // Herdr's own labels, kept per checkout while they are still raw. The
+        // snapshot's tabs carry the formatted form, so the free number has to
+        // be taken here or read back out of display text later.
+        let mut raw_tab_labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for session_tab in &payload.tabs {
             let Some(layout) = payload
                 .layouts
@@ -1884,6 +1888,22 @@ impl Runtime {
             *placed_tabs
                 .entry(layout.workspace_id.as_str())
                 .or_default() += 1;
+            raw_tab_labels
+                .entry(checkout.id.clone())
+                .or_default()
+                .push(session_tab.label.clone());
+        }
+
+        for workspace in &mut workspaces {
+            for checkout in &mut workspace.checkouts {
+                checkout.next_tab_label = crate::model::next_tab_label(
+                    raw_tab_labels
+                        .get(&checkout.id)
+                        .map_or(&[][..], Vec::as_slice)
+                        .iter()
+                        .map(String::as_str),
+                );
+            }
         }
 
         // Herdr names one active tab per workspace, and that name is the only
@@ -7022,6 +7042,7 @@ mod tests {
         pane: Option<PaneSnapshot>,
     ) -> CheckoutSnapshot {
         CheckoutSnapshot {
+            next_tab_label: crate::model::next_tab_label(std::iter::empty()),
             id: checkout_id.to_owned(),
             workspace_id: workspace_id.to_owned(),
             label: checkout_id.to_owned(),
@@ -8320,11 +8341,34 @@ mod tests {
             if source.contains("fallbackIndex") || source.contains("displayLabel") {
                 offenders.push(path.display().to_string());
             }
+            // The same class of defect, read the other way: the shell taking a
+            // label the core formatted and parsing the number back out of it.
+            // That writes the "Tab N" convention down a second time across the
+            // FFI boundary, where a change to either half breaks the other in
+            // silence. The core decides the next label; the shell draws it.
+            if source.contains("hasPrefix(\"tab \")") || source.contains("hasPrefix(\"Tab \")") {
+                offenders.push(path.display().to_string());
+            }
         }
         assert!(
             offenders.is_empty(),
-            "a position-derived tab label path is back in {offenders:?}"
+            "a position-derived or reverse-parsed tab label path is back in {offenders:?}"
         );
+    }
+
+    #[test]
+    fn tab_label_names_the_next_tab_after_the_lowest_free_herdr_number() {
+        let next = |labels: &[&str]| crate::model::next_tab_label(labels.iter().copied());
+        assert_eq!(next(&[]), "Tab 1");
+        assert_eq!(next(&["1", "2"]), "Tab 3");
+        // The gap is taken before the end, so closing tab 1 and adding one
+        // gives Tab 1 back rather than climbing forever.
+        assert_eq!(next(&["2", "3"]), "Tab 1");
+        // Herdr's raw labels, not the formatted ones: a named tab holds no
+        // number, and neither does a tab already written the display way.
+        assert_eq!(next(&["1", "notes"]), "Tab 2");
+        assert_eq!(next(&["Tab 1"]), "Tab 1");
+        assert_eq!(next(&[" 2 ", "1"]), "Tab 3");
     }
 
     /// Reads one view struct's body out of the shell's SwiftUI source.

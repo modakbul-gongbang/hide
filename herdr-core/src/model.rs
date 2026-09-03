@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -248,6 +248,11 @@ pub struct CheckoutSnapshot {
     /// in the order the operator sees them, which the shell draws as it is
     /// given rather than joining two lists of its own.
     pub strip: Vec<StripTabSnapshot>,
+    /// The label the next Herdr tab created here should carry. Decided by the
+    /// core from Herdr's raw labels, next to the function that formats them,
+    /// so the shell never has to read a number back out of a label it was
+    /// given to draw.
+    pub next_tab_label: String,
 }
 
 /// One entry in a checkout's tab strip.
@@ -331,6 +336,30 @@ pub fn display_tab_label(raw_label: &str, tab_id: &str) -> String {
         Ok(number) => format!("Tab {number}"),
         Err(_) => trimmed.to_owned(),
     }
+}
+
+/// The label to give the next Herdr tab created in a checkout.
+///
+/// Reads Herdr's raw labels, never the ones `display_tab_label` has already
+/// formatted. The two are one convention: that function decides how a tab's
+/// number is shown, this one decides which number is free. Deriving the free
+/// number from formatted text instead would write the convention down a second
+/// time, on the far side of the FFI boundary, where a change to either half
+/// breaks the other silently.
+///
+/// A tab Herdr labels with a bare number holds that number; a tab labelled
+/// anything else holds none. The answer is the lowest number no tab holds.
+pub fn next_tab_label<'a>(raw_labels: impl IntoIterator<Item = &'a str>) -> String {
+    let used = raw_labels
+        .into_iter()
+        .filter_map(|label| label.trim().parse::<u32>().ok())
+        .collect::<BTreeSet<_>>();
+    // Bounded rather than an open range: n labels cannot cover n + 1
+    // candidates, so a gap always exists in this span and the search is total.
+    let number = (1..=used.len() as u32 + 1)
+        .find(|candidate| !used.contains(candidate))
+        .expect("a set of n numbers leaves one of n + 1 candidates free");
+    format!("Tab {number}")
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

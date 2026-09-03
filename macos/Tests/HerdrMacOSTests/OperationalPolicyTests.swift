@@ -282,6 +282,7 @@ import Testing
             "source_id": "w1:t1",
             "label": "Tab 1"
           }],
+          "next_tab_label": "Tab 2",
           "tabs": [{
             "id": "w1:t1",
             "workspace_id": "remote:device:mini:workspace:w1",
