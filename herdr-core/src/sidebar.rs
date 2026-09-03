@@ -420,6 +420,41 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
     })
 }
 
+/// The prefix every pane id on a remote target carries. A pane id without it
+/// belongs to the local Herdr server.
+const REMOTE_PANE_ID_PREFIX: &str = "remote:";
+
+/// Which slice of the read record ledger a pass is allowed to prune.
+///
+/// A pass carries the agent list of exactly one Herdr server, and the ledger
+/// holds records for all of them. A pass that pruned every key its own list
+/// did not claim would drop a remote pane's record on the next local sync and
+/// the reverse, so a stopped remote pane the operator had already read came
+/// back as `Done` and demanded a close confirmation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadRecordScope<'a> {
+    /// Prune nothing. The caller's agent list may be stale or from before the
+    /// first sync, and an empty list would otherwise wipe the whole ledger.
+    Retain,
+    /// The caller holds the local server's full agent list, so local records
+    /// no agent claims are dropped. Remote records are left alone.
+    Local,
+    /// The caller holds one remote target's full agent list. The argument is
+    /// that target's pane id prefix, and only records under it are dropped.
+    Remote(&'a str),
+}
+
+impl ReadRecordScope<'_> {
+    /// Whether this pass owns the record keyed by `pane_id` and may drop it.
+    fn owns(self, pane_id: &str) -> bool {
+        match self {
+            Self::Retain => false,
+            Self::Local => !pane_id.starts_with(REMOTE_PANE_ID_PREFIX),
+            Self::Remote(prefix) => pane_id.starts_with(prefix),
+        }
+    }
+}
+
 /// One pane's read record moving, for the diagnostic that records it.
 ///
 /// An eviction carries an empty record, so it needs its own flag: without one
@@ -453,21 +488,23 @@ pub fn apply_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &mut BTreeMap<String, PaneReadRecord>,
     focused_pane_id: Option<&str>,
-    evict_missing_panes: bool,
+    scope: ReadRecordScope<'_>,
 ) -> Vec<ReadRecordChange> {
     let mut changes = Vec::new();
-    // A pane Herdr no longer reports can never be unread again, so its record
-    // is dropped rather than growing the store forever. Only a caller holding
-    // a fresh agent list may do this: an empty list from before the first sync
-    // would otherwise wipe every record the operator restarted with.
-    if evict_missing_panes {
+    // A pane the server no longer reports can never be unread again, so its
+    // record is dropped rather than growing the store forever. Only the pass
+    // that owns the key's namespace may do this, and only when it holds a
+    // fresh agent list: an empty list from before the first sync, or a local
+    // list that has never heard of a remote pane, would otherwise wipe records
+    // the operator restarted with.
+    {
         let live = agents
             .iter()
             .map(|agent| agent.pane_id.clone())
             .collect::<std::collections::BTreeSet<_>>();
         let evicted = records
             .keys()
-            .filter(|pane_id| !live.contains(*pane_id))
+            .filter(|pane_id| scope.owns(pane_id) && !live.contains(*pane_id))
             .cloned()
             .collect::<Vec<_>>();
         for pane_id in evicted {
@@ -499,14 +536,13 @@ pub fn apply_read_state(
     changes
 }
 
-/// Sets the read axis and the derived values from a read record ledger the
-/// caller does not own.
+/// Sets the read axis and every value derived from it.
 ///
 /// The pane tree is projected from its own `project_agents` call rather than
 /// from the navigator's agent rows, and a projection that skipped this
 /// published `Done` and demanded a close confirmation for every pane the
 /// operator had already read.
-pub fn derive_read_state(
+fn derive_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &BTreeMap<String, PaneReadRecord>,
     focused_pane_id: Option<&str>,
@@ -964,13 +1000,13 @@ mod tests {
         let mut agents = projected(json!([finished("a", 1), finished("b", 2), finished("c", 3)]));
         let mut records = BTreeMap::new();
 
-        apply_read_state(&mut agents, &mut records, None, true);
+        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
         assert!(
             agents.iter().all(|agent| agent.unread && agent.group == "done"),
             "nothing is read before the operator focuses anything"
         );
 
-        apply_read_state(&mut agents, &mut records, Some("b"), true);
+        apply_read_state(&mut agents, &mut records, Some("b"), ReadRecordScope::Local);
         let groups = agents
             .iter()
             .map(|agent| (agent.pane_id.as_str(), (agent.unread, agent.group.as_str())))
@@ -987,7 +1023,7 @@ mod tests {
     fn read_record_ignores_herdr_marking_the_tab_seen() {
         let mut agents = projected(json!([finished("a", 1), finished("b", 2)]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, Some("b"), true);
+        apply_read_state(&mut agents, &mut records, Some("b"), ReadRecordScope::Local);
 
         let seen_by_herdr = json!([
             {"pane_id":"a","agent_status":"idle","state_change_seq":9,
@@ -996,7 +1032,7 @@ mod tests {
              "tokens":{"status_done":"\u{25cf}","activity":"0000000000001"}}
         ]);
         let mut agents = projected(seen_by_herdr);
-        apply_read_state(&mut agents, &mut records, None, true);
+        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
         assert!(
             agents.iter().all(|agent| agent.unread),
             "Herdr's tab-scoped seen never decides Hide's read axis"
@@ -1015,7 +1051,7 @@ mod tests {
         let mut records = BTreeMap::new();
 
         let mut watched = projected(asking.clone());
-        apply_read_state(&mut watched, &mut records, Some("a"), true);
+        apply_read_state(&mut watched, &mut records, Some("a"), ReadRecordScope::Local);
         assert!(!watched[0].unread, "a question on the focused pane is read");
         assert_eq!(watched[0].group, "seen");
 
@@ -1024,7 +1060,7 @@ mod tests {
             "tokens":{"status_question_new":"?","activity":"0000000000003"}
         }]);
         let mut later = projected(moved_on);
-        apply_read_state(&mut later, &mut records, Some("elsewhere"), true);
+        apply_read_state(&mut later, &mut records, Some("elsewhere"), ReadRecordScope::Local);
         assert!(later[0].unread, "a new question raised elsewhere is unread");
         assert_eq!(later[0].group, "needs_you");
     }
@@ -1038,14 +1074,14 @@ mod tests {
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut working, &mut records, Some("a"), true);
+        apply_read_state(&mut working, &mut records, Some("a"), ReadRecordScope::Local);
         assert!(!working[0].unread);
 
         let mut asking = projected(json!([{
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_question_new":"?","status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut asking, &mut records, None, true);
+        apply_read_state(&mut asking, &mut records, None, ReadRecordScope::Local);
         assert!(asking[0].unread, "a new demand is unread even at the same sequence");
     }
 
@@ -1056,18 +1092,18 @@ mod tests {
     fn read_records_are_evicted_only_against_a_fresh_agent_list() {
         let mut agents = projected(json!([finished("a", 1)]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, Some("a"), true);
+        apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local);
         let after_first = records.clone();
-        assert!(apply_read_state(&mut agents, &mut records, Some("a"), true).is_empty());
+        assert!(apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local).is_empty());
         assert_eq!(records, after_first, "a repeated apply changes nothing");
 
         let mut none: Vec<SidebarAgentSnapshot> = Vec::new();
-        apply_read_state(&mut none, &mut records, None, false);
+        apply_read_state(&mut none, &mut records, None, ReadRecordScope::Retain);
         assert!(
             records.contains_key("a"),
             "an empty list from before the first sync must not wipe the record"
         );
-        apply_read_state(&mut none, &mut records, None, true);
+        apply_read_state(&mut none, &mut records, None, ReadRecordScope::Local);
         assert!(records.is_empty(), "a pane Herdr stopped reporting is dropped");
     }
 

@@ -27,7 +27,7 @@ use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::model::SidebarAgentSnapshot;
-use crate::sidebar::{SessionSnapshotPayload, project_agents};
+use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
 /// Places one checkout's tab strip.
@@ -385,9 +385,16 @@ fn remote_tab_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'
         .filter(|tab_id| !tab_id.trim().is_empty())
 }
 
+/// The prefix every pane id belonging to one remote target carries. It is
+/// both the terminal-pane ownership test and the read record ledger's scope
+/// for that target, so the two cannot disagree about which panes are its own.
+fn remote_pane_id_prefix(target_id: &str) -> String {
+    format!("remote:{target_id}:pane:")
+}
+
 fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
     projected_id
-        .strip_prefix(&format!("remote:{target_id}:pane:"))
+        .strip_prefix(&remote_pane_id_prefix(target_id))
         .filter(|pane_id| !pane_id.trim().is_empty())
 }
 
@@ -2373,16 +2380,10 @@ impl Runtime {
         // A remote projection is built off the runtime, so it cannot see the
         // read ledger; without this every stopped remote pane published `Done`
         // and demanded a close confirmation. Hide never focuses a remote pane,
-        // so the remote server's own focus is the read signal, and no record is
-        // written: the ledger's eviction pass is scoped to the local agent list
-        // and would drop remote keys on the next sync.
+        // so the remote server's own focus is the read signal.
+        let mut read_changed = false;
         if let Ok(session) = fetched.as_mut() {
-            let focused = session.focused_pane_id.clone();
-            crate::sidebar::derive_read_state(
-                &mut session.agents,
-                &self.snapshot.ui_state.pane_read_records,
-                focused.as_deref(),
-            );
+            read_changed = self.apply_remote_read_state(target_id, session);
         }
         let pane_sets = fetched.as_ref().ok().map(|session| {
             remote_terminal_pane_sets(
@@ -2405,7 +2406,7 @@ impl Runtime {
             return true;
         };
 
-        let mut changed = false;
+        let mut changed = read_changed;
         match fetched {
             Ok(session) => {
                 if status.state != "connected" || status.message.is_some() {
@@ -2477,7 +2478,7 @@ impl Runtime {
         live_pane_ids: &HashSet<String>,
         active_pane_ids: &HashSet<String>,
     ) -> bool {
-        let target_prefix = format!("remote:{target_id}:pane:");
+        let target_prefix = remote_pane_id_prefix(target_id);
         let belongs_to_target = |pane_id: &str| pane_id.starts_with(&target_prefix);
         let projected_pane_ids = self
             .snapshot
@@ -2937,7 +2938,7 @@ impl Runtime {
         self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
-            changed |= self.apply_pane_read_state(&mut agents, true);
+            changed |= self.apply_pane_read_state(&mut agents, ReadRecordScope::Local);
             if self.snapshot.navigator.agents != agents {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
@@ -3095,20 +3096,60 @@ impl Runtime {
     fn apply_pane_read_state(
         &mut self,
         agents: &mut [SidebarAgentSnapshot],
-        evict_missing_panes: bool,
+        scope: ReadRecordScope<'_>,
     ) -> bool {
         let focused = self.snapshot.focused.pane_id.clone();
         let changes = crate::sidebar::apply_read_state(
             agents,
             &mut self.snapshot.ui_state.pane_read_records,
             focused.as_deref(),
-            evict_missing_panes,
+            scope,
         );
         let synced = self.sync_pane_status_from_agents(agents);
         if changes.is_empty() {
             return synced;
         }
-        for change in &changes {
+        if scope != ReadRecordScope::Retain {
+            self.prune_pane_text_scales(agents);
+        }
+        self.record_read_record_changes(&changes);
+        true
+    }
+
+    /// Applies the read axis to one remote target's agent rows.
+    ///
+    /// A pane is a pane: a remote row earns its read record the same way a
+    /// local one does, from the focus its own server reports, because Hide
+    /// never focuses a remote pane itself. Eviction is scoped to this target's
+    /// pane id prefix, so a local sync cannot drop what this pass wrote and
+    /// this pass cannot drop another target's records.
+    fn apply_remote_read_state(
+        &mut self,
+        target_id: &str,
+        session: &mut RemoteSessionSnapshot,
+    ) -> bool {
+        let focused = session.focused_pane_id.clone();
+        let prefix = remote_pane_id_prefix(target_id);
+        let changes = crate::sidebar::apply_read_state(
+            &mut session.agents,
+            &mut self.snapshot.ui_state.pane_read_records,
+            focused.as_deref(),
+            ReadRecordScope::Remote(&prefix),
+        );
+        if changes.is_empty() {
+            return false;
+        }
+        self.record_read_record_changes(&changes);
+        true
+    }
+
+    /// Logs each read record move and saves the ledger.
+    ///
+    /// The record moves on a real state change, a focus move, or a pane going
+    /// away, not on every tick, so the save this triggers is not a per-tick
+    /// disk write.
+    fn record_read_record_changes(&mut self, changes: &[crate::sidebar::ReadRecordChange]) {
+        for change in changes {
             eprintln!(
                 "{}",
                 serde_json::json!({
@@ -3122,11 +3163,7 @@ impl Runtime {
                 })
             );
         }
-        if evict_missing_panes {
-            self.prune_pane_text_scales(agents);
-        }
         self.persist_ui_state();
-        true
     }
 
     /// Copies each pane's status word and close-confirmation answer from the
@@ -3288,7 +3325,7 @@ impl Runtime {
     fn refresh_pane_read_state(&mut self) -> bool {
         let before = self.snapshot.navigator.agents.clone();
         let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
-        self.apply_pane_read_state(&mut agents, false);
+        self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
         let changed = before != agents;
         self.snapshot.navigator.agents = agents;
         changed
@@ -9799,6 +9836,145 @@ mod tests {
         );
         let stored = std::fs::read_to_string(&state_path).expect("state file");
         assert!(!stored.contains("w1:p1"), "the record left the file too");
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    /// AC2, AC3, AC4, R2. A pane is a pane: a remote pane earns a read record
+    /// from the focus its own server reports, exactly as a local pane earns one
+    /// from Hide's focus. The ledger is pruned by pane id namespace, so a local
+    /// sync cannot drop a remote record and one target cannot drop another's.
+    /// Before this, no record survived for a remote pane and a stopped remote
+    /// pane the operator had read still demanded a close confirmation.
+    #[test]
+    fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        for target_id in ["mini", "build"] {
+            runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+                target_id: target_id.to_owned(),
+                state: "not_connected".to_owned(),
+                message: None,
+                last_checked_at_unix_ms: None,
+                session: None,
+                files: RemoteFileListSnapshot::idle(),
+            });
+        }
+        let remote_session = |target_id: &str, pane_ids: &[&str], focused: Option<&str>| {
+            let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+                "agents": pane_ids
+                    .iter()
+                    .map(|pane_id| serde_json::json!({
+                        "pane_id": pane_id,
+                        "workspace_label": "Remote",
+                        "agent": "codex",
+                        "agent_status": "idle",
+                        "state_change_seq": 4,
+                        "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                    }))
+                    .collect::<Vec<_>>()
+            }))
+            .expect("remote payload");
+            let mut agents = project_agents(payload).agents;
+            for agent in &mut agents {
+                agent.pane_id = remote_pane_id_prefix(target_id) + &agent.pane_id;
+                agent.id = agent.pane_id.clone();
+            }
+            RemoteSessionSnapshot {
+                workspaces: Vec::new(),
+                agents,
+                active_tab_ids: BTreeMap::new(),
+                focused_workspace_id: None,
+                focused_checkout_id: None,
+                focused_tab_id: None,
+                focused_pane_id: focused
+                    .map(|pane_id| remote_pane_id_prefix(target_id) + pane_id),
+                pane_layouts: Vec::new(),
+            }
+        };
+        let stored_agents = |runtime: &Runtime, target_id: &str| {
+            runtime
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == target_id)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| {
+                    session
+                        .agents
+                        .iter()
+                        .map(|agent| {
+                            (
+                                agent.pane_id.clone(),
+                                (
+                                    agent.status_label.clone(),
+                                    agent.requires_close_confirmation,
+                                    agent.group.clone(),
+                                ),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .expect("remote session")
+        };
+
+        runtime.ingest_session(Ok(working_payload()));
+        assert!(runtime.snapshot.ui_state.pane_read_records.contains_key("w1:p1"));
+
+        runtime.ingest_remote_session(
+            "mini",
+            Ok(remote_session("mini", &["w9:p1", "w9:p2"], Some("w9:p1"))),
+        );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .pane_read_records
+                .contains_key("remote:mini:pane:w9:p1"),
+            "the pane the remote server focuses gets a read record like any other"
+        );
+        let mini = stored_agents(&runtime, "mini");
+        assert_eq!(
+            mini["remote:mini:pane:w9:p1"],
+            ("Idle".to_owned(), false, "seen".to_owned()),
+            "a stopped remote pane the operator has read closes without a prompt"
+        );
+        assert_eq!(
+            mini["remote:mini:pane:w9:p2"],
+            ("Done".to_owned(), true, "done".to_owned()),
+            "the pane beside it is still unread"
+        );
+
+        runtime.ingest_session(Ok(working_payload()));
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .pane_read_records
+                .contains_key("remote:mini:pane:w9:p1"),
+            "a local sync never prunes a remote record"
+        );
+
+        runtime.ingest_remote_session(
+            "build",
+            Ok(remote_session("build", &["w2:p1"], Some("w2:p1"))),
+        );
+        runtime.ingest_remote_session("mini", Ok(remote_session("mini", &["w9:p2"], None)));
+        let records = runtime
+            .snapshot
+            .ui_state
+            .pane_read_records
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            records,
+            vec![
+                "remote:build:pane:w2:p1".to_owned(),
+                "w1:p1".to_owned(),
+            ],
+            "a target prunes only its own namespace"
+        );
         let _ = std::fs::remove_file(&state_path);
     }
 
