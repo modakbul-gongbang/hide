@@ -39,9 +39,9 @@ struct SidebarCheckoutPresentation: Equatable {
             activity = .missing
         } else if checkoutAgents.contains(where: { $0.demand == "error" }) {
             activity = .error
-        } else if checkoutAgents.contains(where: { $0.group == "needs_you" }) {
+        } else if checkoutAgents.contains(where: { AgentGroup(agent: $0) == .needsYou }) {
             activity = .needsAttention
-        } else if checkoutAgents.contains(where: { $0.group == "working" }) {
+        } else if checkoutAgents.contains(where: { AgentGroup(agent: $0) == .working }) {
             activity = .working
         } else if paneCount > 0 {
             activity = .idle
@@ -101,9 +101,13 @@ extension SidebarAgent {
 }
 
 /// Direct-select numbering for the sidebar. The number is the agent's
-/// position in the list the visible view shows: the Agents view numbers the
-/// runtime's whole agent projection, the Projects view numbers the agents in
-/// the selected checkout, so ⌃1 always reaches the first row the user can see.
+/// position in the list the visible view shows, so ⌃1 always reaches the first
+/// row the user can see.
+///
+/// The Agents view numbers the runtime's whole agent projection. The Projects
+/// view numbers the Needs You and Done rows it raises to the top first, then
+/// the agents left in the selected checkout, which is exactly the order those
+/// rows appear in.
 enum AgentShortcutNumbering {
     static func candidates(
         for content: SidebarContent,
@@ -114,8 +118,12 @@ enum AgentShortcutNumbering {
         case .agents:
             return agents
         case .projects:
-            guard let focusedCheckout else { return [] }
-            return SidebarGrouping.agents(agents, in: focusedCheckout)
+            let raised = SidebarGrouping.raised(agents).flatMap(\.agents)
+            guard let focusedCheckout else { return raised }
+            let raisedIDs = Set(raised.map(\.id))
+            return raised + SidebarGrouping
+                .agents(agents, in: focusedCheckout)
+                .filter { !raisedIDs.contains($0.id) }
         }
     }
 

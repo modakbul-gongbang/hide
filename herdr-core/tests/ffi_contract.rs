@@ -304,13 +304,13 @@ fn snapshot_exposes_the_production_schema_and_status() {
     herdr_core_destroy(core);
 }
 
-fn pet_agent(pane_id: &str, token: &str, symbol: &str, rank: &str, activity: &str) -> Value {
+fn pet_agent(pane_id: &str, token: &str, symbol: &str, activity: &str) -> Value {
     json!({
         "pane_id": pane_id,
         "workspace_label": "Fixture",
         "agent": "codex",
         "agent_status": "unknown",
-        "tokens": {token: symbol, "sort_rank": rank, "activity": activity}
+        "tokens": {token: symbol, "activity": activity}
     })
 }
 
@@ -321,9 +321,9 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
-                pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
-                pet_agent("busy-b", "status_working", "\u{25cf}", "05", "0000000000003"),
-                pet_agent("quiet", "status_idle", "\u{25cb}", "10", "0000000000001")
+                pet_agent("busy-a", "status_working", "\u{25cf}", "0000000000002"),
+                pet_agent("busy-b", "status_working", "\u{25cf}", "0000000000003"),
+                pet_agent("quiet", "status_idle", "\u{25cb}", "0000000000001")
             ],
             "layouts": [single_pane_layout("w1", "busy-a")]
         }}),
@@ -345,15 +345,13 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
-                pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
+                pet_agent("busy-a", "status_working", "\u{25cf}", "0000000000002"),
                 json!({"pane_id": "asked", "workspace_label": "Fixture", "agent": "claude",
                        "agent_status": "done",
-                       "tokens": {"status_question_new": "?", "sort_rank": "01",
-                                  "activity": "0000000000004"}}),
+                       "tokens": {"status_question_new": "?", "activity": "0000000000004"}}),
                 json!({"pane_id": "acknowledged", "workspace_label": "Fixture", "agent": "claude",
                        "agent_status": "idle",
-                       "tokens": {"status_question": "?", "sort_rank": "10",
-                                  "activity": "0000000000005"}})
+                       "tokens": {"status_question": "?", "activity": "0000000000005"}})
             ],
             "layouts": [single_pane_layout("w1", "busy-a")]
         }}),
@@ -366,8 +364,8 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     );
     assert_eq!(
         asked["pet"]["attention_pane_ids"],
-        json!(["asked", "acknowledged"]),
-        "both questions are jumpable until their panes are focused"
+        json!(["acknowledged", "asked"]),
+        "both questions are jumpable until their panes are focused, most recent first"
     );
 
     herdr_core_destroy(core);
@@ -462,11 +460,10 @@ fn a_broken_agent_record_excludes_only_itself_and_reports_the_exclusion() {
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
-                pet_agent("intact", "status_working", "\u{25cf}", "05", "0000000000002"),
+                pet_agent("intact", "status_working", "\u{25cf}", "0000000000002"),
                 json!({"pane_id": "broken", "workspace_label": "Fixture", "agent": "codex",
                        "agent_status": "working",
-                       "tokens": {"status_working": "\u{25cf}", "sort_rank": "oops",
-                                  "activity": "0000000000001"}})
+                       "tokens": {"status_working": "\u{25cf}", "activity": "oops"}})
             ],
             "layouts": [single_pane_layout("w1", "intact")]
         }}),
@@ -665,9 +662,9 @@ fn close_pane_requires_confirmation_only_while_working_or_unread() {
             "kind": "session_snapshot",
             "payload": {
                 "agents": [
-                    {"pane_id":"working","workspace_label":"Fixture","agent":"codex","agent_status":"working","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000003","summary":"Running task","elapsed":"1m"}},
-                    {"pane_id":"attention","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_question_new":"?","sort_rank":"01","activity":"0000000000002","summary":"Needs answer","elapsed":"2m"}},
-                    {"pane_id":"idle","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"Idle","elapsed":"3m"}}
+                    {"pane_id":"working","workspace_label":"Fixture","agent":"codex","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000003","summary":"Running task","elapsed":"1m"}},
+                    {"pane_id":"attention","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_question_new":"?","activity":"0000000000002","summary":"Needs answer","elapsed":"2m"}},
+                    {"pane_id":"idle","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000001","summary":"Idle","elapsed":"3m"}}
                 ],
                 // Focusing the idle pane is what reads it. Without that it
                 // would still be an unread result, and closing an unread
@@ -1251,9 +1248,9 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
             "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {"agents": [
-                {"pane_id":"seen-old","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000010","summary":"Seen older","elapsed":"2h"}},
-                {"pane_id":"blocked","workspace_label":"UI","agent":"claude","agent_status":"done","tokens":{"status_question_new":"?","sort_rank":"01","activity":"0000000000001","summary":"Need a decision","elapsed":"12s"}},
-                {"pane_id":"seen-new","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000020","summary":"Seen newer","elapsed":"4m"}}
+                {"pane_id":"seen-old","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000010","summary":"Seen older","elapsed":"2h"}},
+                {"pane_id":"blocked","workspace_label":"UI","agent":"claude","agent_status":"done","tokens":{"status_question_new":"?","activity":"0000000000001","summary":"Need a decision","elapsed":"12s"}},
+                {"pane_id":"seen-new","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000020","summary":"Seen newer","elapsed":"4m"}}
             ]}
         }),
     );
@@ -1395,11 +1392,11 @@ fn only_a_detected_agent_with_a_forkable_session_offers_a_fork() {
             "kind": "session_snapshot",
             "payload": {
                 "agents": [
-                    {"pane_id":"claude-with-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000001"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"codex-with-session","workspace_label":"Fixture","agent":"codex","agent_status":"idle","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000002"},"spawned_from_pane_id":"claude-with-session","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000002","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"claude-no-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000003","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"session-by-path","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"path","value":"/tmp/session.jsonl"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000004","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"unknown-agent","workspace_label":"Fixture","agent":"gemini","agent_status":"idle","agent_session":{"source":"herdr:gemini","agent":"gemini","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000005"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000005","summary":"Idle","elapsed":"1m"}}
+                    {"pane_id":"claude-with-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000001"},"tokens":{"status_idle":"○","activity":"0000000000001","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"codex-with-session","workspace_label":"Fixture","agent":"codex","agent_status":"idle","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000002"},"spawned_from_pane_id":"claude-with-session","tokens":{"status_idle":"○","activity":"0000000000002","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"claude-no-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000003","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"session-by-path","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"path","value":"/tmp/session.jsonl"},"tokens":{"status_idle":"○","activity":"0000000000004","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"unknown-agent","workspace_label":"Fixture","agent":"gemini","agent_status":"idle","agent_session":{"source":"herdr:gemini","agent":"gemini","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000005"},"tokens":{"status_idle":"○","activity":"0000000000005","summary":"Idle","elapsed":"1m"}}
                 ]
             }
         }),

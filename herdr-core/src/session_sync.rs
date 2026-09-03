@@ -2770,7 +2770,6 @@ mod tests {
         assert_eq!(projected.agents[0].pane_id, "remote:mini:pane:w1:p1");
         assert_eq!(projected.agents[0].demand, "none");
         assert_eq!(projected.agents[0].activity, "working");
-        assert_eq!(projected.agents[0].sort_rank, "99");
         assert_eq!(projected.pane_layouts[0].frames[0].x, 0.0);
         assert_eq!(projected.pane_layouts[0].frames[0].width, 1.0);
         assert!(projected.workspaces[0].checkouts[0].exists);

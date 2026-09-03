@@ -140,7 +140,6 @@ struct PetDashboardProjectionTests {
             statusLabel: group == "done" ? "Done" : "Idle",
             summary: "Agent \(paneID)",
             elapsed: "2m",
-            sortRank: paneID,
             lastActivity: "0000000000001",
             ambient: ambient
         )

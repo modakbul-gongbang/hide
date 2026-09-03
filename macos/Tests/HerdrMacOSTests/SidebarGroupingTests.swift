@@ -21,7 +21,6 @@ private func agent(id: String, paneID: String, group: String) -> SidebarAgent {
         symbol: "\u{25cf}",
         summary: "Summary for \(id)",
         elapsed: "2m",
-        sortRank: "01",
         lastActivity: "0000000000001",
         ambient: nil
     )
@@ -55,7 +54,7 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
     // Membership is the core's group and nothing else. A working, read, or
     // merely finished agent is visible in its space and is asking the user for
     // nothing, so it never reaches the attention list.
-    #expect(SidebarGrouping.needingAttention(agents).map(\.id) == ["c", "e"])
+    #expect(SidebarGrouping.agents(agents, in: .needsYou).map(\.id) == ["c", "e"])
 }
 
 @Test func nothingBlockedLeavesTheAttentionListEmpty() {
@@ -64,7 +63,36 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
         agent(id: "b", paneID: "w1:p2", group: "seen"),
     ]
 
-    #expect(SidebarGrouping.needingAttention(agents).isEmpty)
+    #expect(SidebarGrouping.agents(agents, in: .needsYou).isEmpty)
+}
+
+/// The Agents view draws one section per non-empty group, in group order, and
+/// keeps the order the core put the rows in inside each one.
+@Test func sectionsFollowGroupOrderAndSkipEmptyGroups() {
+    let agents = [
+        agent(id: "c", paneID: "w1:p3", group: "needs_you"),
+        agent(id: "e", paneID: "w1:p5", group: "needs_you"),
+        agent(id: "a", paneID: "w1:p1", group: "working"),
+        agent(id: "b", paneID: "w1:p2", group: "seen"),
+    ]
+
+    #expect(
+        SidebarGrouping.sections(agents).map(\.group) == [.needsYou, .working, .seen]
+    )
+    #expect(SidebarGrouping.sections(agents)[0].agents.map(\.id) == ["c", "e"])
+}
+
+/// The Projects view raises Needs You and Done above the tree, and the tree
+/// below must not repeat those rows.
+@Test func raisedSectionsAreNeedsYouThenDone() {
+    let agents = [
+        agent(id: "d", paneID: "w1:p4", group: "done"),
+        agent(id: "c", paneID: "w1:p3", group: "needs_you"),
+        agent(id: "a", paneID: "w1:p1", group: "working"),
+    ]
+
+    #expect(SidebarGrouping.raised(agents).map(\.group) == [.needsYou, .done])
+    #expect(SidebarGrouping.raised(agents).flatMap(\.agents).map(\.id) == ["c", "d"])
 }
 
 @Test func agentsAreGroupedByThePanesTheirCheckoutOwns() throws {

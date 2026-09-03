@@ -56,15 +56,6 @@ STATE_SYMBOLS = {
     "status_idle": "○",
 }
 
-SORT_RANKS = {
-    "status_error_new": "00",
-    "status_question_new": "01",
-    "status_approval_new": "02",
-    "status_done_new": "04",
-    "status_working": "05",
-}
-
-
 def build_agents(scenario: dict) -> list[dict]:
     agents = []
     for index, entry in enumerate(scenario.get("agents", [])):
@@ -72,7 +63,6 @@ def build_agents(scenario: dict) -> list[dict]:
         token = STATE_TOKENS.get(entry.get("state", "idle"), entry.get("state", "status_idle"))
         tokens = {
             token: STATE_SYMBOLS.get(token, "○"),
-            "sort_rank": entry.get("sort_rank", SORT_RANKS.get(token, "10")),
             # 13 digits; ordering only matters within one snapshot.
             "activity": entry.get("activity", f"{1788000000000 + index:013d}"),
             "summary": entry.get("summary", "Scenario agent"),

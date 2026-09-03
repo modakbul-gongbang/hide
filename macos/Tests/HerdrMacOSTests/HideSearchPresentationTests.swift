@@ -15,7 +15,6 @@ private func searchAgent(paneID: String) -> SidebarAgent {
         symbol: "\u{25cf}",
         summary: "Agent in \(paneID)",
         elapsed: "1m",
-        sortRank: "01",
         lastActivity: "0000000000001",
         ambient: nil
     )
@@ -52,7 +51,6 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         symbol: "\u{25cf}",
         summary: "Build the release",
         elapsed: "2m",
-        sortRank: "01",
         lastActivity: "0000000000001",
         ambient: nil
     )

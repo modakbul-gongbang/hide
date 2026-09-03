@@ -214,7 +214,6 @@ pub struct SidebarAgentSnapshot {
     pub requires_close_confirmation: bool,
     pub summary: String,
     pub elapsed: String,
-    pub sort_rank: String,
     /// The ordering key: the label plugin's activity timestamp when it has one,
     /// otherwise Herdr's state change sequence zero-padded to the same width.
     pub last_activity: String,

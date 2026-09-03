@@ -7183,8 +7183,7 @@ mod tests {
                 "workspace_label": "Fixture",
                 "agent": "codex",
                 "agent_status": "working",
-                "tokens": {"status_working": "\u{25cf}", "sort_rank": "05",
-                           "activity": "0000000000001"}
+                "tokens": {"status_working": "\u{25cf}", "activity": "0000000000001"}
             }],
             "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
             "layouts": [{
@@ -9992,8 +9991,7 @@ mod tests {
                 "workspace_label": "Fixture",
                 "agent": "codex",
                 "agent_status": "idle",
-                "tokens": {"status_idle": "\u{25cb}", "sort_rank": "05",
-                           "activity": "0000000000001"}
+                "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000001"}
             })
         };
         let checkout_path = "/private/tmp/hide-read-record-pane-tree";

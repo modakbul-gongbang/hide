@@ -2612,7 +2612,6 @@ mod tests {
                     "cwd": "/tmp/project",
                     "tokens": {
                         "status_working": "●",
-                        "sort_rank": "04",
                         "activity": "1787963036671",
                         "summary": "doing things",
                         "elapsed": "6h"
@@ -2621,7 +2620,7 @@ mod tests {
                 {
                     "pane_id": "w9:p2",
                     "workspace_id": "w9",
-                    "tokens": {"status_idle": "○", "sort_rank": "10", "activity": "1787963036672"}
+                    "tokens": {"status_idle": "○", "activity": "1787963036672"}
                 }
             ]
         });

@@ -626,12 +626,12 @@ private struct HideSidebar: View {
 
     @ViewBuilder
     private var projectsContent: some View {
-        // What is blocked comes before where things live, because it is the
-        // only part the user has to act on.
-        let waiting = model.agentsNeedingAttention
-        if !waiting.isEmpty {
-            HideSectionLabel(title: "Needs You", count: waiting.count)
-            ForEach(waiting) { agent in
+        // What is waiting, then what finished while the operator was away,
+        // come before where things live: they are the only parts that ask for
+        // an action. An empty group is not drawn at all.
+        ForEach(model.raisedAgentSections) { section in
+            HideSectionLabel(title: section.group.title, count: section.agents.count)
+            ForEach(section.agents) { agent in
                 AgentNavigatorRow(agent: agent, showsWorkspace: true)
             }
         }
@@ -652,18 +652,21 @@ private struct HideSidebar: View {
 
     @ViewBuilder
     private var agentsContent: some View {
-        HideSectionLabel(title: "Agents", count: model.agents.count)
         if model.agents.isEmpty {
+            HideSectionLabel(title: "Agents", count: 0)
             EmptySidebarRow(
                 systemImage: "person.2",
                 title: "No agents running",
                 detail: "Start an agent from a project to see it here."
             )
         } else {
-            // The runtime already applies agent-context-labels sort_rank
-            // ascending and activity descending. Preserve that projection.
-            ForEach(model.agents) { agent in
-                AgentNavigatorRow(agent: agent, showsWorkspace: true)
+            // The four group boundaries, in the order the core sorted them.
+            // Membership and order are the core's answer; this only draws it.
+            ForEach(model.agentSections) { section in
+                HideSectionLabel(title: section.group.title, count: section.agents.count)
+                ForEach(section.agents) { agent in
+                    AgentNavigatorRow(agent: agent, showsWorkspace: true)
+                }
             }
         }
     }
@@ -1134,8 +1137,10 @@ private struct WorkspaceNavigatorRow: View {
         SidebarWorkspacePresentation(workspace: workspace, agents: model.agents)
     }
 
-    private var attentionAgentIDs: Set<String> {
-        Set(model.agentsNeedingAttention.map(\.id))
+    /// The rows the Projects view already drew above the tree. Drawing one
+    /// again under its checkout would say the same thing twice.
+    private var raisedAgentIDs: Set<String> {
+        Set(model.raisedAgents.map(\.id))
     }
 
     var body: some View {
@@ -1209,7 +1214,7 @@ private struct WorkspaceNavigatorRow: View {
         let isFocused = model.focusedCheckout?.id == checkout.id
         let checkoutAgents = model.agents(in: checkout)
         let visibleAgents = isFocused
-            ? checkoutAgents.filter { !attentionAgentIDs.contains($0.id) }
+            ? checkoutAgents.filter { !raisedAgentIDs.contains($0.id) }
             : []
         let checkoutPresentation = SidebarCheckoutPresentation(
             workspace: workspace,

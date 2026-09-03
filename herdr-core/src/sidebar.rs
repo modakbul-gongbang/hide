@@ -199,6 +199,18 @@ impl AgentGroup {
             Self::Seen => "seen",
         }
     }
+
+    /// Where the group sits in the sidebar, read top to bottom: what is
+    /// waiting on the operator, what finished while they were away, what is
+    /// still running, then everything already dealt with.
+    fn rank(self) -> u8 {
+        match self {
+            Self::NeedsYou => 0,
+            Self::Done => 1,
+            Self::Working => 2,
+            Self::Seen => 3,
+        }
+    }
 }
 
 /// Which group a row belongs to, in the order the definitions are read.
@@ -286,13 +298,13 @@ pub struct AgentProjection {
 /// [`apply_read_state`]. A caller with no record still gets a coherent
 /// projection: unread is the honest answer when nothing says otherwise.
 pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
-    let mut projected = Vec::with_capacity(payload.agents.len());
+    let mut agents = Vec::with_capacity(payload.agents.len());
     let mut excluded = Vec::new();
     for (source_index, agent) in payload.agents.into_iter().enumerate() {
         let pane_id =
             non_empty(agent.pane_id.as_deref().or(agent.id.as_deref())).map(str::to_owned);
-        match project_agent(agent, source_index) {
-            Ok(ranked) => projected.push(ranked),
+        match project_agent(agent) {
+            Ok(projected) => agents.push(projected),
             Err(reason) => excluded.push(AgentExclusion {
                 source_index,
                 pane_id,
@@ -301,28 +313,42 @@ pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
         }
     }
 
-    projected.sort_by(|left, right| {
-        left.agent
-            .sort_rank
-            .cmp(&right.agent.sort_rank)
-            .then_with(|| right.agent.last_activity.cmp(&left.agent.last_activity))
-            .then_with(|| left.source_index.cmp(&right.source_index))
-    });
-    let mut agents = projected
-        .into_iter()
-        .map(|item| item.agent)
-        .collect::<Vec<_>>();
+    // Rows stay in the order Herdr sent them. Ordering is a function of the
+    // group, and the group is a function of the read axis, which is decided
+    // in `apply_read_state` where the pane read record lives.
     for agent in &mut agents {
         derive_from_axes(agent);
     }
     AgentProjection { agents, excluded }
 }
 
-/// Fills in every value the shell draws from the three axes.
+/// The one ordering every agent surface reads: the two sidebar views, the pet
+/// dashboard, and the agent switcher's candidate list.
 ///
-/// Called again whenever the read axis moves, so the derived values can never
-/// describe a different read state than the row they sit on.
-fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
+/// Group order first, then most recent activity descending, then the order
+/// Herdr sent the rows in. The sort is stable, so that third key costs
+/// nothing, and re-running it on an already ordered list is the identity
+/// (engineering rule 11).
+///
+/// It runs after the read axis, never inside `project_agents`: a row's group
+/// depends on whether the operator has read it, and a projection that has not
+/// met the read record ledger believes every stopped row is Done. The label
+/// plugin's `sort_rank` token is not read at all, so the order Hide shows is
+/// Hide's own.
+fn sort_agents(agents: &mut [SidebarAgentSnapshot]) {
+    agents.sort_by(|left, right| {
+        group_of(left)
+            .rank()
+            .cmp(&group_of(right).rank())
+            .then_with(|| right.last_activity.cmp(&left.last_activity))
+    });
+}
+
+/// Reads the three axes back off a row.
+///
+/// `derive_from_axes` is the only writer of those fields and writes them from
+/// these same enums, so the round trip is total.
+fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivity, bool) {
     let demand = match agent.demand.as_str() {
         "error" => AgentDemand::Error,
         "question" => AgentDemand::Question,
@@ -334,26 +360,34 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         "stopped" => AgentActivity::Stopped,
         _ => AgentActivity::Unknown,
     };
-    let group = agent_group(demand, activity, agent.unread, agent.blocked);
+    (demand, activity, agent.unread)
+}
+
+fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
+    let (demand, activity, unread) = axes_of(agent);
+    agent_group(demand, activity, unread, agent.blocked)
+}
+
+/// Fills in every value the shell draws from the three axes.
+///
+/// Called again whenever the read axis moves, so the derived values can never
+/// describe a different read state than the row they sit on.
+fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
+    let (demand, activity, unread) = axes_of(agent);
+    let group = agent_group(demand, activity, unread, agent.blocked);
     agent.group = group.name().to_owned();
-    agent.symbol = agent_symbol(demand, activity, agent.unread).to_owned();
+    agent.symbol = agent_symbol(demand, activity, unread).to_owned();
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
-    agent.status_label = agent_status_label(demand, activity, agent.unread).to_owned();
+    agent.status_label = agent_status_label(demand, activity, unread).to_owned();
     agent.requires_close_confirmation = agent_requires_close_confirmation(activity, group);
 }
 
-struct RankedAgent {
-    source_index: usize,
-    agent: SidebarAgentSnapshot,
-}
-
-fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<RankedAgent, String> {
+fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
     let pane_id = non_empty(agent.pane_id.as_deref().or(agent.id.as_deref()))
         .map(str::to_owned)
         .ok_or_else(|| "session agent is missing a pane id".to_owned())?;
-    let sort_rank = projected_sort_rank(&agent.tokens, &pane_id)?;
     let last_activity = projected_last_activity(&agent, &pane_id)?;
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
@@ -380,43 +414,39 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
 
-    Ok(RankedAgent {
-        source_index,
-        agent: SidebarAgentSnapshot {
-            id: agent.id.unwrap_or_else(|| pane_id.clone()),
-            pane_id,
-            workspace_label,
-            checkout_label: None,
-            agent_kind: non_empty(agent.agent.as_deref())
-                .unwrap_or("unknown")
-                .to_owned(),
-            demand: demand.name().to_owned(),
-            activity: activity.name().to_owned(),
-            // Every agent is projected unread; the read axis and everything
-            // derived from it are set once, by `apply_read_state`, where the
-            // pane read record lives.
-            unread: true,
-            blocked,
-            group: String::new(),
-            symbol: String::new(),
-            emphasized: false,
-            status_label: String::new(),
-            requires_close_confirmation: false,
-            summary,
-            elapsed,
-            sort_rank,
-            last_activity,
-            state_change_seq: agent.state_change_seq,
-            ambient,
-            session_id: agent
-                .agent_session
-                .as_ref()
-                .filter(|session| session.kind == "id")
-                .map(|session| session.value.clone())
-                .filter(|value| !value.trim().is_empty()),
-            spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
-                .map(str::to_owned),
-        },
+    Ok(SidebarAgentSnapshot {
+        id: agent.id.unwrap_or_else(|| pane_id.clone()),
+        pane_id,
+        workspace_label,
+        checkout_label: None,
+        agent_kind: non_empty(agent.agent.as_deref())
+            .unwrap_or("unknown")
+            .to_owned(),
+        demand: demand.name().to_owned(),
+        activity: activity.name().to_owned(),
+        // Every agent is projected unread; the read axis and everything
+        // derived from it are set once, by `apply_read_state`, where the
+        // pane read record lives.
+        unread: true,
+        blocked,
+        group: String::new(),
+        symbol: String::new(),
+        emphasized: false,
+        status_label: String::new(),
+        requires_close_confirmation: false,
+        summary,
+        elapsed,
+        last_activity,
+        state_change_seq: agent.state_change_seq,
+        ambient,
+        session_id: agent
+            .agent_session
+            .as_ref()
+            .filter(|session| session.kind == "id")
+            .map(|session| session.value.clone())
+            .filter(|value| !value.trim().is_empty()),
+        spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
+            .map(str::to_owned),
     })
 }
 
@@ -556,6 +586,7 @@ fn derive_read_state(
         agent.unread = !read;
         derive_from_axes(agent);
     }
+    sort_agents(agents);
 }
 
 /// Reads a pane's optional `ambient` object.
@@ -617,24 +648,6 @@ fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
         AgentActivity::Stopped
     } else {
         AgentActivity::Unknown
-    }
-}
-
-/// Optional presentation tokens come from plugins, not from the Socket API
-/// contract. An agent without one remains visible after explicitly ranked
-/// agents, while a present malformed token is still rejected and reported.
-fn projected_sort_rank(tokens: &BTreeMap<String, Value>, pane_id: &str) -> Result<String, String> {
-    match tokens.get("sort_rank") {
-        None => Ok("99".to_owned()),
-        Some(Value::String(value)) => {
-            let value = value.trim();
-            if value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()) {
-                Ok(value.to_owned())
-            } else {
-                Err(format!("agent {pane_id} has an invalid sort_rank token"))
-            }
-        }
-        Some(_) => Err(format!("agent {pane_id} has an invalid sort_rank token")),
     }
 }
 
@@ -788,8 +801,9 @@ mod tests {
             axes["done"], axes["idle"],
             "done and idle differ only by Herdr's tab-scoped seen, which Hide does not read"
         );
-        assert!(
-            projection.agents.iter().all(|agent| agent.sort_rank == "99"),
+        assert_eq!(
+            projection.agents.len(),
+            5,
             "an agent with no plugin token still projects"
         );
     }
@@ -901,28 +915,79 @@ mod tests {
         }
     }
 
+    /// AC5, R3, R4. Group membership follows the definitions, the order is
+    /// group first and most recent activity second, and the label plugin's
+    /// `sort_rank` token has no say: every row here carries one that would
+    /// invert the result if Hide still read it.
     #[test]
-    fn sort_rank_is_primary_and_activity_descending_breaks_ties() {
-        let projected = project_agents(payload(json!([
-            {"pane_id":"older","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001"}},
-            {"pane_id":"later-rank","tokens":{"status_working":"●","sort_rank":"04","activity":"9999999999999"}},
-            {"pane_id":"newer","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000002"}},
-            {"pane_id":"first-rank","tokens":{"status_error_new":"×","sort_rank":"00","activity":"0000000000000"}}
-        ]))).agents;
+    fn group_order_follows_the_four_groups_then_recent_activity() {
+        let mut agents = projected(json!([
+            {"pane_id":"read-idle","agent_status":"idle","state_change_seq":1,
+             "tokens":{"status_idle":"○","sort_rank":"00","activity":"0000000000009"}},
+            {"pane_id":"done-older","agent_status":"done","state_change_seq":2,
+             "tokens":{"status_done_new":"●","sort_rank":"00","activity":"0000000000001"}},
+            {"pane_id":"working","agent_status":"working","state_change_seq":3,
+             "tokens":{"status_working":"●","sort_rank":"99","activity":"0000000000008"}},
+            {"pane_id":"done-newer","agent_status":"done","state_change_seq":4,
+             "tokens":{"status_done_new":"●","sort_rank":"00","activity":"0000000000002"}},
+            {"pane_id":"asking","agent_status":"idle","state_change_seq":5,
+             "tokens":{"status_question_new":"?","sort_rank":"99","activity":"0000000000000"}},
+            {"pane_id":"blocked","agent_status":"blocked","state_change_seq":6,
+             "tokens":{"activity":"0000000000003"}}
+        ]));
+        let mut records = BTreeMap::new();
+        // The operator has looked at `read-idle`, so it drops out of Done.
+        records.insert(
+            "read-idle".to_owned(),
+            PaneReadRecord {
+                state_change_seq: Some(1),
+                demand: "none".to_owned(),
+                activity: "stopped".to_owned(),
+            },
+        );
+        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
+
         assert_eq!(
-            projected
+            agents
+                .iter()
+                .map(|agent| (agent.pane_id.as_str(), agent.group.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("blocked", "needs_you"),
+                ("asking", "needs_you"),
+                ("done-newer", "done"),
+                ("done-older", "done"),
+                ("working", "working"),
+                ("read-idle", "seen"),
+            ]
+        );
+    }
+
+    /// AC5. Two rows in the same group with the same activity keep the order
+    /// Herdr sent them in, because the sort is stable and reads no third key.
+    #[test]
+    fn group_order_keeps_snapshot_order_for_equal_activity() {
+        let same = |pane_id: &str| {
+            json!({"pane_id": pane_id, "agent_status": "done", "state_change_seq": 1,
+                   "tokens": {"status_done_new": "●", "activity": "0000000000004"}})
+        };
+        let mut agents = projected(json!([same("first"), same("second"), same("third")]));
+        let mut records = BTreeMap::new();
+        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
+        assert_eq!(
+            agents
                 .iter()
                 .map(|agent| agent.pane_id.as_str())
                 .collect::<Vec<_>>(),
-            ["first-rank", "later-rank", "newer", "older"]
+            ["first", "second", "third"]
         );
     }
 
     #[test]
     fn summary_is_compact_and_missing_summary_has_an_actionable_label() {
         let projected = project_agents(payload(json!([
-            {"pane_id":"long","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"  one   two three four five six seven eight nine ten  ","elapsed":"4m"}},
-            {"pane_id":"missing","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000000"}}
+            {"pane_id":"long","tokens":{"status_idle":"○","activity":"0000000000001","summary":"  one   two three four five six seven eight nine ten  ","elapsed":"4m"}},
+            {"pane_id":"missing","tokens":{"status_idle":"○","activity":"0000000000000"}}
         ]))).agents;
         assert!(projected[0].summary.chars().count() <= 30);
         assert_eq!(projected[0].elapsed, "4m");
@@ -933,10 +998,10 @@ mod tests {
     #[test]
     fn one_broken_agent_excludes_only_itself_and_names_why() {
         let projection = project_agents(payload(json!([
-            {"pane_id":"good","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000002"}},
-            {"pane_id":"bad-rank","tokens":{"status_idle":"○","sort_rank":"oops","activity":"0000000000001"}},
-            {"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000000"}},
-            {"pane_id":"also-good","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000003"}}
+            {"pane_id":"good","tokens":{"status_working":"●","activity":"0000000000002"}},
+            {"pane_id":"bad-activity","tokens":{"status_idle":"○","activity":"oops"}},
+            {"tokens":{"status_idle":"○","activity":"0000000000000"}},
+            {"pane_id":"also-good","tokens":{"status_idle":"○","activity":"0000000000003"}}
         ])));
 
         assert_eq!(
@@ -948,8 +1013,8 @@ mod tests {
             ["good", "also-good"]
         );
         assert_eq!(projection.excluded.len(), 2);
-        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("bad-rank"));
-        assert!(projection.excluded[0].reason.contains("sort_rank"));
+        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("bad-activity"));
+        assert!(projection.excluded[0].reason.contains("invalid activity"));
         assert_eq!(projection.excluded[1].pane_id, None);
         assert!(projection.excluded[1].reason.contains("pane id"));
     }
@@ -961,12 +1026,12 @@ mod tests {
                 "pane_id":"remote",
                 "state_change_seq":218,
                 "agent_status":"done",
-                "tokens":{"status_done":"●","sort_rank":"05","summary":"finished"}
+                "tokens":{"status_done":"●","summary":"finished"}
             },
             {
                 "pane_id":"malformed",
                 "state_change_seq":219,
-                "tokens":{"status_idle":"○","sort_rank":"10","activity":"not-a-time"}
+                "tokens":{"status_idle":"○","activity":"not-a-time"}
             }
         ])));
 
@@ -1121,8 +1186,8 @@ mod tests {
     #[test]
     fn ambient_counts_parse_and_unknown_keys_never_survive() {
         let projection = project_agents(payload(json!([
-            {"pane_id":"legacy","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001"}},
-            {"pane_id":"counted","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000002"},
+            {"pane_id":"legacy","tokens":{"status_idle":"○","activity":"0000000000001"}},
+            {"pane_id":"counted","tokens":{"status_working":"●","activity":"0000000000002"},
              "ambient":{"subagents_active":2,"background_running":1,"background_failed":0,
                         "task_name":"SENTINEL-do-not-leak","command":"SENTINEL-rm -rf /"}}
         ])));
@@ -1155,9 +1220,9 @@ mod tests {
     #[test]
     fn a_malformed_ambient_record_excludes_only_that_agent() {
         let projection = project_agents(payload(json!([
-            {"pane_id":"broken","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000002"},
+            {"pane_id":"broken","tokens":{"status_working":"●","activity":"0000000000002"},
              "ambient":{"subagents_active":"not-a-number"}},
-            {"pane_id":"intact","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001"}}
+            {"pane_id":"intact","tokens":{"status_idle":"○","activity":"0000000000001"}}
         ])));
 
         assert_eq!(

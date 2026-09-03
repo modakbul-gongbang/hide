@@ -297,7 +297,6 @@ mod tests {
             requires_close_confirmation: false,
             summary: "summary".to_owned(),
             elapsed: "1s".to_owned(),
-            sort_rank: "10".to_owned(),
             last_activity: "0000000000001".to_owned(),
             state_change_seq: None,
             ambient: None,

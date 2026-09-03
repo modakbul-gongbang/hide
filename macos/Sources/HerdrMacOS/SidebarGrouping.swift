@@ -1,17 +1,71 @@
 import Foundation
 
-/// How the sidebar splits agents between the attention list and the space
-/// tree. Kept apart from `ShellModel` so both rules can be exercised without
-/// a live core runtime.
+/// The four groups the core sorts every agent into, in the order the sidebar
+/// reads them top to bottom.
+///
+/// Membership and order are decided once in the core projection. This names
+/// the groups for the screen and nothing else, so the two sidebar views, the
+/// pet dashboard, and the project tree cannot end up with different sets.
+enum AgentGroup: String, CaseIterable {
+    case needsYou = "needs_you"
+    case done
+    case working
+    case seen
+
+    /// The core writes each of these names from its own exhaustive enum, so a
+    /// value this does not recognize can only mean a shell and a core that
+    /// were not built together. Seen is where such a row lands, because Seen
+    /// is already defined as everything the other three do not claim.
+    init(agent: SidebarAgent) {
+        self = AgentGroup(rawValue: agent.group) ?? .seen
+    }
+
+    /// The section heading above the group.
+    var title: String {
+        switch self {
+        case .needsYou: "Needs You"
+        case .done: "Done"
+        case .working: "Working"
+        case .seen: "Seen"
+        }
+    }
+}
+
+/// One group's rows, ready to draw.
+struct AgentGroupSection: Identifiable, Equatable {
+    var id: String { group.rawValue }
+    let group: AgentGroup
+    let agents: [SidebarAgent]
+}
+
+/// How the sidebar splits agents between the groups it raises to the top and
+/// the space tree. Kept apart from `ShellModel` so both rules can be exercised
+/// without a live core runtime.
 enum SidebarGrouping {
-    /// Agents that are waiting on the operator.
+    /// The two groups the Projects view lifts above the project tree.
     ///
     /// This is the one thing the space tree cannot answer: it says what is
-    /// waiting right now across every space, while the tree says what is in
-    /// one space. Membership is the core's `needs_you` group, decided once in
-    /// the projection, so no view keeps a second copy of the vocabulary.
-    static func needingAttention(_ agents: [SidebarAgent]) -> [SidebarAgent] {
-        agents.filter { $0.group == "needs_you" }
+    /// waiting and what finished across every space, while the tree says what
+    /// is in one space. A row in either group is drawn once, at the top, and
+    /// left out of the tree below.
+    static let raisedGroups: [AgentGroup] = [.needsYou, .done]
+
+    /// The rows of one group, in the order the core put them in.
+    static func agents(_ agents: [SidebarAgent], in group: AgentGroup) -> [SidebarAgent] {
+        agents.filter { AgentGroup(agent: $0) == group }
+    }
+
+    /// Every non-empty group in group order, for the Agents view's boundaries.
+    static func sections(_ agents: [SidebarAgent]) -> [AgentGroupSection] {
+        AgentGroup.allCases.compactMap { group in
+            let rows = Self.agents(agents, in: group)
+            return rows.isEmpty ? nil : AgentGroupSection(group: group, agents: rows)
+        }
+    }
+
+    /// The rows the Projects view draws above the tree, Needs You then Done.
+    static func raised(_ agents: [SidebarAgent]) -> [AgentGroupSection] {
+        sections(agents).filter { raisedGroups.contains($0.group) }
     }
 
     /// The agents running in a checkout, found through the panes that checkout

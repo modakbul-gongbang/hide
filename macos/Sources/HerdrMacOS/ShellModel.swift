@@ -371,8 +371,20 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.agents ?? []
     }
 
-    var agentsNeedingAttention: [SidebarAgent] {
-        SidebarGrouping.needingAttention(agents)
+    /// The Needs You and Done sections the Projects view draws above the tree.
+    var raisedAgentSections: [AgentGroupSection] {
+        SidebarGrouping.raised(agents)
+    }
+
+    /// Every non-empty group in group order, for the Agents view.
+    var agentSections: [AgentGroupSection] {
+        SidebarGrouping.sections(agents)
+    }
+
+    /// The rows the Projects view has already drawn at the top, so the tree
+    /// below does not repeat them.
+    var raisedAgents: [SidebarAgent] {
+        raisedAgentSections.flatMap(\.agents)
     }
 
     func agents(in checkout: CoreCheckoutSnapshot) -> [SidebarAgent] {

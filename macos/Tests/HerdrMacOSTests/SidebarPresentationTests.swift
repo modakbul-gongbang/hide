@@ -78,7 +78,6 @@ private func presentationAgent(
         symbol: "\u{25cf}",
         summary: "Agent \(id)",
         elapsed: "1m",
-        sortRank: "01",
         lastActivity: "0000000000001",
         ambient: nil
     )

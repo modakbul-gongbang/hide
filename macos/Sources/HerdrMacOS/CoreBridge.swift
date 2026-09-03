@@ -667,7 +667,7 @@ struct CorePaneFork: Decodable, Equatable {
     }
 }
 
-struct SidebarAgent: Decodable, Identifiable {
+struct SidebarAgent: Decodable, Equatable, Identifiable {
     let id: String
     let paneID: String
     let workspaceLabel: String
@@ -696,7 +696,6 @@ struct SidebarAgent: Decodable, Identifiable {
     let requiresCloseConfirmation: Bool
     let summary: String
     let elapsed: String
-    let sortRank: String
     let lastActivity: String
     let ambient: CoreAmbientSignal?
 
@@ -719,7 +718,6 @@ struct SidebarAgent: Decodable, Identifiable {
         requiresCloseConfirmation: Bool = false,
         summary: String,
         elapsed: String,
-        sortRank: String,
         lastActivity: String,
         ambient: CoreAmbientSignal?
     ) {
@@ -739,7 +737,6 @@ struct SidebarAgent: Decodable, Identifiable {
         self.requiresCloseConfirmation = requiresCloseConfirmation
         self.summary = summary
         self.elapsed = elapsed
-        self.sortRank = sortRank
         self.lastActivity = lastActivity
         self.ambient = ambient
     }
@@ -761,7 +758,6 @@ struct SidebarAgent: Decodable, Identifiable {
         case requiresCloseConfirmation = "requires_close_confirmation"
         case summary
         case elapsed
-        case sortRank = "sort_rank"
         case lastActivity = "last_activity"
         case ambient
     }
@@ -2322,13 +2318,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let workspaceID = "fixture-workspace"
         let tabID = "fixture-tab"
         let agents: [[String: Any]] = [
-            Self.fixtureAgent("error", "×", "00", "1755000007000", "Build failed", "12s", "Core", "codex", "status_error_new"),
-            Self.fixtureAgent("question", "?", "01", "1755000006000", "Choose persistence scope", "4m", "UI", "claude", "status_question_new"),
-            Self.fixtureAgent("approval", "!", "02", "1755000005000", "Approve local save", "8m", "Explorer", "codex", "status_approval_new"),
-            Self.fixtureAgent("done", "●", "04", "1755000004000", "Sidebar contract complete", "2h", "Agents", "claude", "status_done_new"),
-            Self.fixtureAgent("working", "●", "05", "1755000003000", "Connecting Rust bytes", "18s", "Terminal", "codex", "status_working"),
-            Self.fixtureAgent("idle", "○", "10", "1755000002000", "Reviewed fixture", "3d", "Verify", "claude", "status_idle"),
-            Self.fixtureAgent("unknown", "~", "10", "1755000001000", "Awaiting lifecycle token", "9m", "Other", "unknown", "status_unknown"),
+            Self.fixtureAgent("error", "×", "1755000007000", "Build failed", "12s", "Core", "codex", "status_error_new"),
+            Self.fixtureAgent("question", "?", "1755000006000", "Choose persistence scope", "4m", "UI", "claude", "status_question_new"),
+            Self.fixtureAgent("approval", "!", "1755000005000", "Approve local save", "8m", "Explorer", "codex", "status_approval_new"),
+            Self.fixtureAgent("done", "●", "1755000004000", "Sidebar contract complete", "2h", "Agents", "claude", "status_done_new"),
+            Self.fixtureAgent("working", "●", "1755000003000", "Connecting Rust bytes", "18s", "Terminal", "codex", "status_working"),
+            Self.fixtureAgent("idle", "○", "1755000002000", "Reviewed fixture", "3d", "Verify", "claude", "status_idle"),
+            Self.fixtureAgent("unknown", "~", "1755000001000", "Awaiting lifecycle token", "9m", "Other", "unknown", "status_unknown"),
         ]
         dispatch(kind: "create_workspace", payload: [
             "path": workspaceRoot.path,
@@ -2368,7 +2364,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private static func fixtureAgent(
         _ id: String,
         _ symbol: String,
-        _ rank: String,
         _ activity: String,
         _ summary: String,
         _ elapsed: String,
@@ -2384,7 +2379,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "agent_status": id == "working" ? "working" : id == "idle" ? "idle" : "unknown",
             "tokens": [
                 statusToken: symbol,
-                "sort_rank": rank,
                 "activity": activity,
                 "summary": summary,
                 "elapsed": elapsed,

@@ -67,7 +67,7 @@ enum PetDashboardProjector {
                 statusLabel: agentConnected ? agent.statusLabel : "Disconnected",
                 summary: agent.summary,
                 elapsed: agent.elapsed,
-                unseen: agentConnected && agent.group == "needs_you",
+                unseen: agentConnected && AgentGroup(agent: agent) == .needsYou,
                 connection: agentConnected ? "connected" : "disconnected",
                 ambient: agentConnected ? agent.ambient : nil
             )
