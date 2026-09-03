@@ -1675,7 +1675,9 @@ impl Runtime {
                         state: agent
                             .map(|agent| agent.state.clone())
                             .unwrap_or_else(|| "unknown".to_owned()),
-                        summary: agent.map(|agent| agent.summary.clone()),
+                        summary: agent
+                            .map(|agent| agent.summary.clone())
+                            .filter(|summary| summary != crate::sidebar::MISSING_SUMMARY),
                         activity_at_unix_ms: agent.and_then(|agent| agent.activity.parse().ok()),
                         fork: pane_fork_snapshot(agent),
                         ports,

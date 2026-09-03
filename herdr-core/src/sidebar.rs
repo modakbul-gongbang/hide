@@ -68,6 +68,11 @@ pub struct SessionLayoutSplitPayload {
     pub rect: SessionLayoutRect,
 }
 
+/// What the sidebar shows for an agent whose context-label plugin reported
+/// no summary. It is a prompt to the user, not a name, so surfaces that name
+/// a pane must not adopt it.
+pub const MISSING_SUMMARY: &str = "Check agent-context-labels settings";
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionAgentPayload {
     #[serde(default)]
@@ -234,7 +239,7 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
         .map(collapse_whitespace)
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(30).collect())
-        .unwrap_or_else(|| "Check agent-context-labels settings".to_owned());
+        .unwrap_or_else(|| MISSING_SUMMARY.to_owned());
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());

@@ -427,7 +427,14 @@ final class ShellModel: ObservableObject {
 
     var paneProjectionNotice: String? {
         guard isRemoteContext, !focusedPanes.isEmpty else {
-            return localProjectionNotice
+            // A terminal the shell just launched is expected to be missing
+            // from the checkout until the next sync lands it. The empty
+            // state already says "starting"; a projection error on top of
+            // it would announce a failure that is not one.
+            switch checkoutStartState {
+            case .starting, .started: return nil
+            case .idle, .failed: return localProjectionNotice
+            }
         }
         guard let layout = remote.navigation?.focusedPaneLayout else {
             return "remote.pane_layout_unavailable: The selected remote tab has panes but no layout in the Herdr snapshot. Retry the Mac mini connection."
