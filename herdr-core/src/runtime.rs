@@ -19,7 +19,8 @@ use crate::model::{
     clamp_pane_text_scale,
     PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
-    SCHEMA_VERSION, Snapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
+    SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
+    TerminalPaneSnapshot,
     UiStateSnapshot,
 };
 use crate::remote::RusshSftpTransport;
@@ -28,6 +29,52 @@ use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::model::SidebarAgentSnapshot;
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
+
+/// Places one checkout's tab strip.
+///
+/// The strip is a sequence of slots. A slot an entry already held it keeps, so
+/// a file tab the operator dropped between two Herdr tabs stays where it was
+/// put. The Herdr slots are then filled from Herdr's own tab order, because
+/// Herdr owns where its tabs sit and a tab it moved has to move here too. A
+/// tab that is new to the strip takes a slot at the end, which is where both a
+/// newly opened file and a newly created Herdr tab belong.
+fn ordered_strip(
+    stored: &[String],
+    herdr: &[StripTabSnapshot],
+    files: &[StripTabSnapshot],
+) -> Vec<StripTabSnapshot> {
+    let mut by_id = BTreeMap::new();
+    for entry in herdr.iter().chain(files.iter()) {
+        by_id.insert(entry.id.as_str(), entry.clone());
+    }
+    let mut placed = stored
+        .iter()
+        .filter_map(|id| by_id.get(id.as_str()).cloned())
+        .collect::<Vec<_>>();
+    let held = placed
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<BTreeSet<_>>();
+    placed.extend(
+        herdr
+            .iter()
+            .chain(files.iter())
+            .filter(|entry| !held.contains(&entry.id))
+            .cloned(),
+    );
+    // Herdr's order decides which Herdr tab sits in which Herdr slot; the file
+    // slots between them are untouched.
+    let mut from_herdr = herdr.iter();
+    for entry in &mut placed {
+        if entry.kind == StripTabKind::Herdr {
+            *entry = from_herdr
+                .next()
+                .expect("every Herdr slot has a Herdr tab to fill it")
+                .clone();
+        }
+    }
+    placed
+}
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
 const PET_WAKING_MS: u64 = 1_200;
@@ -597,6 +644,12 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    /// The strip order each local checkout has, as strip entry ids. It is
+    /// memory only by decision: Herdr persists its own tab order and file tabs
+    /// do not survive a restart, so there is nothing here worth writing to
+    /// disk. Without it a Herdr tab created next to open file tabs would land
+    /// in front of them instead of at the end of the strip.
+    checkout_tab_order: BTreeMap<String, Vec<String>>,
     /// Workspace/active-tab pairs Herdr named that the navigator could not
     /// place, as `<workspace id>/<tab id>`. Session sync reconciles once a
     /// second, so the diagnostic is emitted when the set changes rather than
@@ -718,6 +771,7 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            checkout_tab_order: BTreeMap::new(),
             unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashSet::new(),
             fork_sequence: 0,
@@ -1801,7 +1855,48 @@ impl Runtime {
             self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
         }
         self.resync_navigator_focus();
+        self.rebuild_tab_strips();
         previous != self.snapshot.navigator
+    }
+
+    /// Rewrites every local checkout's tab strip from the Herdr tabs and file
+    /// tabs it currently holds.
+    ///
+    /// A remote checkout keeps the strip its own projection built: the remote
+    /// context browses Herdr's tabs and has no file tabs to mix in.
+    fn rebuild_tab_strips(&mut self) {
+        let file_tabs = &self.snapshot.editor.tabs;
+        let order = &mut self.checkout_tab_order;
+        let mut live_checkouts = BTreeSet::new();
+        for workspace in &mut self.snapshot.navigator.workspaces {
+            if workspace.remote_target_id.is_some() {
+                continue;
+            }
+            for checkout in &mut workspace.checkouts {
+                live_checkouts.insert(checkout.id.clone());
+                let herdr = checkout
+                    .tabs
+                    .iter()
+                    .filter_map(|tab| {
+                        Some(StripTabSnapshot::herdr(
+                            tab.id.clone()?,
+                            tab.label.clone().unwrap_or_default(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                let files = file_tabs
+                    .iter()
+                    .filter(|tab| {
+                        tab.workspace_id == checkout.workspace_id && tab.checkout_id == checkout.id
+                    })
+                    .map(|tab| StripTabSnapshot::file(tab.id.clone(), tab.label.clone()))
+                    .collect::<Vec<_>>();
+                let stored = order.entry(checkout.id.clone()).or_default();
+                checkout.strip = ordered_strip(stored, &herdr, &files);
+                *stored = checkout.strip.iter().map(|entry| entry.id.clone()).collect();
+            }
+        }
+        order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
     }
 
     /// Reconciles the focused checkout, its owning workspace, root path, and
@@ -4626,6 +4721,8 @@ impl Runtime {
                         if let Err(message) = self.activate_file_tab(&tab_id) {
                             self.set_error("file.focus_failed", message, false);
                         }
+                        // A new file tab takes a slot at the end of the strip.
+                        self.rebuild_tab_strips();
                         self.snapshot.ui_state.selected_path = Some(payload.path);
                     }
                     Err(message) => self.set_error("file.open_failed", message, true),
@@ -4688,6 +4785,7 @@ impl Runtime {
                 let was_active =
                     self.snapshot.editor.active_tab_id.as_deref() == Some(payload.tab_id.as_str());
                 self.snapshot.editor.tabs.remove(index);
+                self.rebuild_tab_strips();
                 self.editor_documents.remove(&payload.tab_id);
                 self.editor_tab_history
                     .retain(|tab_id| tab_id != &payload.tab_id);
@@ -6482,6 +6580,7 @@ mod tests {
                 .map(|pane| vec![tab(workspace_id, checkout_id, Some(pane))])
                 .unwrap_or_default(),
             active_tab_id: pane.map(|_| format!("{checkout_id}:tab")),
+            strip: Vec::new(),
         }
     }
 
@@ -6914,6 +7013,279 @@ mod tests {
             .filter(|diagnostic| diagnostic.kind == "tab.active_unresolved")
             .count();
         assert_eq!(unresolved, 1);
+    }
+
+    fn strip_ids(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.id == checkout_id)
+            .expect("the registered checkout")
+            .strip
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+
+    fn strip_labels(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.id == checkout_id)
+            .expect("the registered checkout")
+            .strip
+            .iter()
+            .map(|entry| entry.label.clone())
+            .collect()
+    }
+
+    fn open_file(runtime: &mut Runtime, checkout_id: &str, path: &Path) {
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "file_open",
+            "payload": {
+                "path": path.to_string_lossy(),
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id
+            }
+        }))
+        .expect("file open event");
+        assert!(runtime.dispatch_json(&event));
+    }
+
+    #[test]
+    fn tab_strip_lists_herdr_tabs_and_then_the_file_that_was_opened() {
+        let directory = std::env::temp_dir().join(format!(
+            "hide-strip-open-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("checkout directory");
+        // The temp root is a symlink on macOS; the catalog keys checkouts by
+        // the real path, so the fixture has to use it too. The fixture is also
+        // made its own repository, because a directory inside another
+        // repository is catalogued under that repository's root instead.
+        let directory = directory.canonicalize().expect("a real checkout path");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&directory)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        let file = directory.join("notes.md");
+        std::fs::write(&file, "notes\n").expect("fixture file");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let (mut runtime, checkout_id) = tab_order_runtime(&checkout_path);
+
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t1".to_owned(),
+                "herdr:w-order:t2".to_owned()
+            ]
+        );
+
+        open_file(&mut runtime, &checkout_id, &file);
+        let with_file = strip_ids(&runtime, &checkout_id);
+        assert_eq!(with_file.len(), 3);
+        assert_eq!(
+            &with_file[..2],
+            &[
+                "herdr:w-order:t1".to_owned(),
+                "herdr:w-order:t2".to_owned()
+            ]
+        );
+        assert!(with_file[2].starts_with("file:"));
+        assert_eq!(strip_labels(&runtime, &checkout_id)[2], "notes.md");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_appends_a_reopened_file_nowhere_and_a_new_herdr_tab_at_the_end() {
+        let directory = std::env::temp_dir().join(format!(
+            "hide-strip-append-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("checkout directory");
+        // The temp root is a symlink on macOS; the catalog keys checkouts by
+        // the real path, so the fixture has to use it too. The fixture is also
+        // made its own repository, because a directory inside another
+        // repository is catalogued under that repository's root instead.
+        let directory = directory.canonicalize().expect("a real checkout path");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&directory)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        let file = directory.join("notes.md");
+        std::fs::write(&file, "notes\n").expect("fixture file");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let (mut runtime, checkout_id) = tab_order_runtime(&checkout_path);
+
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        open_file(&mut runtime, &checkout_id, &file);
+        let opened = strip_ids(&runtime, &checkout_id);
+
+        // Opening a file that is already open activates its tab; it does not
+        // add a second one.
+        open_file(&mut runtime, &checkout_id, &file);
+        assert_eq!(strip_ids(&runtime, &checkout_id), opened);
+
+        // A Herdr tab created next to an open file goes to the end of the
+        // strip, not in front of the file that was there first.
+        let grown = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &grown,
+            &grown,
+            "w-order:t1"
+        ))));
+        let after = strip_ids(&runtime, &checkout_id);
+        assert_eq!(after.len(), 4);
+        assert_eq!(&after[..3], &opened[..]);
+        assert_eq!(after[3], "herdr:w-order:t3");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_keeps_a_file_in_its_slot_while_herdr_reorders_around_it() {
+        let directory = std::env::temp_dir().join(format!(
+            "hide-strip-slot-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("checkout directory");
+        // The temp root is a symlink on macOS; the catalog keys checkouts by
+        // the real path, so the fixture has to use it too. The fixture is also
+        // made its own repository, because a directory inside another
+        // repository is catalogued under that repository's root instead.
+        let directory = directory.canonicalize().expect("a real checkout path");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&directory)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        let file = directory.join("notes.md");
+        std::fs::write(&file, "notes\n").expect("fixture file");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let (mut runtime, checkout_id) = tab_order_runtime(&checkout_path);
+
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        open_file(&mut runtime, &checkout_id, &file);
+        let file_entry = strip_ids(&runtime, &checkout_id)[2].clone();
+
+        // The operator dropped the file tab between the two Herdr tabs. The
+        // move itself is the reorder event's job; what matters here is that
+        // the slot the file took is the slot it keeps.
+        runtime.checkout_tab_order.insert(
+            checkout_id.clone(),
+            vec![
+                "herdr:w-order:t1".to_owned(),
+                file_entry.clone(),
+                "herdr:w-order:t2".to_owned(),
+            ],
+        );
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t1".to_owned(),
+                file_entry.clone(),
+                "herdr:w-order:t2".to_owned()
+            ]
+        );
+
+        // Herdr swapped its two tabs. They swap slots; the file does not move.
+        let moved = ["w-order:t2", "w-order:t1"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &moved,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t2".to_owned(),
+                file_entry,
+                "herdr:w-order:t1".to_owned()
+            ]
+        );
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_label_turns_a_herdr_number_into_a_name_and_keeps_a_named_tab() {
+        assert_eq!(crate::model::display_tab_label("2", "w1:t2"), "Tab 2");
+        assert_eq!(crate::model::display_tab_label(" 2 ", "w1:t2"), "Tab 2");
+        assert_eq!(crate::model::display_tab_label("notes", "w1:t2"), "notes");
+        // A tab Herdr reports with no label at all falls back to its own id,
+        // which is still its identity rather than its place in the strip.
+        assert_eq!(crate::model::display_tab_label("", "w1:t2"), "w1:t2");
+    }
+
+    /// The shell used to name an unlabelled tab after its position, which
+    /// renamed every tab whenever one moved. Nothing may reintroduce that.
+    #[test]
+    fn tab_label_has_no_position_derived_path_left_in_the_shell() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let mut offenders = Vec::new();
+        for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
+            let path = entry.expect("a shell source entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a readable Swift source");
+            if source.contains("fallbackIndex") || source.contains("displayLabel") {
+                offenders.push(path.display().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a position-derived tab label path is back in {offenders:?}"
+        );
     }
 
     #[test]

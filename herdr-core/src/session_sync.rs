@@ -17,7 +17,7 @@ use crate::herdr_api::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, Ho
 use crate::live::{LiveContext, SessionFetchError};
 use crate::model::{
     CheckoutSnapshot, PaneSnapshot, RemotePaneLayoutFrame, RemotePaneLayoutSnapshot,
-    RemoteSessionSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
+    RemoteSessionSnapshot, StripTabSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
 };
 use crate::runtime::Runtime;
 use crate::sidebar::{
@@ -1261,6 +1261,17 @@ impl SessionReplica {
                         }
                     })
                     .collect::<Vec<_>>();
+                // A remote context has no file tabs, so its strip is the Herdr
+                // tab list in Herdr's order and nothing else.
+                let strip = tabs
+                    .iter()
+                    .filter_map(|tab| {
+                        Some(StripTabSnapshot::herdr(
+                            tab.id.clone()?,
+                            tab.label.clone().unwrap_or_default(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
                 let active_tab_id = Some(remote_tab_id(target_id, &workspace.active_tab_id))
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
                 WorkspaceSnapshot {
@@ -1290,6 +1301,7 @@ impl SessionReplica {
                         temporary: false,
                         tabs,
                         active_tab_id,
+                        strip,
                     }],
                 }
             })
@@ -3013,6 +3025,53 @@ mod tests {
                 .tabs
                 .iter()
                 .all(|tab| tab.tab_id != "w1:t1")
+        );
+    }
+
+    /// The remote context browses Herdr's tabs and has no file tabs to mix in,
+    /// so its strip is the Herdr tab list in Herdr's order and nothing else.
+    #[test]
+    fn remote_projection_tab_list_and_order_are_herdr_only() {
+        let replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+        let (projected, _) = replica.project_remote("mini").expect("remote projection");
+        let checkout = projected
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .next()
+            .expect("the remote checkout");
+
+        assert_eq!(
+            checkout
+                .tabs
+                .iter()
+                .map(|tab| tab.id.clone().expect("a remote tab id"))
+                .collect::<Vec<_>>(),
+            vec![
+                remote_tab_id("mini", "w1:t1"),
+                remote_tab_id("mini", "w1:t2")
+            ]
+        );
+        assert_eq!(
+            checkout
+                .strip
+                .iter()
+                .map(|entry| (entry.kind, entry.source_id.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    crate::model::StripTabKind::Herdr,
+                    remote_tab_id("mini", "w1:t1")
+                ),
+                (
+                    crate::model::StripTabKind::Herdr,
+                    remote_tab_id("mini", "w1:t2")
+                )
+            ]
+        );
+        assert_eq!(
+            checkout.active_tab_id,
+            Some(remote_tab_id("mini", "w1:t1"))
         );
     }
 

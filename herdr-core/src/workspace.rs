@@ -448,6 +448,7 @@ fn checkout(
         temporary,
         tabs: Vec::<TabSnapshot>::new(),
         active_tab_id: None,
+        strip: Vec::new(),
     }
 }
 

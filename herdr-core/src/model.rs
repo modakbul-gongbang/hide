@@ -244,6 +244,57 @@ pub struct CheckoutSnapshot {
     /// substitutes its first tab for a missing one; an active id Herdr names
     /// but the navigator cannot place is reported as a diagnostic instead.
     pub active_tab_id: Option<String>,
+    /// The one ordered tab strip for this checkout: Herdr tabs and file tabs
+    /// in the order the operator sees them, which the shell draws as it is
+    /// given rather than joining two lists of its own.
+    pub strip: Vec<StripTabSnapshot>,
+}
+
+/// One entry in a checkout's tab strip.
+///
+/// It carries identity, kind, and the label to draw. The panes, the dirty
+/// mark, and the active mark stay on the snapshots the entry points at: those
+/// change on a keystroke, and the strip rides the revisioned navigator
+/// section, which must not be resent for every edited character.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct StripTabSnapshot {
+    /// Strip-wide identity, unique across kinds.
+    pub id: String,
+    pub kind: StripTabKind,
+    /// The Herdr tab id or the file tab id this entry stands for.
+    pub source_id: String,
+    pub label: String,
+}
+
+/// The kinds of tab a strip holds. Herdr tabs and file tabs are the two the
+/// product has; a kind is added when a surface that needs one is built.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StripTabKind {
+    Herdr,
+    File,
+}
+
+impl StripTabSnapshot {
+    pub fn herdr(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("herdr:{source_id}"),
+            kind: StripTabKind::Herdr,
+            source_id,
+            label: label.into(),
+        }
+    }
+
+    pub fn file(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("file:{source_id}"),
+            kind: StripTabKind::File,
+            source_id,
+            label: label.into(),
+        }
+    }
 }
 
 /// The label a tab is drawn by, derived from the tab's own identity.

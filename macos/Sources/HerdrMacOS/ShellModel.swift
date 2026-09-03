@@ -108,12 +108,9 @@ enum CloseShortcutPolicy {
 }
 
 enum HerdrTabLabelPresentation {
-    static func displayLabel(rawLabel: String?, fallbackIndex: Int) -> String {
-        let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if let number = Int(label) { return "Tab \(number)" }
-        return label.isEmpty ? "Tab \(fallbackIndex + 1)" : label
-    }
-
+    /// The label to give a tab the operator is about to create. What an
+    /// existing tab is drawn by comes from the core, which derives it from the
+    /// tab's own identity.
     static func nextLabel(rawLabels: [String?]) -> String {
         let used = Set(rawLabels.compactMap { rawLabel -> Int? in
             let label = rawLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -137,6 +134,49 @@ struct ShellTabItem: Identifiable {
     let dirty: Bool
     let active: Bool
     let kind: ShellTabKind
+}
+
+/// Resolves the core's ordered tab strip into what the strip draws.
+///
+/// The order is the core's and is used as given. This maps each entry onto the
+/// snapshot it stands for, which is where the panes, the dirty mark, and the
+/// active mark live: those change far more often than the strip does, so they
+/// do not ride the strip.
+enum ShellTabStrip {
+    static func items(
+        strip: [CoreStripTabSnapshot],
+        herdrTabs: [CoreTabSnapshot],
+        fileTabs: [CoreFileTabSnapshot],
+        activeHerdrTabID: String?,
+        activeFileTabID: String?
+    ) -> [ShellTabItem] {
+        strip.compactMap { entry in
+            switch entry.kind {
+            case .herdr:
+                // The core builds the strip from the same tabs it publishes,
+                // so an entry always has one to point at.
+                guard let tab = herdrTabs.first(where: { $0.id == entry.sourceID })
+                else { return nil }
+                return ShellTabItem(
+                    id: entry.id,
+                    label: entry.label,
+                    dirty: false,
+                    active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
+                    kind: .herdr(tab)
+                )
+            case .file:
+                guard let tab = fileTabs.first(where: { $0.id == entry.sourceID })
+                else { return nil }
+                return ShellTabItem(
+                    id: entry.id,
+                    label: entry.label,
+                    dirty: tab.dirty,
+                    active: entry.sourceID == activeFileTabID,
+                    kind: .file(tab)
+                )
+            }
+        }
+    }
 }
 
 /// Direct-select numbering for the tab strip. The number is the tab's
@@ -356,31 +396,13 @@ final class ShellModel: ObservableObject {
     var unifiedTabs: [ShellTabItem] {
         guard let checkout = focusedCheckout else { return [] }
         let activeFileID = isRemoteContext ? nil : core.snapshot?.editor.activeTabID
-        let herdrItems = focusedTabs.enumerated().map { index, tab in
-            return ShellTabItem(
-                id: "herdr:\(tab.stableID)",
-                label: HerdrTabLabelPresentation.displayLabel(
-                    rawLabel: tab.label,
-                    fallbackIndex: index
-                ),
-                dirty: false,
-                active: activeFileID == nil && tab.id == focusedTab?.id,
-                kind: .herdr(tab)
-            )
-        }
-        guard !isRemoteContext else { return herdrItems }
-        let fileItems = (core.snapshot?.editor.tabs ?? [])
-            .filter { $0.workspaceID == checkout.workspaceID && $0.checkoutID == checkout.id }
-            .map { tab in
-                ShellTabItem(
-                    id: "file:\(tab.id)",
-                    label: tab.label,
-                    dirty: tab.dirty,
-                    active: tab.id == activeFileID,
-                    kind: .file(tab)
-                )
-            }
-        return herdrItems + fileItems
+        return ShellTabStrip.items(
+            strip: checkout.strip,
+            herdrTabs: checkout.tabs,
+            fileTabs: core.snapshot?.editor.tabs ?? [],
+            activeHerdrTabID: focusedTab?.id,
+            activeFileTabID: activeFileID
+        )
     }
 
     /// The active tab is the one the core names, and the core takes that name
