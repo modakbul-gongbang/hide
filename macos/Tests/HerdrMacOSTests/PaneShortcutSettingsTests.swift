@@ -101,6 +101,52 @@ struct PaneShortcutSettingsTests {
         #expect(PaneShortcutPolicy.command(for: closePane, bindings: PaneShortcutPolicy.defaults) == .closePane)
     }
 
+    /// Every pane chord was dead in real use while this file's other tests
+    /// stayed green, because they all spell the event the way a US layout
+    /// delivers it. With a Hangul input source selected macOS reports "ㅇ" as
+    /// the D key's `charactersIgnoringModifiers`, and matching on that
+    /// character resolved nothing at all - so the operator pressed ⌘D and the
+    /// pane did not split, with no error to read.
+    ///
+    /// The assertion is what the operator observes: press the physical key,
+    /// get the command, whatever the active input source spells it as. The
+    /// characters below are what a Korean 2-set source actually delivers for
+    /// those physical keys.
+    @Test func everyChordResolvesFromThePhysicalKeyUnderANonLatinInputSource() {
+        let bindings = PaneShortcutPolicy.defaults
+        let cases: [(String, UInt16, NSEvent.ModifierFlags, PaneCommand)] = [
+            ("ㅇ", 2, [.command], .splitRight),
+            ("ㅇ", 2, [.command, .shift], .splitDown),
+            ("ㅈ", 13, [.command, .shift], .closePane),
+            ("=", 24, [.command], .increaseTextSize),
+            ("-", 27, [.command], .decreaseTextSize),
+            ("0", 29, [.command], .resetTextSize),
+        ]
+
+        for (characters, keyCode, modifiers, expected) in cases {
+            let event = keyEvent(characters: characters, keyCode: keyCode, modifiers: modifiers)
+            #expect(PaneShortcutPolicy.command(for: event, bindings: bindings) == expected)
+        }
+
+        // The same press under a Latin source still resolves, so the fix did
+        // not trade one layout for another.
+        let latin = keyEvent(characters: "d", keyCode: 2, modifiers: [.command])
+        #expect(PaneShortcutPolicy.command(for: latin, bindings: bindings) == .splitRight)
+    }
+
+    /// A default bound to a key the physical-key table does not name would
+    /// never fire, and would do it silently - the same class of failure the
+    /// test above covers, one layer up where a new command is added.
+    @Test func everyDefaultChordNamesAKeyThePhysicalTableCanReport() {
+        for command in PaneCommand.allCases {
+            let key = command.defaultShortcut.key
+            #expect(
+                key == "return" || PetHotkey.keyCode(for: key) != nil,
+                "\(command.rawValue) is bound to \(key), which no physical key reports"
+            )
+        }
+    }
+
     /// The close shortcut used to close the whole window once nothing was left
     /// to close, which is how the operator lost the application by pressing
     /// `⌘W` one time too many. It now says there is nothing to close instead.

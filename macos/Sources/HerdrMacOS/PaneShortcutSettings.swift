@@ -118,7 +118,15 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
         if key == "return" {
             return event.keyCode == 36 || event.keyCode == 76
         }
-        return event.charactersIgnoringModifiers?.lowercased() == key
+        // Identity is the physical key, never the produced character. With a
+        // Hangul, Kana, or Cyrillic input source selected, macOS reports the
+        // character that source produces - the D key comes through as "ㅇ" -
+        // so comparing `charactersIgnoringModifiers` leaves every chord in
+        // this catalog dead for as long as that source is active, silently and
+        // all at once. `PetHotkey` already learned this for the pet's own
+        // binding and keys off the virtual code; this uses the same table so
+        // there is one answer to "which physical key is this" in the app.
+        return PetHotkey.name(for: event.keyCode) == key
     }
 
     static func parse(_ raw: String) throws -> PaneShortcut {

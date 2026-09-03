@@ -110,6 +110,7 @@ struct PetHotkey: Equatable {
         UInt16(kVK_ANSI_3): "3", UInt16(kVK_ANSI_4): "4", UInt16(kVK_ANSI_5): "5",
         UInt16(kVK_ANSI_6): "6", UInt16(kVK_ANSI_7): "7", UInt16(kVK_ANSI_8): "8",
         UInt16(kVK_ANSI_9): "9",
+        UInt16(kVK_ANSI_Equal): "=", UInt16(kVK_ANSI_Minus): "-",
         UInt16(kVK_Space): "space", UInt16(kVK_Return): "return",
         UInt16(kVK_Escape): "escape", UInt16(kVK_Tab): "tab",
         UInt16(kVK_LeftArrow): "left", UInt16(kVK_RightArrow): "right",
