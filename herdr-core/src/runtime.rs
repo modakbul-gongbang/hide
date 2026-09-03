@@ -2390,11 +2390,12 @@ impl Runtime {
             changed = true;
         }
         self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
-        if let Some(agents) = agents
-            && self.snapshot.navigator.agents != agents
-        {
-            self.snapshot.navigator.agents = agents;
-            changed = true;
+        if let Some(mut agents) = agents {
+            self.place_agents_in_navigator(&mut agents);
+            if self.snapshot.navigator.agents != agents {
+                self.snapshot.navigator.agents = agents;
+                changed = true;
+            }
         }
         if let Some(layout) = layout {
             if self.snapshot.terminal.pane_id.is_none() {
@@ -3341,6 +3342,29 @@ impl Runtime {
         // sidebar shows right now; the sync that follows Herdr's
         // workspace_closed rebuilds the catalog off the runtime lock.
         self.persist_current_ui_state();
+    }
+
+    /// Names each agent by the project and checkout its pane sits in, as the
+    /// sidebar tree shows them. Herdr's own workspace label ("hide main") is
+    /// a launcher artifact that can span two repositories, so it is kept only
+    /// for a pane the navigator has not placed.
+    fn place_agents_in_navigator(&self, agents: &mut [SidebarAgentSnapshot]) {
+        for agent in agents {
+            let placed = self.snapshot.navigator.workspaces.iter().find_map(|workspace| {
+                workspace.checkouts.iter().find_map(|checkout| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .flat_map(|tab| tab.panes.iter())
+                        .any(|pane| pane.id == agent.pane_id)
+                        .then(|| (workspace.label.clone(), checkout.label.clone()))
+                })
+            });
+            if let Some((workspace_label, checkout_label)) = placed {
+                agent.workspace_label = workspace_label;
+                agent.checkout_label = Some(checkout_label);
+            }
+        }
     }
 
     fn rebuild_catalog(&mut self) {
@@ -5311,23 +5335,40 @@ fn find_workspace_for_context<'a>(
             .position(|workspace| workspace.id == session_workspace_id)
             .and_then(|index| workspaces.get_mut(index));
     };
-    // A navigator project records the Herdr workspaces occupying it, so the
-    // layout names its owner exactly. The path comparisons below are the
-    // fallback for a registration Herdr has no workspace for, and for a
-    // catalog precomputed from a slightly older session.
-    if let Some(index) = workspaces.iter().position(|workspace| {
-        workspace
-            .session_workspace_ids
-            .iter()
-            .any(|id| id == session_workspace_id)
-    }) {
-        return workspaces.get_mut(index);
-    }
     let path = Path::new(raw_path);
     let root = workspace::git_root(path)
         .map(|root| workspace::normalized_for_comparison(&root))
         .unwrap_or_else(|| workspace::normalized_for_comparison(path));
     let normalized = root.clone();
+    // A navigator project records the Herdr workspaces occupying it. One
+    // Herdr workspace can span two repositories and so two projects, so the
+    // pane's directory picks between them. The path comparisons below are the
+    // fallback for a registration Herdr has no workspace for, and for a
+    // catalog precomputed from a slightly older session.
+    let carrying = workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, workspace)| {
+            workspace
+                .session_workspace_ids
+                .iter()
+                .any(|id| id == session_workspace_id)
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if let Some(index) = carrying
+        .iter()
+        .copied()
+        .find(|index| {
+            workspaces[*index]
+                .checkouts
+                .iter()
+                .any(|checkout| path_is_within_checkout(raw_path, &checkout.path))
+        })
+        .or_else(|| carrying.first().copied())
+    {
+        return workspaces.get_mut(index);
+    }
     if let Some(index) = workspaces.iter().position(|workspace| {
         workspace.checkouts.iter().any(|checkout| {
             workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
@@ -6574,20 +6615,20 @@ mod tests {
     }
 
     #[test]
-    fn a_worktree_pane_projects_into_its_own_checkout_row() {
+    fn a_pane_in_a_second_directory_projects_into_its_own_project() {
         let mut runtime = runtime();
         let repository_path = "/private/tmp/hide-rebrand/herdr-ide";
         let checkout_path = "/private/tmp/hide-rebrand/worktrees/hide-rebrand";
-        // Herdr owns the workspace axis, so the navigator project mirrors the
-        // Herdr workspace and its checkouts are the directories its panes are
-        // actually in. The project id is the repository path, so it is the
-        // same before and after Herdr's workspace exists.
+        // Neither path is a git repository here, so each is its own
+        // project: a Herdr workspace spanning two directories is two rows,
+        // each keyed by its own path. (A real worktree folds into its main
+        // repository's project; `workspace::tests` covers that with git.)
         let spaces = vec![workspace::SessionSpace {
             id: "w3M".to_owned(),
             label: "herdr-ide".to_owned(),
             cwds: vec![repository_path.to_owned(), checkout_path.to_owned()],
         }];
-        let workspace_id = workspace::workspace_id_for_path(Path::new(repository_path));
+        let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
         let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
         runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
         runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
@@ -6609,30 +6650,27 @@ mod tests {
                 "splits": []
             }]
         }))
-        .expect("worktree pane payload");
+        .expect("second directory pane payload");
         let catalog = session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
             workspaces: workspace::build_catalog(&[], &spaces),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+        assert_eq!(runtime.snapshot().navigator.workspaces.len(), 2);
         let workspace_snapshot = runtime
             .snapshot()
             .navigator
             .workspaces
             .iter()
             .find(|workspace| workspace.id == workspace_id)
-            .expect("the Herdr workspace")
+            .expect("the second directory's project")
             .clone();
+        assert_eq!(workspace_snapshot.label, "hide-rebrand");
         assert_eq!(workspace_snapshot.session_workspace_ids, vec!["w3M".to_owned()]);
-        // Only the directories panes occupy, not every worktree the
-        // repository has.
-        assert_eq!(workspace_snapshot.checkouts.len(), 2);
-        let checkout = workspace_snapshot
-            .checkouts
-            .iter()
-            .find(|checkout| checkout.id == checkout_id)
-            .expect("the worktree checkout");
+        assert_eq!(workspace_snapshot.checkouts.len(), 1);
+        let checkout = &workspace_snapshot.checkouts[0];
+        assert_eq!(checkout.id, checkout_id);
         assert_eq!(checkout.tabs.len(), 1);
         assert_eq!(checkout.tabs[0].panes[0].id, "w3M:p1");
         assert_eq!(

@@ -611,6 +611,9 @@ struct SidebarAgent: Decodable, Identifiable {
     let id: String
     let paneID: String
     let workspaceLabel: String
+    /// The checkout the agent's pane is in, once the core has placed it in a
+    /// project. Absent for a pane the navigator does not hold.
+    var checkoutLabel: String? = nil
     let agentKind: String
     let state: String
     let symbol: String
@@ -624,6 +627,7 @@ struct SidebarAgent: Decodable, Identifiable {
         case id
         case paneID = "pane_id"
         case workspaceLabel = "workspace_label"
+        case checkoutLabel = "checkout_label"
         case agentKind = "agent_kind"
         case state
         case symbol

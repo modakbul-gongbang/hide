@@ -3331,7 +3331,9 @@ mod tests {
             assert_eq!(second_snapshot_request["method"], "session.snapshot");
             let mut recovered = snapshot();
             recovered["event_sequence"] = json!(50);
-            recovered["workspaces"][0]["label"] = json!("recovered");
+            // A project is named after its directory, not Herdr's workspace
+            // label, so the recovery marker is a pane in a new directory.
+            recovered["panes"][0]["cwd"] = json!("/tmp/fixture-recovered");
             write_result(
                 &mut second_snapshot_stream,
                 &second_snapshot_request,
@@ -3370,7 +3372,7 @@ mod tests {
                     .navigator
                     .workspaces
                     .iter()
-                    .any(|workspace| workspace.label == "recovered")
+                    .any(|workspace| workspace.label == "fixture-recovered")
         });
 
         drop(handle);

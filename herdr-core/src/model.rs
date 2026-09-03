@@ -177,6 +177,9 @@ pub struct SidebarAgentSnapshot {
     pub id: String,
     pub pane_id: String,
     pub workspace_label: String,
+    /// The checkout the agent's pane is in, once the navigator has placed it.
+    #[serde(default)]
+    pub checkout_label: Option<String>,
     pub agent_kind: String,
     pub state: String,
     pub symbol: String,

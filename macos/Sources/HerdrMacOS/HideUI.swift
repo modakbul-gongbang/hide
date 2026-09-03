@@ -260,7 +260,7 @@ private struct AgentSwitcherOverlay: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(agent.summary)
                                 .hideFont(size: 12, weight: .semibold)
-                            Text("\(agent.workspaceLabel) · \(paneID)")
+                            Text("\(agent.contextLabel) · \(paneID)")
                                 .hideFont(size: 9, design: .monospaced)
                                 .foregroundStyle(HideTheme.secondary)
                         }
@@ -1329,7 +1329,7 @@ private struct AgentNavigatorRow: View {
                 )
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
-                        Text(showsWorkspace ? agent.workspaceLabel : agent.summary)
+                        Text(showsWorkspace ? agent.contextLabel : agent.summary)
                             .hideFont(size: 11, weight: showsWorkspace ? .semibold : .regular)
                             .foregroundStyle(showsWorkspace ? HideTheme.primary : HideTheme.secondary)
                             .lineLimit(1)
@@ -1376,7 +1376,7 @@ private struct AgentNavigatorRow: View {
         .buttonStyle(.plain)
         .animation(.easeOut(duration: 0.12), value: model.agentShortcutHintsVisible)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
-        .accessibilityLabel("\(agent.workspaceLabel), \(agent.agentKind), \(agent.state)")
+        .accessibilityLabel("\(agent.contextLabel), \(agent.agentKind), \(agent.state)")
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
     }
 }

@@ -82,6 +82,18 @@ struct SidebarWorkspacePresentation: Equatable {
     }
 }
 
+extension SidebarAgent {
+    /// Where the agent runs, as the project tree names it: the project and,
+    /// when the core has placed the pane, its checkout. The Agents view and
+    /// the Projects view then call one agent's home by the same words.
+    var contextLabel: String {
+        guard let checkoutLabel, !checkoutLabel.isEmpty, checkoutLabel != workspaceLabel else {
+            return workspaceLabel
+        }
+        return "\(workspaceLabel) › \(checkoutLabel)"
+    }
+}
+
 /// Direct-select numbering for the sidebar. The number is the agent's
 /// position in the list the visible view shows: the Agents view numbers the
 /// runtime's whole agent projection, the Projects view numbers the agents in

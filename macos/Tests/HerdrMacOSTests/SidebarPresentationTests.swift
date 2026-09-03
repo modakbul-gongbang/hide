@@ -186,3 +186,12 @@ private func presentationAgent(
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: projectsView) == nil)
     #expect(noCheckout.isEmpty)
 }
+
+@Test func agentContextLabelNamesTheProjectAndItsCheckout() {
+    var agent = presentationAgent(id: "agent-1", paneID: "pane-1", state: "idle")
+    #expect(agent.contextLabel == agent.workspaceLabel)
+    agent.checkoutLabel = "main"
+    #expect(agent.contextLabel == "\(agent.workspaceLabel) › main")
+    agent.checkoutLabel = agent.workspaceLabel
+    #expect(agent.contextLabel == agent.workspaceLabel)
+}

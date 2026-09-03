@@ -153,22 +153,22 @@ pub fn build_catalog(
     registrations: &[WorkspaceRegistration],
     spaces: &[SessionSpace],
 ) -> Vec<WorkspaceSnapshot> {
-    // Project identity is the repository root. Two Herdr workspaces in one
-    // repository are one project with both Herdr ids attached, and a Herdr
-    // workspace that comes and goes (Herdr closes it with its last pane) never
-    // changes which row the user is looking at.
+    // A project is a repository: its main worktree is the identity and every
+    // worktree with a pane in it is a checkout under it. A Herdr workspace
+    // whose panes sit in two repositories contributes to two projects, and
+    // two Herdr workspaces in one repository are one project with both Herdr
+    // ids attached. Herdr closing a workspace with its last pane therefore
+    // never changes which row the user is looking at.
     let mut result: Vec<WorkspaceSnapshot> = Vec::new();
     for space in spaces {
-        let projected = inspect_space(space);
-        if projected.checkouts.is_empty() {
-            continue;
-        }
-        match result
-            .iter_mut()
-            .find(|existing| existing.id == projected.id)
-        {
-            Some(existing) => merge_space(existing, projected),
-            None => result.push(projected),
+        for projected in inspect_space(space) {
+            match result
+                .iter_mut()
+                .find(|existing| existing.id == projected.id)
+            {
+                Some(existing) => merge_space(existing, projected),
+                None => result.push(projected),
+            }
         }
     }
 
@@ -177,21 +177,13 @@ pub fn build_catalog(
     // the registration's identity and label with Herdr's workspace attached,
     // so the row survives Herdr closing that workspace.
     for registration in registrations {
-        let root = git_root(Path::new(&registration.path)).unwrap_or_else(|| {
-            normalized_path(Path::new(&registration.path))
-                .unwrap_or_else(|_| PathBuf::from(&registration.path))
-        });
-        let comparison = normalized_for_comparison(&root);
-        let occupied = result.iter().position(|workspace| {
-            workspace.checkouts.iter().any(|checkout| {
-                normalized_for_comparison(Path::new(&checkout.path)) == comparison
-            })
-        });
+        let comparison = normalized_for_comparison(&project_root(Path::new(&registration.path)));
+        let occupied = result
+            .iter()
+            .position(|workspace| normalized_for_comparison(Path::new(&workspace.path)) == comparison);
         match occupied {
-            // A project already carrying a registration keeps it; a second
-            // registration inside the same project (a repository a
-            // multi-repository Herdr workspace also has a pane in) is not a
-            // second row, and it must not rename the first.
+            // A second registration for a repository that already carries
+            // one is not a second row, and it must not rename the first.
             Some(index) if result[index].registered => continue,
             Some(index) => adopt_registration(&mut result[index], registration),
             None => result.push(inspect_registered(registration)),
@@ -205,6 +197,18 @@ pub fn build_catalog(
             .then_with(|| left.path.cmp(&right.path))
     });
     result
+}
+
+/// The directory that identifies a project: the repository's main worktree
+/// for a git checkout, the folder itself otherwise.
+fn project_root(path: &Path) -> PathBuf {
+    let root =
+        git_root(path).unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
+    if git_root(&root).is_some() {
+        main_worktree_root(&root).unwrap_or(root)
+    } else {
+        root
+    }
 }
 
 /// Folds a second Herdr workspace in the same repository into the project
@@ -246,86 +250,91 @@ fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &Workspac
     }
 }
 
-/// Projects one Herdr workspace, with a checkout per distinct repository its
-/// panes sit in.
+/// Projects one Herdr workspace onto the repositories its panes sit in, one
+/// project per repository with a checkout per worktree that has a pane.
 ///
 /// Enumerating `git worktree list` here is what made the sidebar verbose: it
 /// listed every branch the repository has ever had a worktree for, each with
 /// no tabs. A checkout earns a row by having a pane in it.
-fn inspect_space(space: &SessionSpace) -> WorkspaceSnapshot {
-    // The project id comes from the first pane's repository root, so it is
-    // the same id `inspect_temporary` and a registration of that root derive.
-    let mut roots: Vec<(PathBuf, Option<String>, bool)> = Vec::new();
+fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
+    let mut projects: Vec<WorkspaceSnapshot> = Vec::new();
     for cwd in &space.cwds {
         let path = Path::new(cwd);
         let root =
             git_root(path).unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
-        let comparison = normalized_for_comparison(&root);
-        if roots
+        let project_path = project_root(&root);
+        let project_comparison = normalized_for_comparison(&project_path);
+        let root_comparison = normalized_for_comparison(&root);
+        let workspace_id = workspace_id_for_path(&project_path);
+        let index = match projects
             .iter()
-            .any(|(existing, _, _)| normalized_for_comparison(existing) == comparison)
+            .position(|project| normalized_for_comparison(Path::new(&project.path)) == project_comparison)
+        {
+            Some(index) => index,
+            None => {
+                let name = project_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&space.label)
+                    .to_owned();
+                projects.push(WorkspaceSnapshot {
+                    id: workspace_id.clone(),
+                    label: name.clone(),
+                    path: project_path.to_string_lossy().into_owned(),
+                    remote_target_id: None,
+                    expanded: true,
+                    device_id: LOCAL_DEVICE_ID.to_owned(),
+                    repo_name: name,
+                    is_git: git_root(&root).is_some(),
+                    default_branch: None,
+                    registered: false,
+                    temporary: false,
+                    session_workspace_ids: vec![space.id.clone()],
+                    checkouts: Vec::new(),
+                });
+                projects.len() - 1
+            }
+        };
+        if projects[index]
+            .checkouts
+            .iter()
+            .any(|existing| normalized_for_comparison(Path::new(&existing.path)) == root_comparison)
         {
             continue;
         }
         let branch = current_branch(&root);
-        let is_worktree = git_root(&root).is_some_and(|resolved| {
-            main_worktree_root(&resolved)
-                .is_some_and(|main| normalized_for_comparison(&main) != comparison)
+        let label = branch.clone().unwrap_or_else(|| {
+            root.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Checkout")
+                .to_owned()
         });
-        roots.push((root, branch, is_worktree));
+        let is_worktree = root_comparison != project_comparison;
+        if !is_worktree {
+            projects[index].default_branch = branch.clone();
+        }
+        projects[index].checkouts.push(checkout(
+            &workspace_id,
+            &root,
+            &label,
+            branch,
+            is_worktree,
+            false,
+        ));
     }
-    let workspace_id = roots
-        .first()
-        .map(|(root, _, _)| workspace_id_for_path(root))
-        .unwrap_or_else(|| workspace_id_for_path(Path::new(&space.id)));
-    let checkouts = roots
-        .iter()
-        .map(|(root, branch, is_worktree)| {
-            let label = branch.clone().unwrap_or_else(|| {
-                root.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Checkout")
-                    .to_owned()
-            });
-            checkout(
-                &workspace_id,
-                root,
-                &label,
-                branch.clone(),
-                *is_worktree,
-                false,
-            )
-        })
-        .collect::<Vec<CheckoutSnapshot>>();
-
-    let primary = checkouts
-        .first()
-        .map(|checkout| checkout.path.clone())
-        .unwrap_or_default();
-    let repo_name = checkouts
-        .first()
-        .and_then(|checkout| Path::new(&checkout.path).file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or(&space.label)
-        .to_owned();
-
-    WorkspaceSnapshot {
-        id: workspace_id,
-        label: space.label.clone(),
-        path: primary,
-        remote_target_id: None,
-        expanded: true,
-        device_id: LOCAL_DEVICE_ID.to_owned(),
-        repo_name,
-        is_git: checkouts.iter().any(|checkout| checkout.branch.is_some()),
-        default_branch: checkouts
-            .first()
-            .and_then(|checkout| checkout.branch.clone()),
-        registered: false,
-        temporary: false,
-        session_workspace_ids: vec![space.id.clone()],
-        checkouts,
+    // The main worktree leads, so the primary badge and the project path
+    // agree even when a worktree's pane was reported first.
+    for project in &mut projects {
+        let project_comparison = normalized_for_comparison(Path::new(&project.path));
+        if let Some(index) = project.checkouts.iter().position(|checkout| {
+            normalized_for_comparison(Path::new(&checkout.path)) == project_comparison
+        }) && index != 0
+        {
+            let main = project.checkouts.remove(index);
+            project.checkouts.insert(0, main);
+        }
     }
+    projects
 }
 
 fn current_branch(root: &Path) -> Option<String> {
@@ -661,13 +670,15 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    /// A Herdr workspace with panes in two repositories is two projects, and
+    /// each registration lands on its own repository.
     #[test]
-    fn the_first_registration_covering_a_space_keeps_its_identity() {
+    fn a_space_spanning_two_repositories_is_two_projects() {
         let first = temp_dir("first-repo");
         let second = temp_dir("second-repo");
         let space = SessionSpace {
             id: "w9".to_owned(),
-            label: "both".to_owned(),
+            label: "hide main".to_owned(),
             cwds: vec![
                 first.to_string_lossy().into_owned(),
                 second.to_string_lossy().into_owned(),
@@ -678,12 +689,19 @@ mod tests {
             registration(second.to_str().unwrap(), "Second", LOCAL_DEVICE_ID).expect("second"),
         ];
 
+        let unregistered = build_catalog(&[], &[space.clone()]);
         let catalog = build_catalog(&registrations, &[space]);
 
-        assert_eq!(catalog.len(), 1);
-        assert_eq!(catalog[0].id, registrations[0].id);
-        assert_eq!(catalog[0].label, "First");
-        assert_eq!(catalog[0].checkouts.len(), 2);
+        assert_eq!(unregistered.len(), 2);
+        assert!(unregistered.iter().all(|project| project.label != "hide main"));
+        assert_eq!(catalog.len(), 2);
+        let labels = catalog.iter().map(|p| p.label.as_str()).collect::<Vec<_>>();
+        assert_eq!(labels, vec!["First", "Second"]);
+        assert!(catalog.iter().all(|project| {
+            project.registered
+                && project.checkouts.len() == 1
+                && project.session_workspace_ids == vec!["w9".to_owned()]
+        }));
         let _ = fs::remove_dir_all(first);
         let _ = fs::remove_dir_all(second);
     }

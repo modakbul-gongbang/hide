@@ -245,6 +245,7 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
             id: agent.id.unwrap_or_else(|| pane_id.clone()),
             pane_id,
             workspace_label,
+            checkout_label: None,
             agent_kind: non_empty(agent.agent.as_deref())
                 .unwrap_or("unknown")
                 .to_owned(),
