@@ -3273,6 +3273,74 @@ impl Runtime {
         });
     }
 
+    /// Herdr closes a workspace with its last pane, and a project that exists
+    /// only as that Herdr workspace would vanish from the sidebar with it.
+    /// The user asked to close a pane, not to forget the project, so the
+    /// project is registered at its repository path first. The path-keyed
+    /// project id is unchanged by this, and the row stays selectable with
+    /// its "start new terminal" control once Herdr's workspace is gone.
+    fn retain_project_before_last_pane_closes(&mut self, pane_id: &str) {
+        let Some(project) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.remote_target_id.is_none()
+                    && workspace
+                        .checkouts
+                        .iter()
+                        .flat_map(|checkout| checkout.tabs.iter())
+                        .flat_map(|tab| tab.panes.iter())
+                        .any(|pane| pane.id == pane_id)
+            })
+        else {
+            return;
+        };
+        let pane_count = project
+            .checkouts
+            .iter()
+            .flat_map(|checkout| checkout.tabs.iter())
+            .map(|tab| tab.panes.len())
+            .sum::<usize>();
+        if project.registered || pane_count != 1 {
+            return;
+        }
+        let registration = match workspace::registration(
+            &project.path,
+            &project.repo_name,
+            &project.device_id,
+        ) {
+            Ok(registration) => registration,
+            Err(message) => {
+                self.set_error("workspace.retain_failed", message, false);
+                return;
+            }
+        };
+        if self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|existing| existing.id == registration.id)
+        {
+            return;
+        }
+        self.push_diagnostic(
+            "workspace.retained",
+            format!(
+                "Registered {} at {} so closing its last pane keeps the project listed",
+                registration.label, registration.path
+            ),
+        );
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .push(registration);
+        self.rebuild_catalog();
+        self.persist_current_ui_state();
+    }
+
     fn rebuild_catalog(&mut self) {
         let mut workspaces = workspace::build_catalog(
             &self.snapshot.ui_state.workspace_registrations,
@@ -4272,6 +4340,7 @@ impl Runtime {
                     return true;
                 };
                 let pane_id = payload.pane_id;
+                self.retain_project_before_last_pane_closes(&pane_id);
                 self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
                 if let Err(message) =
                     live::spawn_pane_control(context, PaneControlAction::Close { pane_id })
@@ -6724,6 +6793,79 @@ mod tests {
         assert_eq!(catalog[0].label, "Duplicate");
         assert!(catalog[0].registered);
         assert_eq!(catalog[0].session_workspace_ids, vec!["w41".to_owned()]);
+    }
+
+    /// The user's report: a project that exists only as a Herdr workspace,
+    /// one tab, one pane. Closing that pane made Herdr close the workspace,
+    /// and the project vanished from the sidebar.
+    #[test]
+    fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
+        let mut runtime = runtime();
+        let checkout_path = "/private/tmp/hide-retain-project";
+        let spaces = vec![workspace::SessionSpace {
+            id: "w5".to_owned(),
+            label: "hide main".to_owned(),
+            cwds: vec![checkout_path.to_owned()],
+        }];
+        let project_id = workspace::workspace_id_for_path(Path::new(checkout_path));
+        let checkout_id = workspace::checkout_id_for_path(&project_id, Path::new(checkout_path));
+        let occupied: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "workspaces": [{"workspace_id": "w5", "label": "hide main"}],
+            "tabs": [{"workspace_id": "w5", "tab_id": "w5:t1", "label": "1"}],
+            "panes": [{"pane_id": "w5:p1", "cwd": checkout_path}],
+            "layouts": [{
+                "workspace_id": "w5",
+                "tab_id": "w5:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w5:p1",
+                "panes": [{"pane_id": "w5:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("occupied payload");
+        let catalog = session_sync::PrecomputedCatalog {
+            registrations: Vec::new(),
+            workspaces: workspace::build_catalog(&[], &spaces),
+        };
+        runtime.restore_hint_pending = false;
+        assert!(runtime.ingest_session_with_catalog(Ok(occupied), Some(catalog)));
+        assert!(runtime.focus_checkout(&project_id, &checkout_id));
+        assert!(!runtime.snapshot().navigator.workspaces[0].registered);
+
+        runtime.retain_project_before_last_pane_closes("w5:p1");
+
+        let registrations = &runtime.snapshot().ui_state.workspace_registrations;
+        assert_eq!(registrations.len(), 1);
+        assert_eq!(registrations[0].path, checkout_path);
+        assert_eq!(registrations[0].id, project_id);
+        // Retaining is idempotent: the close path may run again.
+        runtime.retain_project_before_last_pane_closes("w5:p1");
+        assert_eq!(runtime.snapshot().ui_state.workspace_registrations.len(), 1);
+
+        // Herdr then drops the workspace with the pane.
+        let released: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "workspaces": [],
+            "tabs": [],
+            "panes": [],
+            "layouts": []
+        }))
+        .expect("released payload");
+        assert!(runtime.ingest_session(Ok(released)));
+
+        let navigator = &runtime.snapshot().navigator;
+        assert_eq!(navigator.workspaces.len(), 1);
+        assert_eq!(navigator.workspaces[0].id, project_id);
+        assert!(navigator.workspaces[0].registered);
+        assert!(navigator.workspaces[0].session_workspace_ids.is_empty());
+        assert_eq!(navigator.workspaces[0].checkouts[0].id, checkout_id);
+        assert!(navigator.workspaces[0].checkouts[0].tabs.is_empty());
+        // The selection survives, so the shell shows this checkout's empty
+        // state with its start control rather than "no workspace".
+        assert_eq!(navigator.focused_checkout_id.as_deref(), Some(checkout_id.as_str()));
+        assert_eq!(navigator.root_path.as_deref(), Some(checkout_path));
     }
 
     #[test]
