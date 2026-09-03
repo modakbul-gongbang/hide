@@ -158,7 +158,7 @@ cmd_setup() {
   local finished_tab mixed_tab
   finished_tab="$(herdr tab list --workspace "$workspace" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tabs"][0]["tab_id"])')"
-  herdr tab rename "$finished_tab" finished >/dev/null 2>&1 || true
+  herdr tab rename "$finished_tab" finished >/dev/null
   mixed_tab="$(herdr tab create --workspace "$workspace" --cwd "$FIXTURE_ROOT" --label mixed --no-focus \
     | python3 -c 'import json,sys; d=json.load(sys.stdin)["result"]; print(d.get("tab_id") or d["tab"]["tab_id"])')"
 
