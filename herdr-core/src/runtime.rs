@@ -47,14 +47,18 @@ fn ordered_strip(
     for entry in herdr.iter().chain(files.iter()) {
         by_id.insert(entry.id.as_str(), entry.clone());
     }
-    let mut placed = stored
-        .iter()
-        .filter_map(|id| by_id.get(id.as_str()).cloned())
-        .collect::<Vec<_>>();
-    let held = placed
-        .iter()
-        .map(|entry| entry.id.clone())
-        .collect::<BTreeSet<_>>();
+    // A stored order that names the same tab twice holds one slot, not two, so
+    // the Herdr slot count stays equal to the Herdr tab count below.
+    let mut placed = Vec::with_capacity(herdr.len() + files.len());
+    let mut held = BTreeSet::new();
+    for id in stored {
+        let Some(entry) = by_id.get(id.as_str()) else {
+            continue;
+        };
+        if held.insert(entry.id.clone()) {
+            placed.push(entry.clone());
+        }
+    }
     placed.extend(
         herdr
             .iter()

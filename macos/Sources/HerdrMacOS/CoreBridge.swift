@@ -2237,7 +2237,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "session_snapshot", payload: [
             "focused_pane_id": paneID,
             "agents": agents,
-            "workspaces": [["workspace_id": workspaceID, "label": "hide rebrand"]],
+            "workspaces": [[
+                "workspace_id": workspaceID,
+                "label": "hide rebrand",
+                "active_tab_id": tabID,
+            ]],
             "tabs": [["tab_id": tabID, "workspace_id": workspaceID, "label": "Round 3"]],
             "panes": [["pane_id": paneID, "cwd": workspaceRoot.path]],
             "layouts": [[
