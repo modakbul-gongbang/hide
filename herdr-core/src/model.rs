@@ -357,6 +357,36 @@ impl PaneLayoutSnapshot {
         self.root.collect_pane_ids(&mut pane_ids);
         pane_ids
     }
+
+    /// This layout with `pane_id` gone, or `None` when it held nothing else.
+    ///
+    /// Herdr stays the authority on what a tab contains; this only lets the
+    /// rendered projection reach the same answer before the authoritative
+    /// `pane_closed` event arrives, which was measured at 167 ms behind the
+    /// request. Because the event recomputes the projection from the sync
+    /// replica anyway, running ahead converges on its own and needs no record
+    /// of what was removed.
+    ///
+    /// Focus follows the pane out: a layout whose `focused_pane_id` named the
+    /// removed pane would otherwise describe a pane that is no longer in it,
+    /// and the shell reads that field to decide where input goes.
+    pub fn removing(&self, pane_id: &str) -> Option<Self> {
+        let root = self.root.removing(pane_id)?;
+        let focused_pane_id = if self.focused_pane_id == pane_id {
+            let mut survivors = Vec::new();
+            root.collect_pane_ids(&mut survivors);
+            survivors.first()?.to_string()
+        } else {
+            self.focused_pane_id.clone()
+        };
+        Some(Self {
+            workspace_id: self.workspace_id.clone(),
+            tab_id: self.tab_id.clone(),
+            focused_pane_id,
+            zoomed: self.zoomed,
+            root,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
