@@ -429,10 +429,13 @@ private struct PetDashboardView: View {
                     value: projection.counts.seen,
                     color: HideTheme.secondary
                 )
+                // The warning hue, the same one a disconnected row carries in
+                // `AgentStatusStyle`, so the tile and the row cannot say a
+                // different thing about the same state.
                 PetCountTile(
                     label: "DISCONNECTED",
                     value: projection.counts.disconnected,
-                    color: HideTheme.danger
+                    color: HideTheme.warning
                 )
             }
             .padding(.horizontal, 18)

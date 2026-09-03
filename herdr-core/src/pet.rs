@@ -202,8 +202,12 @@ pub fn ambient_totals(agents: &[SidebarAgentSnapshot], connected: bool) -> Ambie
 }
 
 /// Whether this agent is one the operator still has to act on.
+///
+/// Read through the projection's own enum, not by matching the group name a
+/// second time: a name compared here is a copy of a vocabulary that lives in
+/// one place.
 pub fn is_unseen(agent: &SidebarAgentSnapshot) -> bool {
-    agent.group == "needs_you"
+    crate::sidebar::group_of(agent) == AgentGroup::NeedsYou
 }
 
 /// The unseen panes in click order: the pane whose unseen state was observed
