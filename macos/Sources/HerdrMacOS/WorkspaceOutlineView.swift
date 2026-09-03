@@ -80,25 +80,25 @@ private final class WorkspaceOutlineNode: NSObject {
     var name: String { placeholderMessage ?? url.lastPathComponent }
 }
 
+/// A row draws hover, but it does not decide it.
+///
+/// The row used to own a tracking area and set `isHovered` from its own
+/// enter/exit events. Two things broke that. `NSOutlineView` recycles row
+/// views, so a row that scrolled away handed its `true` to whatever item took
+/// its place; and a wheel scroll moves content under a stationary pointer,
+/// which AppKit never reports as an exit. The result was a band of rows all
+/// drawing hover at once, which reads as a multiple selection because the
+/// selected and hovered fills differ only in alpha. The outline view now owns
+/// the hovered row and recomputes it from the live pointer position, so the
+/// state cannot outlive the row it described.
 private final class WorkspaceOutlineRowView: NSTableRowView {
     var level = 0 { didSet { needsDisplay = true } }
     var isHovered = false { didSet { needsDisplay = true } }
-    private var trackingAreaReference: NSTrackingArea?
 
-    override func updateTrackingAreas() {
-        if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
-        let tracking = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(tracking)
-        trackingAreaReference = tracking
-        super.updateTrackingAreas()
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        isHovered = false
     }
-
-    override func mouseEntered(with event: NSEvent) { isHovered = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false }
 
     override func drawBackground(in dirtyRect: NSRect) {
         if isSelected {
@@ -124,6 +124,65 @@ private final class WorkspaceOutlineRowView: NSTableRowView {
 
 final class WorkspaceNSOutlineView: NSOutlineView {
     var onActivate: (() -> Void)?
+
+    private var hoveredRow = -1
+    private var trackingAreaReference: NSTrackingArea?
+
+    /// `.inVisibleRect` has AppKit rebuild this area as the view scrolls, and
+    /// that rebuild is the one signal a wheel scroll reliably produces, so the
+    /// hovered row is recomputed here as well as on pointer movement.
+    override func updateTrackingAreas() {
+        if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
+        let tracking = NSTrackingArea(
+            rect: .zero,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(tracking)
+        trackingAreaReference = tracking
+        super.updateTrackingAreas()
+        syncHoveredRow()
+    }
+
+    override func mouseEntered(with event: NSEvent) { syncHoveredRow() }
+    override func mouseMoved(with event: NSEvent) { syncHoveredRow() }
+    override func mouseExited(with event: NSEvent) { applyHoveredRow(-1) }
+
+    override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+        syncHoveredRow()
+    }
+
+    /// Reads the row under the pointer now, rather than trusting a value an
+    /// earlier event left behind. Called for pointer movement and for the two
+    /// ways a row can change without the pointer moving: a scroll, and a row
+    /// view arriving on screen.
+    func syncHoveredRow() {
+        guard let window, window.isKeyWindow else {
+            applyHoveredRow(-1)
+            return
+        }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        applyHoveredRow(visibleRect.contains(point) ? row(at: point) : -1)
+    }
+
+    /// Sweeps every visible row rather than only the pair that changed, so a
+    /// recycled or newly attached row view cannot keep a fill that belonged to
+    /// the item it replaced.
+    private func applyHoveredRow(_ newRow: Int) {
+        hoveredRow = newRow
+        let visible = rows(in: visibleRect)
+        guard visible.length > 0 else { return }
+        for candidate in visible.location..<(visible.location + visible.length) {
+            guard let rowView = rowView(atRow: candidate, makeIfNecessary: false)
+                as? WorkspaceOutlineRowView
+            else { continue }
+            let hovered = candidate == newRow
+            if rowView.isHovered != hovered {
+                rowView.isHovered = hovered
+            }
+        }
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76 {
@@ -322,6 +381,16 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             let row = WorkspaceOutlineRowView()
             row.level = max(0, outlineView.level(forItem: item))
             return row
+        }
+
+        /// A scroll brings rows under a pointer that never moved, so the row
+        /// that just attached has to be asked whether it is the hovered one.
+        func outlineView(
+            _ outlineView: NSOutlineView,
+            didAdd rowView: NSTableRowView,
+            forRow row: Int
+        ) {
+            (outlineView as? WorkspaceNSOutlineView)?.syncHoveredRow()
         }
 
         /// A click anywhere on a row's body activates it. The disclosure
