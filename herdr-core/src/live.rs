@@ -331,6 +331,24 @@ pub enum RemoteControlAction {
     CloseTab {
         tab_id: String,
     },
+    /// Asks Herdr to put one of its tabs at a new place in its workspace.
+    ///
+    /// Herdr owns the order of its own tabs, so this is a request, not a
+    /// local edit: the strip keeps the order Herdr last reported until Herdr
+    /// reports the new one. `expected_order` is the checkout-scoped Herdr tab
+    /// order the operator asked for, carried so the acknowledgement can be
+    /// checked against what was requested rather than assumed.
+    MoveTab {
+        checkout_id: String,
+        tab_id: String,
+        /// Herdr's insertion index, which counts positions in the tab list
+        /// *before* the moved tab is taken out of it.
+        insert_index: usize,
+        expected_order: Vec<String>,
+        /// Which reorder this request belongs to, so a result that a later
+        /// drag has already superseded cannot cancel the newer one.
+        generation: u64,
+    },
 }
 
 impl RemoteControlAction {
@@ -341,6 +359,7 @@ impl RemoteControlAction {
             Self::FocusTab { .. } => "tab.focus",
             Self::CreateTab { .. } => "tab.create",
             Self::CloseTab { .. } => "tab.close",
+            Self::MoveTab { .. } => "tab.move",
         }
     }
 }
@@ -351,6 +370,8 @@ pub enum RemoteControlOutcome {
         created_tab_id: Option<String>,
         created_pane_id: Option<String>,
     },
+    /// The workspace tab order Herdr reported back, in Herdr's order.
+    TabsOrdered { tab_ids: Vec<String> },
 }
 
 #[derive(Clone)]
@@ -444,6 +465,35 @@ fn execute_remote_control(
         RemoteControlAction::CloseTab { tab_id } => {
             control_request(connector, "tab.close", json!({"tab_id": tab_id}))?;
             (None, None)
+        }
+        RemoteControlAction::MoveTab {
+            tab_id,
+            insert_index,
+            ..
+        } => {
+            // `tab.move` answers with the workspace's whole tab list in its
+            // new order, so the caller can check what Herdr actually did
+            // instead of assuming the request landed as asked.
+            let result = control_request(
+                connector,
+                "tab.move",
+                json!({"tab_id": tab_id, "insert_index": insert_index}),
+            )?;
+            let tabs = result
+                .get("tabs")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "tab.move response is missing tabs".to_owned())?;
+            let tab_ids = tabs
+                .iter()
+                .map(|tab| {
+                    tab.get("tab_id")
+                        .and_then(Value::as_str)
+                        .filter(|tab_id| !tab_id.trim().is_empty())
+                        .map(str::to_owned)
+                        .ok_or_else(|| "tab.move response has a tab without an id".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(RemoteControlOutcome::TabsOrdered { tab_ids });
         }
     };
     Ok(RemoteControlOutcome::Acknowledged {
@@ -849,6 +899,11 @@ pub fn spawn_remote_control(
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")
         }
+        // A remote context browses Herdr's own tab order and owns no strip
+        // slots, so there is nothing here for a reorder to move.
+        RemoteControlAction::MoveTab { .. } => {
+            return Err("a remote context's tab order cannot be reordered".to_owned());
+        }
     };
     thread::Builder::new()
         .name(worker_name)
@@ -886,6 +941,7 @@ pub fn spawn_local_control(
         RemoteControlAction::FocusTab { .. } => "herdr-core-tab-focus",
         RemoteControlAction::CreateTab { .. } => "herdr-core-tab-create",
         RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
+        RemoteControlAction::MoveTab { .. } => "herdr-core-tab-move",
         _ => return Err(format!("{} is not a local tab action", action.kind())),
     };
     thread::Builder::new()

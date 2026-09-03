@@ -80,6 +80,34 @@ fn ordered_strip(
     placed
 }
 
+/// One reorder the operator asked for that Herdr has not reported back yet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingTabMove {
+    /// The whole strip order the entry was dropped into, as strip entry ids.
+    desired: Vec<String>,
+    /// The Herdr tab ids of `desired` in order. Herdr reporting exactly this
+    /// order for the checkout is what commits the arrangement.
+    herdr_order: Vec<String>,
+    generation: u64,
+}
+
+/// Translates a wanted Herdr tab order into the index `tab.move` takes.
+///
+/// Herdr counts the insertion point in the list it still holds, before the
+/// moved tab is taken out of it, so the index is the current position of
+/// whichever tab is to end up behind the moved one. A tab moving to the end
+/// has no successor and goes one past the last position.
+///
+/// `None` means the move cannot be expressed as a Herdr move: the named tab is
+/// not one of Herdr's, or the wanted order names a tab Herdr does not have.
+fn herdr_insert_index(current: &[String], desired: &[String], moved: &str) -> Option<usize> {
+    let position = desired.iter().position(|tab_id| tab_id == moved)?;
+    match desired.get(position + 1) {
+        Some(successor) => current.iter().position(|tab_id| tab_id == successor),
+        None => Some(current.len()),
+    }
+}
+
 /// How long the pet plays its waking pose after activity interrupts sleep.
 const PET_WAKING_MS: u64 = 1_200;
 
@@ -164,6 +192,17 @@ struct FocusTabPayload {
     workspace_id: String,
     checkout_id: String,
     tab_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReorderTabPayload {
+    workspace_id: String,
+    checkout_id: String,
+    /// The strip entry being moved, by its strip id, not the Herdr tab id:
+    /// the strip is what the operator dragged in and it holds both kinds.
+    tab_id: String,
+    /// Where the entry ends up, as its index in the resulting strip.
+    to_index: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -537,6 +576,7 @@ enum ValidatedEvent {
     CreateTab(CreateTabPayload),
     FocusCheckout(FocusCheckoutPayload),
     FocusTab(FocusTabPayload),
+    ReorderTab(ReorderTabPayload),
     FocusDevice(FocusDevicePayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
@@ -654,6 +694,15 @@ pub struct Runtime {
     /// disk. Without it a Herdr tab created next to open file tabs would land
     /// in front of them instead of at the end of the strip.
     checkout_tab_order: BTreeMap<String, Vec<String>>,
+    /// The arrangement a reorder asked for and Herdr has not reported yet,
+    /// per checkout. Herdr owns where its own tabs sit, so a drag that moves
+    /// one of them is held here rather than written into the strip: an
+    /// arrangement written early would show the file slots moved and the
+    /// Herdr slots not, and a refusal would have nothing to revert to.
+    pending_tab_move: BTreeMap<String, PendingTabMove>,
+    /// Numbers each reorder request so a result that a later drag has already
+    /// superseded cannot cancel the newer one.
+    next_tab_move_generation: u64,
     /// Workspace/active-tab pairs Herdr named that the navigator could not
     /// place, as `<workspace id>/<tab id>`. Session sync reconciles once a
     /// second, so the diagnostic is emitted when the set changes rather than
@@ -776,6 +825,8 @@ impl Runtime {
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
             checkout_tab_order: BTreeMap::new(),
+            pending_tab_move: BTreeMap::new(),
+            next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashSet::new(),
             fork_sequence: 0,
@@ -1863,6 +1914,170 @@ impl Runtime {
         previous != self.snapshot.navigator
     }
 
+    /// Puts one strip entry at a new place in its checkout's strip.
+    ///
+    /// The two kinds of entry have different owners. A file tab's slot is
+    /// Hide's, so a move that only rearranges file slots is committed here and
+    /// nothing is sent to Herdr. The relative order of Herdr's tabs is Herdr's,
+    /// so a move that changes it is a request: the arrangement is held until
+    /// Herdr reports the order it actually has, and a refusal leaves the strip
+    /// on the order Herdr last reported.
+    fn reorder_tab(&mut self, payload: ReorderTabPayload) -> bool {
+        let Some(workspace) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == payload.workspace_id)
+        else {
+            self.set_error(
+                "tab.unknown_workspace",
+                format!("Workspace {} is not registered", payload.workspace_id),
+                false,
+            );
+            return true;
+        };
+        if workspace.remote_target_id.is_some() {
+            self.set_error(
+                "tab.reorder_remote",
+                "A remote target's tab order is Herdr's alone and cannot be rearranged here",
+                false,
+            );
+            return true;
+        }
+        let Some(checkout) = workspace
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.id == payload.checkout_id)
+        else {
+            self.set_error(
+                "tab.unknown_checkout",
+                format!("Checkout {} is not available", payload.checkout_id),
+                false,
+            );
+            return true;
+        };
+        let strip = checkout.strip.clone();
+        let Some(from) = strip.iter().position(|entry| entry.id == payload.tab_id) else {
+            self.set_error(
+                "tab.reorder_unknown",
+                format!("Tab {} is not in this checkout's strip", payload.tab_id),
+                false,
+            );
+            return true;
+        };
+        if payload.to_index >= strip.len() {
+            self.set_error(
+                "tab.reorder_out_of_range",
+                format!(
+                    "Position {} is past the end of a strip of {}",
+                    payload.to_index,
+                    strip.len()
+                ),
+                false,
+            );
+            return true;
+        }
+
+        let mut desired = strip.clone();
+        let moved = desired.remove(from);
+        desired.insert(payload.to_index, moved.clone());
+        let desired_ids = desired
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        let herdr_ids = |entries: &[StripTabSnapshot]| {
+            entries
+                .iter()
+                .filter(|entry| entry.kind == StripTabKind::Herdr)
+                .map(|entry| entry.source_id.clone())
+                .collect::<Vec<_>>()
+        };
+        let current_herdr = herdr_ids(&strip);
+        let desired_herdr = herdr_ids(&desired);
+
+        if current_herdr == desired_herdr {
+            // Only slots Hide owns changed, so Herdr has nothing to do and the
+            // arrangement is the operator's the moment they drop it.
+            self.pending_tab_move.remove(&payload.checkout_id);
+            self.checkout_tab_order
+                .insert(payload.checkout_id.clone(), desired_ids);
+            self.rebuild_tab_strips();
+            return true;
+        }
+
+        let Some(insert_index) =
+            herdr_insert_index(&current_herdr, &desired_herdr, &moved.source_id)
+        else {
+            self.set_error(
+                "tab.reorder_inconsistent",
+                format!(
+                    "Tab {} cannot be placed there: it is not one of Herdr's tabs in this checkout",
+                    moved.source_id
+                ),
+                false,
+            );
+            return true;
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.set_error(
+                "tab.control_unavailable",
+                "Moving a Herdr tab requires a live Herdr connection",
+                true,
+            );
+            return true;
+        };
+        let generation = self.next_tab_move_generation;
+        self.next_tab_move_generation += 1;
+        self.pending_tab_move.insert(
+            payload.checkout_id.clone(),
+            PendingTabMove {
+                desired: desired_ids,
+                herdr_order: desired_herdr.clone(),
+                generation,
+            },
+        );
+        self.push_diagnostic(
+            "tab.move.requested",
+            format!(
+                "Asking Herdr to insert tab {} at {insert_index}",
+                moved.source_id
+            ),
+        );
+        if let Err(message) = live::spawn_local_control(
+            context,
+            RemoteControlAction::MoveTab {
+                checkout_id: payload.checkout_id.clone(),
+                tab_id: moved.source_id,
+                insert_index,
+                expected_order: desired_herdr,
+                generation,
+            },
+        ) {
+            self.pending_tab_move.remove(&payload.checkout_id);
+            self.set_error("tab.move_worker_failed", message, true);
+        }
+        true
+    }
+
+    /// Drops a held reorder and says why, so a refused move is never a strip
+    /// that silently stayed where it was.
+    fn abandon_tab_move(&mut self, checkout_id: &str, generation: u64, reason: String) -> bool {
+        // A result from a drag a later drag has replaced must not cancel the
+        // newer one.
+        if self
+            .pending_tab_move
+            .get(checkout_id)
+            .is_none_or(|pending| pending.generation != generation)
+        {
+            return false;
+        }
+        self.pending_tab_move.remove(checkout_id);
+        self.set_error("tab.move_refused", reason, true);
+        self.rebuild_tab_strips();
+        true
+    }
+
     /// Rewrites every local checkout's tab strip from the Herdr tabs and file
     /// tabs it currently holds.
     ///
@@ -1871,6 +2086,7 @@ impl Runtime {
     fn rebuild_tab_strips(&mut self) {
         let file_tabs = &self.snapshot.editor.tabs;
         let order = &mut self.checkout_tab_order;
+        let pending = &mut self.pending_tab_move;
         let mut live_checkouts = BTreeSet::new();
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() {
@@ -1896,11 +2112,34 @@ impl Runtime {
                     .map(|tab| StripTabSnapshot::file(tab.id.clone(), tab.label.clone()))
                     .collect::<Vec<_>>();
                 let stored = order.entry(checkout.id.clone()).or_default();
+                // A held reorder lands the moment Herdr reports the order it
+                // asked for, whichever path carried it: the `tab_moved` event,
+                // a move Herdr had already made, or a move made from the TUI.
+                // A held reorder whose tabs are no longer the checkout's tabs
+                // can never be reported, so it is dropped rather than kept
+                // waiting for an order that cannot arrive.
+                if let Some(held) = pending.get(&checkout.id) {
+                    let live_herdr = herdr
+                        .iter()
+                        .map(|entry| entry.source_id.clone())
+                        .collect::<BTreeSet<_>>();
+                    if held.herdr_order.iter().cloned().collect::<BTreeSet<_>>() != live_herdr {
+                        pending.remove(&checkout.id);
+                    } else if held
+                        .herdr_order
+                        .iter()
+                        .eq(herdr.iter().map(|entry| &entry.source_id))
+                    {
+                        *stored = held.desired.clone();
+                        pending.remove(&checkout.id);
+                    }
+                }
                 checkout.strip = ordered_strip(stored, &herdr, &files);
                 *stored = checkout.strip.iter().map(|entry| entry.id.clone()).collect();
             }
         }
         order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
     }
 
     /// Reconciles the focused checkout, its owning workspace, root path, and
@@ -3215,6 +3454,15 @@ impl Runtime {
                     })
                 );
             }
+            // A remote target owns its tab order; `spawn_remote_control`
+            // refuses the only action that reports one back.
+            Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                self.set_error(
+                    "remote.control.failed",
+                    format!("{action_kind} for {target_id} returned a tab order remotely"),
+                    false,
+                );
+            }
             Err(message) => {
                 self.set_error(
                     "remote.control.failed",
@@ -3245,6 +3493,23 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
+        if let RemoteControlAction::MoveTab {
+            checkout_id,
+            tab_id,
+            expected_order,
+            generation,
+            ..
+        } = &action
+        {
+            return self.ingest_tab_move_result(
+                checkout_id,
+                tab_id,
+                expected_order,
+                *generation,
+                result,
+                elapsed_ms,
+            );
+        }
         match result {
             Ok(RemoteControlOutcome::Acknowledged {
                 created_tab_id,
@@ -3299,8 +3564,113 @@ impl Runtime {
                     })
                 );
             }
+            // `tab.move` is the only action that reports a tab order and it
+            // is handled above, before this match.
+            Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                self.set_error(
+                    "tab.control.failed",
+                    format!("{action_kind} returned a tab order it was not asked for"),
+                    false,
+                );
+            }
         }
         true
+    }
+
+    /// Reads what Herdr did with a requested tab move.
+    ///
+    /// Herdr answers with the workspace's tab list in its new order, so the
+    /// answer says whether the move landed as asked without waiting for the
+    /// event. An answer that matches leaves the arrangement held until the
+    /// order reaches the navigator; anything else drops it and says so, so a
+    /// refused or differently-placed move is never a strip that quietly
+    /// stayed where it was.
+    fn ingest_tab_move_result(
+        &mut self,
+        checkout_id: &str,
+        tab_id: &str,
+        expected_order: &[String],
+        generation: u64,
+        result: Result<RemoteControlOutcome, String>,
+        elapsed_ms: u128,
+    ) -> bool {
+        let outcome = match result {
+            Ok(RemoteControlOutcome::TabsOrdered { tab_ids }) => Ok(tab_ids),
+            Ok(RemoteControlOutcome::Acknowledged { .. }) => {
+                Err("tab.move did not report the resulting tab order".to_owned())
+            }
+            Err(message) => Err(message),
+        };
+        match outcome {
+            Ok(tab_ids) => {
+                // The response lists the whole workspace, which can hold tabs
+                // from sibling checkouts. Only the order of this checkout's
+                // tabs was asked for, so only that is checked.
+                let placed = tab_ids
+                    .iter()
+                    .filter(|candidate| expected_order.contains(candidate))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if placed == expected_order {
+                    self.push_diagnostic(
+                        "tab.move.ready",
+                        format!(
+                            "Herdr placed tab {tab_id} as asked in {elapsed_ms} ms; awaiting the ordered event"
+                        ),
+                    );
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({
+                            "component": "tab_control",
+                            "kind": "tab.move.ready",
+                            "checkout_id": checkout_id,
+                            "tab_id": tab_id,
+                            "order": placed,
+                            "duration_ms": elapsed_ms,
+                        })
+                    );
+                    return true;
+                }
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "tab_control",
+                        "kind": "tab.move.diverged",
+                        "checkout_id": checkout_id,
+                        "tab_id": tab_id,
+                        "requested": expected_order,
+                        "placed": placed,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+                self.abandon_tab_move(
+                    checkout_id,
+                    generation,
+                    format!("Herdr put tab {tab_id} somewhere else; the strip follows Herdr"),
+                );
+                true
+            }
+            Err(message) => {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "tab_control",
+                        "kind": "tab.move.failed",
+                        "checkout_id": checkout_id,
+                        "tab_id": tab_id,
+                        "requested": expected_order,
+                        "message": message,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
+                self.abandon_tab_move(
+                    checkout_id,
+                    generation,
+                    format!("Herdr refused to move tab {tab_id}: {message}"),
+                );
+                true
+            }
+        }
     }
 
     /// Appends only the decoded frame bytes when the delivering official
@@ -4237,6 +4607,7 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::ReorderTab(payload) => self.reorder_tab(payload),
             ValidatedEvent::FocusDevice(payload) => {
                 if !self
                     .snapshot
@@ -5646,6 +6017,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "create_tab" => decode!(CreateTabPayload, CreateTab),
         "focus_checkout" => decode!(FocusCheckoutPayload, FocusCheckout),
         "focus_tab" => decode!(FocusTabPayload, FocusTab),
+        "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
@@ -7049,6 +7421,53 @@ mod tests {
             .collect()
     }
 
+    /// A registered checkout the strip tests can drive.
+    ///
+    /// The temp root is a symlink on macOS and the catalog keys checkouts by
+    /// the real path, so the fixture uses that. It is also made its own
+    /// repository, because a directory inside another repository is
+    /// catalogued under that repository's root instead.
+    fn strip_checkout(name: &str) -> (Runtime, String, PathBuf) {
+        let directory = std::env::temp_dir().join(format!(
+            "hide-strip-{name}-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("checkout directory");
+        let directory = directory.canonicalize().expect("a real checkout path");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&directory)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        std::fs::write(directory.join("notes.md"), "notes\n").expect("fixture file");
+        let (runtime, checkout_id) = tab_order_runtime(&directory.to_string_lossy());
+        (runtime, checkout_id, directory)
+    }
+
+    fn reorder_tab(
+        runtime: &mut Runtime,
+        checkout_id: &str,
+        entry_id: &str,
+        to_index: usize,
+    ) -> bool {
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "reorder_tab",
+            "payload": {
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id,
+                "tab_id": entry_id,
+                "to_index": to_index
+            }
+        }))
+        .expect("reorder tab event");
+        runtime.dispatch_json(&event)
+    }
+
     fn open_file(runtime: &mut Runtime, checkout_id: &str, path: &Path) {
         let event = serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION,
@@ -7255,6 +7674,308 @@ mod tests {
                 file_entry,
                 "herdr:w-order:t1".to_owned()
             ]
+        );
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_reorder_index_counts_positions_before_the_tab_leaves_the_list() {
+        // Herdr inserts into the list it still holds and then takes the moved
+        // tab out of its old place, so the index is where the tab that ends up
+        // behind the moved one sits now. These three cases are the ones a live
+        // 0.8.2 server was observed answering with exactly these orders.
+        let current = ["t1", "t2", "t3"].map(str::to_owned);
+        assert_eq!(
+            herdr_insert_index(&current, &["t2", "t1", "t3"].map(str::to_owned), "t1"),
+            Some(2)
+        );
+        assert_eq!(
+            herdr_insert_index(&current, &["t2", "t3", "t1"].map(str::to_owned), "t1"),
+            Some(3)
+        );
+        assert_eq!(
+            herdr_insert_index(&current, &["t3", "t1", "t2"].map(str::to_owned), "t3"),
+            Some(0)
+        );
+        // A file tab is not one of Herdr's, so there is no Herdr move to make.
+        assert_eq!(
+            herdr_insert_index(
+                &current,
+                &["t1", "t2", "t3"].map(str::to_owned),
+                "file:notes"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn tab_strip_reorder_moves_a_file_tab_without_asking_herdr() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("file-move");
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        open_file(&mut runtime, &checkout_id, &directory.join("notes.md"));
+        let file_entry = strip_ids(&runtime, &checkout_id)[2].clone();
+
+        // There is no live connection in this fixture, so a move that reached
+        // Herdr would fail loudly. Landing silently is the assertion.
+        assert!(reorder_tab(&mut runtime, &checkout_id, &file_entry, 1));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t1".to_owned(),
+                file_entry.clone(),
+                "herdr:w-order:t2".to_owned()
+            ]
+        );
+        assert!(runtime.snapshot().status.last_error.is_none());
+        assert!(runtime.pending_tab_move.is_empty());
+
+        // The slot survives the next catalog rebuild, which is what makes the
+        // move a move rather than a repaint.
+        runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t1".to_owned(),
+                file_entry,
+                "herdr:w-order:t2".to_owned()
+            ]
+        );
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_reorder_asks_herdr_and_lands_only_once_herdr_reports_the_order() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("herdr-move");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        open_file(&mut runtime, &checkout_id, &directory.join("notes.md"));
+        let file_entry = strip_ids(&runtime, &checkout_id)[2].clone();
+        let before = strip_ids(&runtime, &checkout_id);
+
+        // A Unix socket path has a hard length limit and the checkout fixture
+        // can sit deep, so the fixture server lives at a short one of its own.
+        let socket_root = PathBuf::from("/tmp").join(format!(
+            "herdr-core-tab-move-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&socket_root).expect("socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
+        let server = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            let (mut stream, _) = listener.accept().expect("accept tab.move");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut line)
+                .expect("read request");
+            let request: serde_json::Value =
+                serde_json::from_str(&line).expect("tab.move request JSON");
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "id": request["id"],
+                    "result": {
+                        "type": "tab_list",
+                        "tabs": [
+                            {"tab_id": "w-order:t2"},
+                            {"tab_id": "w-order:t1"}
+                        ]
+                    }
+                })
+            )
+            .expect("write tab_list response");
+            request
+        });
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+
+        // Move the first Herdr tab behind the second. The file tab does not
+        // move, so the arrangement differs from Herdr's only in Herdr's own
+        // order, which is Herdr's to grant.
+        assert!(reorder_tab(
+            &mut runtime,
+            &checkout_id,
+            "herdr:w-order:t1",
+            1
+        ));
+        let request = server.join().expect("fixture server joins");
+        assert_eq!(request["method"], "tab.move");
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"tab_id": "w-order:t1", "insert_index": 2})
+        );
+
+        // The strip does not move on the operator's word alone.
+        assert_eq!(strip_ids(&runtime, &checkout_id), before);
+        assert_eq!(
+            runtime.pending_tab_move[&checkout_id].herdr_order,
+            vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()]
+        );
+
+        // Herdr reports the new order; the arrangement lands with it.
+        let moved = ["w-order:t2", "w-order:t1"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &moved,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t2".to_owned(),
+                "herdr:w-order:t1".to_owned(),
+                file_entry
+            ]
+        );
+        assert!(runtime.pending_tab_move.is_empty());
+
+        std::fs::remove_dir_all(&socket_root).ok();
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_reorder_keeps_herdrs_order_and_reports_when_a_move_is_refused() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("herdr-refused");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        let before = strip_ids(&runtime, &checkout_id);
+        runtime.pending_tab_move.insert(
+            checkout_id.clone(),
+            PendingTabMove {
+                desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
+                herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+                generation: 7,
+            },
+        );
+
+        assert!(runtime.ingest_local_control_result(
+            RemoteControlAction::MoveTab {
+                checkout_id: checkout_id.clone(),
+                tab_id: "w-order:t1".to_owned(),
+                insert_index: 2,
+                expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+                generation: 7,
+            },
+            Err("tab.move failed: tab_not_found: tab w-order:t9 not found".to_owned()),
+            4,
+        ));
+        assert_eq!(strip_ids(&runtime, &checkout_id), before);
+        assert!(runtime.pending_tab_move.is_empty());
+        let error = runtime
+            .snapshot()
+            .status
+            .last_error
+            .clone()
+            .expect("a refused move is reported");
+        assert_eq!(error.kind, "tab.move_refused");
+        assert!(error.message.contains("w-order:t1"), "{}", error.message);
+        assert!(error.retryable);
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_reorder_ignores_a_result_a_later_drag_has_replaced() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("herdr-superseded");
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        let live = PendingTabMove {
+            desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
+            herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+            generation: 9,
+        };
+        runtime
+            .pending_tab_move
+            .insert(checkout_id.clone(), live.clone());
+
+        // The first drag's refusal arrives after a second drag replaced it.
+        assert!(runtime.ingest_local_control_result(
+            RemoteControlAction::MoveTab {
+                checkout_id: checkout_id.clone(),
+                tab_id: "w-order:t1".to_owned(),
+                insert_index: 2,
+                expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+                generation: 8,
+            },
+            Err("tab.move failed: transport".to_owned()),
+            4,
+        ));
+        assert_eq!(runtime.pending_tab_move[&checkout_id], live);
+        assert!(runtime.snapshot().status.last_error.is_none());
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn tab_strip_reorder_refuses_a_remote_checkout() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("remote-refusal");
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        let before = strip_ids(&runtime, &checkout_id);
+        for workspace in &mut runtime.snapshot.navigator.workspaces {
+            workspace.remote_target_id = Some("mini".to_owned());
+        }
+
+        assert!(reorder_tab(
+            &mut runtime,
+            &checkout_id,
+            "herdr:w-order:t1",
+            1
+        ));
+        assert_eq!(strip_ids(&runtime, &checkout_id), before);
+        assert!(runtime.pending_tab_move.is_empty());
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("tab.reorder_remote")
         );
 
         std::fs::remove_dir_all(&directory).ok();
