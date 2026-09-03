@@ -39,7 +39,6 @@ enum AgentRowDensity {
     case compact
 
     var badgeSize: CGFloat { self == .prominent ? 19 : 16 }
-    var titleSize: CGFloat { self == .prominent ? 11 : 11 }
     var titleWeight: Font.Weight { self == .prominent ? .semibold : .regular }
     var titleColor: Color { self == .prominent ? HideTheme.primary : HideTheme.secondary }
     /// The mark column sits at the indent, so the agent badge lands where it
@@ -137,21 +136,29 @@ private struct AgentStatusMark: View {
 
 /// The one agent row. Needs You, Done, the Agents view, the checkout group in
 /// the project tree, and the pet dashboard all draw this.
-struct AgentRow<Accessory: View>: View {
+struct AgentRow: View {
     let presentation: AgentRowPresentation
     var density: AgentRowDensity = .prominent
     var isFocused: Bool = false
     var shortcutNumber: Int?
     let action: () -> Void
-    @ViewBuilder var accessory: () -> Accessory
 
+    /// Work the agent started that is still running. It is background noise
+    /// next to the agent's own state, so it stays muted.
     private var ambientLabel: String? {
         guard let ambient = presentation.ambient else { return nil }
         var parts: [String] = []
         if ambient.subagentsActive > 0 { parts.append("\(ambient.subagentsActive) sub") }
         if ambient.backgroundRunning > 0 { parts.append("\(ambient.backgroundRunning) bg") }
-        if ambient.backgroundFailed > 0 { parts.append("\(ambient.backgroundFailed) failed") }
         return parts.isEmpty ? nil : parts.joined(separator: "  ")
+    }
+
+    /// Work that failed, which is the one ambient signal worth a color. Every
+    /// surface says it once, in the same place and the same hue; the pet
+    /// dashboard used to repeat it in a trailing label of its own.
+    private var failedLabel: String? {
+        guard let failed = presentation.ambient?.backgroundFailed, failed > 0 else { return nil }
+        return "\(failed) failed"
     }
 
     var body: some View {
@@ -166,7 +173,7 @@ struct AgentRow<Accessory: View>: View {
                 VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                     HStack(spacing: 5) {
                         Text(presentation.title)
-                            .hideFont(size: density.titleSize, weight: density.titleWeight)
+                            .hideFont(size: 11, weight: density.titleWeight)
                             .foregroundStyle(density.titleColor)
                             .lineLimit(1)
                         Spacer(minLength: 0)
@@ -200,9 +207,14 @@ struct AgentRow<Accessory: View>: View {
                                 .foregroundStyle(HideTheme.muted)
                                 .lineLimit(1)
                         }
+                        if let failedLabel {
+                            Text(failedLabel)
+                                .hideFont(size: 9, weight: .medium)
+                                .foregroundStyle(HideTheme.danger)
+                                .lineLimit(1)
+                        }
                     }
                 }
-                accessory()
             }
             .padding(.leading, density.leadingPadding)
             .padding(.trailing, density.trailingPadding)
@@ -218,24 +230,5 @@ struct AgentRow<Accessory: View>: View {
             "\(presentation.title), \(presentation.agentKind), \(presentation.statusLabel)"
         )
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
-    }
-}
-
-extension AgentRow where Accessory == EmptyView {
-    init(
-        presentation: AgentRowPresentation,
-        density: AgentRowDensity = .prominent,
-        isFocused: Bool = false,
-        shortcutNumber: Int? = nil,
-        action: @escaping () -> Void
-    ) {
-        self.init(
-            presentation: presentation,
-            density: density,
-            isFocused: isFocused,
-            shortcutNumber: shortcutNumber,
-            action: action,
-            accessory: { EmptyView() }
-        )
     }
 }

@@ -498,8 +498,8 @@ private struct PetCountTile: View {
     }
 }
 
-/// A pet dashboard row: the one agent row plus this surface's own card and
-/// the ambient counts only the dashboard has room for.
+/// A pet dashboard row: the one agent row on this surface's own card. What the
+/// row says is the row's business, so the dashboard adds only the card.
 private struct PetDashboardAgentRow: View {
     @Environment(\.hideAccent) private var accent
     let agent: PetDashboardRow
@@ -509,13 +509,7 @@ private struct PetDashboardAgentRow: View {
         AgentRow(
             presentation: AgentRowPresentation(row: agent, accent: accent),
             action: action
-        ) {
-            if agent.ambient?.backgroundFailed ?? 0 > 0 {
-                Text("failed \(agent.ambient?.backgroundFailed ?? 0)")
-                    .hideFont(size: 8, design: .monospaced)
-                    .foregroundStyle(HideTheme.danger)
-            }
-        }
+        )
         .frame(minHeight: 56)
         .background(
             HideTheme.elevated.opacity(0.75),
