@@ -95,17 +95,43 @@ struct PendingTabMove {
 ///
 /// Herdr counts the insertion point in the list it still holds, before the
 /// moved tab is taken out of it, so the index is the current position of
-/// whichever tab is to end up behind the moved one. A tab moving to the end
-/// has no successor and goes one past the last position.
+/// whichever tab is to end up behind the moved one.
+///
+/// `workspace_order` is the whole Herdr workspace's tab list, because that is
+/// the list Herdr indexes. `desired` is the order the operator asked for in
+/// one checkout's strip, which is a subset of it: a workspace's tabs are split
+/// across a repository and its worktrees whenever their panes are. Reading the
+/// index off the subset instead lands the tab elsewhere as soon as the
+/// checkout's tabs do not start at the workspace's first position.
+///
+/// A tab dropped at the end of its checkout's strip has no successor there, so
+/// it goes in front of whichever workspace tab currently follows the checkout's
+/// last tab, and at the end of the workspace when nothing follows.
 ///
 /// `None` means the move cannot be expressed as a Herdr move: the named tab is
-/// not one of Herdr's, or the wanted order names a tab Herdr does not have.
-fn herdr_insert_index(current: &[String], desired: &[String], moved: &str) -> Option<usize> {
+/// not one of Herdr's, or an anchor it needs is not in the workspace's list.
+fn herdr_insert_index(
+    workspace_order: &[String],
+    desired: &[String],
+    moved: &str,
+) -> Option<usize> {
     let position = desired.iter().position(|tab_id| tab_id == moved)?;
-    match desired.get(position + 1) {
-        Some(successor) => current.iter().position(|tab_id| tab_id == successor),
-        None => Some(current.len()),
+    let index_of = |wanted: &str| workspace_order.iter().position(|tab_id| tab_id == wanted);
+    if let Some(successor) = desired.get(position + 1) {
+        return index_of(successor);
     }
+    let Some(predecessor) = position.checked_sub(1).and_then(|before| desired.get(before)) else {
+        // The checkout has one Herdr tab, so there is nothing to move it past.
+        // Its own position is the index that leaves the workspace unchanged.
+        return index_of(moved);
+    };
+    let after_predecessor = index_of(predecessor)? + 1;
+    Some(
+        workspace_order[after_predecessor..]
+            .iter()
+            .position(|tab_id| tab_id != moved)
+            .map_or(workspace_order.len(), |offset| after_predecessor + offset),
+    )
 }
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
@@ -694,6 +720,13 @@ pub struct Runtime {
     /// disk. Without it a Herdr tab created next to open file tabs would land
     /// in front of them instead of at the end of the strip.
     checkout_tab_order: BTreeMap<String, Vec<String>>,
+    /// Every Herdr workspace's whole tab list, in Herdr's order, keyed by the
+    /// Herdr workspace id. A checkout holds only the tabs whose panes sit in
+    /// its own directory, so one workspace's tabs can be split across a
+    /// repository and its worktrees. `tab.move` counts its insertion index in
+    /// the workspace's list, not in a checkout's part of it, so the index has
+    /// to be read off this list or the tab lands somewhere else.
+    herdr_workspace_tab_order: BTreeMap<String, Vec<String>>,
     /// The arrangement a reorder asked for and Herdr has not reported yet,
     /// per checkout. Herdr owns where its own tabs sit, so a drag that moves
     /// one of them is held here rather than written into the strip: an
@@ -825,6 +858,7 @@ impl Runtime {
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
             checkout_tab_order: BTreeMap::new(),
+            herdr_workspace_tab_order: BTreeMap::new(),
             pending_tab_move: BTreeMap::new(),
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
@@ -1714,6 +1748,21 @@ impl Runtime {
         let projected_agents = project_agents(payload.clone()).agents;
         let listening_ports = self.listening_ports.entries.clone();
 
+        // Every workspace's whole tab list, in Herdr's order, before any of it
+        // is split across checkouts. A tab whose layout has not arrived yet is
+        // in it, because Herdr counts it when it indexes a move. Rebuilt whole
+        // each reconcile so a closed workspace leaves no stale order behind.
+        self.herdr_workspace_tab_order = payload.tabs.iter().fold(
+            BTreeMap::<String, Vec<String>>::new(),
+            |mut order, session_tab| {
+                order
+                    .entry(session_tab.workspace_id.clone())
+                    .or_default()
+                    .push(session_tab.tab_id.clone());
+                order
+            },
+        );
+
         // Herdr's tab order is the navigator's tab order. A layout is the
         // per-tab detail looked up by tab id, never what decides where a tab
         // sits: layouts arrive in the order each tab was first drawn, so a tab
@@ -2006,8 +2055,35 @@ impl Runtime {
             return true;
         }
 
+        // Herdr indexes a move in the whole workspace's tab list. A checkout
+        // holding tabs from two Herdr workspaces cannot express an order that
+        // interleaves them, so that is refused here rather than sent as an
+        // index one of the two workspaces would misread.
+        let mut owning_workspaces = current_herdr.iter().map(|tab_id| {
+            self.herdr_workspace_tab_order
+                .iter()
+                .find(|(_, order)| order.contains(tab_id))
+                .map(|(workspace_id, _)| workspace_id.as_str())
+        });
+        let owner = owning_workspaces.next().flatten();
+        let workspace_order = owner
+            .filter(|owner| owning_workspaces.all(|candidate| candidate == Some(owner)))
+            .and_then(|owner| self.herdr_workspace_tab_order.get(owner))
+            .cloned();
+        let Some(workspace_order) = workspace_order else {
+            self.set_error(
+                "tab.reorder_split_workspace",
+                format!(
+                    "Tab {} cannot be placed there: this checkout's tabs come from more than one Herdr workspace",
+                    moved.source_id
+                ),
+                false,
+            );
+            return true;
+        };
+
         let Some(insert_index) =
-            herdr_insert_index(&current_herdr, &desired_herdr, &moved.source_id)
+            herdr_insert_index(&workspace_order, &desired_herdr, &moved.source_id)
         else {
             self.set_error(
                 "tab.reorder_inconsistent",
@@ -7719,6 +7795,29 @@ mod tests {
             ),
             None
         );
+
+        // A workspace split across two checkouts. The strip the operator drags
+        // holds t1, t2 and t3; t5 is a sibling checkout's tab that Herdr still
+        // counts. Dropping t1 at the end of that strip means "after t3", which
+        // is one past the workspace's last position when t5 leads and t5's own
+        // position when t5 trails. Reading the index off the strip alone gives
+        // 3 in both cases, which puts the tab between t2 and t3.
+        let leading = ["t5", "t1", "t2", "t3"].map(str::to_owned);
+        assert_eq!(
+            herdr_insert_index(&leading, &["t2", "t3", "t1"].map(str::to_owned), "t1"),
+            Some(4)
+        );
+        let trailing = ["t1", "t2", "t3", "t5"].map(str::to_owned);
+        assert_eq!(
+            herdr_insert_index(&trailing, &["t2", "t3", "t1"].map(str::to_owned), "t1"),
+            Some(3)
+        );
+        // A tab that keeps a successor in its own strip is placed in front of
+        // it, wherever the workspace holds that successor.
+        assert_eq!(
+            herdr_insert_index(&leading, &["t2", "t1", "t3"].map(str::to_owned), "t1"),
+            Some(3)
+        );
     }
 
     #[test]
@@ -7871,6 +7970,218 @@ mod tests {
 
         std::fs::remove_dir_all(&socket_root).ok();
         std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A repository with one linked worktree, both holding panes of the same
+    /// Herdr workspace, which is how a workspace comes to span two checkouts.
+    /// Returns the runtime, the repository's checkout id, and both directories.
+    fn split_workspace_checkouts(name: &str) -> (Runtime, String, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "hide-split-{name}-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("fixture root");
+        let root = root.canonicalize().expect("a real fixture path");
+        let repository = root.join("repo");
+        std::fs::create_dir_all(&repository).expect("repository directory");
+        let git = |arguments: &[&str], directory: &Path| {
+            assert!(
+                std::process::Command::new("git")
+                    .args(arguments)
+                    .current_dir(directory)
+                    .env("GIT_AUTHOR_NAME", "fixture")
+                    .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+                    .env("GIT_COMMITTER_NAME", "fixture")
+                    .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+                    .status()
+                    .expect("git runs")
+                    .success(),
+                "git {arguments:?}"
+            );
+        };
+        git(&["init", "-q", "-b", "main"], &repository);
+        std::fs::write(repository.join("notes.md"), "notes\n").expect("fixture file");
+        git(&["add", "notes.md"], &repository);
+        git(&["commit", "-qm", "notes"], &repository);
+        // A linked worktree is a second checkout of the same project, so the
+        // catalog gives it its own row under one project.
+        let worktree = root.join("feature");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                &worktree.to_string_lossy(),
+            ],
+            &repository,
+        );
+        let (runtime, checkout_id) = tab_order_runtime(&repository.to_string_lossy());
+        (runtime, checkout_id, repository, worktree)
+    }
+
+    /// A session payload for one Herdr workspace whose tabs are split across
+    /// two directories, in Herdr's own order.
+    fn split_workspace_payload(
+        tab_order: &[(&str, &str)],
+        active_tab_id: &str,
+    ) -> SessionSnapshotPayload {
+        let tabs = tab_order
+            .iter()
+            .map(|(tab_id, _)| {
+                serde_json::json!({"workspace_id": "w-order", "tab_id": tab_id, "label": ""})
+            })
+            .collect::<Vec<_>>();
+        let panes = tab_order
+            .iter()
+            .map(|(tab_id, cwd)| {
+                serde_json::json!({"pane_id": format!("{tab_id}:p"), "cwd": cwd})
+            })
+            .collect::<Vec<_>>();
+        let layouts = tab_order
+            .iter()
+            .map(|(tab_id, _)| {
+                serde_json::json!({
+                    "workspace_id": "w-order",
+                    "tab_id": tab_id,
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": format!("{tab_id}:p"),
+                    "panes": [{
+                        "pane_id": format!("{tab_id}:p"),
+                        "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                    }],
+                    "splits": []
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "workspaces": [{
+                "workspace_id": "w-order",
+                "label": "order",
+                "active_tab_id": active_tab_id
+            }],
+            "tabs": tabs,
+            "panes": panes,
+            "layouts": layouts
+        }))
+        .expect("split session payload")
+    }
+
+    #[test]
+    fn tab_strip_reorder_indexes_a_move_in_the_whole_workspace_not_one_checkout() {
+        let (mut runtime, checkout_id, repository, worktree) =
+            split_workspace_checkouts("index-scope");
+        let repository_path = repository.to_string_lossy().into_owned();
+        let worktree_path = worktree.to_string_lossy().into_owned();
+        // Herdr's list leads with the worktree's tab, so this checkout's tabs
+        // do not start at the workspace's first position.
+        let order = [
+            ("w-order:t5", worktree_path.as_str()),
+            ("w-order:t1", repository_path.as_str()),
+            ("w-order:t2", repository_path.as_str()),
+            ("w-order:t3", repository_path.as_str()),
+        ];
+        assert!(runtime.ingest_session(Ok(split_workspace_payload(&order, "w-order:t1"))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t1".to_owned(),
+                "herdr:w-order:t2".to_owned(),
+                "herdr:w-order:t3".to_owned()
+            ],
+            "the repository's checkout holds only its own three tabs"
+        );
+
+        let socket_root = PathBuf::from("/tmp").join(format!(
+            "herdr-core-split-move-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&socket_root).expect("socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
+        let server = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            let (mut stream, _) = listener.accept().expect("accept tab.move");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut line)
+                .expect("read request");
+            let request: serde_json::Value =
+                serde_json::from_str(&line).expect("tab.move request JSON");
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "id": request["id"],
+                    "result": {
+                        "type": "tab_list",
+                        "tabs": [
+                            {"tab_id": "w-order:t5"},
+                            {"tab_id": "w-order:t2"},
+                            {"tab_id": "w-order:t3"},
+                            {"tab_id": "w-order:t1"}
+                        ]
+                    }
+                })
+            )
+            .expect("write tab_list response");
+            request
+        });
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+
+        // Drag the first tab to the end of this checkout's strip. In the
+        // checkout's own coordinates that reads as index 3, which Herdr would
+        // apply to its four-tab list and land the tab between t2 and t3.
+        assert!(reorder_tab(
+            &mut runtime,
+            &checkout_id,
+            "herdr:w-order:t1",
+            2
+        ));
+        let request = server.join().expect("fixture server joins");
+        assert_eq!(request["method"], "tab.move");
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"tab_id": "w-order:t1", "insert_index": 4})
+        );
+        assert!(
+            runtime.snapshot().status.last_error.is_none(),
+            "a move Herdr can make is not an error"
+        );
+
+        // Herdr reports the order the request asked for, so the arrangement
+        // lands and the sibling checkout's tab is untouched.
+        let moved = [
+            ("w-order:t5", worktree_path.as_str()),
+            ("w-order:t2", repository_path.as_str()),
+            ("w-order:t3", repository_path.as_str()),
+            ("w-order:t1", repository_path.as_str()),
+        ];
+        assert!(runtime.ingest_session(Ok(split_workspace_payload(&moved, "w-order:t1"))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-order:t2".to_owned(),
+                "herdr:w-order:t3".to_owned(),
+                "herdr:w-order:t1".to_owned()
+            ]
+        );
+        assert!(runtime.pending_tab_move.is_empty());
+
+        std::fs::remove_dir_all(&socket_root).ok();
+        std::fs::remove_dir_all(repository.parent().expect("fixture root")).ok();
     }
 
     #[test]
