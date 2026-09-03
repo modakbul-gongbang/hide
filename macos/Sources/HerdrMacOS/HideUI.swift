@@ -31,6 +31,9 @@ enum HideTheme {
     /// keeps its shape and its hue so the row still says what it is; only its
     /// urgency drops (DESIGN.md, R5).
     static let readStatusOpacity: Double = 0.55
+    /// The column an agent's status mark sits in. Fixed, so `?` `!` `×` and
+    /// `~` line up down a list instead of shifting each row's text.
+    static let agentMarkWidth: CGFloat = 12
     /// Diff line tints, named here so the changes view and any later diff
     /// surface cannot drift apart. They lean on the semantic pair above
     /// rather than introducing hues of their own.
@@ -495,96 +498,29 @@ private struct PetCountTile: View {
     }
 }
 
-/// The one place an agent's mark color is decided.
-///
-/// It reads the axes the core publishes, never a state name, so the pet
-/// dashboard, the sidebar rows, and anything added later cannot drift apart.
-/// A row the operator has already read keeps its hue and loses its urgency.
-enum AgentStatusStyle {
-    static func color(
-        demand: String,
-        activity: String,
-        emphasized: Bool,
-        accent: Color
-    ) -> Color {
-        let base: Color = switch demand {
-        case "error": HideTheme.danger
-        case "question", "approval": HideTheme.warning
-        default:
-            switch activity {
-            case "working": accent
-            case "stopped": emphasized ? HideTheme.success : HideTheme.secondary
-            default: HideTheme.secondary
-            }
-        }
-        guard !emphasized, demand != "none" else { return base }
-        return base.opacity(HideTheme.readStatusOpacity)
-    }
-}
-
+/// A pet dashboard row: the one agent row plus this surface's own card and
+/// the ambient counts only the dashboard has room for.
 private struct PetDashboardAgentRow: View {
+    @Environment(\.hideAccent) private var accent
     let agent: PetDashboardRow
     let action: () -> Void
 
-    private var statusColor: Color {
-        guard agent.group != "disconnected" else { return HideTheme.warning }
-        return AgentStatusStyle.color(
-            demand: agent.demand,
-            activity: agent.activity,
-            emphasized: agent.emphasized,
-            accent: HideTheme.accent
-        )
-    }
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                AgentBadge(agentKind: agent.agentKind, stateColor: statusColor, size: 19)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(agent.summary)
-                        .hideFont(size: 12, weight: .semibold)
-                        .foregroundStyle(HideTheme.primary)
-                        .lineLimit(1)
-                    HStack(spacing: 7) {
-                        Text(agent.agentKind.capitalized)
-                        Text(agent.paneID)
-                        Text(agent.elapsed)
-                    }
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-                }
-                Spacer(minLength: 8)
-                if let ambient = agent.ambient {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("sub \(ambient.subagentsActive) · bg \(ambient.backgroundRunning)")
-                        if ambient.backgroundFailed > 0 {
-                            Text("failed \(ambient.backgroundFailed)")
-                                .foregroundStyle(HideTheme.danger)
-                        }
-                    }
+        AgentRow(
+            presentation: AgentRowPresentation(row: agent, accent: accent),
+            action: action
+        ) {
+            if agent.ambient?.backgroundFailed ?? 0 > 0 {
+                Text("failed \(agent.ambient?.backgroundFailed ?? 0)")
                     .hideFont(size: 8, design: .monospaced)
-                    .foregroundStyle(HideTheme.secondary)
-                }
-                if agent.unseen {
-                    Text("UNSEEN")
-                        .hideFont(size: 8, weight: .bold)
-                        .foregroundStyle(HideTheme.warning)
-                }
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(agent.statusLabel.uppercased())
-                        .hideFont(size: 9, weight: .bold)
-                        .foregroundStyle(statusColor)
-                    Text(agent.connection)
-                        .hideFont(size: 8, design: .monospaced)
-                        .foregroundStyle(HideTheme.muted)
-                }
+                    .foregroundStyle(HideTheme.danger)
             }
-            .padding(.horizontal, 11)
-            .frame(minHeight: 56)
-            .contentShape(Rectangle())
-            .background(HideTheme.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 7))
         }
-        .buttonStyle(.plain)
+        .frame(minHeight: 56)
+        .background(
+            HideTheme.elevated.opacity(0.75),
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+        )
         .accessibilityIdentifier("pet-dashboard-agent-\(agent.paneID)")
     }
 }
@@ -1318,7 +1254,7 @@ private struct CheckoutNavigatorRow: View {
     }
 }
 
-private struct SidebarBadge: View {
+struct SidebarBadge: View {
     let label: String
     let color: Color
 
@@ -1336,115 +1272,34 @@ private struct SidebarBadge: View {
     }
 }
 
+/// A sidebar agent row: the one agent row plus the sidebar's focus state and
+/// its direct-select shortcut hint.
 private struct AgentNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
     let agent: SidebarAgent
-    /// Under a space the workspace name is the heading above the row, so
+    /// Under a checkout the project name is the heading above the row, so
     /// repeating it wastes the line the summary needs.
     let showsWorkspace: Bool
 
-    private var stateColor: Color {
-        AgentStatusStyle.color(
-            demand: agent.demand,
-            activity: agent.activity,
-            emphasized: agent.emphasized,
-            accent: accent
-        )
-    }
-
-    private var isFocused: Bool {
-        model.focusedPaneID == agent.paneID
-    }
-
-    private var providerLabel: String {
-        switch agent.agentKind {
-        case "claude": "Claude"
-        case "codex": "Codex"
-        default: agent.agentKind.capitalized
-        }
-    }
-
-    private var stateLabel: String {
-        agent.statusLabel
-    }
-
-    private var ambientLabel: String? {
-        guard let ambient = agent.ambient else { return nil }
-        var parts: [String] = []
-        if ambient.subagentsActive > 0 { parts.append("\(ambient.subagentsActive) sub") }
-        if ambient.backgroundRunning > 0 { parts.append("\(ambient.backgroundRunning) bg") }
-        if ambient.backgroundFailed > 0 { parts.append("\(ambient.backgroundFailed) failed") }
-        return parts.isEmpty ? nil : parts.joined(separator: "  ")
-    }
+    private var density: AgentRowDensity { showsWorkspace ? .prominent : .compact }
 
     var body: some View {
-        Button { model.selectAgent(agent) } label: {
-            HStack(alignment: .top, spacing: 8) {
-                AgentBadge(
-                    agentKind: agent.agentKind,
-                    stateColor: stateColor,
-                    size: showsWorkspace ? 19 : 16
-                )
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(showsWorkspace ? agent.workspaceLabel : agent.summary)
-                            .hideFont(size: 11, weight: showsWorkspace ? .semibold : .regular)
-                            .foregroundStyle(showsWorkspace ? HideTheme.primary : HideTheme.secondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        if model.agentShortcutHintsVisible,
-                           let shortcutNumber = model.agentShortcutNumber(paneID: agent.paneID)
-                        {
-                            SidebarBadge(label: "⌃\(shortcutNumber)", color: HideTheme.secondary)
-                                .transition(.opacity)
-                        }
-                        Text(agent.elapsed)
-                            .hideFont(size: 9, design: .monospaced)
-                            .foregroundStyle(HideTheme.muted)
-                    }
-                    if showsWorkspace {
-                        Text(agent.summary)
-                            .hideFont(size: 10)
-                            .foregroundStyle(HideTheme.secondary)
-                            .lineLimit(2)
-                        HStack(spacing: 5) {
-                            Text(agent.statusLabel)
-                                .hideFont(size: 9, weight: .medium)
-                                .foregroundStyle(stateColor)
-                            if let checkoutQualifier = agent.checkoutQualifier {
-                                Text(checkoutQualifier)
-                                    .hideFont(size: 9)
-                                    .foregroundStyle(HideTheme.muted)
-                                    .lineLimit(1)
-                            }
-                        }
-                    } else {
-                        HStack(spacing: 6) {
-                            Text(providerLabel)
-                            Text(stateLabel)
-                                .foregroundStyle(stateColor)
-                            if let ambientLabel {
-                                Text(ambientLabel)
-                            }
-                        }
-                        .hideFont(size: 8, weight: .medium)
-                        .foregroundStyle(HideTheme.muted)
-                        .lineLimit(1)
-                    }
-                }
-            }
-            .padding(.leading, showsWorkspace ? 14 : 43)
-            .padding(.trailing, showsWorkspace ? 14 : 9)
-            .padding(.vertical, showsWorkspace ? 7 : 5)
-            .background(isFocused ? HideTheme.panel : .clear, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        AgentRow(
+            presentation: AgentRowPresentation(
+                agent: agent,
+                density: density,
+                accent: accent
+            ),
+            density: density,
+            isFocused: model.focusedPaneID == agent.paneID,
+            shortcutNumber: model.agentShortcutHintsVisible
+                ? model.agentShortcutNumber(paneID: agent.paneID)
+                : nil,
+            action: { model.selectAgent(agent) }
+        )
         .animation(.easeOut(duration: 0.12), value: model.agentShortcutHintsVisible)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
-        .accessibilityLabel("\(agent.contextLabel), \(agent.agentKind), \(agent.statusLabel)")
-        .accessibilityValue(isFocused ? "Selected" : "Not selected")
     }
 }
 

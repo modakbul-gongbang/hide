@@ -40,18 +40,14 @@ struct PetDashboardProjectionTests {
         #expect(projection.groups[0].agents[1].ambient == nil)
         #expect(projection.groups[0].agents[1].group == "done")
         #expect(projection.groups[0].agents[1].statusLabel == "Done")
-        #expect(projection.groups[0].agents[1].unseen == false)
         #expect(projection.groups[1].agents[0].group == "needs_you")
-        #expect(projection.groups[0].agents[3].unseen)
-        #expect(projection.groups[1].agents[0].unseen)
         #expect(projection.groups[1].agents[1].demand == "approval")
-        #expect(projection.groups[1].agents[1].unseen)
 
         let rowFields = Set(Mirror(reflecting: projection.groups[0].agents[0]).children.compactMap(\.label))
         #expect(rowFields == [
             "id", "paneID", "agentKind", "group", "demand", "activity",
             "emphasized", "symbol", "statusLabel", "summary", "elapsed",
-            "unseen", "connection", "ambient",
+            "connection", "ambient",
         ])
     }
 

@@ -26,7 +26,10 @@ struct PetDashboardRow: Identifiable, Equatable {
     let statusLabel: String
     let summary: String
     let elapsed: String
-    let unseen: Bool
+    /// Whether the server that owns this row is still answering. A row from a
+    /// server that stopped is drawn in the warning hue and says so in its
+    /// status word; there is no second unread flag, because the bright mark
+    /// and the Done word already say that.
     let connection: String
     let ambient: CoreAmbientSignal?
 }
@@ -67,7 +70,6 @@ enum PetDashboardProjector {
                 statusLabel: agentConnected ? agent.statusLabel : "Disconnected",
                 summary: agent.summary,
                 elapsed: agent.elapsed,
-                unseen: agentConnected && AgentGroup(agent: agent) == .needsYou,
                 connection: agentConnected ? "connected" : "disconnected",
                 ambient: agentConnected ? agent.ambient : nil
             )
