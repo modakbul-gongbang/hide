@@ -1853,6 +1853,10 @@ impl Runtime {
                         terminal_title: source.and_then(|source| source.terminal_title.clone()),
                         workspace_label: agent.map(|agent| agent.workspace_label.clone()),
                         cwd,
+                        // This projection cannot see the read record ledger,
+                        // so both read-dependent values are refilled from the
+                        // navigator's agent rows once those are final; see
+                        // `sync_pane_status_from_agents`.
                         status_label: agent
                             .map(|agent| agent.status_label.clone())
                             .unwrap_or_else(|| "Unknown".to_owned()),
@@ -2364,8 +2368,22 @@ impl Runtime {
     pub fn ingest_remote_session(
         &mut self,
         target_id: &str,
-        fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
+        mut fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
     ) -> bool {
+        // A remote projection is built off the runtime, so it cannot see the
+        // read ledger; without this every stopped remote pane published `Done`
+        // and demanded a close confirmation. Hide never focuses a remote pane,
+        // so the remote server's own focus is the read signal, and no record is
+        // written: the ledger's eviction pass is scoped to the local agent list
+        // and would drop remote keys on the next sync.
+        if let Ok(session) = fetched.as_mut() {
+            let focused = session.focused_pane_id.clone();
+            crate::sidebar::derive_read_state(
+                &mut session.agents,
+                &self.snapshot.ui_state.pane_read_records,
+                focused.as_deref(),
+            );
+        }
         let pane_sets = fetched.as_ref().ok().map(|session| {
             remote_terminal_pane_sets(
                 session,
@@ -3086,8 +3104,9 @@ impl Runtime {
             focused.as_deref(),
             evict_missing_panes,
         );
+        let synced = self.sync_pane_status_from_agents(agents);
         if changes.is_empty() {
-            return false;
+            return synced;
         }
         for change in &changes {
             eprintln!(
@@ -3096,6 +3115,7 @@ impl Runtime {
                     "component": "session",
                     "kind": "pane.read_record",
                     "pane_id": change.pane_id,
+                    "evicted": change.evicted,
                     "state_change_seq": change.record.state_change_seq,
                     "demand": change.record.demand,
                     "activity": change.record.activity,
@@ -3107,6 +3127,54 @@ impl Runtime {
         }
         self.persist_ui_state();
         true
+    }
+
+    /// Copies each pane's status word and close-confirmation answer from the
+    /// agent rows that just had the read axis applied.
+    ///
+    /// The catalog reconcile builds the pane tree from its own `project_agents`
+    /// call, which cannot see the read record ledger and cannot know which pane
+    /// is focused. Left alone it published `Done` and demanded a close
+    /// confirmation for every pane the operator had already read. One owner
+    /// decides the answer; the tree copies it.
+    fn sync_pane_status_from_agents(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
+        let by_pane = agents
+            .iter()
+            .map(|agent| {
+                (
+                    agent.pane_id.as_str(),
+                    (
+                        agent.status_label.as_str(),
+                        agent.requires_close_confirmation,
+                    ),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut changed = false;
+        for pane in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+            .flat_map(|tab| tab.panes.iter_mut())
+        {
+            let Some((status_label, requires_close_confirmation)) =
+                by_pane.get(pane.id.as_str()).copied()
+            else {
+                continue;
+            };
+            if pane.status_label != status_label {
+                pane.status_label = status_label.to_owned();
+                changed = true;
+            }
+            if pane.requires_close_confirmation != requires_close_confirmation {
+                pane.requires_close_confirmation = requires_close_confirmation;
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Drops the text scale of a pane Herdr no longer reports, on the same
@@ -9731,6 +9799,111 @@ mod tests {
         );
         let stored = std::fs::read_to_string(&state_path).expect("state file");
         assert!(!stored.contains("w1:p1"), "the record left the file too");
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    /// The pane tree is projected separately from the navigator's agent rows.
+    /// It published `Done` and demanded a close confirmation for every pane the
+    /// operator had already read, because that projection never saw the record
+    /// ledger.
+    #[test]
+    fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        let idle = |pane_id: &str| {
+            serde_json::json!({
+                "pane_id": pane_id,
+                "workspace_label": "Fixture",
+                "agent": "codex",
+                "agent_status": "idle",
+                "tokens": {"status_idle": "\u{25cb}", "sort_rank": "05",
+                           "activity": "0000000000001"}
+            })
+        };
+        let checkout_path = "/private/tmp/hide-read-record-pane-tree";
+        runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+            id: "workspace:read-record".to_owned(),
+            label: "read-record".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        }];
+        runtime.rebuild_catalog();
+        let checkout_id =
+            workspace::checkout_id_for_path("workspace:read-record", Path::new(checkout_path));
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:read-record".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.reset_terminal_projection(None);
+        let tab = |index: u8| {
+            serde_json::json!({
+                "workspace_id": "herdr-workspace",
+                "tab_id": format!("herdr-workspace:t{index}"),
+                "label": index.to_string()
+            })
+        };
+        let layout = |index: u8| {
+            let pane_id = format!("plain:p{index}");
+            serde_json::json!({
+                "workspace_id": "herdr-workspace",
+                "tab_id": format!("herdr-workspace:t{index}"),
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": pane_id,
+                "panes": [{"pane_id": pane_id,
+                           "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            })
+        };
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [idle("plain:p1"), idle("plain:p2")],
+            "focused_pane_id": "plain:p1",
+            "panes": [
+                {"pane_id": "plain:p1", "cwd": checkout_path},
+                {"pane_id": "plain:p2", "cwd": checkout_path}
+            ],
+            "tabs": [tab(1), tab(2)],
+            "layouts": [layout(1), layout(2)]
+        }))
+        .expect("session payload");
+        runtime.ingest_session(Ok(payload));
+
+        let snapshot = runtime.snapshot();
+        let panes = snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .map(|pane| {
+                (
+                    pane.id.as_str(),
+                    pane.status_label.as_str(),
+                    pane.requires_close_confirmation,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            panes,
+            vec![("plain:p1", "Idle", false), ("plain:p2", "Done", true)],
+            "the read pane is Idle and closes without a prompt; the unread one does not"
+        );
+
+        for agent in &snapshot.navigator.agents {
+            let pane = panes
+                .iter()
+                .find(|(id, _, _)| *id == agent.pane_id)
+                .expect("every agent pane is in the tree");
+            assert_eq!(
+                (pane.1, pane.2),
+                (
+                    agent.status_label.as_str(),
+                    agent.requires_close_confirmation
+                ),
+                "pane {} disagrees with its agent row",
+                agent.pane_id
+            );
+        }
         let _ = std::fs::remove_file(&state_path);
     }
 

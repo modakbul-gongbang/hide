@@ -421,10 +421,15 @@ fn project_agent(agent: SessionAgentPayload, source_index: usize) -> Result<Rank
 }
 
 /// One pane's read record moving, for the diagnostic that records it.
+///
+/// An eviction carries an empty record, so it needs its own flag: without one
+/// a dropped record and a record raised on a pane with no sequence and no
+/// demand read identically in the log.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadRecordChange {
     pub pane_id: String,
     pub record: PaneReadRecord,
+    pub evicted: bool,
 }
 
 /// What the operator is looking at on this pane right now.
@@ -470,25 +475,51 @@ pub fn apply_read_state(
             changes.push(ReadRecordChange {
                 pane_id,
                 record: PaneReadRecord::default(),
+                evicted: true,
             });
         }
     }
 
     for agent in agents.iter_mut() {
-        let current = read_fingerprint(agent);
-        if focused_pane_id == Some(agent.pane_id.as_str()) {
-            if records.get(&agent.pane_id) != Some(&current) {
-                records.insert(agent.pane_id.clone(), current.clone());
-                changes.push(ReadRecordChange {
-                    pane_id: agent.pane_id.clone(),
-                    record: current.clone(),
-                });
-            }
+        if focused_pane_id != Some(agent.pane_id.as_str()) {
+            continue;
         }
-        agent.unread = records.get(&agent.pane_id) != Some(&current);
+        let current = read_fingerprint(agent);
+        if records.get(&agent.pane_id) != Some(&current) {
+            records.insert(agent.pane_id.clone(), current.clone());
+            changes.push(ReadRecordChange {
+                pane_id: agent.pane_id.clone(),
+                record: current,
+                evicted: false,
+            });
+        }
+    }
+
+    derive_read_state(agents, records, focused_pane_id);
+    changes
+}
+
+/// Sets the read axis and the derived values from a read record ledger the
+/// caller does not own.
+///
+/// The pane tree is projected from its own `project_agents` call rather than
+/// from the navigator's agent rows, and a projection that skipped this
+/// published `Done` and demanded a close confirmation for every pane the
+/// operator had already read.
+pub fn derive_read_state(
+    agents: &mut [SidebarAgentSnapshot],
+    records: &BTreeMap<String, PaneReadRecord>,
+    focused_pane_id: Option<&str>,
+) {
+    for agent in agents.iter_mut() {
+        // The focused pane is read as of now whether or not the ledger has
+        // caught up in this dispatch, so the two projections agree regardless
+        // of which one the runtime builds first.
+        let read = focused_pane_id == Some(agent.pane_id.as_str())
+            || records.get(&agent.pane_id) == Some(&read_fingerprint(agent));
+        agent.unread = !read;
         derive_from_axes(agent);
     }
-    changes
 }
 
 /// Reads a pane's optional `ambient` object.
