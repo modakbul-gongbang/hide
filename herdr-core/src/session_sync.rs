@@ -282,12 +282,15 @@ fn run_coordinator(
                     let current = replica
                         .as_mut()
                         .expect("active subscription always has a replica");
-                    current.replace_agents(agents);
-                    if current.ready_to_publish()
-                        && !publish_replica(&context, current, &mut catalog_cache)
-                    {
-                        stop_subscription(&mut subscription);
-                        return;
+                    let publish = agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                    if publish {
+                        current.replace_agents(agents);
+                        if current.ready_to_publish()
+                            && !publish_replica(&context, current, &mut catalog_cache)
+                        {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
                     }
                 }
                 Err(error) => {
@@ -614,6 +617,28 @@ fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<WireAgent>, SessionF
         )));
     }
     Ok(response.agents)
+}
+
+/// Whether an agent refresh has to republish the projection.
+///
+/// An `agent.list` identical to the one already held projects to the same
+/// sidebar, so recomputing it would rebuild the whole projection and the
+/// workspace catalog for a wire that did not move. `WireAgent` is exactly the
+/// projection's input - deserializing already drops the fields the projection
+/// never reads - so equality here is equality of the projection.
+///
+/// The catalog is the other reason a tick must publish. It is rebuilt inside
+/// `publish_replica` on its own refresh window, and on an idle session this
+/// tick is the only thing that calls it, so a skip that ignored the window
+/// would freeze every branch and dirty mark in the navigator.
+fn agent_tick_needs_publish(
+    replica: &SessionReplica,
+    agents: &[WireAgent],
+    catalog_cache: Option<&CatalogCache>,
+) -> bool {
+    replica.state.agents != agents
+        || catalog_cache
+            .is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
 }
 
 fn publish_replica(
@@ -3274,6 +3299,67 @@ mod tests {
             .expect("sequence jump is legal");
         assert!(outcome.publish);
         assert_eq!(replica.cursor, 57);
+    }
+
+    fn agent(pane_id: &str, elapsed: &str) -> WireAgent {
+        serde_json::from_value(json!({
+            "pane_id": pane_id,
+            "workspace_id": "w1",
+            "tab_id": "w1:t1",
+            "agent": "claude",
+            "agent_status": "idle",
+            "tokens": {"status_idle": "\u{25cb}", "elapsed": elapsed, "activity": "1"}
+        }))
+        .expect("a wire agent")
+    }
+
+    fn fresh_catalog() -> CatalogCache {
+        CatalogCache {
+            registrations: Vec::new(),
+            spaces: Vec::new(),
+            workspaces: Vec::new(),
+            built_at: Instant::now(),
+        }
+    }
+
+    /// R6, AC12, SC5. `agent.list` is polled once a second whether or not it
+    /// moved, and every tick used to rebuild the whole projection and re-enter
+    /// the runtime lock twice for a sidebar that had not changed.
+    #[test]
+    fn snapshot_delivery_skips_the_projection_when_the_agent_list_is_unchanged() {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let held = vec![agent("w1:p1", "4m")];
+        replica.replace_agents(held.clone());
+        let catalog = fresh_catalog();
+
+        assert!(
+            !agent_tick_needs_publish(&replica, &held, Some(&catalog)),
+            "an identical list projects the same sidebar, so the tick publishes nothing"
+        );
+        assert!(
+            agent_tick_needs_publish(&replica, &[agent("w1:p1", "5m")], Some(&catalog)),
+            "a token the sidebar renders moved, so the projection has to be rebuilt"
+        );
+        assert!(
+            agent_tick_needs_publish(&replica, &[], Some(&catalog)),
+            "an agent that went away has to leave the sidebar"
+        );
+
+        // The catalog is rebuilt inside the publish on its own refresh window,
+        // and on an idle session this tick is the only thing that calls it, so
+        // the skip must not be what freezes every branch mark in the navigator.
+        assert!(
+            agent_tick_needs_publish(&replica, &held, None),
+            "a catalog that was never built has to be built"
+        );
+        let stale = CatalogCache {
+            built_at: Instant::now() - CATALOG_REFRESH_INTERVAL,
+            ..fresh_catalog()
+        };
+        assert!(
+            agent_tick_needs_publish(&replica, &held, Some(&stale)),
+            "a catalog past its refresh window has to be rebuilt"
+        );
     }
 
     #[test]

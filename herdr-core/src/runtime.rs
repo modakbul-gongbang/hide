@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -941,6 +941,17 @@ struct RuntimeWorkerContext {
     notifier: ChangeNotifier,
 }
 
+/// Turns a taken delta into the bytes the shell reads.
+///
+/// It takes the payload and nothing else. That signature is the guarantee the
+/// runtime mutex is not held here: there is no runtime in scope to lock. The
+/// caller takes a payload under the lock, drops the guard, and calls this.
+pub fn serialize_snapshot_delta(
+    payload: &crate::model::SnapshotDeltaPayload,
+) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(&crate::model::SnapshotDeltaWire::borrow(payload))
+}
+
 /// Revision bookkeeping for the delta snapshot wire. Revisions are stamped
 /// lazily at read time by comparing live sections against the last stamped
 /// copy, so mutation sites carry no dirty-tracking obligations.
@@ -950,9 +961,13 @@ struct DeltaState {
     rest_revision: u64,
     editor_revision: u64,
     changes_revision: u64,
-    last_rest: Option<crate::model::RestSections>,
-    last_editor: Option<crate::model::EditorSnapshot>,
-    last_changes: Option<crate::model::ChangesSnapshot>,
+    /// Reference-counted so a delta can carry the section out of the lock
+    /// without copying it. The runtime never mutates one in place: a changed
+    /// section becomes a new `Arc`, which leaves any payload already handed
+    /// out holding the state it was taken at.
+    last_rest: Option<Arc<crate::model::RestSections>>,
+    last_editor: Option<Arc<crate::model::EditorSnapshot>>,
+    last_changes: Option<Arc<crate::model::ChangesSnapshot>>,
 }
 
 impl Runtime {
@@ -1170,17 +1185,24 @@ impl Runtime {
         true
     }
 
-    /// Serializes one delta response for the snapshot wire: sections whose
-    /// revision passed `have_revision`, plus terminal chunks past
-    /// `have_sequence`. Reading is idempotent - the same cursors return the
-    /// same delta again - so a caller that failed to apply a response
-    /// recovers by re-reading with its unadvanced cursors.
-    pub fn snapshot_delta(
+    /// Takes one delta response for the snapshot wire: sections whose revision
+    /// passed `have_revision`, plus terminal chunks past `have_sequence`.
+    /// Reading is idempotent - the same cursors return the same delta again -
+    /// so a caller that failed to apply a response recovers by re-reading with
+    /// its unadvanced cursors.
+    ///
+    /// This is the half that needs the runtime, and it is deliberately the
+    /// only half: it stamps revisions and copies out what the wire needs, and
+    /// `serialize_snapshot_delta` turns that into bytes with the lock already
+    /// released. Serializing here would put the whole navigator, ui state and
+    /// terminal output through `serde_json` while every attach thread and the
+    /// shell's next read wait on the mutex.
+    pub fn snapshot_delta_payload(
         &mut self,
         have_revision: u64,
         have_sequence: u64,
-    ) -> Result<Vec<u8>, serde_json::Error> {
-        use crate::model::{RestSections, RestWire, SnapshotDeltaWire, TerminalMetaWire};
+    ) -> crate::model::SnapshotDeltaPayload {
+        use crate::model::{RestSections, SnapshotDeltaPayload};
 
         if !self
             .delta
@@ -1190,17 +1212,17 @@ impl Runtime {
         {
             self.delta.revision += 1;
             self.delta.rest_revision = self.delta.revision;
-            self.delta.last_rest = Some(RestSections::capture(&self.snapshot));
+            self.delta.last_rest = Some(Arc::new(RestSections::capture(&self.snapshot)));
         }
-        if self.delta.last_editor.as_ref() != Some(&self.snapshot.editor) {
+        if self.delta.last_editor.as_deref() != Some(&self.snapshot.editor) {
             self.delta.revision += 1;
             self.delta.editor_revision = self.delta.revision;
-            self.delta.last_editor = Some(self.snapshot.editor.clone());
+            self.delta.last_editor = Some(Arc::new(self.snapshot.editor.clone()));
         }
-        if self.delta.last_changes.as_ref() != Some(&self.snapshot.changes) {
+        if self.delta.last_changes.as_deref() != Some(&self.snapshot.changes) {
             self.delta.revision += 1;
             self.delta.changes_revision = self.delta.revision;
-            self.delta.last_changes = Some(self.snapshot.changes.clone());
+            self.delta.last_changes = Some(Arc::new(self.snapshot.changes.clone()));
         }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
@@ -1210,50 +1232,59 @@ impl Runtime {
             have_revision
         };
 
+        // Chunks are cloned rather than drained: a caller whose apply failed
+        // re-reads with the same cursor and has to get the same bytes back.
         let chunks: Vec<_> = self
             .snapshot
             .terminal
             .chunks
             .iter()
             .filter(|chunk| chunk.sequence > have_sequence)
+            .cloned()
             .collect();
         let chunks_dropped = match self.snapshot.terminal.chunks.first() {
             Some(oldest) => have_sequence + 1 < oldest.sequence,
             None => have_sequence < self.snapshot.terminal.sequence,
         };
 
-        let wire = SnapshotDeltaWire {
+        SnapshotDeltaPayload {
             schema_version: self.snapshot.schema_version,
             revision: self.delta.revision,
-            rest: (self.delta.rest_revision > have_revision).then(|| RestWire {
-                navigator: &self.snapshot.navigator,
-                overlay: &self.snapshot.overlay,
-                tab: &self.snapshot.tab,
-                connection: &self.snapshot.connection,
-                zoomed: &self.snapshot.zoomed,
-                focused: &self.snapshot.focused,
-                pane_layouts: &self.snapshot.pane_layouts,
-                terminal: TerminalMetaWire {
-                    pane_id: &self.snapshot.terminal.pane_id,
-                    closed: self.snapshot.terminal.closed,
-                    exit_code: self.snapshot.terminal.exit_code,
-                    panes: &self.snapshot.terminal.panes,
-                },
-                ui_state: &self.snapshot.ui_state,
-                ime: &self.snapshot.ime,
-                status: &self.snapshot.status,
-                pet: &self.snapshot.pet,
+            // The retained copies were compared against the live snapshot
+            // above and rebuilt where they differed, so each is the live
+            // section and costs a refcount instead of a copy. All three are
+            // stamped by that block, so a missing one is a broken invariant
+            // and not a section to send as null.
+            rest: (self.delta.rest_revision > have_revision).then(|| {
+                Arc::clone(
+                    self.delta
+                        .last_rest
+                        .as_ref()
+                        .expect("the rest section is stamped before a delta is taken"),
+                )
             }),
-            editor: (self.delta.editor_revision > have_revision).then_some(&self.snapshot.editor),
-            changes: (self.delta.changes_revision > have_revision)
-                .then_some(&self.snapshot.changes),
-            find: &self.snapshot.find,
+            editor: (self.delta.editor_revision > have_revision).then(|| {
+                Arc::clone(
+                    self.delta
+                        .last_editor
+                        .as_ref()
+                        .expect("the editor section is stamped before a delta is taken"),
+                )
+            }),
+            changes: (self.delta.changes_revision > have_revision).then(|| {
+                Arc::clone(
+                    self.delta
+                        .last_changes
+                        .as_ref()
+                        .expect("the changes section is stamped before a delta is taken"),
+                )
+            }),
+            find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,
             chunks,
             chunks_dropped,
-        };
-        serde_json::to_vec(&wire)
+        }
     }
 
     pub fn set_live(&mut self, context: LiveContext) {
@@ -8606,6 +8637,72 @@ mod tests {
         assert!(
             bridge.contains("runtimePreparation"),
             "the one core is created after the runtime resolves, so the resolution has to be awaited"
+        );
+    }
+
+    /// R6, AC12. The delta used to be serialized with the runtime mutex held,
+    /// so every attach thread and the shell's next read waited behind the
+    /// whole navigator, ui state and terminal output going through serde.
+    ///
+    /// The split is enforced twice. The signature is the first half: a
+    /// payload owns everything the wire needs, so the function that turns it
+    /// into bytes has no runtime in scope to lock. The call site is the
+    /// second: the guard is taken for the payload and gone before serde runs.
+    #[test]
+    fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
+        let mut runtime = runtime();
+        let payload = runtime.snapshot_delta_payload(0, 0);
+        // A payload outlives the borrow it came from, which is what lets the
+        // caller drop the guard between the two halves.
+        drop(runtime);
+        let serialize: fn(
+            &crate::model::SnapshotDeltaPayload,
+        ) -> Result<Vec<u8>, serde_json::Error> = serialize_snapshot_delta;
+        let bytes = serialize(&payload).expect("a payload serializes on its own");
+        assert!(!bytes.is_empty(), "the wire is written from the payload");
+
+        let ffi = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ffi.rs"),
+        )
+        .expect("the ffi source");
+        let entry_point = ffi
+            .split_once("pub extern \"C\" fn herdr_core_snapshot(")
+            .expect("the snapshot entry point")
+            .1;
+        let body = entry_point
+            .split_once("#[unsafe(no_mangle)]")
+            .expect("the entry point after it")
+            .0;
+        assert!(
+            body.contains("serialize_snapshot_delta(&payload)"),
+            "the shell's read must serialize through the free function: {body}"
+        );
+        let between = body
+            .split_once("snapshot_delta_payload(")
+            .expect("the locked half")
+            .1
+            .split_once("serialize_snapshot_delta(")
+            .expect("the unlocked half after it")
+            .0;
+        assert!(
+            between.lines().any(|line| line.trim() == "};"),
+            "the block scoping the runtime guard must close before serialization: {body}"
+        );
+
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .expect("the runtime source");
+        let locked_half = source
+            .split_once("pub fn snapshot_delta_payload(")
+            .expect("the payload function")
+            .1
+            .split_once("\n    pub fn ")
+            .expect("the function after it")
+            .0;
+        assert!(
+            !locked_half.contains("serde_json"),
+            "the half that runs under the lock must not serialize: {locked_half}"
         );
     }
 

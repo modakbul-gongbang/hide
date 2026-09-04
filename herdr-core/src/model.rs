@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -1235,11 +1236,35 @@ impl RestSections {
     }
 }
 
+/// One delta response taken from the runtime, holding everything the wire
+/// needs and nothing that reaches back into the runtime.
+///
+/// Taking a payload is what runs under the runtime lock; serializing it is
+/// what must not. The three large sections ride the reference-counted copies
+/// the runtime already retains for revision stamping, so taking one copies no
+/// section body - it bumps three refcounts and clones the chunks that arrived
+/// since the caller's cursor.
+pub struct SnapshotDeltaPayload {
+    pub schema_version: u32,
+    pub revision: u64,
+    pub rest: Option<Arc<RestSections>>,
+    pub editor: Option<Arc<EditorSnapshot>>,
+    pub changes: Option<Arc<ChangesSnapshot>>,
+    pub find: PaneFindSnapshot,
+    pub input_generation: u64,
+    pub terminal_sequence: u64,
+    pub chunks: Vec<TerminalChunk>,
+    pub chunks_dropped: bool,
+}
+
 /// One delta response on the snapshot wire. `rest`, `editor`, and `changes`
 /// are present only when the caller's `have_revision` predates their last
 /// change; `chunks` carries only sequences past the caller's cursor. The
 /// changes view holds a whole file's diff text, so it is kept off `rest`,
 /// which restamps whenever any agent's elapsed time ticks.
+///
+/// It borrows from a `SnapshotDeltaPayload`, never from the runtime, so
+/// building and serializing it needs no lock.
 #[derive(Serialize)]
 pub struct SnapshotDeltaWire<'a> {
     pub schema_version: u32,
@@ -1255,8 +1280,25 @@ pub struct SnapshotDeltaWire<'a> {
     pub find: &'a PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
-    pub chunks: Vec<&'a TerminalChunk>,
+    pub chunks: &'a [TerminalChunk],
     pub chunks_dropped: bool,
+}
+
+impl<'a> SnapshotDeltaWire<'a> {
+    pub fn borrow(payload: &'a SnapshotDeltaPayload) -> Self {
+        Self {
+            schema_version: payload.schema_version,
+            revision: payload.revision,
+            rest: payload.rest.as_deref().map(RestWire::borrow),
+            editor: payload.editor.as_deref(),
+            changes: payload.changes.as_deref(),
+            find: &payload.find,
+            input_generation: payload.input_generation,
+            terminal_sequence: payload.terminal_sequence,
+            chunks: &payload.chunks,
+            chunks_dropped: payload.chunks_dropped,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1273,6 +1315,30 @@ pub struct RestWire<'a> {
     pub ime: &'a ImeSnapshot,
     pub status: &'a StatusSnapshot,
     pub pet: &'a PetSnapshot,
+}
+
+impl<'a> RestWire<'a> {
+    fn borrow(rest: &'a RestSections) -> Self {
+        Self {
+            navigator: &rest.navigator,
+            overlay: &rest.overlay,
+            tab: &rest.tab,
+            connection: &rest.connection,
+            zoomed: &rest.zoomed,
+            focused: &rest.focused,
+            pane_layouts: &rest.pane_layouts,
+            terminal: TerminalMetaWire {
+                pane_id: &rest.terminal_pane_id,
+                closed: rest.terminal_closed,
+                exit_code: rest.terminal_exit_code,
+                panes: &rest.terminal_panes,
+            },
+            ui_state: &rest.ui_state,
+            ime: &rest.ime,
+            status: &rest.status,
+            pet: &rest.pet,
+        }
+    }
 }
 
 #[derive(Serialize)]

@@ -1012,6 +1012,60 @@ fn callback_fires_for_snapshot_changes_and_unregisters_cleanly() {
     herdr_core_destroy(core);
 }
 
+fn focus_pane(pane_id: &str) -> Value {
+    json!({
+        "schema_version": 2,
+        "kind": "focus_pane",
+        "payload": {"pane_id": pane_id, "origin": "operator"}
+    })
+}
+
+/// R6, AC12. The shell answers one announcement by reading the whole
+/// snapshot, so every change between an announcement and the read that
+/// answers it is already carried by that read. Announcing each one separately
+/// bought the main thread a run-loop hop and a turn on the runtime mutex per
+/// PTY chunk, which is what a busy pane made of typing lag.
+#[test]
+fn snapshot_delivery_coalesces_a_burst_into_one_announcement() {
+    let core = create();
+    let counter = AtomicUsize::new(0);
+    herdr_core_on_change(
+        core,
+        Some(count_change),
+        (&counter as *const AtomicUsize).cast_mut().cast::<c_void>(),
+    );
+
+    for pane in ["p2", "p3", "p4", "p5"] {
+        dispatch(core, focus_pane(pane));
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "four changes with no read between them are one announcement"
+    );
+
+    // The read answers the standing announcement, so the next change has to
+    // announce itself: a latch that never cleared would freeze the shell.
+    let delta = snapshot_delta(core, 0, 0);
+    assert_eq!(
+        delta["rest"]["focused"]["pane_id"], "p5",
+        "the one read carries the last change of the burst: {delta}"
+    );
+    dispatch(core, focus_pane("p6"));
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    // And the announcement standing after that one coalesces the same way.
+    dispatch(core, focus_pane("p7"));
+    dispatch(core, focus_pane("p8"));
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "an unanswered announcement absorbs every later change"
+    );
+
+    herdr_core_destroy(core);
+}
+
 #[test]
 fn off_owner_dispatch_surfaces_a_thread_contract_failure() {
     let core = create();

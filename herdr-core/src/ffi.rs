@@ -2,6 +2,7 @@ use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::slice;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 
@@ -47,26 +48,60 @@ unsafe impl Sync for CallbackRegistration {}
 
 /// Thread-safe handle that fires the registered change callback. Cloned into
 /// live worker threads so PTY and session-sync output can wake the Swift shell.
+///
+/// Announcements coalesce. The shell answers one by reading the whole
+/// snapshot, so every change between an announcement and the read that
+/// answers it is already carried by that read; announcing each one separately
+/// bought the main thread one hop through the run loop and one turn waiting
+/// on the runtime mutex per PTY chunk.
 #[derive(Clone)]
 pub struct ChangeNotifier {
     registration: Arc<Mutex<Option<CallbackRegistration>>>,
+    /// True from an announcement until the read that answers it begins.
+    announced: Arc<AtomicBool>,
 }
 
 impl ChangeNotifier {
+    fn new() -> Self {
+        Self {
+            registration: Arc::new(Mutex::new(None)),
+            announced: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     pub fn notify(&self) {
         let registration = *lock_recover(&self.registration);
-        if let Some(registration) = registration {
-            let _ = catch_unwind(AssertUnwindSafe(|| {
-                (registration.callback)(registration.context);
-            }));
+        // Latching with nobody listening would swallow the first real
+        // announcement, so an unregistered notifier stays silent and unlatched.
+        let Some(registration) = registration else {
+            return;
+        };
+        if self.announced.swap(true, Ordering::AcqRel) {
+            return;
         }
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            (registration.callback)(registration.context);
+        }));
+    }
+
+    /// Called before the reader takes the runtime lock, never after.
+    ///
+    /// Clearing first means a change that lands while the delta is being taken
+    /// announces itself again; the reader may then run once for nothing, which
+    /// costs a read. Clearing afterwards would read that announcement as
+    /// already delivered and leave the change on screen-invisible state until
+    /// something else happened to notify.
+    fn clear_announcement(&self) {
+        self.announced.store(false, Ordering::Release);
+    }
+
+    fn set_callback(&self, registration: Option<CallbackRegistration>) {
+        *lock_recover(&self.registration) = registration;
     }
 
     #[cfg(test)]
     pub(crate) fn noop() -> Self {
-        Self {
-            registration: Arc::new(Mutex::new(None)),
-        }
+        Self::new()
     }
 }
 
@@ -75,7 +110,7 @@ pub struct HerdrCore {
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     _remote_session_sync: Vec<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
-    callback: Arc<Mutex<Option<CallbackRegistration>>>,
+    notifier: ChangeNotifier,
     owner_thread: ThreadId,
 }
 
@@ -120,10 +155,7 @@ fn check_owner_thread(core: &HerdrCore, operation: &str) -> bool {
 }
 
 fn notify_change(core: &HerdrCore) {
-    ChangeNotifier {
-        registration: Arc::clone(&core.callback),
-    }
-    .notify();
+    core.notifier.notify();
 }
 
 #[unsafe(no_mangle)]
@@ -147,19 +179,13 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
             options.herdr_socket_path = Some(path.clone());
         }
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
-        let callback = Arc::new(Mutex::new(None));
-        lock_recover(&runtime).install_worker_context(
-            Arc::downgrade(&runtime),
-            ChangeNotifier {
-                registration: Arc::clone(&callback),
-            },
-        );
+        let notifier = ChangeNotifier::new();
+        lock_recover(&runtime)
+            .install_worker_context(Arc::downgrade(&runtime), notifier.clone());
         let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,
-                ChangeNotifier {
-                    registration: Arc::clone(&callback),
-                },
+                notifier.clone(),
                 socket_path,
                 options.herdr_bin_path.as_deref(),
                 home_path.clone(),
@@ -192,9 +218,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                             target.id.clone(),
                             Arc::clone(&connector),
                             Arc::downgrade(&runtime),
-                            ChangeNotifier {
-                                registration: Arc::clone(&callback),
-                            },
+                            notifier.clone(),
                         ),
                     );
                     lock_recover(&runtime).install_remote_terminal(
@@ -203,9 +227,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                             Arc::clone(&client),
                             target.herdr_socket_path.clone(),
                             Arc::downgrade(&runtime),
-                            ChangeNotifier {
-                                registration: Arc::clone(&callback),
-                            },
+                            notifier.clone(),
                         ),
                     );
                     lock_recover(&runtime).install_remote_file_transport(
@@ -217,9 +239,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                         target.label.clone(),
                         connector,
                         Arc::downgrade(&runtime),
-                        ChangeNotifier {
-                            registration: Arc::clone(&callback),
-                        },
+notifier.clone(),
                     );
                     crate::session_sync::spawn(context, None)
                 })();
@@ -240,10 +260,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                             Err(crate::live::SessionFetchError::Unreachable(message)),
                         );
                         if changed {
-                            ChangeNotifier {
-                                registration: Arc::clone(&callback),
-                            }
-                            .notify();
+                            notifier.notify();
                         }
                     }
                 }
@@ -253,7 +270,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
             _session_sync: session_sync,
             _remote_session_sync: remote_session_sync,
             runtime,
-            callback,
+            notifier,
             owner_thread: thread::current().id(),
         }))
     }))
@@ -300,7 +317,18 @@ pub extern "C" fn herdr_core_snapshot(
             notify_change(core);
             return HerdrBytes::empty();
         }
-        match lock_recover(&core.runtime).snapshot_delta(have_revision, have_terminal_sequence) {
+        // Clear first, then read. A change landing between the two announces
+        // itself again and costs one extra read; clearing after the read would
+        // lose it.
+        core.notifier.clear_announcement();
+        let payload = {
+            let mut runtime = lock_recover(&core.runtime);
+            runtime.snapshot_delta_payload(have_revision, have_terminal_sequence)
+        };
+        // The guard is gone before a byte is written. Serializing the
+        // navigator, ui state and terminal output under the lock made every
+        // attach thread and the next read wait behind it.
+        match crate::runtime::serialize_snapshot_delta(&payload) {
             Ok(bytes) => HerdrBytes::from_vec(bytes),
             Err(_) => HerdrBytes::empty(),
         }
@@ -322,8 +350,8 @@ pub extern "C" fn herdr_core_on_change(
             notify_change(core);
             return;
         }
-        *lock_recover(&core.callback) =
-            callback.map(|callback| CallbackRegistration { callback, context });
+        core.notifier
+            .set_callback(callback.map(|callback| CallbackRegistration { callback, context }));
     }));
 }
 
@@ -354,7 +382,7 @@ pub extern "C" fn herdr_core_destroy(core: *mut HerdrCore) {
             notify_change(core_ref);
             return;
         }
-        *lock_recover(&core_ref.callback) = None;
+        core_ref.notifier.set_callback(None);
         unsafe {
             drop_core(core);
         }
