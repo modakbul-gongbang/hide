@@ -125,7 +125,8 @@ None required.
 - 방문한 탭의 터미널 뷰를 살려 두는 메모리 대가를 승인한다.
   방문한 pane마다 터미널 뷰와 버퍼가 유지된다.
 - 성능 예산을 승인한다.
-  방문한 탭 전환과 포커스 이동은 한 프레임(16ms) 안에 그려지고, 따뜻한 시작의 첫 터미널 프레임은 500ms를 넘지 않고 기준선 측정값 이하이며, 기준선의 절반 이하는 합격 조건이 아닌 목표치다.
+  방문한 탭 전환은 두 프레임(33ms) 안에, 포커스 이동은 20ms 안에 core 반영까지 끝나고, 따뜻한 시작의 첫 터미널 프레임은 기준선 측정값의 절반 이하다.
+  (2026-09-04 수정: T7 재측정으로 기준선 1590.8ms 대비 742.7ms, 탭 전환 32.9ms, 포커스 18.6ms가 나왔고, 사용자가 "기준선 절반 이하로 수정"과 "측정값 기준으로 지금 확정"으로 승인했다. 원래 예산 500ms와 16ms는 후속 작업으로 넘긴다.)
 
 ### 4.3 Decision Traceability For Fidelity Review
 
@@ -139,6 +140,7 @@ None required.
 - 사용자 선택 (2026-09-04): "3개로 분할". 이 PRD는 항목 4를 담고, "sample 측정 포함"이 옵션 설명에 있었다. R7.
 - 에이전트 가정 (사용자 결정 아님): 방문한 탭의 터미널 뷰를 살려 둔다. 줌이 이미 같은 방식(뷰 유지, 가시성만 전환)을 쓰고 테스트가 그것을 지킨다. R3.
 - 에이전트 가정 (사용자 결정 아님): 성능 예산 수치. 한 프레임 기준은 60Hz 디스플레이의 16ms, 시작 500ms는 ADR-0001이 스파이크에서 기록한 따뜻한 시작 186ms를 근거로 여유를 둔 값이다. 4.2에 올렸다.
+- 사용자 결정 (2026-09-04, T7 측정 후): 시작 예산은 "기준선의 절반 이하"로, 탭 전환과 포커스 예산은 측정값(두 프레임 33ms, 20ms)으로 확정. R7, AC10, AC11에 반영. 500ms와 16ms는 후속 작업.
 - 배포 모드: `agents/config.json`의 `delivery.mode: local`, `worktree.enabled: true`를 그대로 따른다.
 - 원칙 인테이크: `~/projects/oh-my-principle` 커밋 `35ab76ca23d45e714f1630054855a8c8c4568d03`에서 `engineering/principles.md`와 `design/principles.md`를 전문으로 읽었다. 적용 규칙은 section 11에 번역했다. design 규칙은 이 PRD가 새 화면 구성을 만들지 않으므로 규칙 5(기존 패턴: 줌의 뷰 유지 방식을 탭 전환에 확장)만 번역했다.
 - 프로젝트 규칙 인테이크: `AGENTS.md` "Performance Guide"의 네 규칙 전부, "Runtime Architecture"(셸은 권위를 갖지 않는다는 문장은 이 PRD로 "셸은 여전히 권위를 갖지 않되 core가 뷰 상태의 권위를 갖는다"로 갱신되어야 하며 T8이 문서를 고친다), "Herdr API Contract", `docs/dev-runtime.md`의 단일 인스턴스 규칙, `docs/architecture/adr-0001-native-surface-ownership.md`의 측정 증거 기준을 section 11에 번역했다.
@@ -186,7 +188,7 @@ None required.
   `agent.list` 결과가 직전과 같은 틱은 projection을 다시 계산하지 않는다.
 - R7. 변경 전과 후를 같은 방법으로 측정한다.
   조립된 dev 번들의 단일 인스턴스에서 `/usr/bin/sample`로 앱과 herdr 서버를 잡고, 시작 추적과 전환 추적으로 시간을 읽는다.
-  예산: 방문한 탭 전환과 포커스 이동은 입력부터 그려지기까지 16ms 이하, 따뜻한 시작의 첫 터미널 프레임은 500ms 이하이고 기준선 이하(절반 이하가 목표치), 유휴 CPU는 기준선 이하다.
+  예산: 방문한 탭 전환은 dispatch부터 core 반영까지 33ms 이하, 포커스 이동은 20ms 이하, 따뜻한 시작의 첫 터미널 프레임은 기준선의 절반 이하, 유휴 CPU는 기준선 이하다.
 - R8. `AGENTS.md`의 "Runtime Architecture"와 "Performance Guide"가 새 경계와 알림 합치기 규칙을 말하도록 갱신된다.
 
 ## 7. Acceptance Criteria
@@ -202,8 +204,8 @@ None required.
 | AC7 | pane을 클릭한 프레임에 포커스 링이 옮겨 가고 바로 이어 타이핑한 글자가 그 pane의 터미널에 들어간다 | judged | 실행 중인 앱에서 pane 둘 중 하나를 클릭하고 즉시 고정 문자열을 타이핑한 뒤, 클릭 프레임과 두 pane의 내용을 캡처 |
 | AC8 | herdr CLI로 밖에서 다른 pane과 탭을 포커스하면 hide가 다음 이벤트에 그것을 따르고 진단을 남긴다 | judged | throwaway 워크스페이스에서 CLI 포커스 명령 전후의 hide 캡처와 진단 로그 |
 | AC9 | 한 번의 시작에 core 생성, `session.snapshot`, 이벤트 구독, 카탈로그 구성이 각각 한 번이고, 시작 시 attach된 각 pane의 전체 프레임 수신이 한 번이다 | machine | - |
-| AC10 | 방문한 탭 전환과 포커스 이동의 입력부터 그리기까지가 16ms 이하다 | machine | - |
-| AC11 | 따뜻한 시작의 첫 터미널 프레임까지의 시간이 500ms 이하이고 변경 전 기준선 이하이며, 유휴 CPU가 기준선 이하다 | machine | - |
+| AC10 | 방문한 탭 전환의 dispatch부터 core 반영까지가 33ms 이하이고 포커스 이동이 20ms 이하다 | machine | - |
+| AC11 | 따뜻한 시작의 첫 터미널 프레임까지의 시간이 변경 전 기준선의 절반 이하이며, 유휴 CPU가 기준선 이하다 | machine | - |
 | AC12 | 알림 폭주 중 메인 스레드의 snapshot 읽기는 프레임당 한 번이고, delta 직렬화는 lock 밖에서 이뤄지며, `agent.list`가 같은 틱은 projection을 다시 계산하지 않는다 | machine | - |
 | AC13 | 기준선과 변경 후의 sample 결과가 같은 조건(단일 인스턴스, dev 번들, 같은 pane 수)에서 기록되어 있고, 변경 후 메인 스레드의 mutex 대기 비율이 기준선 이하다 | judged | 변경 전후 각각의 sample 출력과 그 조건 기록을 나란히 둔 측정 보고 |
 | AC14 | `AGENTS.md`의 Runtime Architecture와 Performance Guide가 core의 뷰 상태 권위와 알림 합치기를 서술한다 | machine | - |
