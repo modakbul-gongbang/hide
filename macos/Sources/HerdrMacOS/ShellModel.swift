@@ -224,35 +224,6 @@ enum TabDragPlacement {
     }
 }
 
-enum TerminalLayoutPolicy {
-    static func belongs(
-        layout: CorePaneLayoutSnapshot,
-        to checkout: CoreCheckoutSnapshot
-    ) -> Bool {
-        belongs(
-            workspaceID: layout.workspaceID,
-            tabID: layout.tabID,
-            paneIDs: layout.root.paneIDs,
-            checkout: checkout
-        )
-    }
-
-    static func belongs(
-        workspaceID: String,
-        tabID: String,
-        paneIDs: [String],
-        checkout: CoreCheckoutSnapshot
-    ) -> Bool {
-        // `layout.workspace_id` is Herdr's live session workspace ID, while
-        // `checkout.workspaceID` is Hide's catalog workspace ID. They are
-        // intentionally different identity domains. The Herdr tab ID and
-        // its complete pane set are the stable cross-domain projection key.
-        _ = workspaceID
-        guard let tab = checkout.tabs.first(where: { $0.id == tabID }) else { return false }
-        return Set(paneIDs) == Set(tab.panes.map(\.id))
-    }
-}
-
 enum HerdrStatusPresentation {
     static func localMessage(
         bridgeError: String?,
@@ -466,14 +437,14 @@ final class ShellModel: ObservableObject {
                 focusedPaneID: focusedPaneID
             )
             return items
-        } else if let layout = focusedPaneLayout {
-            return PaneGridPresentation.items(
-                layout: layout,
-                focusedPaneID: focusedPaneID
-            )
         }
-        return PaneGridPresentation.uniformItems(
-            paneIDs: focusedPanes.map(\.id),
+        // The visible tab's layout is always in the snapshot, so there is no
+        // stand-in grid to draw while one is fetched. A tab with no layout
+        // yet draws nothing rather than a guessed geometry, because the
+        // geometry the canvas draws is what sets the PTY size.
+        guard let layout = focusedPaneLayout else { return [] }
+        return PaneGridPresentation.items(
+            layout: layout,
             focusedPaneID: focusedPaneID
         )
     }
@@ -491,12 +462,12 @@ final class ShellModel: ObservableObject {
         core.resizePane(paneID, direction: direction, amount: amount)
     }
 
+    /// The layout of the tab the canvas is showing. Every tab's layout is in
+    /// the snapshot, so this is a lookup by tab id and never empties to mark
+    /// a switch in progress.
     var focusedPaneLayout: CorePaneLayoutSnapshot? {
-        guard let layout = core.snapshot?.paneLayout,
-              let checkout = focusedCheckout,
-              TerminalLayoutPolicy.belongs(layout: layout, to: checkout)
-        else { return nil }
-        return layout
+        guard !isRemoteContext, let tabID = focusedTab?.id else { return nil }
+        return core.snapshot?.paneLayouts.first(where: { $0.tabID == tabID })
     }
 
     var focusedPath: URL? {
@@ -554,7 +525,7 @@ final class ShellModel: ObservableObject {
         if isRemoteContext {
             return remote.navigation?.focusedPaneID
         }
-        return core.snapshot?.paneLayout?.focusedPaneID
+        return focusedPaneLayout?.focusedPaneID
             ?? core.snapshot?.terminal.paneID
     }
 
@@ -953,7 +924,7 @@ final class ShellModel: ObservableObject {
     private func observeAgentFocus(in snapshot: CoreSnapshot?) {
         let currentAgents = snapshot?.navigator.agents ?? []
         agentMRU.observe(
-            focusedPaneID: snapshot?.paneLayout?.focusedPaneID ?? snapshot?.terminal.paneID,
+            focusedPaneID: snapshot?.activePaneLayout?.focusedPaneID ?? snapshot?.terminal.paneID,
             availablePaneIDs: currentAgents.map(\.paneID)
         )
     }

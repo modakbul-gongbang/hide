@@ -83,34 +83,6 @@ enum PaneGridPresentation {
         }
     }
 
-    static func uniformItems(
-        paneIDs: [String],
-        focusedPaneID: String?
-    ) -> [PaneGridItem] {
-        guard !paneIDs.isEmpty else { return [] }
-
-        let columnCount = paneIDs.count > 1 ? 2 : 1
-        let rowCount = (paneIDs.count + columnCount - 1) / columnCount
-
-        return paneIDs.enumerated().map { index, paneID in
-            let column = index % columnCount
-            let row = index / columnCount
-            let frame = PaneGridFrame(
-                x: Double(column) / Double(columnCount),
-                y: Double(row) / Double(rowCount),
-                width: 1 / Double(columnCount),
-                height: 1 / Double(rowCount)
-            )
-            return PaneGridItem(
-                paneID: paneID,
-                retainedFrame: frame,
-                visualFrame: frame,
-                isVisible: true,
-                isFocused: paneID == focusedPaneID
-            )
-        }
-    }
-
     static func dividers(layout: CorePaneLayoutSnapshot) -> [PaneGridDivider] {
         collectDividers(node: visibleRoot(layout: layout), frame: .unit)
     }

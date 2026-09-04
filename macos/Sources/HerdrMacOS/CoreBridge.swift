@@ -18,7 +18,10 @@ struct CoreSnapshot {
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
-    let paneLayout: CorePaneLayoutSnapshot?
+    /// Every tab's layout in the local session, keyed by the tab id each one
+    /// carries. The canvas draws the entry for the visible tab, so switching
+    /// tabs is a lookup here instead of a wait for Herdr to send one.
+    let paneLayouts: [CorePaneLayoutSnapshot]
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let changes: CoreChangesSnapshot
@@ -38,7 +41,7 @@ struct CoreSnapshot {
             schemaVersion: schemaVersion,
             navigator: navigator,
             zoomed: zoomed,
-            paneLayout: paneLayout,
+            paneLayouts: paneLayouts,
             terminal: terminal,
             editor: editor ?? self.editor,
             changes: changes ?? self.changes,
@@ -80,10 +83,19 @@ struct CoreSnapshotDelta: Decodable {
     }
 }
 
+extension CoreSnapshot {
+    /// The layout being drawn: the one holding the selected pane. It mirrors
+    /// the core's own rule so both sides name the same layout.
+    var activePaneLayout: CorePaneLayoutSnapshot? {
+        guard let paneID = terminal.paneID else { return nil }
+        return paneLayouts.first(where: { $0.root.paneIDs.contains(paneID) })
+    }
+}
+
 struct CoreRestSnapshot: Decodable {
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
-    let paneLayout: CorePaneLayoutSnapshot?
+    let paneLayouts: [CorePaneLayoutSnapshot]
     let terminal: CoreTerminalSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
@@ -92,7 +104,7 @@ struct CoreRestSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case navigator
         case zoomed
-        case paneLayout = "pane_layout"
+        case paneLayouts = "pane_layouts"
         case terminal
         case uiState = "ui_state"
         case status
@@ -2215,7 +2227,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     schemaVersion: decoded.schemaVersion,
                     navigator: rest.navigator,
                     zoomed: rest.zoomed,
-                    paneLayout: rest.paneLayout,
+                    paneLayouts: rest.paneLayouts,
                     terminal: rest.terminal,
                     editor: editor,
                     changes: decoded.changes ?? snapshot?.changes ?? .empty,
@@ -2282,33 +2294,35 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 .flatMap(\.checkouts)
                 .first(where: { $0.id == checkoutID })
         }
-        let layoutBelongs = decoded.paneLayout.flatMap { layout in
-            focusedCheckout.map { checkout in
-                TerminalLayoutPolicy.belongs(layout: layout, to: checkout)
-            }
-        } ?? false
+        // The layout the canvas draws is the visible tab's, so that is what
+        // the projection line names. A layout no longer needs to be tested
+        // against the focused checkout: it is found through that checkout's
+        // own active tab or not at all.
+        let visibleLayout = focusedCheckout?.activeTabID.flatMap { tabID in
+            decoded.paneLayouts.first(where: { $0.tabID == tabID })
+        }
         let projection = [
             "focused_workspace_id=\(decoded.navigator.focusedWorkspaceID ?? "nil")",
             "focused_checkout_id=\(decoded.navigator.focusedCheckoutID ?? "nil")",
             "checkout_workspace_id=\(focusedCheckout?.workspaceID ?? "nil")",
-            "layout_workspace_id=\(decoded.paneLayout?.workspaceID ?? "nil")",
-            "layout_tab_id=\(decoded.paneLayout?.tabID ?? "nil")",
-            "layout_pane_ids=\(decoded.paneLayout?.root.paneIDs.joined(separator: ",") ?? "nil")",
+            "layout_workspace_id=\(visibleLayout?.workspaceID ?? "nil")",
+            "layout_tab_id=\(visibleLayout?.tabID ?? "nil")",
+            "layout_pane_ids=\(visibleLayout?.root.paneIDs.joined(separator: ",") ?? "nil")",
             "terminal_pane_id=\(decoded.terminal.paneID ?? "nil")",
-            "layout_belongs=\(layoutBelongs)"
+            "layout_count=\(decoded.paneLayouts.count)"
         ].joined(separator: " ")
         if projection != lastLoggedProjection {
             lastLoggedProjection = projection
             HideLaunchTrace.mark("core.snapshot.projection", detail: projection)
         }
-        let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
+        let previousFocusedPaneID = snapshot?.activePaneLayout?.focusedPaneID
             ?? snapshot?.terminal.paneID
         snapshot = decoded
         bridgeError = routingError
             ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             ?? startupDiagnostic
         restorePaneSelectionIfNeeded(decoded)
-        let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
+        let authoritativeFocusedPaneID = decoded.activePaneLayout?.focusedPaneID
             ?? decoded.terminal.paneID
         if authoritativeFocusedPaneID != previousFocusedPaneID,
            let authoritativeFocusedPaneID {

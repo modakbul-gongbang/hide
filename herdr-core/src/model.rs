@@ -31,7 +31,12 @@ pub struct Snapshot {
     pub connection: ConnectionSnapshot,
     pub zoomed: Option<String>,
     pub focused: FocusedSnapshot,
-    pub pane_layout: Option<PaneLayoutSnapshot>,
+    /// Every tab's layout in the local Herdr session, keyed by the tab id
+    /// each one carries. The shell draws the entry whose tab is active, so a
+    /// tab switch is a lookup rather than a wait: nothing here is emptied to
+    /// mark a switch in progress, and the geometry drawn is always one Herdr
+    /// has already applied.
+    pub pane_layouts: Vec<PaneLayoutSnapshot>,
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
     pub changes: ChangesSnapshot,
@@ -514,6 +519,18 @@ pub struct PaneLayoutSnapshot {
     pub focused_pane_id: String,
     pub zoomed: bool,
     pub root: PaneLayoutNodeSnapshot,
+}
+
+impl Snapshot {
+    /// The layout being drawn: the one belonging to the tab that holds the
+    /// selected pane. Every tab's layout is carried, so this is a lookup and
+    /// never waits for Herdr to name the visible tab again.
+    pub fn active_pane_layout(&self) -> Option<&PaneLayoutSnapshot> {
+        let pane_id = self.terminal.pane_id.as_deref()?;
+        self.pane_layouts
+            .iter()
+            .find(|layout| layout.pane_ids().contains(&pane_id))
+    }
 }
 
 impl PaneLayoutSnapshot {
@@ -1070,7 +1087,7 @@ impl Snapshot {
                 surface: Surface::Terminal,
                 pane_id: None,
             },
-            pane_layout: None,
+            pane_layouts: Vec::new(),
             terminal: TerminalSnapshot {
                 pane_id: None,
                 sequence: 0,
@@ -1165,7 +1182,7 @@ pub struct RestSections {
     pub connection: ConnectionSnapshot,
     pub zoomed: Option<String>,
     pub focused: FocusedSnapshot,
-    pub pane_layout: Option<PaneLayoutSnapshot>,
+    pub pane_layouts: Vec<PaneLayoutSnapshot>,
     pub terminal_pane_id: Option<String>,
     pub terminal_closed: bool,
     pub terminal_exit_code: Option<i32>,
@@ -1185,7 +1202,7 @@ impl RestSections {
             connection: snapshot.connection.clone(),
             zoomed: snapshot.zoomed.clone(),
             focused: snapshot.focused.clone(),
-            pane_layout: snapshot.pane_layout.clone(),
+            pane_layouts: snapshot.pane_layouts.clone(),
             terminal_pane_id: snapshot.terminal.pane_id.clone(),
             terminal_closed: snapshot.terminal.closed,
             terminal_exit_code: snapshot.terminal.exit_code,
@@ -1206,7 +1223,7 @@ impl RestSections {
             && self.connection == snapshot.connection
             && self.zoomed == snapshot.zoomed
             && self.focused == snapshot.focused
-            && self.pane_layout == snapshot.pane_layout
+            && self.pane_layouts == snapshot.pane_layouts
             && self.terminal_pane_id == snapshot.terminal.pane_id
             && self.terminal_closed == snapshot.terminal.closed
             && self.terminal_exit_code == snapshot.terminal.exit_code
@@ -1250,7 +1267,7 @@ pub struct RestWire<'a> {
     pub connection: &'a ConnectionSnapshot,
     pub zoomed: &'a Option<String>,
     pub focused: &'a FocusedSnapshot,
-    pub pane_layout: &'a Option<PaneLayoutSnapshot>,
+    pub pane_layouts: &'a [PaneLayoutSnapshot],
     pub terminal: TerminalMetaWire<'a>,
     pub ui_state: &'a UiStateSnapshot,
     pub ime: &'a ImeSnapshot,

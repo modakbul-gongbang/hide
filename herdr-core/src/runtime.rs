@@ -1171,7 +1171,7 @@ impl Runtime {
                 connection: &self.snapshot.connection,
                 zoomed: &self.snapshot.zoomed,
                 focused: &self.snapshot.focused,
-                pane_layout: &self.snapshot.pane_layout,
+                pane_layouts: &self.snapshot.pane_layouts,
                 terminal: TerminalMetaWire {
                     pane_id: &self.snapshot.terminal.pane_id,
                     closed: self.snapshot.terminal.closed,
@@ -2760,19 +2760,10 @@ impl Runtime {
             .terminal
             .pane_id
             .as_deref()
-            .filter(|pane_id| {
-                self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
-                    layout
-                        .pane_ids()
-                        .into_iter()
-                        .any(|layout_pane_id| layout_pane_id == *pane_id)
-                })
-            })
+            .filter(|pane_id| self.layout_holding_pane(pane_id).is_some())
             .map(str::to_owned);
         let previously_projected_tab = self
-            .snapshot
-            .pane_layout
-            .as_ref()
+            .active_pane_layout()
             .map(|layout| layout.tab_id.clone());
         let previously_projected_in_focused_checkout =
             previously_projected_pane.as_deref().is_some_and(|pane_id| {
@@ -2815,11 +2806,12 @@ impl Runtime {
             self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
         }
         let mut excluded = Vec::new();
+        let mut rejected_layouts: Vec<(String, String)> = Vec::new();
         let catalog_changed = fetched
             .as_ref()
             .map(|payload| self.reconcile_session_catalog(payload, precomputed))
             .unwrap_or(false);
-        let (state, message, agents, layout, selection_changed) = match fetched {
+        let (state, message, agents, layouts, layout, selection_changed) = match fetched {
             Ok(payload) => {
                 self.consume_restore_hint(&payload);
                 let focused_checkout = self
@@ -2993,6 +2985,8 @@ impl Runtime {
                         true,
                     );
                 }
+                let (layouts, rejected) = live::project_layouts(&payload);
+                rejected_layouts = rejected;
                 let layout = target_pane_id
                     .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
                     .transpose();
@@ -3003,6 +2997,7 @@ impl Runtime {
                         "connected",
                         None,
                         Some(projection.agents),
+                        layouts,
                         layout,
                         selection_changed,
                     ),
@@ -3012,6 +3007,7 @@ impl Runtime {
                             "Herdr pane layout could not be projected: {projection_error}"
                         )),
                         None,
+                        layouts,
                         None,
                         selection_changed,
                     ),
@@ -3021,6 +3017,7 @@ impl Runtime {
                 error.state(),
                 Some(error.message().to_owned()),
                 None,
+                Vec::new(),
                 None,
                 false,
             ),
@@ -3063,6 +3060,22 @@ impl Runtime {
                 changed = true;
             }
         }
+        for (tab_id, reason) in &rejected_layouts {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "session",
+                    "kind": "layout.excluded",
+                    "tab_id": tab_id,
+                    "message": reason,
+                })
+            );
+            self.push_diagnostic(
+                "layout.excluded",
+                format!("Tab {tab_id} has no drawable layout: {reason}"),
+            );
+        }
+        changed |= self.store_pane_layouts(layouts);
         if let Some(layout) = layout {
             if self.snapshot.terminal.pane_id.is_none() {
                 let pane_id = layout.focused_pane_id.clone();
@@ -3365,13 +3378,52 @@ impl Runtime {
         self.refresh_pane_read_state();
     }
 
+    /// The layout of the tab that holds this pane. Every tab in the session
+    /// has one, so this answers for a pane in any tab, not only the visible
+    /// one.
+    fn layout_holding_pane(&self, pane_id: &str) -> Option<&PaneLayoutSnapshot> {
+        self.snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.pane_ids().contains(&pane_id))
+    }
+
+    /// The layout being drawn: the one holding the selected pane.
+    fn active_pane_layout(&self) -> Option<&PaneLayoutSnapshot> {
+        self.snapshot.active_pane_layout()
+    }
+
+    /// Replaces the session's layouts wholesale from one session projection.
+    ///
+    /// Herdr sends the whole session on every topology update, so a
+    /// `layout_updated` for one tab arrives as a payload in which only that
+    /// tab's entry differs; comparing the projected vector is what keeps the
+    /// other tabs' entries and the revision they ride untouched.
+    fn store_pane_layouts(&mut self, mut layouts: Vec<PaneLayoutSnapshot>) -> bool {
+        // Sorted by tab id, because Herdr's own order for the layouts array
+        // carries no meaning - the tab list is what orders tabs - and a
+        // reshuffle of it would otherwise restamp the revisioned section and
+        // resend the whole navigator with it.
+        layouts.sort_by(|left, right| left.tab_id.cmp(&right.tab_id));
+        if self.snapshot.pane_layouts == layouts {
+            return false;
+        }
+        self.snapshot.pane_layouts = layouts;
+        true
+    }
+
     fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
         let pane_ids = layout
             .pane_ids()
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let layout_changed = self.snapshot.pane_layout.as_ref() != Some(&layout);
+        let layout_changed = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .find(|stored| stored.tab_id == layout.tab_id)
+            != Some(&layout);
 
         let previous = self
             .snapshot
@@ -3404,7 +3456,20 @@ impl Runtime {
         self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
         self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
         self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
-        self.snapshot.pane_layout = Some(layout);
+        match self
+            .snapshot
+            .pane_layouts
+            .iter_mut()
+            .find(|stored| stored.tab_id == layout.tab_id)
+        {
+            Some(stored) => *stored = layout,
+            None => {
+                self.snapshot.pane_layouts.push(layout);
+                self.snapshot
+                    .pane_layouts
+                    .sort_by(|left, right| left.tab_id.cmp(&right.tab_id));
+            }
+        }
         if self
             .snapshot
             .status
@@ -4400,25 +4465,58 @@ impl Runtime {
         }
     }
 
-    /// Drops the previous checkout's rendered layout before selecting the
-    /// next one. Herdr's globally focused pane may belong to another
-    /// workspace, so retaining it here would let the next sync update redraw
-    /// stale terminal content while the selected checkout has no pane yet.
+    /// Drops the rendered terminal state before selecting a pane in another
+    /// checkout. Herdr's globally focused pane may belong to another
+    /// workspace, so retaining the attach set here would let the next sync
+    /// update redraw stale terminal content while the selected checkout has
+    /// no pane yet.
+    ///
+    /// The layouts are not dropped. They describe every tab in the session,
+    /// they are Herdr's and not this selection's, and emptying them to mark a
+    /// selection in progress is what made the canvas pass through a blank
+    /// frame on the way to the tab the operator asked for.
     fn clear_terminal_projection(&mut self) {
-        self.snapshot.pane_layout = None;
         self.snapshot.zoomed = None;
         self.snapshot.terminal.panes.clear();
         self.snapshot.terminal.closed = false;
         self.snapshot.terminal.exit_code = None;
     }
 
-    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
-        self.clear_terminal_projection();
+    /// Points the terminal projection at another pane without discarding
+    /// anything Herdr has said.
+    ///
+    /// Zoom is re-read from that pane's own layout rather than carried over,
+    /// so leaving a zoomed tab does not leak its zoom into the next one.
+    fn select_terminal_pane(&mut self, pane_id: Option<String>) {
+        let zoomed = pane_id
+            .as_deref()
+            .and_then(|pane_id| self.layout_holding_pane(pane_id))
+            .and_then(|layout| layout.zoomed.then(|| layout.focused_pane_id.clone()));
+        let pane_ids = pane_id
+            .as_deref()
+            .and_then(|pane_id| self.layout_holding_pane(pane_id))
+            .map(|layout| {
+                layout
+                    .pane_ids()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         self.snapshot.terminal.pane_id = pane_id.clone();
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = pane_id.clone();
         self.snapshot.ui_state.selected_pane_id = pane_id;
+        self.snapshot.zoomed = zoomed;
+        for pane_id in pane_ids {
+            self.ensure_terminal_pane(&pane_id);
+        }
         self.sync_focused_terminal_projection();
+    }
+
+    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
+        self.clear_terminal_projection();
+        self.select_terminal_pane(pane_id);
     }
 
     /// A launcher result is a local projection anchor, not a Herdr focus
@@ -4426,14 +4524,9 @@ impl Runtime {
     /// next event-stream projection catches up, and make the missing layout
     /// visible instead of retaining unrelated same-cwd content.
     fn apply_selected_pane_anchor(&mut self, pane_id: Option<String>) {
-        let layout_contains_pane = pane_id.as_deref().is_some_and(|selected_pane_id| {
-            self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
-                layout
-                    .pane_ids()
-                    .into_iter()
-                    .any(|layout_pane_id| layout_pane_id == selected_pane_id)
-            })
-        });
+        let layout_contains_pane = pane_id
+            .as_deref()
+            .is_some_and(|selected_pane_id| self.layout_holding_pane(selected_pane_id).is_some());
         self.snapshot.terminal.pane_id = pane_id.clone();
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = pane_id.clone();
@@ -4992,14 +5085,28 @@ impl Runtime {
                 // order and the active mark alike, and it confirms this focus
                 // with `tab_focused`; moving the tab here made every switch
                 // look like a reorder until the next catalog rebuild undid it.
-                let next_pane_id = checkout.tabs[index]
+                let first_pane_id = checkout.tabs[index]
                     .panes
                     .first()
                     .map(|pane| pane.id.clone());
+                // Return to the pane the operator last had in that tab. Its
+                // layout is already here, so the tab's own focused pane is
+                // known without asking Herdr for it.
+                let next_pane_id = self
+                    .snapshot
+                    .pane_layouts
+                    .iter()
+                    .find(|layout| layout.tab_id == payload.tab_id)
+                    .map(|layout| layout.focused_pane_id.clone())
+                    .or(first_pane_id);
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id);
                 self.snapshot.navigator.root_path = Some(checkout_path);
-                self.reset_terminal_projection(next_pane_id);
+                // Nothing is cleared here. The tab being selected already has
+                // its layout in the snapshot, so the canvas draws it on this
+                // frame instead of showing an empty canvas until Herdr
+                // answers.
+                self.select_terminal_pane(next_pane_id);
                 self.sync_active_tab_projection();
                 self.deactivate_file_tab();
                 self.persist_current_ui_state();
@@ -6161,8 +6268,8 @@ impl Runtime {
             return false;
         }
         if !pane_id.starts_with("remote:")
-            && let Some(layout) = self.snapshot.pane_layout.as_ref()
-            && !layout.pane_ids().contains(&pane_id)
+            && !self.snapshot.pane_layouts.is_empty()
+            && self.layout_holding_pane(pane_id).is_none()
         {
             return false;
         }
@@ -6595,7 +6702,7 @@ mod tests {
             closed: false,
             ..TerminalPaneSnapshot::default()
         }];
-        runtime.snapshot.pane_layout = Some(layout.clone());
+        runtime.snapshot.pane_layouts = vec![layout.clone()];
         runtime.snapshot.focused.surface = Surface::Terminal;
         runtime.snapshot.focused.pane_id = Some(pane_id.to_owned());
         runtime.snapshot.terminal.pane_id = Some(pane_id.to_owned());
@@ -6651,7 +6758,7 @@ mod tests {
 
         for (action, receipt) in receipts {
             assert!(runtime.ingest_pane_control_result(action, Ok(receipt), 3));
-            assert_eq!(runtime.snapshot.pane_layout, Some(layout.clone()));
+            assert_eq!(runtime.snapshot.pane_layouts, vec![layout.clone()]);
             assert_eq!(runtime.snapshot.terminal.panes, panes);
             assert_eq!(runtime.snapshot.terminal.pane_id.as_deref(), Some(pane_id));
             assert_eq!(runtime.snapshot.focused.pane_id.as_deref(), Some(pane_id));
@@ -7639,7 +7746,7 @@ mod tests {
             Some("/tmp/hide-runtime-empty")
         );
         assert!(runtime.snapshot().terminal.pane_id.is_none());
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert!(runtime.snapshot().terminal.panes.is_empty());
     }
 
@@ -7734,6 +7841,162 @@ mod tests {
             .iter()
             .map(|tab| tab.id.clone().expect("a Herdr tab always has an id"))
             .collect()
+    }
+
+    /// Every tab in the session ships its own layout, keyed by its tab id.
+    /// Before this the snapshot carried one layout, so a tab the operator was
+    /// not looking at had no geometry to draw and switching to it had to wait
+    /// for Herdr to send one.
+    #[test]
+    fn tab_layouts_carry_every_tab_in_the_session() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-all";
+        let (mut runtime, _checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .map(|layout| layout.tab_id.clone())
+                .collect::<Vec<_>>(),
+            tabs.map(str::to_owned).to_vec()
+        );
+        // Each entry is that tab's own geometry rather than a copy of the
+        // visible one.
+        for tab_id in tabs {
+            let layout = runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .find(|layout| layout.tab_id == tab_id)
+                .expect("every tab has a layout")
+                .clone();
+            assert_eq!(layout.focused_pane_id, format!("{tab_id}:p"));
+        }
+    }
+
+    /// Switching tabs empties nothing. The tab being selected already has its
+    /// geometry, so the canvas draws it on the same dispatch instead of
+    /// showing an empty canvas until Herdr confirms the focus.
+    #[test]
+    fn tab_layouts_survive_a_tab_switch_with_no_empty_canvas() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-switch";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .active_pane_layout()
+                .map(|layout| layout.tab_id.clone()),
+            Some("w-order:t1".to_owned())
+        );
+
+        let focus = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_tab",
+            "payload": {
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id,
+                "tab_id": "w-order:t3"
+            }
+        }))
+        .expect("focus tab event");
+        assert!(runtime.dispatch_json(&focus));
+
+        // Every tab still has its layout, and the canvas is already drawing
+        // the one that was asked for.
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .map(|layout| layout.tab_id.clone())
+                .collect::<Vec<_>>(),
+            tabs.map(str::to_owned).to_vec()
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .active_pane_layout()
+                .map(|layout| layout.tab_id.clone()),
+            Some("w-order:t3".to_owned())
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t3:p")
+        );
+    }
+
+    /// A layout update for one tab changes that tab's entry and no other, so
+    /// redrawing one tab cannot disturb what another tab draws.
+    #[test]
+    fn tab_layouts_update_only_the_tab_whose_layout_changed() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-one";
+        let (mut runtime, _checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        let before = runtime.snapshot().pane_layouts.clone();
+
+        let mut next = tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t1");
+        next.layouts
+            .iter_mut()
+            .find(|layout| layout.tab_id == "w-order:t2")
+            .expect("the second tab's layout")
+            .zoomed = true;
+        assert!(runtime.ingest_session(Ok(next)));
+
+        let after = runtime.snapshot().pane_layouts.clone();
+        assert_eq!(after.len(), before.len());
+        for (was, now) in before.iter().zip(after.iter()) {
+            if now.tab_id == "w-order:t2" {
+                assert!(!was.zoomed);
+                assert!(now.zoomed);
+            } else {
+                assert_eq!(was, now);
+            }
+        }
+    }
+
+    /// The shell used to draw an even grid of the tab's panes whenever it had
+    /// no layout, which is a geometry Herdr never applied and which decides
+    /// the PTY size. With every tab's layout in the snapshot there is nothing
+    /// left for it to stand in for, and nothing may bring it back.
+    #[test]
+    fn tab_layouts_have_no_uniform_grid_stand_in_left_in_the_shell() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let mut offenders = Vec::new();
+        for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
+            let path = entry.expect("a shell source entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a readable Swift source");
+            if source.contains("uniformItems") {
+                offenders.push(path.display().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a uniform pane grid stand-in is back in {offenders:?}"
+        );
     }
 
     fn checkout_active_tab_id(runtime: &Runtime, checkout_id: &str) -> Option<String> {
@@ -9006,8 +9269,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("plain:p1")
         );
@@ -9170,8 +9432,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
             Some(("w3Z", "w3Z:t1"))
         );
@@ -9337,7 +9598,7 @@ mod tests {
         runtime.reset_terminal_projection(None);
         runtime.snapshot.terminal.pane_id = Some("w2X:pB".to_owned());
         runtime.snapshot.focused.pane_id = Some("w2X:pB".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w2X".to_owned(),
             tab_id: "w2X:t1".to_owned(),
             focused_pane_id: "w2X:pB".to_owned(),
@@ -9345,7 +9606,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w2X:pB".to_owned(),
             },
-        });
+        }];
         runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
             pane_id: "w2X:pB".to_owned(),
             closed: false,
@@ -9377,7 +9638,7 @@ mod tests {
             runtime.snapshot().focused.pane_id.as_deref(),
             Some(selected_pane)
         );
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert!(runtime.snapshot().terminal.panes.is_empty());
         assert_eq!(
             runtime.snapshot().ui_state.focused_checkout_id.as_deref(),
@@ -9452,8 +9713,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
             Some(("w3V", "w3V:t1"))
         );
@@ -9497,7 +9757,7 @@ mod tests {
         runtime.snapshot.ui_state.selected_pane_id = Some("w-close:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w-close:p1".to_owned());
         runtime.snapshot.focused.pane_id = Some("w-close:p1".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w-close".to_owned(),
             tab_id: "w-close:t1".to_owned(),
             focused_pane_id: "w-close:p1".to_owned(),
@@ -9505,7 +9765,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w-close:p1".to_owned(),
             },
-        });
+        }];
         runtime.restore_hint_pending = false;
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
@@ -9546,8 +9806,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("w-close:p2")
         );
@@ -9591,7 +9850,7 @@ mod tests {
         runtime.snapshot.ui_state.selected_pane_id = Some("w-last:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w-last:p1".to_owned());
         runtime.snapshot.focused.pane_id = Some("w-last:p1".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w-last".to_owned(),
             tab_id: "w-last:t1".to_owned(),
             focused_pane_id: "w-last:p1".to_owned(),
@@ -9599,7 +9858,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w-last:p1".to_owned(),
             },
-        });
+        }];
         runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
             pane_id: "w-last:p1".to_owned(),
             closed: false,
@@ -9625,7 +9884,7 @@ mod tests {
         assert_eq!(runtime.snapshot().terminal.pane_id, None);
         assert_eq!(runtime.snapshot().focused.pane_id, None);
         assert_eq!(runtime.snapshot().ui_state.selected_pane_id, None);
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert!(runtime.snapshot().terminal.panes.is_empty());
         assert!(runtime.snapshot().status.last_error.is_none());
     }
@@ -9672,7 +9931,7 @@ mod tests {
         runtime.snapshot.ui_state.selected_pane_id = Some("w-foreign:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w-foreign:p1".to_owned());
         runtime.snapshot.focused.pane_id = Some("w-foreign:p1".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w-foreign".to_owned(),
             tab_id: "w-foreign:t1".to_owned(),
             focused_pane_id: "w-foreign:p1".to_owned(),
@@ -9680,7 +9939,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w-foreign:p1".to_owned(),
             },
-        });
+        }];
         runtime.restore_hint_pending = false;
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
@@ -9714,7 +9973,7 @@ mod tests {
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("w-foreign:p1")
         );
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert_eq!(
             runtime
                 .snapshot()
@@ -9775,7 +10034,7 @@ mod tests {
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert_eq!(
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("missing:p1")
@@ -9854,8 +10113,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("wL:p1")
         );
@@ -9900,7 +10158,7 @@ mod tests {
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("w19:p1")
         );
-        assert!(runtime.snapshot().pane_layout.is_some());
+        assert!(runtime.snapshot().active_pane_layout().is_some());
     }
 
     #[test]
@@ -9916,7 +10174,7 @@ mod tests {
             exit_code: None,
             ..TerminalPaneSnapshot::default()
         }];
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w3P".to_owned(),
             tab_id: "w3P:t1".to_owned(),
             focused_pane_id: "w3P:p1".to_owned(),
@@ -9924,7 +10182,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w3P:p1".to_owned(),
             },
-        });
+        }];
         runtime.snapshot.tab = TabSnapshot {
             id: Some("w3P:t1".to_owned()),
             workspace_id: Some("w3P".to_owned()),
@@ -9960,7 +10218,13 @@ mod tests {
                 workspaces: Vec::new(),
             }),
         ));
-        assert!(runtime.snapshot().pane_layout.is_none());
+        // The layout stays in the snapshot because it is Herdr's and it
+        // describes a tab that exists. What must not happen is drawing it,
+        // and that is settled by the tab projection going empty and the
+        // projection-unavailable error being raised, both asserted here. The
+        // shell has no checkout to look a tab up in, so it has no layout to
+        // draw either.
+        assert_eq!(runtime.snapshot().pane_layouts.len(), 1);
         assert!(runtime.snapshot().terminal.panes.is_empty());
         assert!(runtime.snapshot().tab.empty);
         assert!(runtime.snapshot().tab.panes.is_empty());

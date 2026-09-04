@@ -225,7 +225,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "input_generation",
             "navigator",
             "overlay",
-            "pane_layout",
+            "pane_layouts",
             "pet",
             "schema_version",
             "status",
@@ -586,14 +586,18 @@ fn session_snapshot_exposes_authoritative_recursive_layout_and_per_pane_state() 
     );
     let snapshot = snapshot(core);
 
-    assert_eq!(snapshot["pane_layout"]["workspace_id"], "w-grid");
-    assert_eq!(snapshot["pane_layout"]["tab_id"], "w-grid:t1");
-    assert_eq!(snapshot["pane_layout"]["root"]["type"], "split");
-    assert_eq!(snapshot["pane_layout"]["root"]["direction"], "right");
-    assert_eq!(
-        snapshot["pane_layout"]["root"]["second"]["direction"],
-        "down"
-    );
+    // The wire carries one entry per tab, keyed by the tab id the shell looks
+    // it up with, so a tab switch reads a layout that is already here.
+    let layouts = snapshot["pane_layouts"]
+        .as_array()
+        .expect("pane_layouts is an array");
+    assert_eq!(layouts.len(), 1);
+    let layout = &layouts[0];
+    assert_eq!(layout["workspace_id"], "w-grid");
+    assert_eq!(layout["tab_id"], "w-grid:t1");
+    assert_eq!(layout["root"]["type"], "split");
+    assert_eq!(layout["root"]["direction"], "right");
+    assert_eq!(layout["root"]["second"]["direction"], "down");
     assert_eq!(snapshot["terminal"]["pane_id"], "w-grid:p3");
     assert_eq!(
         snapshot["terminal"]["panes"]
@@ -639,7 +643,16 @@ fn session_sync_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
 
     let snapshot = snapshot(core);
     assert_eq!(snapshot["terminal"]["pane_id"], "fixture:p1");
-    assert!(snapshot["pane_layout"].is_null());
+    // The second session's layouts are carried, because they are Herdr's and
+    // they describe real tabs. None of them holds the explicitly selected
+    // pane, which is what leaves the shell with nothing to draw here rather
+    // than the unrelated workspace's grid.
+    let layouts = snapshot["pane_layouts"]
+        .as_array()
+        .expect("pane_layouts is an array");
+    assert_eq!(layouts.len(), 1);
+    assert_eq!(layouts[0]["tab_id"], "user:t1");
+    assert!(!layouts.iter().any(|layout| layout["focused_pane_id"] == "fixture:p1"));
     assert!(
         snapshot["terminal"]["panes"]
             .as_array()

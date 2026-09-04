@@ -219,46 +219,6 @@ import Testing
     ) == "Provider failed")
 }
 
-@Test func terminalLayoutMustBelongToTheFocusedCheckoutBeforeRendering() {
-    let checkout = CoreCheckoutSnapshot(
-        id: "checkout-b",
-        workspaceID: "workspace-b",
-        label: "main",
-        path: "/tmp/hide-workspace-b",
-        branch: "main",
-        isWorktree: false,
-        exists: true,
-        temporary: false,
-        tabs: [CoreTabSnapshot(
-            id: "tab-b",
-            workspaceID: "workspace-b",
-            checkoutID: "checkout-b",
-            label: "1",
-            empty: false,
-            panes: [CorePaneSnapshot(
-                id: "pane-b",
-                cwd: "/tmp/hide-workspace-b",
-                statusLabel: "Attached",
-                summary: nil,
-                activityAt: nil
-            )]
-        )]
-    )
-
-    #expect(TerminalLayoutPolicy.belongs(
-        workspaceID: "herdr-live-workspace-b",
-        tabID: "tab-b",
-        paneIDs: ["pane-b"],
-        checkout: checkout
-    ))
-    #expect(!TerminalLayoutPolicy.belongs(
-        workspaceID: "workspace-a",
-        tabID: "tab-a",
-        paneIDs: ["pane-a"],
-        checkout: checkout
-    ))
-}
-
 @Test func coreRemoteSessionCarriesContextAndPaneCwd() throws {
     let data = Data("""
     {
