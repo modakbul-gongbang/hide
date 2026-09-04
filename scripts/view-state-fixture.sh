@@ -21,14 +21,19 @@
 #
 # Every workspace, tab and pane this script touches is one it created. It
 # refuses to run against a fixture that already exists rather than creating a
-# second one, every object is created with --no-focus so nothing the operator
-# was looking at moves, and teardown closes exactly the workspace whose id it
-# recorded and checks the operator's workspace count came back.
+# second one, and teardown closes exactly the workspace whose id it recorded and
+# checks the operator's workspace count came back.
+#
+# Setup creates every object with --no-focus, so standing the fixture up moves
+# nothing the operator was looking at. `focus` is the exception and is meant to
+# be: it exists to drive the outside-focus path, and Herdr's focused pane is
+# session state rather than per-workspace state. So the first `focus` records
+# where the focus was and teardown puts it back.
 #
 # Usage:
 #   zsh scripts/view-state-fixture.sh setup
 #   zsh scripts/view-state-fixture.sh status
-#   zsh scripts/view-state-fixture.sh focus <pane-id|tab-id>
+#   zsh scripts/view-state-fixture.sh focus <pane-id|tab-id>   # moves herdr focus
 #   zsh scripts/view-state-fixture.sh procedure
 #   zsh scripts/view-state-fixture.sh teardown
 
@@ -42,6 +47,12 @@ REPO_ROOT="${SCRIPT_PATH:h:h}"
 FIXTURE_LABEL="view-state-fixture"
 FIXTURE_ROOT="/tmp/herdr-ide-verify/fixtures/view-state"
 STATE_FILE="${FIXTURE_ROOT}/.fixture-workspace-id"
+# Herdr's session-wide focused pane before this script first moved it. Focus is
+# session state, not per-workspace state, so a workspace listing cannot see it
+# and closing the fixture does not put it back: Herdr picks a new focus on its
+# own. The script undoes its own perturbation from this record rather than
+# naming a workspace it did not create.
+FOCUS_STATE_FILE="${FIXTURE_ROOT}/.fixture-focus-before"
 SOCKET_PATH="${HERDR_SOCKET_PATH:-${HOME}/.config/herdr/herdr.sock}"
 MARK_COUNT=12
 
@@ -197,8 +208,19 @@ cmd_status() {
   done
 }
 
+# The session's focused pane, which is not what `herdr pane current` answers:
+# that reports the pane the calling process runs in, from HERDR_PANE_ID, so a
+# script run from inside a pane always reads its own.
+current_focused_pane() {
+  herdr pane list 2>/dev/null \
+    | python3 -c 'import json,sys; print(next((p["pane_id"] for p in json.load(sys.stdin)["result"]["panes"] if p.get("focused")), ""))' 2>/dev/null || true
+}
+
 # The outside-focus path (AC8, V6). Hide must follow this on the next event and
 # leave a diagnostic saying it followed, rather than fighting it back.
+#
+# This is the one command here that moves Herdr's session focus, so the first
+# call records where the focus was, and teardown puts it back.
 cmd_focus() {
   require_socket
   local target="${1:-}"
@@ -211,11 +233,36 @@ cmd_focus() {
   [[ "$target" == "${workspace}:"* ]] || \
     die "${target} is not in ${workspace}; this script focuses only what it created"
 
+  if [[ ! -f "$FOCUS_STATE_FILE" ]]; then
+    local before
+    before="$(current_focused_pane)"
+    [[ -z "$before" ]] || printf '%s\n' "$before" > "$FOCUS_STATE_FILE"
+  fi
+
   if [[ "$target" == *":t"* ]]; then
     herdr tab focus "$target"
   else
     socket_call "pane.focus" "{\"pane_id\":\"${target}\"}"
   fi
+}
+
+# Puts Herdr's session focus back where the first `focus` call found it, if it
+# is not there already and the pane still exists.
+restore_focus() {
+  local before now
+  before="$(cat "$FOCUS_STATE_FILE" 2>/dev/null || true)"
+  [[ -n "$before" ]] || return 0
+  now="$(current_focused_pane)"
+  if [[ "$now" == "$before" ]]; then
+    print -- "herdr focus is already on ${before}"
+    return 0
+  fi
+  if ! herdr pane get "$before" >/dev/null 2>&1; then
+    print -u2 -- "fixture: pane ${before} is gone; herdr focus left on ${now:-unknown}"
+    return 0
+  fi
+  socket_call "pane.focus" "{\"pane_id\":\"${before}\"}" >/dev/null
+  print -- "herdr focus restored: ${now:-unknown} -> ${before}"
 }
 
 # The verification procedure, printed rather than written down somewhere it can
@@ -271,6 +318,8 @@ cmd_teardown() {
   [[ -n "$workspace" ]] || die "no ${FIXTURE_LABEL} workspace recorded or listed; nothing to close"
 
   before="$(workspace_count)"
+  # Before the close, while the recorded pane is still reachable to compare.
+  restore_focus
   herdr workspace close "$workspace" >/dev/null
   after="$(workspace_count)"
   rm -f "$STATE_FILE"
