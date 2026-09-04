@@ -266,6 +266,9 @@ Live 모드의 부작용 경계:
   읽음 기록이 pane id 키이므로 서버 재시작 뒤 항목이 안 읽음으로 돌아올 수 있다.
   hide 재시작(잦음)과 herdr 서버 재시작(드묾)을 구분해 후자는 받아들인다.
 - `INV-herdr-unseen-token`은 `rules` CLI로만 갱신해야 하며 CLI가 갱신을 지원하지 않으면 T7에서 보고하고 사람의 지시를 기다린다.
+  이 경우가 실제로 일어났다: 2026-09-04 `rules` CLI에는 add, check, relevant만 있어 기존 인버리언트를 갱신할 수 없었고, T7은 검증된 교체 초안을 `agents/runs/hide-agent-attention/evidence/INV-herdr-unseen-token.draft.md`로 등록하고 사람의 지시를 기다렸다.
+  사람은 "내가 직접 적용 승인"으로 답해, 관찰자가 그 초안을 `agents/rules/invariants/INV-herdr-unseen-token.md`와 `agents/rules/INDEX.md`의 해당 행에 바이트 그대로 적용하는 것을 승인했다.
+  이것이 이 PRD에서 규칙 파일과 원장을 손으로 편집한 유일한 예외이며, 그 사실은 `observer-deviations.txt` 증거로 기록된다.
 - 읽음의 기준이 되는 "hide의 포커스 pane"은 지금 herdr의 `pane_focused` 이벤트에서 온다.
   `hide-view-state` PRD가 이를 hide 소유로 바꾸면 R2의 판정 시점이 즉시로 당겨질 뿐 규칙은 같다.
 - live 검증은 운영자의 herdr 서버에서 돈다. V4의 격리 경계가 완화책이고 section 11이 금지로 적는다.
@@ -279,6 +282,7 @@ Live 모드의 부작용 경계:
 - section 6을 넘어 범위를 넓히지 않고, section 5를 넘어 구조를 바꾸지 않으며, 서드파티 의존성을 추가하지 않는다.
 - 숨겨진 사용자 흐름을 추가하지 않는다.
 - 규칙 원장과 규칙 파일은 손으로 편집하지 않고 `rules` CLI로만 다룬다 (`AGENTS.md` "Harness Namespace").
+  단 하나의 예외는 section 10에 기록된 사람의 지시다: CLI가 기존 인버리언트 갱신을 지원하지 않아 사람이 "내가 직접 적용 승인"으로 승인한 등록 초안의 바이트 그대로 적용.
 - 성능은 `AGENTS.md` "Performance Guide"를 따른다: 분류, 읽음 판정, 정렬은 lock 안에서 subprocess나 블로킹 I/O를 부르지 않으며, 읽음 기록 저장은 기존 ui_state 저장 경로를 쓰고 매 틱 디스크 쓰기를 추가하지 않는다.
 - 증거는 `AGENTS.md` "Evidence Belongs Outside The Repository"를 따른다: 모든 캡처와 로그는 `agents/runs/hide-agent-attention/`에 두고 커밋하지 않는다.
 - 디자인은 `AGENTS.md` "Design Reference"와 `DESIGN.md`를 따른다: 기호 색은 기존 토큰에서 오고 새 값은 `HideTheme`에 추가해 쓴다.
@@ -309,7 +313,7 @@ Live 모드의 부작용 경계:
 - T1부터 T7까지의 완료 상태와 R/AC/V 커버리지.
 - 모드별 검증 증거와 각 산출물이 있는 실행 디렉터리.
 - T2에 대해: 플러그인 토큰 변화에 herdr `state_change_seq`가 오르는지 실제 바이너리에서 관찰한 결과.
-- T7에 대해: `rules` CLI가 실행한 정확한 갱신과 원장의 결과 행.
+- T7에 대해: `rules` CLI가 실행한 정확한 갱신과 원장의 결과 행, 또는 CLI가 갱신을 지원하지 않아 사람의 승인 아래 초안을 손으로 적용했다는 사실과 그 승인 문구.
 - V4에 대해: 이 실행이 만든 herdr 워크스페이스, 탭, pane과 그 전부가 닫혔다는 확인, 그 밖의 어떤 것도 건드리지 않았다는 확인.
 - 추가되거나 바뀐 자동 테스트와 각각이 막는 회귀.
 - 삭제된 어휘 사본과 코드 경로의 목록.
