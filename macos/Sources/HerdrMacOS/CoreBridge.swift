@@ -18,7 +18,10 @@ struct CoreSnapshot {
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
-    let paneLayout: CorePaneLayoutSnapshot?
+    /// Every tab's layout in the local session, keyed by the tab id each one
+    /// carries. The canvas draws the entry for the visible tab, so switching
+    /// tabs is a lookup here instead of a wait for Herdr to send one.
+    let paneLayouts: [CorePaneLayoutSnapshot]
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let changes: CoreChangesSnapshot
@@ -38,7 +41,7 @@ struct CoreSnapshot {
             schemaVersion: schemaVersion,
             navigator: navigator,
             zoomed: zoomed,
-            paneLayout: paneLayout,
+            paneLayouts: paneLayouts,
             terminal: terminal,
             editor: editor ?? self.editor,
             changes: changes ?? self.changes,
@@ -80,10 +83,30 @@ struct CoreSnapshotDelta: Decodable {
     }
 }
 
+extension CoreSnapshot {
+    /// The pane the keyboard belongs to, decided once for everyone who reads
+    /// a snapshot.
+    ///
+    /// The core owns the focused pane, so its own field is the whole answer:
+    /// a click has to move the ring on its own frame rather than on Herdr's
+    /// confirming event. Callers used to reach for a layout's focused pane
+    /// when this was nil, and the order drifted between them - the agent
+    /// recency list read the layout first and so pointed at the pane Herdr
+    /// last confirmed instead of the pane just clicked. That stand-in never
+    /// worked in any case: the layout it read was found by looking this same
+    /// field up in each layout's pane list, so it was nil in exactly the case
+    /// the fallback existed for. Reading a layout here is not the way to fill
+    /// the gap; `ShellModel.focusedPaneLayout` resolves one by the focused
+    /// tab, which does not defeat itself.
+    var focusedPaneID: String? {
+        terminal.paneID
+    }
+}
+
 struct CoreRestSnapshot: Decodable {
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
-    let paneLayout: CorePaneLayoutSnapshot?
+    let paneLayouts: [CorePaneLayoutSnapshot]
     let terminal: CoreTerminalSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
@@ -92,7 +115,7 @@ struct CoreRestSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case navigator
         case zoomed
-        case paneLayout = "pane_layout"
+        case paneLayouts = "pane_layouts"
         case terminal
         case uiState = "ui_state"
         case status
@@ -1320,6 +1343,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private let fixtureMode: Bool
     private var startupDiagnostic: String?
     private var runtimeInitializationStarted = false
+    /// The runtime resolution started at init, awaited once before the core
+    /// is created. Held so the two are the same piece of work rather than two
+    /// resolutions racing.
+    private var runtimePreparation: Task<RuntimeStartupPreparation, Never>?
     private var lastLoggedHerdrState: String?
     private var lastLoggedErrorKind: String?
     private var lastLoggedProjection: String?
@@ -1364,65 +1391,66 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         statePath = resolvedStatePath
         fixtureMode = resolvedFixtureMode
         runtimeSelection = nil
-        guard let created = Self.createCore(
-            herdrBinaryPath: nil,
-            fixtureMode: resolvedFixtureMode,
-            statePath: resolvedStatePath
-        ) else {
-            bridgeError = "herdr_core_create returned null"
+        if resolvedFixtureMode {
+            // The verification fixture never talks to Herdr, so it has no
+            // runtime to resolve and its core is ready immediately.
+            guard adoptCore(herdrBinaryPath: nil) else {
+                HideLaunchTrace.mark(
+                    "core_bridge.init.failed",
+                    detail: "core_create_null",
+                    durationMilliseconds: Int(Date().timeIntervalSince(initStarted) * 1_000)
+                )
+                return
+            }
+            #if DEBUG
+            seedVerificationFixture()
+            #endif
             HideLaunchTrace.mark(
-                "core_bridge.init.failed",
-                detail: "core_create_null",
+                "core_bridge.init.ready",
+                detail: "fixture",
                 durationMilliseconds: Int(Date().timeIntervalSince(initStarted) * 1_000)
             )
             return
         }
-        core = created
-        herdr_core_on_change(
-            created,
-            coreChangeCallback,
-            Unmanaged.passUnretained(self).toOpaque()
-        )
-        refreshSnapshot()
-
-        #if DEBUG
-        if arguments.contains("--verification-ui-fixture") {
-            seedVerificationFixture()
-        }
-        #endif
-        if !resolvedFixtureMode {
-            startupDiagnostic = HideStartupDiagnostic.initializing
-            bridgeError = startupDiagnostic
-        }
-        HideLaunchTrace.mark(
-            "core_bridge.init.ready",
-            detail: resolvedFixtureMode ? "fixture" : "initial_core_without_runtime",
-            durationMilliseconds: Int(Date().timeIntervalSince(initStarted) * 1_000)
-        )
-    }
-
-    /// Starts all external runtime discovery after the application has made
-    /// its first window visible. Finder launches therefore cannot lose their
-    /// first window to a slow shell or CLI subprocess.
-    func startRuntimeInitialization() {
-        guard !fixtureMode, !runtimeInitializationStarted else { return }
-        runtimeInitializationStarted = true
+        startupDiagnostic = HideStartupDiagnostic.initializing
+        bridgeError = startupDiagnostic
+        // The core is created once, and it needs the resolved Herdr binary to
+        // attach a terminal at all, so resolution has to finish first.
+        // Starting it here rather than at the first window means it overlaps
+        // AppKit's launch instead of following it, while the subprocesses it
+        // runs stay off the main thread.
         let bundlePath = Bundle.main.path(
             forResource: "herdr",
             ofType: nil,
             inDirectory: "herdr-runtime"
         )
+        runtimePreparation = Task.detached(priority: .userInitiated) {
+            RuntimeStartupPreparation(
+                selection: HerdrRuntimeResolver.resolve(bundlePath: bundlePath),
+                environment: HideRuntimeEnvironment.childEnvironment()
+            )
+        }
+        HideLaunchTrace.mark(
+            "core_bridge.init.ready",
+            detail: "awaiting_runtime",
+            durationMilliseconds: Int(Date().timeIntervalSince(initStarted) * 1_000)
+        )
+    }
+
+    /// Creates the one core of this launch, once the application has made its
+    /// first window visible and the runtime it needs has been resolved.
+    /// Finder launches therefore cannot lose their first window to a slow
+    /// shell or CLI subprocess.
+    func startRuntimeInitialization() {
+        guard !fixtureMode, !runtimeInitializationStarted else { return }
+        runtimeInitializationStarted = true
         let socketPath = Self.defaultHerdrSocketPath()
         let startedAt = Date()
         HideLaunchTrace.mark("runtime_initialization.begin")
         Task { @MainActor [weak self] in
-            let preparation = await Task.detached(priority: .userInitiated) {
-                RuntimeStartupPreparation(
-                    selection: HerdrRuntimeResolver.resolve(bundlePath: bundlePath),
-                    environment: HideRuntimeEnvironment.childEnvironment()
-                )
-            }.value
+            guard let preparation = await self?.runtimePreparation?.value else { return }
             guard let self else { return }
+            self.runtimePreparation = nil
             let detail = preparation.selection.map {
                 "selected_\($0.source)_v\($0.version)"
             } ?? "no_runtime"
@@ -1433,10 +1461,18 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             )
 
             let socketExists = FileManager.default.fileExists(atPath: socketPath)
-            guard self.replaceCore(with: preparation.selection) else {
-                HideLaunchTrace.mark("runtime_initialization.failed", detail: "core_replace_failed")
+            self.runtimeSelection = preparation.selection
+            guard self.adoptCore(herdrBinaryPath: preparation.selection?.path) else {
+                self.setStartupDiagnostic(
+                    "Hide could not initialize its Herdr connection. Reopen the app to retry."
+                )
+                HideLaunchTrace.mark("runtime_initialization.failed", detail: "core_create_null")
                 return
             }
+            HideLaunchTrace.markOnce(
+                "core_bridge.ready",
+                detail: preparation.selection.map { "runtime_\($0.source)" } ?? "socket_only"
+            )
             guard preparation.selection != nil || socketExists else {
                 self.setStartupDiagnostic(HideStartupDiagnostic.runtimeUnavailable)
                 HideLaunchTrace.mark("runtime_initialization.failed", detail: "runtime_unavailable")
@@ -1502,21 +1538,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return created
     }
 
-    @discardableResult
-    private func replaceCore(with selection: HerdrRuntimeSelection?) -> Bool {
-        if let current = core {
-            herdr_core_on_change(current, nil, nil)
-            herdr_core_destroy(current)
-        }
-        core = nil
+    /// Creates this launch's core and takes ownership of it. A bridge holds
+    /// one core for its whole life, so this runs once.
+    private func adoptCore(herdrBinaryPath: String?) -> Bool {
         guard let created = Self.createCore(
-            herdrBinaryPath: selection?.path,
+            herdrBinaryPath: herdrBinaryPath,
             fixtureMode: fixtureMode,
             statePath: statePath
         ) else {
-            runtimeSelection = selection
-            setStartupDiagnostic("Hide could not initialize its Herdr connection. Reopen the app to retry.")
-            HideLaunchTrace.mark("core_bridge.replace.failed", detail: "core_create_null")
+            bridgeError = "herdr_core_create returned null"
             return false
         }
         core = created
@@ -1525,16 +1555,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             coreChangeCallback,
             Unmanaged.passUnretained(self).toOpaque()
         )
-        runtimeSelection = selection
-        lastTerminalSequence = 0
-        pendingTerminalBytes.removeAll()
-        restoredPaneSelection = false
         startupDiagnostic = nil
         refreshSnapshot()
-        HideLaunchTrace.mark(
-            "core_bridge.replace.ready",
-            detail: selection.map { "runtime_\($0.source)" } ?? "socket_only"
-        )
         return true
     }
 
@@ -2165,6 +2187,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             return "kind=focus_checkout workspace_id=\(traceValue(payload, key: "workspace_id")) checkout_id=\(traceValue(payload, key: "checkout_id"))"
         case "ui_state_update":
             return "kind=ui_state_update selected_pane_id=\(traceValue(payload, key: "selected_pane_id")) focused_checkout_id=\(traceValue(payload, key: "focused_checkout_id")) workspace_registrations=\(payload["workspace_registrations"] == nil ? "omitted" : "present")"
+        case "focus_tab", "focus_pane":
+            // The two view-state dispatches. Hide decides both of them itself,
+            // so the interval from this mark to the projection that follows is
+            // the whole of what the operator waits for, with no Herdr round
+            // trip in it. Measuring it any other way costs the synthetic input
+            // harness, which on this machine is over a hundred milliseconds
+            // before a keystroke even reaches the app.
+            return "kind=\(kind) tab_id=\(traceValue(payload, key: "tab_id")) pane_id=\(traceValue(payload, key: "pane_id")) origin=\(traceValue(payload, key: "origin"))"
+        case "terminal_resize":
+            // When a view first reports its size is when a pane whose size is
+            // not yet known can attach, so the launch trace has to be able to
+            // see it. A view reports only when its cell count changes, so this
+            // is not a per-frame line.
+            return "kind=terminal_resize pane_id=\(traceValue(payload, key: "pane_id")) rows=\(traceValue(payload, key: "rows")) cols=\(traceValue(payload, key: "cols"))"
         default:
             return nil
         }
@@ -2215,7 +2251,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     schemaVersion: decoded.schemaVersion,
                     navigator: rest.navigator,
                     zoomed: rest.zoomed,
-                    paneLayout: rest.paneLayout,
+                    paneLayouts: rest.paneLayouts,
                     terminal: rest.terminal,
                     editor: editor,
                     changes: decoded.changes ?? snapshot?.changes ?? .empty,
@@ -2282,34 +2318,34 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 .flatMap(\.checkouts)
                 .first(where: { $0.id == checkoutID })
         }
-        let layoutBelongs = decoded.paneLayout.flatMap { layout in
-            focusedCheckout.map { checkout in
-                TerminalLayoutPolicy.belongs(layout: layout, to: checkout)
-            }
-        } ?? false
+        // The layout the canvas draws is the visible tab's, so that is what
+        // the projection line names. A layout no longer needs to be tested
+        // against the focused checkout: it is found through that checkout's
+        // own active tab or not at all.
+        let visibleLayout = focusedCheckout?.activeTabID.flatMap { tabID in
+            decoded.paneLayouts.first(where: { $0.tabID == tabID })
+        }
         let projection = [
             "focused_workspace_id=\(decoded.navigator.focusedWorkspaceID ?? "nil")",
             "focused_checkout_id=\(decoded.navigator.focusedCheckoutID ?? "nil")",
             "checkout_workspace_id=\(focusedCheckout?.workspaceID ?? "nil")",
-            "layout_workspace_id=\(decoded.paneLayout?.workspaceID ?? "nil")",
-            "layout_tab_id=\(decoded.paneLayout?.tabID ?? "nil")",
-            "layout_pane_ids=\(decoded.paneLayout?.root.paneIDs.joined(separator: ",") ?? "nil")",
+            "layout_workspace_id=\(visibleLayout?.workspaceID ?? "nil")",
+            "layout_tab_id=\(visibleLayout?.tabID ?? "nil")",
+            "layout_pane_ids=\(visibleLayout?.root.paneIDs.joined(separator: ",") ?? "nil")",
             "terminal_pane_id=\(decoded.terminal.paneID ?? "nil")",
-            "layout_belongs=\(layoutBelongs)"
+            "layout_count=\(decoded.paneLayouts.count)"
         ].joined(separator: " ")
         if projection != lastLoggedProjection {
             lastLoggedProjection = projection
             HideLaunchTrace.mark("core.snapshot.projection", detail: projection)
         }
-        let previousFocusedPaneID = snapshot?.paneLayout?.focusedPaneID
-            ?? snapshot?.terminal.paneID
+        let previousFocusedPaneID = snapshot?.focusedPaneID
         snapshot = decoded
         bridgeError = routingError
             ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             ?? startupDiagnostic
         restorePaneSelectionIfNeeded(decoded)
-        let authoritativeFocusedPaneID = decoded.paneLayout?.focusedPaneID
-            ?? decoded.terminal.paneID
+        let authoritativeFocusedPaneID = decoded.focusedPaneID
         if authoritativeFocusedPaneID != previousFocusedPaneID,
            let authoritativeFocusedPaneID {
             DispatchQueue.main.async { [weak self] in
@@ -2335,8 +2371,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         else { return }
         for bytes in pending {
             registration.receive(bytes)
+            // The launch is over when a terminal first has a frame to draw.
+            // The core writes `ESC c` itself to clear the grid the instant it
+            // asks Herdr for a session (`start_terminal_session`), so that
+            // chunk marks the request, not the frame. Bytes held for a pane
+            // with no view yet are not the moment either, which is why this
+            // is here and not where the snapshot is decoded.
+            if bytes != Self.terminalGridReset {
+                HideLaunchTrace.markOnce("first_terminal_frame", detail: "pane_\(paneID)")
+            }
         }
     }
+
+    /// The grid reset the core writes when it requests a terminal session.
+    private static let terminalGridReset: [UInt8] = [0x1b, 0x63]
 
     #if DEBUG
     private func seedVerificationFixture() {

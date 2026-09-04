@@ -52,6 +52,43 @@ enum PaneGridPresentation {
         }
     }
 
+    /// One canvas per tab the operator has already opened, in strip order,
+    /// with the visible one marked.
+    ///
+    /// A visited tab keeps its canvas so its terminal views stay alive and
+    /// its geometry stays put while another tab is on top: returning to it
+    /// shows the scrollback it had, and the switch reports no new size to
+    /// Herdr. This is the visibility rule zoom already uses, one level up -
+    /// the hidden thing keeps its frame and loses only its opacity.
+    ///
+    /// A tab nobody has opened is left out. Building its terminal views would
+    /// register panes Hide has not attached and report a size for them, which
+    /// is the resize a first visit is supposed to make.
+    static func retainedCanvases(
+        tabIDs: [String],
+        layouts: [CorePaneLayoutSnapshot],
+        attachedPaneIDs: Set<String>,
+        visibleTabID: String?,
+        visibleFocusedPaneID: String?
+    ) -> [RetainedTabCanvas] {
+        tabIDs.compactMap { tabID -> RetainedTabCanvas? in
+            guard let layout = layouts.first(where: { $0.tabID == tabID }) else { return nil }
+            let isVisible = tabID == visibleTabID
+            guard isVisible || layout.root.paneIDs.contains(where: attachedPaneIDs.contains)
+            else { return nil }
+            // A hidden tab keeps its own last focused pane ringed. The core's
+            // focused pane belongs to the visible tab alone.
+            let focusedPaneID = isVisible ? visibleFocusedPaneID : layout.focusedPaneID
+            return RetainedTabCanvas(
+                tabID: tabID,
+                isVisible: isVisible,
+                isZoomed: layout.zoomed,
+                items: items(layout: layout, focusedPaneID: focusedPaneID),
+                dividers: layout.zoomed ? [] : dividers(layout: layout)
+            )
+        }
+    }
+
     static func items(
         remoteLayout: RemotePaneLayoutSnapshot,
         focusedPaneID: String?
@@ -79,34 +116,6 @@ enum PaneGridPresentation {
                     : retainedFrame,
                 isVisible: !remoteLayout.zoomed || frame.paneID == effectiveFocusedPaneID,
                 isFocused: frame.paneID == effectiveFocusedPaneID
-            )
-        }
-    }
-
-    static func uniformItems(
-        paneIDs: [String],
-        focusedPaneID: String?
-    ) -> [PaneGridItem] {
-        guard !paneIDs.isEmpty else { return [] }
-
-        let columnCount = paneIDs.count > 1 ? 2 : 1
-        let rowCount = (paneIDs.count + columnCount - 1) / columnCount
-
-        return paneIDs.enumerated().map { index, paneID in
-            let column = index % columnCount
-            let row = index / columnCount
-            let frame = PaneGridFrame(
-                x: Double(column) / Double(columnCount),
-                y: Double(row) / Double(rowCount),
-                width: 1 / Double(columnCount),
-                height: 1 / Double(rowCount)
-            )
-            return PaneGridItem(
-                paneID: paneID,
-                retainedFrame: frame,
-                visualFrame: frame,
-                isVisible: true,
-                isFocused: paneID == focusedPaneID
             )
         }
     }
@@ -213,6 +222,19 @@ struct PaneGridItem: Equatable {
     let visualFrame: PaneGridFrame
     let isVisible: Bool
     let isFocused: Bool
+}
+
+/// One tab's canvas on the terminal surface, and whether it is the one on
+/// top. Every tab the operator has opened in this checkout has one, so a
+/// switch changes which is visible rather than which exists.
+struct RetainedTabCanvas: Equatable, Identifiable {
+    let tabID: String
+    let isVisible: Bool
+    let isZoomed: Bool
+    let items: [PaneGridItem]
+    let dividers: [PaneGridDivider]
+
+    var id: String { tabID }
 }
 
 struct PaneGridDivider: Equatable, Identifiable {

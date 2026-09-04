@@ -117,14 +117,19 @@ import Testing
     #expect(message.hasPrefix("Herdr could not start:"))
 }
 
-@Test @MainActor func coreBridgeHasAnImmediateSnapshotBeforeRuntimeResolution() {
+/// A launch creates one core, and it cannot be created before the Herdr
+/// binary it needs is resolved. Until then the bridge holds no core and says
+/// what it is waiting for, rather than standing up a throwaway core whose
+/// empty navigator reads as "no workspaces" and whose teardown blocks the
+/// main thread joining its half-finished session sync.
+@Test @MainActor func coreBridgeWaitsForTheRuntimeAndSaysSoBeforeItsOnlyCore() {
     let bridge = CoreBridge(arguments: [
         "HerdrMacOS",
         "--state-path",
         "/tmp/hide-p0-startup-test-state.json",
     ])
 
-    #expect(bridge.snapshot != nil)
+    #expect(bridge.snapshot == nil)
     #expect(bridge.runtimeSelection == nil)
     #expect(bridge.bridgeError == HideStartupDiagnostic.initializing)
 }
@@ -217,46 +222,6 @@ import Testing
         state: "stale",
         providerMessage: "Provider failed"
     ) == "Provider failed")
-}
-
-@Test func terminalLayoutMustBelongToTheFocusedCheckoutBeforeRendering() {
-    let checkout = CoreCheckoutSnapshot(
-        id: "checkout-b",
-        workspaceID: "workspace-b",
-        label: "main",
-        path: "/tmp/hide-workspace-b",
-        branch: "main",
-        isWorktree: false,
-        exists: true,
-        temporary: false,
-        tabs: [CoreTabSnapshot(
-            id: "tab-b",
-            workspaceID: "workspace-b",
-            checkoutID: "checkout-b",
-            label: "1",
-            empty: false,
-            panes: [CorePaneSnapshot(
-                id: "pane-b",
-                cwd: "/tmp/hide-workspace-b",
-                statusLabel: "Attached",
-                summary: nil,
-                activityAt: nil
-            )]
-        )]
-    )
-
-    #expect(TerminalLayoutPolicy.belongs(
-        workspaceID: "herdr-live-workspace-b",
-        tabID: "tab-b",
-        paneIDs: ["pane-b"],
-        checkout: checkout
-    ))
-    #expect(!TerminalLayoutPolicy.belongs(
-        workspaceID: "workspace-a",
-        tabID: "tab-a",
-        paneIDs: ["pane-a"],
-        checkout: checkout
-    ))
 }
 
 @Test func coreRemoteSessionCarriesContextAndPaneCwd() throws {

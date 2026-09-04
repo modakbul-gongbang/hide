@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +32,12 @@ pub struct Snapshot {
     pub connection: ConnectionSnapshot,
     pub zoomed: Option<String>,
     pub focused: FocusedSnapshot,
-    pub pane_layout: Option<PaneLayoutSnapshot>,
+    /// Every tab's layout in the local Herdr session, keyed by the tab id
+    /// each one carries. The shell draws the entry whose tab is active, so a
+    /// tab switch is a lookup rather than a wait: nothing here is emptied to
+    /// mark a switch in progress, and the geometry drawn is always one Herdr
+    /// has already applied.
+    pub pane_layouts: Vec<PaneLayoutSnapshot>,
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
     pub changes: ChangesSnapshot,
@@ -516,6 +522,18 @@ pub struct PaneLayoutSnapshot {
     pub root: PaneLayoutNodeSnapshot,
 }
 
+impl Snapshot {
+    /// The layout being drawn: the one belonging to the tab that holds the
+    /// selected pane. Every tab's layout is carried, so this is a lookup and
+    /// never waits for Herdr to name the visible tab again.
+    pub fn active_pane_layout(&self) -> Option<&PaneLayoutSnapshot> {
+        let pane_id = self.terminal.pane_id.as_deref()?;
+        self.pane_layouts
+            .iter()
+            .find(|layout| layout.pane_ids().contains(&pane_id))
+    }
+}
+
 impl PaneLayoutSnapshot {
     pub fn pane_ids(&self) -> Vec<&str> {
         let mut pane_ids = Vec::new();
@@ -919,12 +937,15 @@ pub struct DiagnosticSnapshot {
     pub occurred_at: u64,
 }
 
+/// Carries no "last checked" stamp on purpose. Every check restamped it, the
+/// stamp rides `rest`, and `rest` is compared field by field to decide whether
+/// the reader is current - so a clock reading nothing renders made every
+/// heartbeat re-send the whole navigator, ui state, status and pet.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProviderStatusSnapshot {
     pub state: String,
     pub socket_path: Option<String>,
     pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -932,7 +953,6 @@ pub struct RemoteStatusSnapshot {
     pub target_id: String,
     pub state: String,
     pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
     pub session: Option<RemoteSessionSnapshot>,
     pub files: RemoteFileListSnapshot,
 }
@@ -1070,7 +1090,7 @@ impl Snapshot {
                 surface: Surface::Terminal,
                 pane_id: None,
             },
-            pane_layout: None,
+            pane_layouts: Vec::new(),
             terminal: TerminalSnapshot {
                 pane_id: None,
                 sequence: 0,
@@ -1101,7 +1121,6 @@ impl Snapshot {
                     state: herdr_state.to_owned(),
                     socket_path: options.herdr_socket_path.clone(),
                     message: herdr_message,
-                    last_checked_at_unix_ms: None,
                 },
                 remote: options
                     .remote_targets
@@ -1110,7 +1129,6 @@ impl Snapshot {
                         target_id: target.id.clone(),
                         state: "not_connected".to_owned(),
                         message: Some("Waiting for the first remote connection attempt".to_owned()),
-                        last_checked_at_unix_ms: None,
                         session: None,
                         files: RemoteFileListSnapshot::idle(),
                     })
@@ -1165,7 +1183,7 @@ pub struct RestSections {
     pub connection: ConnectionSnapshot,
     pub zoomed: Option<String>,
     pub focused: FocusedSnapshot,
-    pub pane_layout: Option<PaneLayoutSnapshot>,
+    pub pane_layouts: Vec<PaneLayoutSnapshot>,
     pub terminal_pane_id: Option<String>,
     pub terminal_closed: bool,
     pub terminal_exit_code: Option<i32>,
@@ -1185,7 +1203,7 @@ impl RestSections {
             connection: snapshot.connection.clone(),
             zoomed: snapshot.zoomed.clone(),
             focused: snapshot.focused.clone(),
-            pane_layout: snapshot.pane_layout.clone(),
+            pane_layouts: snapshot.pane_layouts.clone(),
             terminal_pane_id: snapshot.terminal.pane_id.clone(),
             terminal_closed: snapshot.terminal.closed,
             terminal_exit_code: snapshot.terminal.exit_code,
@@ -1206,7 +1224,7 @@ impl RestSections {
             && self.connection == snapshot.connection
             && self.zoomed == snapshot.zoomed
             && self.focused == snapshot.focused
-            && self.pane_layout == snapshot.pane_layout
+            && self.pane_layouts == snapshot.pane_layouts
             && self.terminal_pane_id == snapshot.terminal.pane_id
             && self.terminal_closed == snapshot.terminal.closed
             && self.terminal_exit_code == snapshot.terminal.exit_code
@@ -1218,11 +1236,35 @@ impl RestSections {
     }
 }
 
+/// One delta response taken from the runtime, holding everything the wire
+/// needs and nothing that reaches back into the runtime.
+///
+/// Taking a payload is what runs under the runtime lock; serializing it is
+/// what must not. The three large sections ride the reference-counted copies
+/// the runtime already retains for revision stamping, so taking one copies no
+/// section body - it bumps three refcounts and clones the chunks that arrived
+/// since the caller's cursor.
+pub struct SnapshotDeltaPayload {
+    pub schema_version: u32,
+    pub revision: u64,
+    pub rest: Option<Arc<RestSections>>,
+    pub editor: Option<Arc<EditorSnapshot>>,
+    pub changes: Option<Arc<ChangesSnapshot>>,
+    pub find: PaneFindSnapshot,
+    pub input_generation: u64,
+    pub terminal_sequence: u64,
+    pub chunks: Vec<TerminalChunk>,
+    pub chunks_dropped: bool,
+}
+
 /// One delta response on the snapshot wire. `rest`, `editor`, and `changes`
 /// are present only when the caller's `have_revision` predates their last
 /// change; `chunks` carries only sequences past the caller's cursor. The
 /// changes view holds a whole file's diff text, so it is kept off `rest`,
 /// which restamps whenever any agent's elapsed time ticks.
+///
+/// It borrows from a `SnapshotDeltaPayload`, never from the runtime, so
+/// building and serializing it needs no lock.
 #[derive(Serialize)]
 pub struct SnapshotDeltaWire<'a> {
     pub schema_version: u32,
@@ -1238,8 +1280,25 @@ pub struct SnapshotDeltaWire<'a> {
     pub find: &'a PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
-    pub chunks: Vec<&'a TerminalChunk>,
+    pub chunks: &'a [TerminalChunk],
     pub chunks_dropped: bool,
+}
+
+impl<'a> SnapshotDeltaWire<'a> {
+    pub fn borrow(payload: &'a SnapshotDeltaPayload) -> Self {
+        Self {
+            schema_version: payload.schema_version,
+            revision: payload.revision,
+            rest: payload.rest.as_deref().map(RestWire::borrow),
+            editor: payload.editor.as_deref(),
+            changes: payload.changes.as_deref(),
+            find: &payload.find,
+            input_generation: payload.input_generation,
+            terminal_sequence: payload.terminal_sequence,
+            chunks: &payload.chunks,
+            chunks_dropped: payload.chunks_dropped,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1250,12 +1309,36 @@ pub struct RestWire<'a> {
     pub connection: &'a ConnectionSnapshot,
     pub zoomed: &'a Option<String>,
     pub focused: &'a FocusedSnapshot,
-    pub pane_layout: &'a Option<PaneLayoutSnapshot>,
+    pub pane_layouts: &'a [PaneLayoutSnapshot],
     pub terminal: TerminalMetaWire<'a>,
     pub ui_state: &'a UiStateSnapshot,
     pub ime: &'a ImeSnapshot,
     pub status: &'a StatusSnapshot,
     pub pet: &'a PetSnapshot,
+}
+
+impl<'a> RestWire<'a> {
+    fn borrow(rest: &'a RestSections) -> Self {
+        Self {
+            navigator: &rest.navigator,
+            overlay: &rest.overlay,
+            tab: &rest.tab,
+            connection: &rest.connection,
+            zoomed: &rest.zoomed,
+            focused: &rest.focused,
+            pane_layouts: &rest.pane_layouts,
+            terminal: TerminalMetaWire {
+                pane_id: &rest.terminal_pane_id,
+                closed: rest.terminal_closed,
+                exit_code: rest.terminal_exit_code,
+                panes: &rest.terminal_panes,
+            },
+            ui_state: &rest.ui_state,
+            ime: &rest.ime,
+            status: &rest.status,
+            pet: &rest.pet,
+        }
+    }
 }
 
 #[derive(Serialize)]

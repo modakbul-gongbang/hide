@@ -1091,6 +1091,26 @@ pub fn project_layout_for_pane(
     project_layout(layout)
 }
 
+/// Every tab's layout in the session, in the order Herdr sent them, plus the
+/// tabs whose layout could not be read.
+///
+/// One unreadable layout excludes only its own tab. Refusing the whole
+/// session for it would empty every other tab's canvas over a fault in one,
+/// which is the failure shape the caller is being given all of them to avoid.
+pub fn project_layouts(
+    payload: &SessionSnapshotPayload,
+) -> (Vec<PaneLayoutSnapshot>, Vec<(String, String)>) {
+    let mut layouts = Vec::with_capacity(payload.layouts.len());
+    let mut rejected = Vec::new();
+    for layout in &payload.layouts {
+        match project_layout(layout) {
+            Ok(projected) => layouts.push(projected),
+            Err(reason) => rejected.push((layout.tab_id.clone(), reason)),
+        }
+    }
+    (layouts, rejected)
+}
+
 fn project_layout(layout: &SessionLayoutPayload) -> Result<PaneLayoutSnapshot, String> {
     if layout.panes.is_empty() {
         return Err(format!("Herdr tab {} has no panes", layout.tab_id));

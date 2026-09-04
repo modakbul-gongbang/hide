@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -188,6 +188,93 @@ struct FocusPanePayload {
 enum PaneFocusOrigin {
     Operator,
     Restore,
+}
+
+/// How long a view-state notification may stay unconfirmed before Hide stops
+/// treating Herdr's answer as pending.
+///
+/// The round trip measured on this machine is roughly 130 ms for the request
+/// and 170 ms more for the confirming event, so three seconds never trips on
+/// a healthy server while still releasing a value quickly when Herdr has
+/// stopped answering. The value is kept when the wait expires; only the
+/// waiting stops.
+const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
+
+/// A view-state change Hide has already made and told Herdr about.
+///
+/// Hide owns the visible tab and the focused pane, so the value in the
+/// snapshot is not a prediction to be undone. This records only that a
+/// notification is in flight, which is what tells a Herdr event naming an
+/// older value apart from an operator focusing something outside Hide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingViewFocus {
+    /// The checkout the tab belongs to. Empty for a pane focus, which is
+    /// identified by its pane id alone.
+    scope_id: String,
+    /// The tab or pane id Hide asked Herdr to focus.
+    target_id: String,
+    requested_at_unix_ms: u64,
+}
+
+impl PendingViewFocus {
+    fn new(scope_id: impl Into<String>, target_id: impl Into<String>) -> Self {
+        Self {
+            scope_id: scope_id.into(),
+            target_id: target_id.into(),
+            requested_at_unix_ms: unix_milliseconds(),
+        }
+    }
+
+    fn expired_at(&self, now_unix_ms: u64) -> bool {
+        now_unix_ms.saturating_sub(self.requested_at_unix_ms) >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
+    }
+}
+
+/// Which of the two view-state values a pending notification is about.
+///
+/// The tab and the pane run the same four paths - confirm, follow, refuse,
+/// time out - and differ only in the words their records use. Naming those
+/// words once is what keeps the paths from drifting apart: the refusal and
+/// the timeout had already grown two different reporting shapes for the same
+/// event before this existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewFocusSlot {
+    Tab,
+    Pane,
+}
+
+impl ViewFocusSlot {
+    const ALL: [Self; 2] = [Self::Tab, Self::Pane];
+
+    fn what(self) -> &'static str {
+        match self {
+            Self::Tab => "tab",
+            Self::Pane => "pane",
+        }
+    }
+
+    fn id_key(self) -> &'static str {
+        match self {
+            Self::Tab => "tab_id",
+            Self::Pane => "pane_id",
+        }
+    }
+
+    fn refused_kind(self) -> &'static str {
+        match self {
+            Self::Tab => "tab.focus.refused",
+            Self::Pane => "pane.focus.refused",
+        }
+    }
+
+    /// What Hide does with the value it kept, said the way the operator would
+    /// describe it: a tab is on screen, a pane has the keyboard.
+    fn kept_phrase(self) -> &'static str {
+        match self {
+            Self::Tab => "Hide keeps showing it",
+            Self::Pane => "Hide keeps it focused",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -800,6 +887,10 @@ pub struct Runtime {
     next_terminal_session_generation: u64,
     next_remote_file_generation: u64,
     terminal_sizes: HashMap<String, (u16, u16)>,
+    /// Panes whose attach is held until a view reports their size. Herdr
+    /// sizes the PTY from the attach, so starting one at a guess costs a
+    /// full frame at the wrong size and a second one after the resize.
+    panes_awaiting_size: HashSet<String>,
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
@@ -825,6 +916,19 @@ pub struct Runtime {
     /// operator's behalf arms this, and it is memory only: a launch starts
     /// with the operator having looked at nothing.
     operator_focused_pane_id: Option<String>,
+    /// The tab Hide is showing in each checkout it has been asked about.
+    ///
+    /// Hide owns the visible tab. The navigator is rebuilt from Herdr's
+    /// session on every update, so the choice has to live outside it or every
+    /// tick would hand the decision back to Herdr.
+    visible_tab_ids: BTreeMap<String, String>,
+    /// The tab focus Hide has told Herdr about and is still waiting to see
+    /// confirmed. Latest request wins; a second switch replaces the first
+    /// rather than queueing behind it.
+    pending_tab_focus: Option<PendingViewFocus>,
+    /// The pane focus Hide has told Herdr about and is still waiting to see
+    /// confirmed.
+    pending_pane_focus: Option<PendingViewFocus>,
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
@@ -884,6 +988,17 @@ struct RuntimeWorkerContext {
     notifier: ChangeNotifier,
 }
 
+/// Turns a taken delta into the bytes the shell reads.
+///
+/// It takes the payload and nothing else. That signature is the guarantee the
+/// runtime mutex is not held here: there is no runtime in scope to lock. The
+/// caller takes a payload under the lock, drops the guard, and calls this.
+pub fn serialize_snapshot_delta(
+    payload: &crate::model::SnapshotDeltaPayload,
+) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(&crate::model::SnapshotDeltaWire::borrow(payload))
+}
+
 /// Revision bookkeeping for the delta snapshot wire. Revisions are stamped
 /// lazily at read time by comparing live sections against the last stamped
 /// copy, so mutation sites carry no dirty-tracking obligations.
@@ -893,9 +1008,13 @@ struct DeltaState {
     rest_revision: u64,
     editor_revision: u64,
     changes_revision: u64,
-    last_rest: Option<crate::model::RestSections>,
-    last_editor: Option<crate::model::EditorSnapshot>,
-    last_changes: Option<crate::model::ChangesSnapshot>,
+    /// Reference-counted so a delta can carry the section out of the lock
+    /// without copying it. The runtime never mutates one in place: a changed
+    /// section becomes a new `Arc`, which leaves any payload already handed
+    /// out holding the state it was taken at.
+    last_rest: Option<Arc<crate::model::RestSections>>,
+    last_editor: Option<Arc<crate::model::EditorSnapshot>>,
+    last_changes: Option<Arc<crate::model::ChangesSnapshot>>,
 }
 
 impl Runtime {
@@ -913,7 +1032,7 @@ impl Runtime {
                 );
             }
         }
-        let (ui_state, disposition) = persistence::load(&state_path);
+        let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
         snapshot.navigator.devices =
             workspace::devices(&remote_targets, &snapshot.ui_state.device_registrations);
@@ -969,7 +1088,8 @@ impl Runtime {
             terminal_session_lifecycles: HashMap::new(),
             next_terminal_session_generation: 0,
             next_remote_file_generation: 0,
-            terminal_sizes: HashMap::new(),
+            terminal_sizes: pane_terminal_sizes.into_iter().collect(),
+            panes_awaiting_size: HashSet::new(),
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -980,6 +1100,9 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
+            visible_tab_ids: BTreeMap::new(),
+            pending_tab_focus: None,
+            pending_pane_focus: None,
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
@@ -1109,17 +1232,24 @@ impl Runtime {
         true
     }
 
-    /// Serializes one delta response for the snapshot wire: sections whose
-    /// revision passed `have_revision`, plus terminal chunks past
-    /// `have_sequence`. Reading is idempotent - the same cursors return the
-    /// same delta again - so a caller that failed to apply a response
-    /// recovers by re-reading with its unadvanced cursors.
-    pub fn snapshot_delta(
+    /// Takes one delta response for the snapshot wire: sections whose revision
+    /// passed `have_revision`, plus terminal chunks past `have_sequence`.
+    /// Reading is idempotent - the same cursors return the same delta again -
+    /// so a caller that failed to apply a response recovers by re-reading with
+    /// its unadvanced cursors.
+    ///
+    /// This is the half that needs the runtime, and it is deliberately the
+    /// only half: it stamps revisions and copies out what the wire needs, and
+    /// `serialize_snapshot_delta` turns that into bytes with the lock already
+    /// released. Serializing here would put the whole navigator, ui state and
+    /// terminal output through `serde_json` while every attach thread and the
+    /// shell's next read wait on the mutex.
+    pub fn snapshot_delta_payload(
         &mut self,
         have_revision: u64,
         have_sequence: u64,
-    ) -> Result<Vec<u8>, serde_json::Error> {
-        use crate::model::{RestSections, RestWire, SnapshotDeltaWire, TerminalMetaWire};
+    ) -> crate::model::SnapshotDeltaPayload {
+        use crate::model::{RestSections, SnapshotDeltaPayload};
 
         if !self
             .delta
@@ -1129,17 +1259,17 @@ impl Runtime {
         {
             self.delta.revision += 1;
             self.delta.rest_revision = self.delta.revision;
-            self.delta.last_rest = Some(RestSections::capture(&self.snapshot));
+            self.delta.last_rest = Some(Arc::new(RestSections::capture(&self.snapshot)));
         }
-        if self.delta.last_editor.as_ref() != Some(&self.snapshot.editor) {
+        if self.delta.last_editor.as_deref() != Some(&self.snapshot.editor) {
             self.delta.revision += 1;
             self.delta.editor_revision = self.delta.revision;
-            self.delta.last_editor = Some(self.snapshot.editor.clone());
+            self.delta.last_editor = Some(Arc::new(self.snapshot.editor.clone()));
         }
-        if self.delta.last_changes.as_ref() != Some(&self.snapshot.changes) {
+        if self.delta.last_changes.as_deref() != Some(&self.snapshot.changes) {
             self.delta.revision += 1;
             self.delta.changes_revision = self.delta.revision;
-            self.delta.last_changes = Some(self.snapshot.changes.clone());
+            self.delta.last_changes = Some(Arc::new(self.snapshot.changes.clone()));
         }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
@@ -1149,50 +1279,59 @@ impl Runtime {
             have_revision
         };
 
+        // Chunks are cloned rather than drained: a caller whose apply failed
+        // re-reads with the same cursor and has to get the same bytes back.
         let chunks: Vec<_> = self
             .snapshot
             .terminal
             .chunks
             .iter()
             .filter(|chunk| chunk.sequence > have_sequence)
+            .cloned()
             .collect();
         let chunks_dropped = match self.snapshot.terminal.chunks.first() {
             Some(oldest) => have_sequence + 1 < oldest.sequence,
             None => have_sequence < self.snapshot.terminal.sequence,
         };
 
-        let wire = SnapshotDeltaWire {
+        SnapshotDeltaPayload {
             schema_version: self.snapshot.schema_version,
             revision: self.delta.revision,
-            rest: (self.delta.rest_revision > have_revision).then(|| RestWire {
-                navigator: &self.snapshot.navigator,
-                overlay: &self.snapshot.overlay,
-                tab: &self.snapshot.tab,
-                connection: &self.snapshot.connection,
-                zoomed: &self.snapshot.zoomed,
-                focused: &self.snapshot.focused,
-                pane_layout: &self.snapshot.pane_layout,
-                terminal: TerminalMetaWire {
-                    pane_id: &self.snapshot.terminal.pane_id,
-                    closed: self.snapshot.terminal.closed,
-                    exit_code: self.snapshot.terminal.exit_code,
-                    panes: &self.snapshot.terminal.panes,
-                },
-                ui_state: &self.snapshot.ui_state,
-                ime: &self.snapshot.ime,
-                status: &self.snapshot.status,
-                pet: &self.snapshot.pet,
+            // The retained copies were compared against the live snapshot
+            // above and rebuilt where they differed, so each is the live
+            // section and costs a refcount instead of a copy. All three are
+            // stamped by that block, so a missing one is a broken invariant
+            // and not a section to send as null.
+            rest: (self.delta.rest_revision > have_revision).then(|| {
+                Arc::clone(
+                    self.delta
+                        .last_rest
+                        .as_ref()
+                        .expect("the rest section is stamped before a delta is taken"),
+                )
             }),
-            editor: (self.delta.editor_revision > have_revision).then_some(&self.snapshot.editor),
-            changes: (self.delta.changes_revision > have_revision)
-                .then_some(&self.snapshot.changes),
-            find: &self.snapshot.find,
+            editor: (self.delta.editor_revision > have_revision).then(|| {
+                Arc::clone(
+                    self.delta
+                        .last_editor
+                        .as_ref()
+                        .expect("the editor section is stamped before a delta is taken"),
+                )
+            }),
+            changes: (self.delta.changes_revision > have_revision).then(|| {
+                Arc::clone(
+                    self.delta
+                        .last_changes
+                        .as_ref()
+                        .expect("the changes section is stamped before a delta is taken"),
+                )
+            }),
+            find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,
             chunks,
             chunks_dropped,
-        };
-        serde_json::to_vec(&wire)
+        }
     }
 
     pub fn set_live(&mut self, context: LiveContext) {
@@ -2039,11 +2178,12 @@ impl Runtime {
             }
         }
 
-        // Herdr names one active tab per workspace, and that name is the only
-        // authority for which tab is active. A workspace whose panes are split
-        // across checkouts leaves the sibling checkouts with none rather than
-        // letting each promote its own first tab.
+        // Herdr names one active tab per workspace. Hide owns which tab is
+        // visible, so that name is what Hide reconciles against rather than
+        // what it obeys: it confirms a switch Hide made, or it is an operator
+        // focusing a tab outside Hide and Hide follows it and says so.
         let mut unresolved_active_tabs = BTreeSet::new();
+        let mut herdr_active_tab_by_checkout: BTreeMap<String, String> = BTreeMap::new();
         for session_workspace in &payload.workspaces {
             let Some(active_tab_id) = session_workspace
                 .active_tab_id
@@ -2054,14 +2194,15 @@ impl Runtime {
                 continue;
             };
             let mut resolved = false;
-            for workspace in &mut workspaces {
-                for checkout in &mut workspace.checkouts {
+            for workspace in &workspaces {
+                for checkout in &workspace.checkouts {
                     if checkout
                         .tabs
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(active_tab_id))
                     {
-                        checkout.active_tab_id = Some(active_tab_id.to_owned());
+                        herdr_active_tab_by_checkout
+                            .insert(checkout.id.clone(), active_tab_id.to_owned());
                         resolved = true;
                     }
                 }
@@ -2082,6 +2223,7 @@ impl Runtime {
             }
         }
         self.report_unresolved_active_tabs(unresolved_active_tabs);
+        self.reconcile_visible_tabs(&mut workspaces, &herdr_active_tab_by_checkout);
 
         let previous = self.snapshot.navigator.clone();
         self.snapshot.navigator.workspaces = workspaces;
@@ -2416,6 +2558,180 @@ impl Runtime {
         self.sync_active_tab_projection();
     }
 
+    /// Decides which tab each checkout shows, given what Herdr says is active
+    /// and what Hide has already chosen.
+    ///
+    /// Hide owns the visible tab, so Herdr's name is read four ways:
+    /// it agrees with Hide and confirms a switch in flight; it disagrees while
+    /// Hide's notification is still unconfirmed, and Hide keeps its own value
+    /// until Herdr answers; it disagrees with nothing in flight, which is an
+    /// operator focusing that tab outside Hide, so Hide follows it and reports
+    /// the tab and where the change came from; or Herdr names no tab in this
+    /// checkout, and Hide keeps showing what it was showing.
+    ///
+    /// A checkout that has tabs always ends with one of them visible. Leaving
+    /// a sibling checkout of a split workspace without an active tab is what
+    /// made its canvas draw the empty-checkout state over real panes.
+    fn reconcile_visible_tabs(
+        &mut self,
+        workspaces: &mut [WorkspaceSnapshot],
+        herdr_active_tab_by_checkout: &BTreeMap<String, String>,
+    ) {
+        let mut followed: Vec<(String, String, String)> = Vec::new();
+        let mut follow_pane: Option<String> = None;
+        let mut confirmed_pending = false;
+        // The catalog is rebuilt whole on every pass, so a checkout absent
+        // from it is gone rather than momentarily missing. Keeping its tab
+        // would grow this map for the life of the process.
+        let live_checkout_ids = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .map(|checkout| checkout.id.clone())
+            .collect::<HashSet<_>>();
+        self.visible_tab_ids
+            .retain(|checkout_id, _| live_checkout_ids.contains(checkout_id));
+        for workspace in workspaces.iter_mut() {
+            for checkout in workspace.checkouts.iter_mut() {
+                let has_tab = |tab_id: &str| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(tab_id))
+                };
+                let hide_tab = self
+                    .visible_tab_ids
+                    .get(&checkout.id)
+                    .filter(|tab_id| has_tab(tab_id))
+                    .cloned();
+                let herdr_tab = herdr_active_tab_by_checkout.get(&checkout.id).cloned();
+                let pending_tab = self
+                    .pending_tab_focus
+                    .as_ref()
+                    .filter(|pending| pending.scope_id == checkout.id)
+                    .map(|pending| pending.target_id.clone());
+                let visible = match (hide_tab, herdr_tab) {
+                    (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => {
+                        if pending_tab.as_deref() == Some(hide_tab.as_str()) {
+                            confirmed_pending = true;
+                        }
+                        Some(hide_tab)
+                    }
+                    (Some(hide_tab), Some(herdr_tab)) => {
+                        if pending_tab.as_deref() == Some(hide_tab.as_str()) {
+                            Some(hide_tab)
+                        } else {
+                            // Following the tab has to bring the keyboard with
+                            // it. Leaving the projection on the tab that just
+                            // stopped being visible parks the focus ring and
+                            // the first responder on a pane nobody can see.
+                            if self.snapshot.navigator.focused_checkout_id.as_deref()
+                                == Some(checkout.id.as_str())
+                            {
+                                let first_pane_id = checkout
+                                    .tabs
+                                    .iter()
+                                    .find(|tab| tab.id.as_deref() == Some(herdr_tab.as_str()))
+                                    .and_then(|tab| tab.panes.first())
+                                    .map(|pane| pane.id.clone());
+                                follow_pane = self.tab_focus_pane_id(&herdr_tab, first_pane_id);
+                            }
+                            followed.push((checkout.id.clone(), hide_tab, herdr_tab.clone()));
+                            Some(herdr_tab)
+                        }
+                    }
+                    (Some(hide_tab), None) => Some(hide_tab),
+                    (None, Some(herdr_tab)) => Some(herdr_tab),
+                    (None, None) => checkout.tabs.first().and_then(|tab| tab.id.clone()),
+                };
+                match visible {
+                    Some(tab_id) => {
+                        self.visible_tab_ids
+                            .insert(checkout.id.clone(), tab_id.clone());
+                        checkout.active_tab_id = Some(tab_id);
+                    }
+                    None => {
+                        self.visible_tab_ids.remove(&checkout.id);
+                        checkout.active_tab_id = None;
+                    }
+                }
+            }
+        }
+        if confirmed_pending {
+            self.pending_tab_focus = None;
+        }
+        if let Some(pane_id) = follow_pane {
+            self.select_terminal_pane(Some(pane_id));
+        }
+        for (checkout_id, hide_tab, herdr_tab) in followed {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "view_state",
+                    "kind": "tab.focus.followed",
+                    "checkout_id": checkout_id,
+                    "from_tab_id": hide_tab,
+                    "to_tab_id": herdr_tab,
+                    "origin": "herdr",
+                })
+            );
+            self.push_diagnostic(
+                "tab.focus.followed",
+                format!("Herdr focused tab {herdr_tab} in {checkout_id}; Hide was showing {hide_tab}"),
+            );
+        }
+    }
+
+    /// The pane that becoming visible should put the keyboard on: the one the
+    /// operator last had in that tab, and its first pane before it has ever
+    /// been visited.
+    fn tab_focus_pane_id(&self, tab_id: &str, first_pane_id: Option<String>) -> Option<String> {
+        self.snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.tab_id == tab_id)
+            .map(|layout| layout.focused_pane_id.clone())
+            .or(first_pane_id)
+    }
+
+    /// Stops waiting on a view-state notification Herdr never answered.
+    ///
+    /// The value Hide chose is kept: the operator's tab and pane are Hide's,
+    /// and a silent Herdr is a reason to report, not a reason to move the
+    /// screen out from under them. Dropping the wait is what lets the next
+    /// Herdr event be read as an external focus rather than as a late answer.
+    fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
+        let mut expired = Vec::new();
+        for slot in ViewFocusSlot::ALL {
+            let pending = self.pending_view_focus(slot);
+            if let Some(pending) = pending.as_ref()
+                && pending.expired_at(now_unix_ms)
+            {
+                expired.push((slot.what(), pending.target_id.clone()));
+                *self.pending_view_focus_mut(slot) = None;
+            }
+        }
+        let changed = !expired.is_empty();
+        for (what, target_id) in expired {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "view_state",
+                    "kind": "view_focus.timed_out",
+                    "what": what,
+                    "target_id": target_id,
+                    "timeout_ms": VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS,
+                })
+            );
+            self.push_diagnostic(
+                "view_focus.timed_out",
+                format!(
+                    "Herdr did not confirm {what} focus {target_id} within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms; Hide keeps it"
+                ),
+            );
+        }
+        changed
+    }
+
     fn sync_active_tab_projection(&mut self) {
         let Some(focused_checkout_id) = self.snapshot.navigator.focused_checkout_id.as_deref()
         else {
@@ -2452,9 +2768,11 @@ impl Runtime {
             };
             return;
         };
-        // The active tab is the one Herdr named, looked up by id. The first
-        // tab is not a stand-in for a missing one: reading position as focus
-        // is what made a tab move look like a focus change.
+        // The visible tab is looked up by the id Hide holds for this checkout.
+        // The first tab is not a stand-in for a missing one: reading position
+        // as focus is what made a tab move look like a focus change. A
+        // checkout that has tabs always names one, so the only tabless case
+        // left is a checkout with no tabs at all.
         let active = checkout.active_tab_id.as_deref().and_then(|active_tab_id| {
             checkout
                 .tabs
@@ -2468,11 +2786,7 @@ impl Runtime {
                 id: None,
                 workspace_id: Some(workspace_id),
                 checkout_id: Some(checkout.id.clone()),
-                label: Some(if checkout.tabs.is_empty() {
-                    "No tabs".to_owned()
-                } else {
-                    "No active tab".to_owned()
-                }),
+                label: Some("No tabs".to_owned()),
                 empty: true,
                 panes: Vec::new(),
             };
@@ -2558,7 +2872,6 @@ impl Runtime {
                 }
             }
         }
-        status.last_checked_at_unix_ms = Some(unix_milliseconds());
 
         let agent_count = status
             .session
@@ -2755,24 +3068,20 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        // The session update is this runtime's only regular tick, so it is
+        // also where a notification Herdr never answered stops being pending.
+        // Doing it first lets this same update be read as an external focus
+        // rather than as a late answer to a request that has gone quiet.
+        let timed_out = self.expire_pending_view_focus(unix_milliseconds());
         let previously_projected_pane = self
             .snapshot
             .terminal
             .pane_id
             .as_deref()
-            .filter(|pane_id| {
-                self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
-                    layout
-                        .pane_ids()
-                        .into_iter()
-                        .any(|layout_pane_id| layout_pane_id == *pane_id)
-                })
-            })
+            .filter(|pane_id| self.layout_holding_pane(pane_id).is_some())
             .map(str::to_owned);
         let previously_projected_tab = self
-            .snapshot
-            .pane_layout
-            .as_ref()
+            .active_pane_layout()
             .map(|layout| layout.tab_id.clone());
         let previously_projected_in_focused_checkout =
             previously_projected_pane.as_deref().is_some_and(|pane_id| {
@@ -2813,13 +3122,15 @@ impl Runtime {
             self.terminal_session_lifecycles
                 .retain(|pane_id, _| keep(pane_id));
             self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
+            self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         }
         let mut excluded = Vec::new();
+        let mut rejected_layouts: Vec<(String, String)> = Vec::new();
         let catalog_changed = fetched
             .as_ref()
             .map(|payload| self.reconcile_session_catalog(payload, precomputed))
             .unwrap_or(false);
-        let (state, message, agents, layout, selection_changed) = match fetched {
+        let (state, message, agents, layouts, layout, selection_changed) = match fetched {
             Ok(payload) => {
                 self.consume_restore_hint(&payload);
                 let focused_checkout = self
@@ -2993,6 +3304,8 @@ impl Runtime {
                         true,
                     );
                 }
+                let (layouts, rejected) = live::project_layouts(&payload);
+                rejected_layouts = rejected;
                 let layout = target_pane_id
                     .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
                     .transpose();
@@ -3003,6 +3316,7 @@ impl Runtime {
                         "connected",
                         None,
                         Some(projection.agents),
+                        layouts,
                         layout,
                         selection_changed,
                     ),
@@ -3012,6 +3326,7 @@ impl Runtime {
                             "Herdr pane layout could not be projected: {projection_error}"
                         )),
                         None,
+                        layouts,
                         None,
                         selection_changed,
                     ),
@@ -3021,6 +3336,7 @@ impl Runtime {
                 error.state(),
                 Some(error.message().to_owned()),
                 None,
+                Vec::new(),
                 None,
                 false,
             ),
@@ -3046,7 +3362,8 @@ impl Runtime {
             );
         }
 
-        let mut changed = catalog_changed || selection_changed || !excluded.is_empty();
+        let mut changed =
+            catalog_changed || selection_changed || timed_out || !excluded.is_empty();
         if self.snapshot.status.herdr.state != state
             || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
         {
@@ -3054,7 +3371,6 @@ impl Runtime {
             self.snapshot.status.herdr.message = message;
             changed = true;
         }
-        self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
             changed |= self.apply_pane_read_state(&mut agents, ReadRecordScope::Local);
@@ -3063,6 +3379,22 @@ impl Runtime {
                 changed = true;
             }
         }
+        for (tab_id, reason) in &rejected_layouts {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "session",
+                    "kind": "layout.excluded",
+                    "tab_id": tab_id,
+                    "message": reason,
+                })
+            );
+            self.push_diagnostic(
+                "layout.excluded",
+                format!("Tab {tab_id} has no drawable layout: {reason}"),
+            );
+        }
+        changed |= self.store_pane_layouts(layouts);
         if let Some(layout) = layout {
             if self.snapshot.terminal.pane_id.is_none() {
                 let pane_id = layout.focused_pane_id.clone();
@@ -3327,19 +3659,45 @@ impl Runtime {
 
     /// Saves the current UI state and surfaces a write failure instead of
     /// dropping it.
+    /// Writes the operator's UI state and the pane sizes the next launch
+    /// attaches with. The sizes are not part of the UI state the shell draws,
+    /// so they are collected here rather than carried on the snapshot.
+    fn write_ui_state(&self) -> Result<(), String> {
+        let pane_terminal_sizes: persistence::PaneTerminalSizes = self
+            .terminal_sizes
+            .iter()
+            .map(|(pane_id, size)| (pane_id.clone(), *size))
+            .collect();
+        persistence::save(
+            &self.state_path,
+            &self.snapshot.ui_state,
+            &pane_terminal_sizes,
+        )
+    }
+
     fn persist_ui_state(&mut self) {
-        if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+        if let Err(message) = self.write_ui_state() {
             self.set_error("ui_state.save_failed", message, true);
         }
     }
 
-    /// Focuses a pane in Herdr, and for an operator focus makes that pane the
-    /// one the read record follows.
+    /// Moves the keyboard focus to a pane and tells Herdr afterwards.
     ///
-    /// The record is raised here rather than when the resulting layout lands,
-    /// so one click on a Done row clears that row inside the same dispatch.
-    /// A focus that never reaches Herdr arms nothing.
+    /// Hide owns the focused pane, so the focus ring and the first responder
+    /// move on this frame rather than on Herdr's confirming event. What Herdr
+    /// still owns is which panes exist and how they are split; this only says
+    /// which of them has the keyboard.
+    ///
+    /// For an operator focus the pane also becomes the one the read record
+    /// follows. The record is raised here rather than when the resulting
+    /// layout lands, so one click on a Done row clears that row inside the
+    /// same dispatch. A focus that never reaches Herdr arms nothing.
     fn focus_pane(&mut self, pane_id: String, origin: PaneFocusOrigin) {
+        let already_focused = self.snapshot.focused.pane_id.as_deref() == Some(pane_id.as_str());
+        self.snapshot.terminal.pane_id = Some(pane_id.clone());
+        self.snapshot.focused.surface = Surface::Terminal;
+        self.snapshot.focused.pane_id = Some(pane_id.clone());
+        self.sync_focused_terminal_projection();
         let Some(context) = self.live.as_ref().cloned() else {
             self.set_error(
                 "pane.control_unavailable",
@@ -3348,15 +3706,26 @@ impl Runtime {
             );
             return;
         };
-        self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
-        if let Err(message) = live::spawn_pane_control(
-            context,
-            PaneControlAction::Focus {
-                pane_id: pane_id.clone(),
-            },
-        ) {
-            self.set_error("pane.focus_worker_failed", message, true);
-            return;
+        // Rule 11: focusing the pane that already has the keyboard, with
+        // nothing in flight, converges without a second notification. The
+        // look itself still counts, so only the notification is skipped.
+        let notify =
+            !already_focused || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id);
+        if notify {
+            self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
+            if let Err(message) = live::spawn_pane_control(
+                context,
+                PaneControlAction::Focus {
+                    pane_id: pane_id.clone(),
+                },
+            ) {
+                self.set_error("pane.focus_worker_failed", message, true);
+                return;
+            }
+            // Latest request wins, so a second click while the first is
+            // unconfirmed cannot be pulled back by Herdr's answer to the
+            // first.
+            self.pending_pane_focus = Some(PendingViewFocus::new(String::new(), pane_id.clone()));
         }
         if origin == PaneFocusOrigin::Restore {
             return;
@@ -3365,46 +3734,142 @@ impl Runtime {
         self.refresh_pane_read_state();
     }
 
+    /// The layout of the tab that holds this pane. Every tab in the session
+    /// has one, so this answers for a pane in any tab, not only the visible
+    /// one.
+    fn layout_holding_pane(&self, pane_id: &str) -> Option<&PaneLayoutSnapshot> {
+        self.snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.pane_ids().contains(&pane_id))
+    }
+
+    /// The layout being drawn: the one holding the selected pane.
+    fn active_pane_layout(&self) -> Option<&PaneLayoutSnapshot> {
+        self.snapshot.active_pane_layout()
+    }
+
+    /// Replaces the session's layouts wholesale from one session projection.
+    ///
+    /// Herdr sends the whole session on every topology update, so a
+    /// `layout_updated` for one tab arrives as a payload in which only that
+    /// tab's entry differs; comparing the projected vector is what keeps the
+    /// other tabs' entries and the revision they ride untouched.
+    fn store_pane_layouts(&mut self, mut layouts: Vec<PaneLayoutSnapshot>) -> bool {
+        // Sorted by tab id, because Herdr's own order for the layouts array
+        // carries no meaning - the tab list is what orders tabs - and a
+        // reshuffle of it would otherwise restamp the revisioned section and
+        // resend the whole navigator with it.
+        layouts.sort_by(|left, right| left.tab_id.cmp(&right.tab_id));
+        if self.snapshot.pane_layouts == layouts {
+            return false;
+        }
+        self.snapshot.pane_layouts = layouts;
+        true
+    }
+
     fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
         let pane_ids = layout
             .pane_ids()
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let layout_changed = self.snapshot.pane_layout.as_ref() != Some(&layout);
-
-        let previous = self
+        let layout_changed = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .find(|stored| stored.tab_id == layout.tab_id)
+            != Some(&layout);
+        // The rendered projection is compared on its own, because an
+        // unchanged layout no longer implies an unchanged projection. Layouts
+        // now survive a tab switch, so this runs for a tab whose geometry
+        // Herdr never altered while the panes it puts on the canvas still
+        // change. Returning the layout comparison alone would then withhold
+        // the notification for a canvas that did change.
+        let previous_pane_ids = self
             .snapshot
             .terminal
             .panes
-            .drain(..)
-            .map(|pane| (pane.pane_id.clone(), pane))
-            .collect::<HashMap<_, _>>();
-        let mut terminal_panes = pane_ids
             .iter()
-            .map(|pane_id| {
-                previous
-                    .get(pane_id)
-                    .cloned()
-                    .unwrap_or_else(|| self.terminal_pane_snapshot(pane_id))
-            })
+            .map(|pane| pane.pane_id.clone())
             .collect::<Vec<_>>();
-        let mut remote_panes = previous
-            .into_values()
-            .filter(|pane| pane.pane_id.starts_with("remote:"))
-            .collect::<Vec<_>>();
-        remote_panes.sort_by(|left, right| left.pane_id.cmp(&right.pane_id));
-        terminal_panes.extend(remote_panes);
-        self.snapshot.terminal.panes = terminal_panes;
+        let previous_selected = self.snapshot.terminal.pane_id.clone();
+        let previous_zoomed = self.snapshot.zoomed.clone();
 
-        // Herdr owns focus and input routing. The shell never keeps a second,
-        // hover- or click-local focus value alongside the authoritative layout.
+        // A pane a visited tab left behind keeps its projection entry. The
+        // terminal view the shell holds open for that tab reads its transport
+        // state from here, and dropping the entry on every switch is what
+        // dropped the attach with it and made the tab come back empty. Only a
+        // pane that has left the session goes, and the session is the union
+        // of every tab's layout.
+        let arriving_tab_id = layout.tab_id.clone();
+        match self
+            .snapshot
+            .pane_layouts
+            .iter_mut()
+            .find(|stored| stored.tab_id == arriving_tab_id)
+        {
+            Some(stored) => *stored = layout.clone(),
+            None => {
+                self.snapshot.pane_layouts.push(layout.clone());
+                self.snapshot
+                    .pane_layouts
+                    .sort_by(|left, right| left.tab_id.cmp(&right.tab_id));
+            }
+        }
+        let session_pane_ids = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .flat_map(|stored| stored.pane_ids())
+            .map(str::to_owned)
+            .collect::<HashSet<_>>();
+        self.snapshot.terminal.panes.retain(|pane| {
+            pane.pane_id.starts_with("remote:") || session_pane_ids.contains(&pane.pane_id)
+        });
+        for pane_id in &pane_ids {
+            self.ensure_terminal_pane(pane_id);
+        }
+
+        // Hide owns the focused pane. An arriving layout confirms the focus
+        // Hide notified Herdr about, or - with nothing in flight - it is a
+        // focus made outside Hide and Hide follows it and says so. While a
+        // notification is unconfirmed the layout's geometry is taken and its
+        // focus is not, so the operator's click is not undone by the frame
+        // that was already on its way.
         let previous_focus = self.snapshot.focused.pane_id.clone();
-        self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
-        self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
-        self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
-        self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
-        self.snapshot.pane_layout = Some(layout);
+        let pending_pane = self
+            .pending_pane_focus
+            .as_ref()
+            .map(|pending| pending.target_id.clone());
+        let arriving_confirms_pending_tab = self
+            .pending_tab_focus
+            .as_ref()
+            .is_some_and(|pending| pending.target_id == arriving_tab_id);
+        let adopt_focus = match pending_pane.as_deref() {
+            Some(pending) if pending == layout.focused_pane_id => {
+                self.pending_pane_focus = None;
+                true
+            }
+            Some(_) => false,
+            None => true,
+        };
+        if adopt_focus {
+            if previous_focus.as_deref() != Some(layout.focused_pane_id.as_str())
+                && pending_pane.is_none()
+                && !arriving_confirms_pending_tab
+            {
+                self.report_followed_pane_focus(previous_focus.as_deref(), &layout.focused_pane_id);
+            }
+            self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
+            self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
+            self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
+            // Zoom is Herdr's, and its subject is the focused pane. While
+            // Hide keeps a focus Herdr has not confirmed, taking the zoom
+            // would hide the pane the operator just clicked behind another.
+            self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
+        }
+        let mut notice_cleared = false;
         if self
             .snapshot
             .status
@@ -3413,6 +3878,7 @@ impl Runtime {
             .is_some_and(|error| error.kind == "pane.projection_unavailable")
         {
             self.snapshot.status.last_error = None;
+            notice_cleared = true;
         }
         self.sync_focused_terminal_projection();
 
@@ -3421,7 +3887,100 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
             }
         }
-        layout_changed
+        let projection_changed = notice_cleared
+            || previous_selected != self.snapshot.terminal.pane_id
+            || previous_focus != self.snapshot.focused.pane_id
+            || previous_zoomed != self.snapshot.zoomed
+            || previous_pane_ids
+                != self
+                    .snapshot
+                    .terminal
+                    .panes
+                    .iter()
+                    .map(|pane| pane.pane_id.clone())
+                    .collect::<Vec<_>>();
+        layout_changed || projection_changed
+    }
+
+    /// Ends the wait on a view-state focus Herdr refused, keeping the value
+    /// Hide chose and reporting the refusal.
+    ///
+    /// A refusal that names some other target is not this wait's answer and
+    /// is left alone, so a late refusal for a tab the operator has already
+    /// moved on from cannot end the wait on the current one.
+    fn clear_refused_view_focus(&mut self, slot: ViewFocusSlot, target_id: &str, message: &str) {
+        if self
+            .pending_view_focus(slot)
+            .as_ref()
+            .is_none_or(|pending| pending.target_id != target_id)
+        {
+            return;
+        }
+        *self.pending_view_focus_mut(slot) = None;
+        let what = slot.what();
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "view_state",
+                "kind": slot.refused_kind(),
+                slot.id_key(): target_id,
+                "message": message,
+            })
+        );
+        self.push_diagnostic(
+            slot.refused_kind(),
+            format!(
+                "Herdr refused {what} focus {target_id}: {message}; {}",
+                slot.kept_phrase()
+            ),
+        );
+    }
+
+    /// Rule 11: whether repeating this view-state change would converge on
+    /// what the core already holds, so Herdr needs no second notification.
+    /// True when nothing is in flight for the slot, or what is in flight is
+    /// this very target.
+    fn view_focus_settled_on(&self, slot: ViewFocusSlot, target_id: &str) -> bool {
+        self.pending_view_focus(slot)
+            .as_ref()
+            .is_none_or(|pending| pending.target_id == target_id)
+    }
+
+    fn pending_view_focus(&self, slot: ViewFocusSlot) -> &Option<PendingViewFocus> {
+        match slot {
+            ViewFocusSlot::Tab => &self.pending_tab_focus,
+            ViewFocusSlot::Pane => &self.pending_pane_focus,
+        }
+    }
+
+    fn pending_view_focus_mut(&mut self, slot: ViewFocusSlot) -> &mut Option<PendingViewFocus> {
+        match slot {
+            ViewFocusSlot::Tab => &mut self.pending_tab_focus,
+            ViewFocusSlot::Pane => &mut self.pending_pane_focus,
+        }
+    }
+
+    /// Reports that Hide moved its keyboard focus to follow a pane focus made
+    /// outside it.
+    ///
+    /// Rule 9: the record names the panes and where the change came from, and
+    /// carries nothing about what is in them.
+    fn report_followed_pane_focus(&mut self, previous: Option<&str>, arriving: &str) {
+        let from = previous.unwrap_or("<none>").to_owned();
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "view_state",
+                "kind": "pane.focus.followed",
+                "from_pane_id": from,
+                "to_pane_id": arriving,
+                "origin": "herdr",
+            })
+        );
+        self.push_diagnostic(
+            "pane.focus.followed",
+            format!("Herdr focused pane {arriving}; Hide was on {from}"),
+        );
     }
 
     /// Drops the operator focus once Herdr moves focus off the pane the
@@ -3801,7 +4360,11 @@ impl Runtime {
                 self.set_error("pane.projection_failed", message, true);
                 true
             }
-            (PaneControlAction::Focus { .. }, Err(message)) => {
+            (PaneControlAction::Focus { pane_id }, Err(message)) => {
+                // Hide keeps the pane it focused. The refusal is reported and
+                // the wait ends, so the next Herdr event naming another pane
+                // is read as the authority it is rather than as a late answer.
+                self.clear_refused_view_focus(ViewFocusSlot::Pane, &pane_id, &message);
                 self.set_error("pane.focus_failed", message, true);
                 true
             }
@@ -3962,6 +4525,12 @@ impl Runtime {
                 );
             }
             Err(message) => {
+                // Hide keeps the tab it made visible. The refusal is reported
+                // and the wait ends, so the next Herdr event naming another
+                // tab is read as an external focus rather than a late answer.
+                if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    self.clear_refused_view_focus(ViewFocusSlot::Tab, tab_id, &message);
+                }
                 self.set_error(
                     "tab.control.failed",
                     format!("{action_kind} failed: {message}"),
@@ -4395,30 +4964,61 @@ impl Runtime {
             self.snapshot.navigator.focused_device_id.clone();
         self.snapshot.ui_state.focused_checkout_id =
             self.snapshot.navigator.focused_checkout_id.clone();
-        if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
-            self.set_error("ui_state.save_failed", message, true);
-        }
+        self.persist_ui_state();
     }
 
-    /// Drops the previous checkout's rendered layout before selecting the
-    /// next one. Herdr's globally focused pane may belong to another
-    /// workspace, so retaining it here would let the next sync update redraw
-    /// stale terminal content while the selected checkout has no pane yet.
+    /// Drops the rendered terminal state before selecting a pane in another
+    /// checkout. Herdr's globally focused pane may belong to another
+    /// workspace, so retaining the attach set here would let the next sync
+    /// update redraw stale terminal content while the selected checkout has
+    /// no pane yet.
+    ///
+    /// The layouts are not dropped. They describe every tab in the session,
+    /// they are Herdr's and not this selection's, and emptying them to mark a
+    /// selection in progress is what made the canvas pass through a blank
+    /// frame on the way to the tab the operator asked for.
     fn clear_terminal_projection(&mut self) {
-        self.snapshot.pane_layout = None;
         self.snapshot.zoomed = None;
         self.snapshot.terminal.panes.clear();
         self.snapshot.terminal.closed = false;
         self.snapshot.terminal.exit_code = None;
     }
 
-    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
-        self.clear_terminal_projection();
+    /// Points the terminal projection at another pane without discarding
+    /// anything Herdr has said.
+    ///
+    /// Zoom is re-read from that pane's own layout rather than carried over,
+    /// so leaving a zoomed tab does not leak its zoom into the next one.
+    fn select_terminal_pane(&mut self, pane_id: Option<String>) {
+        let zoomed = pane_id
+            .as_deref()
+            .and_then(|pane_id| self.layout_holding_pane(pane_id))
+            .and_then(|layout| layout.zoomed.then(|| layout.focused_pane_id.clone()));
+        let pane_ids = pane_id
+            .as_deref()
+            .and_then(|pane_id| self.layout_holding_pane(pane_id))
+            .map(|layout| {
+                layout
+                    .pane_ids()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         self.snapshot.terminal.pane_id = pane_id.clone();
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = pane_id.clone();
         self.snapshot.ui_state.selected_pane_id = pane_id;
+        self.snapshot.zoomed = zoomed;
+        for pane_id in pane_ids {
+            self.ensure_terminal_pane(&pane_id);
+        }
         self.sync_focused_terminal_projection();
+    }
+
+    fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
+        self.clear_terminal_projection();
+        self.select_terminal_pane(pane_id);
     }
 
     /// A launcher result is a local projection anchor, not a Herdr focus
@@ -4426,14 +5026,9 @@ impl Runtime {
     /// next event-stream projection catches up, and make the missing layout
     /// visible instead of retaining unrelated same-cwd content.
     fn apply_selected_pane_anchor(&mut self, pane_id: Option<String>) {
-        let layout_contains_pane = pane_id.as_deref().is_some_and(|selected_pane_id| {
-            self.snapshot.pane_layout.as_ref().is_some_and(|layout| {
-                layout
-                    .pane_ids()
-                    .into_iter()
-                    .any(|layout_pane_id| layout_pane_id == selected_pane_id)
-            })
-        });
+        let layout_contains_pane = pane_id
+            .as_deref()
+            .is_some_and(|selected_pane_id| self.layout_holding_pane(selected_pane_id).is_some());
         self.snapshot.terminal.pane_id = pane_id.clone();
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = pane_id.clone();
@@ -4988,21 +5583,43 @@ impl Runtime {
                     return true;
                 };
                 let checkout_path = checkout.path.clone();
-                // Focusing a tab does not reorder the strip. Herdr owns the
-                // order and the active mark alike, and it confirms this focus
-                // with `tab_focused`; moving the tab here made every switch
-                // look like a reorder until the next catalog rebuild undid it.
-                let next_pane_id = checkout.tabs[index]
+                // Hide owns the visible tab, so the active mark moves here,
+                // on the frame the operator asked for it, and Herdr is told
+                // afterwards. Focusing a tab still does not reorder the
+                // strip: Herdr owns the order, and moving the tab here made
+                // every switch look like a reorder until the next catalog
+                // rebuild undid it.
+                let already_visible = checkout.active_tab_id.as_deref() == Some(&payload.tab_id);
+                checkout.active_tab_id = Some(payload.tab_id.clone());
+                let first_pane_id = checkout.tabs[index]
                     .panes
                     .first()
                     .map(|pane| pane.id.clone());
+                // Return to the pane the operator last had in that tab. Its
+                // layout is already here, so the tab's own focused pane is
+                // known without asking Herdr for it.
+                let next_pane_id = self.tab_focus_pane_id(&payload.tab_id, first_pane_id);
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
-                self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id);
+                self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
-                self.reset_terminal_projection(next_pane_id);
+                self.visible_tab_ids
+                    .insert(payload.checkout_id.clone(), payload.tab_id.clone());
+                // Nothing is cleared here. The tab being selected already has
+                // its layout in the snapshot, so the canvas draws it on this
+                // frame instead of showing an empty canvas until Herdr
+                // answers.
+                self.select_terminal_pane(next_pane_id);
                 self.sync_active_tab_projection();
                 self.deactivate_file_tab();
                 self.persist_current_ui_state();
+                // Rule 11: reaching for the tab already showing, with nothing
+                // in flight, converges on the state it is already in and
+                // sends Herdr no second notification.
+                if already_visible
+                    && self.view_focus_settled_on(ViewFocusSlot::Tab, &payload.tab_id)
+                {
+                    return true;
+                }
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.set_error(
                         "tab.control_unavailable",
@@ -5014,11 +5631,20 @@ impl Runtime {
                 if let Err(message) = live::spawn_local_control(
                     context,
                     RemoteControlAction::FocusTab {
-                        tab_id: payload.tab_id,
+                        tab_id: payload.tab_id.clone(),
                     },
                 ) {
                     self.set_error("tab.focus_worker_failed", message, true);
+                    return true;
                 }
+                // Latest request wins. A second switch while the first is
+                // unconfirmed replaces it, so Herdr's answer to the first
+                // cannot pull the canvas back off the tab the operator is
+                // now on.
+                self.pending_tab_focus = Some(PendingViewFocus::new(
+                    payload.checkout_id,
+                    payload.tab_id,
+                ));
                 true
             }
             ValidatedEvent::ReorderTab(payload) => self.reorder_tab(payload),
@@ -5752,13 +6378,37 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.terminal_sizes
-                    .insert(payload.pane_id.clone(), (payload.rows, payload.cols));
-                if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
-                    && session.mode == TerminalSessionMode::Control
-                    && let Err(message) = session.resize(payload.rows, payload.cols)
-                {
-                    self.set_error("terminal.resize_failed", message, true);
+                let size = (payload.rows, payload.cols);
+                let previous = self.terminal_sizes.insert(payload.pane_id.clone(), size);
+                // A view reporting the size the pane is already running at is
+                // the common case right after an attach. Sending it on would
+                // make Herdr answer with a second full frame for a size that
+                // never changed.
+                if previous == Some(size) {
+                    return false;
+                }
+                // A pane's first size is what the next launch attaches with,
+                // so it is written now. Later sizes ride the next UI-state
+                // save rather than putting a file write in the middle of a
+                // window drag.
+                if previous.is_none() {
+                    self.persist_ui_state();
+                }
+                if self.terminal_sessions.contains_key(&payload.pane_id) {
+                    if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
+                        && session.mode == TerminalSessionMode::Control
+                        && let Err(message) = session.resize(payload.rows, payload.cols)
+                    {
+                        self.set_error("terminal.resize_failed", message, true);
+                        return true;
+                    }
+                    return false;
+                }
+                // The pane's attach was held back because no view had reported
+                // a size yet. This is that size, so it can start now, at the
+                // size it will keep.
+                if self.panes_awaiting_size.remove(&payload.pane_id) {
+                    self.request_terminal_control(&payload.pane_id);
                     return true;
                 }
                 false
@@ -5943,7 +6593,7 @@ impl Runtime {
                 // Session sync owns session-derived temporary workspaces.
                 // UI-state persistence must not rebuild from an empty session
                 // and erase the catalog that the user is currently viewing.
-                match persistence::save(&self.state_path, &self.snapshot.ui_state) {
+                match self.write_ui_state() {
                     Ok(()) => true,
                     Err(message) => {
                         self.set_error("ui_state.save_failed", message, true);
@@ -5966,6 +6616,22 @@ impl Runtime {
             current.state,
             self.terminal_sessions.contains_key(pane_id),
         ) {
+            self.sync_transport_projection(pane_id);
+            return;
+        }
+        // Herdr sizes the PTY from the attach, so attaching before a view has
+        // reported a size costs a full frame at a guessed size and a second
+        // one after the resize. The pane's own view reports within a frame of
+        // the layout arriving, and the resize handler starts the attach then.
+        if !self.terminal_sizes.contains_key(pane_id) {
+            if self.panes_awaiting_size.insert(pane_id.to_owned()) {
+                self.push_diagnostic(
+                    "terminal.attach_deferred",
+                    format!(
+                        "Pane {pane_id} is waiting for its view to report a size before attaching"
+                    ),
+                );
+            }
             self.sync_transport_projection(pane_id);
             return;
         }
@@ -6075,13 +6741,34 @@ impl Runtime {
             self.set_error("terminal.transport_unavailable", message, true);
             return;
         };
+        // Herdr sizes the PTY from the attach, so there is no honest size to
+        // send when no view has reported one. Every path here has one:
+        // `request_terminal_control` holds a pane back until its view reports,
+        // and an observe session only follows a control session that already
+        // had a size. A pane that arrives here without one is a routing bug,
+        // and saying so beats attaching at a guess and hiding it.
+        let Some((rows, cols)) = self.terminal_sizes.get(pane_id).copied() else {
+            let message =
+                format!("Pane {pane_id} has no reported terminal size, so it cannot be attached");
+            self.record_terminal_session_failure(
+                pane_id,
+                generation,
+                attempt,
+                mode,
+                "size_unknown",
+                &message,
+                0,
+            );
+            self.set_error("terminal.size_unknown", message, true);
+            return;
+        };
         if let Err(message) = live::spawn_terminal_session(
             context,
             pane_id.to_owned(),
             generation,
             mode,
-            self.terminal_sizes.get(pane_id).map_or(24, |size| size.0),
-            self.terminal_sizes.get(pane_id).map_or(80, |size| size.1),
+            rows,
+            cols,
         ) {
             self.record_terminal_session_failure(
                 pane_id,
@@ -6161,8 +6848,8 @@ impl Runtime {
             return false;
         }
         if !pane_id.starts_with("remote:")
-            && let Some(layout) = self.snapshot.pane_layout.as_ref()
-            && !layout.pane_ids().contains(&pane_id)
+            && !self.snapshot.pane_layouts.is_empty()
+            && self.layout_holding_pane(pane_id).is_none()
         {
             return false;
         }
@@ -6595,7 +7282,7 @@ mod tests {
             closed: false,
             ..TerminalPaneSnapshot::default()
         }];
-        runtime.snapshot.pane_layout = Some(layout.clone());
+        runtime.snapshot.pane_layouts = vec![layout.clone()];
         runtime.snapshot.focused.surface = Surface::Terminal;
         runtime.snapshot.focused.pane_id = Some(pane_id.to_owned());
         runtime.snapshot.terminal.pane_id = Some(pane_id.to_owned());
@@ -6651,7 +7338,7 @@ mod tests {
 
         for (action, receipt) in receipts {
             assert!(runtime.ingest_pane_control_result(action, Ok(receipt), 3));
-            assert_eq!(runtime.snapshot.pane_layout, Some(layout.clone()));
+            assert_eq!(runtime.snapshot.pane_layouts, vec![layout.clone()]);
             assert_eq!(runtime.snapshot.terminal.panes, panes);
             assert_eq!(runtime.snapshot.terminal.pane_id.as_deref(), Some(pane_id));
             assert_eq!(runtime.snapshot.focused.pane_id.as_deref(), Some(pane_id));
@@ -6678,7 +7365,6 @@ mod tests {
             target_id: "mini".to_owned(),
             state: "connected".to_owned(),
             message: None,
-            last_checked_at_unix_ms: Some(1),
             session: Some(RemoteSessionSnapshot {
                 workspaces: vec![remote_workspace],
                 agents: Vec::new(),
@@ -6771,7 +7457,6 @@ mod tests {
             target_id: "mini".to_owned(),
             state: "not_connected".to_owned(),
             message: None,
-            last_checked_at_unix_ms: None,
             session: None,
             files: RemoteFileListSnapshot::idle(),
         });
@@ -6833,6 +7518,9 @@ mod tests {
                 .all(|pane| pane.transport_state == "idle")
         );
 
+        // The canvas that draws this pane reports its size, and an attach is
+        // held back until one has arrived.
+        runtime.terminal_sizes.insert(pane_id.to_owned(), (40, 120));
         let focus_remote = serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION,
             "kind": "focus_device",
@@ -6940,7 +7628,6 @@ mod tests {
             target_id: "mini".to_owned(),
             state: "connected".to_owned(),
             message: None,
-            last_checked_at_unix_ms: Some(1),
             session: Some(RemoteSessionSnapshot {
                 workspaces: vec![remote_workspace],
                 agents: Vec::new(),
@@ -7036,6 +7723,93 @@ mod tests {
         assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
     }
 
+    /// AC6's failure half: an attach that fails names its reason on the pane
+    /// it failed for and leaves every other pane alone.
+    ///
+    /// A launch pointed at a Herdr binary that is not there reaches the
+    /// runtime as exactly this spawn error. That launch cannot be staged from
+    /// outside the app - `HerdrRuntimeResolver.resolve` searches absolute
+    /// paths that ignore both HOME and PATH, so any staging finds the
+    /// operator's installed Herdr - which is why the failure is proven here,
+    /// at the boundary the failure actually crosses, rather than by a window
+    /// screenshot.
+    #[test]
+    fn attach_failure_names_its_reason_on_that_pane_and_leaves_the_others_idle() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        // Both panes are projected the way the runtime projects them, so the
+        // untouched one carries a real resting state rather than a zero value
+        // a hand-built struct would have handed the assertion for free.
+        runtime.ensure_terminal_pane("w1:p1");
+        runtime.ensure_terminal_pane("w1:p2");
+        runtime
+            .terminal_session_generations
+            .insert("w1:p1".to_owned(), 7);
+        runtime.terminal_session_lifecycles.insert(
+            "w1:p1".to_owned(),
+            TerminalSessionLifecycle {
+                state: "starting",
+                generation: 7,
+                attempt: 1,
+                mode: Some(TerminalSessionMode::Control),
+                ..TerminalSessionLifecycle::default()
+            },
+        );
+
+        let reason = "herdr terminal control failed: no such file or directory";
+        assert!(runtime.ingest_terminal_session_spawn(
+            7,
+            "w1:p1",
+            TerminalSessionMode::Control,
+            Err(reason.to_owned()),
+            12,
+            Weak::new(),
+            crate::ffi::ChangeNotifier::noop(),
+        ));
+
+        let failed = runtime
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "w1:p1")
+            .expect("the pane whose attach failed is still projected");
+        assert_eq!(failed.transport_state, "unavailable");
+        assert_eq!(failed.transport_message.as_deref(), Some(reason));
+        assert_eq!(failed.transport_exit_category.as_deref(), Some("spawn_failed"));
+        assert_eq!(failed.transport_retry_decision, "manual");
+
+        let untouched = runtime
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "w1:p2")
+            .expect("the other pane is still projected");
+        assert_eq!(
+            untouched.transport_state, "idle",
+            "one pane's attach failure must not mark another pane unavailable"
+        );
+        assert_eq!(untouched.transport_message, None);
+        assert_eq!(untouched.transport_exit_category, None);
+
+        // The reason is also written into that pane's own byte stream, so the
+        // operator reads it where the terminal would have been and nowhere
+        // else on the canvas.
+        let notices: Vec<&TerminalChunk> = runtime
+            .snapshot
+            .terminal
+            .chunks
+            .iter()
+            .filter(|chunk| {
+                String::from_utf8(live::decode_base64(&chunk.bytes_base64).expect("chunk bytes"))
+                    .is_ok_and(|text| text.contains(reason))
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "the reason is announced once");
+        assert_eq!(notices[0].pane_id, "w1:p1");
+    }
+
     #[test]
     fn runtime_owner_conflict_observes_ignores_stale_delivery_and_reconnects_once() {
         let mut runtime = runtime();
@@ -7057,6 +7831,9 @@ mod tests {
             ..TerminalPaneSnapshot::default()
         }];
         runtime.next_terminal_session_generation = 40;
+        // The pane is one the operator is looking at, so its view has already
+        // reported a size; an attach is held back until one has.
+        runtime.terminal_sizes.insert("w1:p1".to_owned(), (40, 120));
         runtime
             .terminal_session_generations
             .insert("w1:p1".to_owned(), 40);
@@ -7639,7 +8416,7 @@ mod tests {
             Some("/tmp/hide-runtime-empty")
         );
         assert!(runtime.snapshot().terminal.pane_id.is_none());
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert!(runtime.snapshot().terminal.panes.is_empty());
     }
 
@@ -7736,6 +8513,696 @@ mod tests {
             .collect()
     }
 
+    /// Every tab in the session ships its own layout, keyed by its tab id.
+    /// Before this the snapshot carried one layout, so a tab the operator was
+    /// not looking at had no geometry to draw and switching to it had to wait
+    /// for Herdr to send one.
+    #[test]
+    fn tab_layouts_carry_every_tab_in_the_session() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-all";
+        let (mut runtime, _checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .map(|layout| layout.tab_id.clone())
+                .collect::<Vec<_>>(),
+            tabs.map(str::to_owned).to_vec()
+        );
+        // Each entry is that tab's own geometry rather than a copy of the
+        // visible one.
+        for tab_id in tabs {
+            let layout = runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .find(|layout| layout.tab_id == tab_id)
+                .expect("every tab has a layout")
+                .clone();
+            assert_eq!(layout.focused_pane_id, format!("{tab_id}:p"));
+        }
+    }
+
+    /// Switching tabs empties nothing. The tab being selected already has its
+    /// geometry, so the canvas draws it on the same dispatch instead of
+    /// showing an empty canvas until Herdr confirms the focus.
+    #[test]
+    fn tab_layouts_survive_a_tab_switch_with_no_empty_canvas() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-switch";
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .active_pane_layout()
+                .map(|layout| layout.tab_id.clone()),
+            Some("w-order:t1".to_owned())
+        );
+
+        let focus = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_tab",
+            "payload": {
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id,
+                "tab_id": "w-order:t3"
+            }
+        }))
+        .expect("focus tab event");
+        assert!(runtime.dispatch_json(&focus));
+
+        // Every tab still has its layout, and the canvas is already drawing
+        // the one that was asked for.
+        assert_eq!(
+            runtime
+                .snapshot()
+                .pane_layouts
+                .iter()
+                .map(|layout| layout.tab_id.clone())
+                .collect::<Vec<_>>(),
+            tabs.map(str::to_owned).to_vec()
+        );
+        assert_eq!(
+            runtime
+                .snapshot()
+                .active_pane_layout()
+                .map(|layout| layout.tab_id.clone()),
+            Some("w-order:t3".to_owned())
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t3:p")
+        );
+    }
+
+    /// A layout update for one tab changes that tab's entry and no other, so
+    /// redrawing one tab cannot disturb what another tab draws.
+    #[test]
+    fn tab_layouts_update_only_the_tab_whose_layout_changed() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-one";
+        let (mut runtime, _checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        let before = runtime.snapshot().pane_layouts.clone();
+
+        let mut next = tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t1");
+        next.layouts
+            .iter_mut()
+            .find(|layout| layout.tab_id == "w-order:t2")
+            .expect("the second tab's layout")
+            .zoomed = true;
+        assert!(runtime.ingest_session(Ok(next)));
+
+        let after = runtime.snapshot().pane_layouts.clone();
+        assert_eq!(after.len(), before.len());
+        for (was, now) in before.iter().zip(after.iter()) {
+            if now.tab_id == "w-order:t2" {
+                assert!(!was.zoomed);
+                assert!(now.zoomed);
+            } else {
+                assert_eq!(was, now);
+            }
+        }
+    }
+
+    /// A layout Herdr has already sent still moves the canvas when it belongs
+    /// to another tab. The return value is what fires the change notifier, so
+    /// it has to report the projection that was rebuilt and not only the
+    /// geometry that was compared. Before layouts survived a tab switch the
+    /// two could not disagree, because a switch emptied the stored layout and
+    /// every following layout counted as new.
+    #[test]
+    fn tab_layouts_report_a_projection_move_under_an_unchanged_layout() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-notify";
+        let (mut runtime, _checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        let second = runtime
+            .snapshot()
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.tab_id == "w-order:t2")
+            .expect("the second tab's layout")
+            .clone();
+
+        // The geometry is the one already stored, so only the projection
+        // moves. That move still has to be reported.
+        assert!(runtime.apply_pane_layout(second.clone()));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t2:p")
+        );
+
+        // The same layout over the same projection changes nothing, and
+        // reports nothing, so the canvas is not redrawn for a repeat.
+        assert!(!runtime.apply_pane_layout(second));
+    }
+
+    /// The shell used to draw an even grid of the tab's panes whenever it had
+    /// no layout, which is a geometry Herdr never applied and which decides
+    /// the PTY size. With every tab's layout in the snapshot there is nothing
+    /// left for it to stand in for, and nothing may bring it back.
+    #[test]
+    fn tab_layouts_have_no_uniform_grid_stand_in_left_in_the_shell() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let mut offenders = Vec::new();
+        for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
+            let path = entry.expect("a shell source entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a readable Swift source");
+            if source.contains("uniformItems") {
+                offenders.push(path.display().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a uniform pane grid stand-in is back in {offenders:?}"
+        );
+    }
+
+    /// R8, AC14. The agent notes are what the next person reads before they
+    /// touch this subsystem, and both of their claims about it were wrong: the
+    /// shell was described as reading the snapshot on every change
+    /// notification, and the only measured figure in the performance guide was
+    /// a mutex wait from an incident measured while typing on a build three
+    /// rounds of work ago. A document drifts silently, so the claims that
+    /// matter are asserted here rather than trusted.
+    #[test]
+    fn agent_notes_state_the_view_authority_and_the_announcement_rule() {
+        let notes = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../AGENTS.md"),
+        )
+        .expect("the agent notes");
+        let (architecture, rest) = notes
+            .split_once("## Runtime Architecture")
+            .expect("a Runtime Architecture section");
+        assert!(
+            architecture.len() < rest.len(),
+            "the split must put the section body on the right"
+        );
+        let (architecture, _) = rest
+            .split_once("## Herdr API Contract")
+            .expect("Runtime Architecture ends at the Herdr API Contract");
+        let (_, performance) = notes
+            .split_once("## Performance Guide")
+            .expect("a Performance Guide section");
+
+        for (section, name, wanted) in [
+            (
+                architecture,
+                "Runtime Architecture",
+                vec![
+                    // The boundary itself, both halves of it.
+                    "visible tab",
+                    "keyboard focus pane",
+                    // The four paths a core-owned value can take.
+                    "pending",
+                    "followed",
+                    "refusal",
+                    // What replaced the per-change read and the second core.
+                    "once per burst",
+                    "before** it takes the lock",
+                    "creates the core once",
+                ],
+            ),
+            (
+                performance,
+                "Performance Guide",
+                vec![
+                    "serialize_snapshot_delta",
+                    "ChangeNotifier",
+                    "idle",
+                    "driven",
+                ],
+            ),
+        ] {
+            for phrase in wanted {
+                assert!(
+                    section.contains(phrase),
+                    "AGENTS.md {name} does not say {phrase:?}"
+                );
+            }
+        }
+        assert!(
+            !performance.contains("main thread spent 47% of wall time"),
+            "the stale 47% figure is replaced by measurements with their load, not kept beside them"
+        );
+    }
+
+    /// R5, AC9. A launch used to create a core without the resolved Herdr
+    /// binary, start its session sync, and then throw both away for a second
+    /// core once the runtime was known. Destroying the first one joined a
+    /// worker mid-bootstrap, which is where the measured 360 ms between the
+    /// runtime resolving and the second core being ready went. One core per
+    /// launch means one `session.snapshot`, one subscription and one catalog
+    /// build, and the shell is the only place that can put the second one
+    /// back.
+    #[test]
+    fn one_launch_creates_the_core_once_and_never_replaces_it() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let mut creations = Vec::new();
+        let mut destructions = Vec::new();
+        for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
+            let path = entry.expect("a shell source entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a readable Swift source");
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            for line in source.lines().map(str::trim) {
+                if line.starts_with("//") {
+                    continue;
+                }
+                if line.contains("herdr_core_create(") {
+                    creations.push(format!("{name}: {line}"));
+                }
+                if line.contains("herdr_core_destroy(") {
+                    destructions.push(format!("{name}: {line}"));
+                }
+            }
+        }
+        assert_eq!(
+            creations.len(),
+            1,
+            "the shell must call herdr_core_create from one place: {creations:?}"
+        );
+        assert_eq!(
+            destructions.len(),
+            1,
+            "a core is destroyed only when the bridge goes away: {destructions:?}"
+        );
+        let bridge = std::fs::read_to_string(shell.join("CoreBridge.swift"))
+            .expect("the core bridge source");
+        assert!(
+            !bridge.contains("replaceCore"),
+            "replacing a live core with a second one is the path this removed"
+        );
+        assert!(
+            bridge.contains("runtimePreparation"),
+            "the one core is created after the runtime resolves, so the resolution has to be awaited"
+        );
+    }
+
+    /// R6, AC12. Herdr publishes a session snapshot on every event and on
+    /// every agent refresh, and the wire has to be sized by what changed. A
+    /// republish that moved nothing must leave the reader's cursor current, or
+    /// the whole navigator, ui state, status and pet sections ride the next
+    /// read for nothing.
+    #[test]
+    fn snapshot_delivery_leaves_the_rest_section_alone_when_a_republish_moves_nothing() {
+        fn session() -> SessionSnapshotPayload {
+            serde_json::from_value(serde_json::json!({
+                "agents": [],
+                "workspaces": [{"workspace_id": "w1", "label": "fixture"}],
+                "panes": [{"pane_id": "w1:p1", "cwd": "/tmp/fixture"}],
+                "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}],
+                "layouts": [{
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{
+                        "pane_id": "w1:p1",
+                        "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                    }],
+                    "splits": []
+                }]
+            }))
+            .expect("a session payload")
+        }
+
+        let mut runtime = runtime();
+        runtime.ingest_session(Ok(session()));
+        let first = runtime.snapshot_delta_payload(0, 0);
+        assert!(first.rest.is_some(), "a fresh cursor reads the whole state");
+        let caught_up = first.revision;
+
+        runtime.ingest_session(Ok(session()));
+        let second = runtime.snapshot_delta_payload(caught_up, first.terminal_sequence);
+        assert!(
+            second.rest.is_none(),
+            "an identical republish must not restamp the rest section"
+        );
+        assert_eq!(
+            second.revision, caught_up,
+            "a republish that moved nothing leaves the reader current"
+        );
+    }
+
+    /// R6, AC12. The delta used to be serialized with the runtime mutex held,
+    /// so every attach thread and the shell's next read waited behind the
+    /// whole navigator, ui state and terminal output going through serde.
+    ///
+    /// The split is enforced twice. The signature is the first half: a
+    /// payload owns everything the wire needs, so the function that turns it
+    /// into bytes has no runtime in scope to lock. The call site is the
+    /// second: the guard is taken for the payload and gone before serde runs.
+    #[test]
+    fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
+        let mut runtime = runtime();
+        let payload = runtime.snapshot_delta_payload(0, 0);
+        // A payload outlives the borrow it came from, which is what lets the
+        // caller drop the guard between the two halves.
+        drop(runtime);
+        let serialize: fn(
+            &crate::model::SnapshotDeltaPayload,
+        ) -> Result<Vec<u8>, serde_json::Error> = serialize_snapshot_delta;
+        let bytes = serialize(&payload).expect("a payload serializes on its own");
+        assert!(!bytes.is_empty(), "the wire is written from the payload");
+
+        let ffi = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ffi.rs"),
+        )
+        .expect("the ffi source");
+        let entry_point = ffi
+            .split_once("pub extern \"C\" fn herdr_core_snapshot(")
+            .expect("the snapshot entry point")
+            .1;
+        let body = entry_point
+            .split_once("#[unsafe(no_mangle)]")
+            .expect("the entry point after it")
+            .0;
+        assert!(
+            body.contains("serialize_snapshot_delta(&payload)"),
+            "the shell's read must serialize through the free function: {body}"
+        );
+        let between = body
+            .split_once("snapshot_delta_payload(")
+            .expect("the locked half")
+            .1
+            .split_once("serialize_snapshot_delta(")
+            .expect("the unlocked half after it")
+            .0;
+        assert!(
+            between.lines().any(|line| line.trim() == "};"),
+            "the block scoping the runtime guard must close before serialization: {body}"
+        );
+
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .expect("the runtime source");
+        let locked_half = source
+            .split_once("pub fn snapshot_delta_payload(")
+            .expect("the payload function")
+            .1
+            .split_once("\n    pub fn ")
+            .expect("the function after it")
+            .0;
+        assert!(
+            !locked_half.contains("serde_json"),
+            "the half that runs under the lock must not serialize: {locked_half}"
+        );
+    }
+
+    /// R5, AC9. Herdr sizes a pane's PTY from the attach, so an attach before
+    /// any view has reported a size draws a full frame at a guess and a
+    /// second one after the resize corrects it. The wait is reported, because
+    /// a pane that never attaches must not look like a pane with no output.
+    #[test]
+    fn one_launch_holds_an_attach_until_the_view_reports_a_size() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        runtime.live = None;
+
+        runtime.request_terminal_control("w-size:p1");
+        assert!(
+            runtime.terminal_session_lifecycles.get("w-size:p1").is_none(),
+            "no session may be started for a pane with no reported size"
+        );
+        assert!(
+            runtime
+                .snapshot
+                .status
+                .diagnostics
+                .iter()
+                .any(|entry| entry.kind == "terminal.attach_deferred"),
+            "the wait must be reported: {:?}",
+            runtime.snapshot.status.diagnostics
+        );
+        assert!(runtime.panes_awaiting_size.contains("w-size:p1"));
+    }
+
+    /// The panes the terminal projection is holding open, in snapshot order.
+    fn projected_pane_ids(runtime: &Runtime) -> Vec<String> {
+        runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.clone())
+            .collect()
+    }
+
+    /// R3, AC5, SC1. A tab the operator leaves keeps its panes in the
+    /// projection, so the attach that feeds its terminal view is never
+    /// dropped and the scrollback is still arriving when they come back. The
+    /// projection used to be rebuilt from the arriving layout alone, which
+    /// took every other tab's panes out of it on each switch.
+    #[test]
+    fn retained_views_keep_a_visited_tab_in_the_projection_across_a_switch() {
+        let checkout_path = "/private/tmp/hide-retained-views-switch";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert_eq!(projected_pane_ids(&runtime), vec!["w-order:t1:p"]);
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+
+        let projected = projected_pane_ids(&runtime);
+        assert!(
+            projected.contains(&"w-order:t1:p".to_owned()),
+            "the tab left behind keeps its pane attached: {projected:?}"
+        );
+        assert!(projected.contains(&"w-order:t2:p".to_owned()));
+
+        // And back again, with nothing having been rebuilt in between.
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        let returned = projected_pane_ids(&runtime);
+        assert!(returned.contains(&"w-order:t1:p".to_owned()));
+        assert!(returned.contains(&"w-order:t2:p".to_owned()));
+    }
+
+    /// R3, AC5, AC6. The half of retention the canvas cannot show: a tab the
+    /// operator is not looking at keeps producing output, and that output has
+    /// to reach the snapshot on its own sequence while it is hidden. If it
+    /// only arrived once the tab was visible again, coming back would replay
+    /// rather than resume.
+    #[test]
+    fn retained_views_keep_a_hidden_tabs_output_arriving() {
+        let checkout_path = "/private/tmp/hide-retained-views-hidden-output";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        // Visit the second tab, which is what starts its attach, then leave it.
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+        runtime.terminal_session_generations.insert("w-order:t2:p".to_owned(), 7);
+        runtime.terminal_sessions.insert(
+            "w-order:t2:p".to_owned(),
+            TerminalSession::test_stub("w-order:t2:p", 7, TerminalSessionMode::Control),
+        );
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert_eq!(runtime.snapshot().tab.id.as_deref(), Some("w-order:t1"));
+        let before = runtime.snapshot().terminal.sequence;
+
+        assert!(
+            runtime.ingest_terminal_session_frame(
+                "w-order:t2:p",
+                7,
+                TerminalSessionMode::Control,
+                b"hidden tab still talking",
+            ),
+            "the session behind a hidden tab is still delivering"
+        );
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.terminal.sequence,
+            before + 1,
+            "the chunk rides the cursor, so a hidden tab costs one sequence step and no resend"
+        );
+        let arrived = snapshot
+            .terminal
+            .chunks
+            .last()
+            .expect("the chunk that just arrived");
+        assert_eq!(arrived.pane_id, "w-order:t2:p");
+        assert_eq!(arrived.sequence, before + 1);
+        assert_eq!(
+            live::decode_base64(&arrived.bytes_base64).expect("chunk bytes"),
+            b"hidden tab still talking".to_vec()
+        );
+    }
+
+    /// AC5. A hidden pane's size is what the shell last reported for it, and a
+    /// tab switch neither reports a new one nor lets the core invent one.
+    /// Geometry decides the PTY size, so a size that moved while a pane was
+    /// out of sight would reflow its contents behind the operator's back.
+    #[test]
+    fn retained_views_leave_a_hidden_panes_size_alone_across_a_switch() {
+        let checkout_path = "/private/tmp/hide-retained-views-size";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        let resize = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": "w-order:t1:p", "rows": 40, "cols": 120}
+        }))
+        .expect("resize event");
+        runtime.dispatch_json(&resize);
+        assert_eq!(
+            runtime.terminal_sizes.get("w-order:t1:p").copied(),
+            Some((40, 120))
+        );
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+
+        assert_eq!(
+            runtime.terminal_sizes.get("w-order:t1:p").copied(),
+            Some((40, 120)),
+            "the hidden pane keeps the size it was last given"
+        );
+    }
+
+    /// AC5, rule 1. Retention is bounded by the session. A pane whose tab has
+    /// gone leaves the projection on the next update rather than accumulating
+    /// there for the life of the process.
+    #[test]
+    fn retained_views_drop_a_pane_whose_tab_left_the_session() {
+        let checkout_path = "/private/tmp/hide-retained-views-closed";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+        assert!(projected_pane_ids(&runtime).contains(&"w-order:t1:p".to_owned()));
+
+        let remaining = ["w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &remaining,
+            &remaining,
+            "w-order:t2"
+        )));
+
+        assert_eq!(projected_pane_ids(&runtime), vec!["w-order:t2:p"]);
+    }
+
+    /// AC5, R3. The shell drew one canvas keyed by the visible tab, so every
+    /// switch destroyed its terminal views and the new ones started empty and
+    /// reported a size. The surface now draws every visited tab and hides all
+    /// but one, which is the mechanism zoom already uses for panes. Removing
+    /// either half brings the blank frame and the switch-time resize back.
+    #[test]
+    fn retained_views_have_no_single_canvas_keyed_by_the_visible_tab() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let surface = std::fs::read_to_string(shell.join("HideUI.swift"))
+            .expect("the terminal surface source");
+        let presentation = std::fs::read_to_string(shell.join("ShellView.swift"))
+            .expect("the pane grid presentation source");
+        assert!(
+            surface.contains("model.retainedTabCanvases"),
+            "the terminal surface no longer draws every visited tab"
+        );
+        assert!(
+            surface.contains(".opacity(canvas.isVisible ? 1 : 0)"),
+            "a hidden tab is removed from the view tree instead of being hidden"
+        );
+        assert!(
+            presentation.contains("func retainedCanvases("),
+            "the rule deciding which tabs keep a canvas is gone"
+        );
+    }
+
     fn checkout_active_tab_id(runtime: &Runtime, checkout_id: &str) -> Option<String> {
         runtime
             .snapshot()
@@ -7747,6 +9214,387 @@ mod tests {
             .expect("the registered checkout")
             .active_tab_id
             .clone()
+    }
+
+    /// A [`tab_order_runtime`] with a live Herdr context, so a view-state
+    /// notification actually leaves and a wait is armed.
+    fn live_tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let socket_path = std::env::temp_dir()
+            .join(format!(
+                "herdr-core-view-authority-{}-{}.sock",
+                std::process::id(),
+                NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned();
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone().into(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+        (runtime, checkout_id)
+    }
+
+    fn focus_tab_event(checkout_id: &str, tab_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_tab",
+            "payload": {
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id,
+                "tab_id": tab_id
+            }
+        }))
+        .expect("focus tab event")
+    }
+
+    fn diagnostic_count(runtime: &Runtime, kind: &str) -> usize {
+        runtime
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == kind)
+            .count()
+    }
+
+    /// AC1, SC1. The strip's active mark and the canvas are the same field, so
+    /// asking for a tab moves both on the dispatch that asked, without waiting
+    /// for Herdr to answer.
+    #[test]
+    fn view_authority_a_tab_switch_moves_the_strip_and_the_canvas_in_one_snapshot() {
+        let checkout_path = "/private/tmp/hide-view-authority-switch";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "the strip's active mark moves on the frame the operator asked for"
+        );
+        assert_eq!(snapshot.tab.id.as_deref(), Some("w-order:t3"));
+        assert_eq!(
+            snapshot.active_pane_layout().map(|layout| layout.tab_id.as_str()),
+            Some("w-order:t3"),
+            "the canvas is drawing the requested tab in the same snapshot"
+        );
+    }
+
+    /// AC1, SC1. Herdr's next session update still names the tab the operator
+    /// left, because the notification has not landed. That is the answer to a
+    /// question already asked, not a new focus, so it must not pull the canvas
+    /// back.
+    #[test]
+    fn view_authority_a_stale_herdr_tab_does_not_undo_an_unconfirmed_switch() {
+        let checkout_path = "/private/tmp/hide-view-authority-stale-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3")
+        );
+        assert_eq!(
+            diagnostic_count(&runtime, "tab.focus.followed"),
+            0,
+            "an unconfirmed notification is not an external focus"
+        );
+
+        // The confirmation ends the wait, and the value is unchanged by it.
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t3"
+        )));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3")
+        );
+        assert!(runtime.pending_tab_focus.is_none());
+    }
+
+    /// AC1, R1. With nothing in flight, a Herdr session naming another tab is
+    /// somebody focusing that tab outside Hide. Hide follows it and says so.
+    #[test]
+    fn view_authority_an_external_tab_focus_is_followed_and_reported() {
+        let checkout_path = "/private/tmp/hide-view-authority-external-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.pending_tab_focus.is_none());
+
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        ))));
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t2")
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+        assert_eq!(
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t2"),
+            "the canvas follows the tab, not only the strip"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t2:p"),
+            "and the keyboard lands in that tab rather than staying on a pane nobody can see"
+        );
+    }
+
+    /// AC1, SC1. Registering a device rebuilds the catalog from scratch, and a
+    /// freshly built checkout names no active tab. The visible tab is Hide's,
+    /// so it survives a rebuild Herdr had no part in.
+    #[test]
+    fn view_authority_a_catalog_rebuild_keeps_the_visible_tab() {
+        let checkout_path = "/private/tmp/hide-view-authority-rebuild";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+        let register_device = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "register_device",
+            "payload": {
+                "id": "device-rebuild",
+                "label": "Rebuild",
+                "ssh_alias": "rebuild-host"
+            }
+        }))
+        .expect("register device event");
+        assert!(runtime.dispatch_json(&register_device));
+
+        // The rebuilt catalog carries no tabs until the next session update,
+        // which is what makes this the interesting moment: the tab the
+        // operator chose has to survive the gap. It survives because a
+        // rebuild is not a reconcile - the catalog says nothing about which
+        // tab is visible, so nothing on this path may read it as Herdr
+        // naming another one.
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "a rebuild is not Herdr moving the tab"
+        );
+        assert_eq!(
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t3"),
+            "and the canvas comes back on the tab it was showing"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+    }
+
+    /// AC2, R1. Herdr refusing the notification does not move the operator's
+    /// screen. The tab stays where they put it and the refusal is reported.
+    #[test]
+    fn view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it() {
+        let checkout_path = "/private/tmp/hide-view-authority-refused-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+        assert!(runtime.pending_tab_focus.is_some());
+
+        runtime.ingest_local_control_result(
+            RemoteControlAction::FocusTab {
+                tab_id: "w-order:t3".to_owned(),
+            },
+            Err("tab.focus rejected".to_owned()),
+            12,
+        );
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "a refusal is reported, not acted on by moving the screen"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.refused"), 1);
+        assert!(runtime.pending_tab_focus.is_none());
+    }
+
+    /// AC2, R1. A notification Herdr never answers stops being pending, the
+    /// value Hide chose is kept, and the silence is reported rather than
+    /// waited on forever.
+    #[test]
+    fn view_authority_an_unanswered_notification_times_out_and_keeps_its_value() {
+        let checkout_path = "/private/tmp/hide-view-authority-timeout";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+        let requested_at = runtime
+            .pending_tab_focus
+            .as_ref()
+            .expect("a notification is in flight")
+            .requested_at_unix_ms;
+
+        assert!(!runtime.expire_pending_view_focus(requested_at + 1));
+        assert!(runtime.pending_tab_focus.is_some());
+        assert!(
+            runtime
+                .expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS)
+        );
+
+        assert!(runtime.pending_tab_focus.is_none());
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "a silent Herdr is a reason to report, not to move the screen"
+        );
+        assert_eq!(diagnostic_count(&runtime, "view_focus.timed_out"), 1);
+    }
+
+    /// AC1, AC7, SC3. The focus ring moves on the click, and the layout that
+    /// was already on its way carrying the old focus does not take it back.
+    /// The read record stays on the clicked pane through that arrival.
+    #[test]
+    fn view_authority_a_pane_click_moves_focus_and_a_stale_layout_does_not_undo_it() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        assert_eq!(
+            runtime.snapshot().focused.pane_id.as_deref(),
+            Some("w1:p3"),
+            "the ring moves on the click, not on Herdr's confirming event"
+        );
+        assert_eq!(runtime.snapshot().terminal.pane_id.as_deref(), Some("w1:p3"));
+
+        // Herdr's in-flight frame still names the pane the tab came forward
+        // with. Its geometry is taken; its focus is not.
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2"],
+            "the clicked row stays read through the stale arrival"
+        );
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+    }
+
+    /// AC1, AC8, R1. With nothing in flight, a Herdr layout naming another
+    /// pane is a focus made outside Hide. Hide follows it and reports the
+    /// panes and where the change came from.
+    #[test]
+    fn view_authority_an_external_pane_focus_is_followed_and_reported() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.pending_pane_focus.is_none());
+
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+    }
+
+    /// AC2, R1. A refused pane focus leaves the keyboard where the operator
+    /// put it and reports the refusal.
+    #[test]
+    fn view_authority_a_refused_pane_focus_keeps_the_pane_and_reports_it() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+
+        runtime.ingest_pane_control_result(
+            PaneControlAction::Focus {
+                pane_id: "w1:p3".to_owned(),
+            },
+            Err("pane.focus rejected".to_owned()),
+            9,
+        );
+
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.refused"), 1);
+        assert!(runtime.pending_pane_focus.is_none());
+    }
+
+    /// Rule 11. Reaching for the pane that already has the keyboard converges
+    /// on the state it is already in and sends Herdr nothing a second time.
+    /// The look itself still counts, because clicking the pane you are on is
+    /// still looking at it.
+    #[test]
+    fn view_authority_repeating_a_focus_sends_no_second_notification() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+        assert!(runtime.pending_pane_focus.is_none());
+        let notifications = diagnostic_count(&runtime, "pane.focus.requested");
+
+        runtime.dispatch_json(&operator_focus_event("w1:p3"));
+
+        assert_eq!(
+            diagnostic_count(&runtime, "pane.focus.requested"),
+            notifications,
+            "no second request leaves for a pane Herdr has already focused"
+        );
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+        assert_eq!(unread_panes(&runtime), vec!["w1:p1", "w1:p2"]);
     }
 
     #[test]
@@ -7839,12 +9687,14 @@ mod tests {
             tabs.map(str::to_owned).to_vec(),
             "a tab switch must not move the tab it switched to"
         );
-        // Herdr has not confirmed the switch yet, so the active mark has not
-        // moved either. It is never inferred from position.
+        // The active mark moves on the dispatch that asked for it, because
+        // Hide owns the visible tab. It is still never inferred from
+        // position: the strip order above did not change.
         assert_eq!(
             checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-            Some("w-order:t1")
+            Some("w-order:t3")
         );
+        assert_eq!(runtime.snapshot().tab.id.as_deref(), Some("w-order:t3"));
     }
 
     #[test]
@@ -7881,15 +9731,17 @@ mod tests {
             "w-order:t9"
         ))));
 
-        assert_eq!(checkout_active_tab_id(&runtime, &checkout_id), None);
+        // Hide owns the visible tab, so a checkout that has tabs shows one of
+        // them. What Herdr named is still reported, because a name that
+        // matches no tab in the session is worth knowing about.
         assert_eq!(
-            runtime.snapshot().tab.id,
-            None,
-            "no tab stands in for the one Herdr named"
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t1")
         );
         assert_eq!(
-            runtime.snapshot().tab.label.as_deref(),
-            Some("No active tab")
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t1"),
+            "a checkout with tabs never draws the empty-checkout state"
         );
         let unresolved = runtime
             .snapshot()
@@ -9006,8 +10858,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("plain:p1")
         );
@@ -9170,8 +11021,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
             Some(("w3Z", "w3Z:t1"))
         );
@@ -9337,7 +11187,7 @@ mod tests {
         runtime.reset_terminal_projection(None);
         runtime.snapshot.terminal.pane_id = Some("w2X:pB".to_owned());
         runtime.snapshot.focused.pane_id = Some("w2X:pB".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w2X".to_owned(),
             tab_id: "w2X:t1".to_owned(),
             focused_pane_id: "w2X:pB".to_owned(),
@@ -9345,7 +11195,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w2X:pB".to_owned(),
             },
-        });
+        }];
         runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
             pane_id: "w2X:pB".to_owned(),
             closed: false,
@@ -9377,7 +11227,7 @@ mod tests {
             runtime.snapshot().focused.pane_id.as_deref(),
             Some(selected_pane)
         );
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert!(runtime.snapshot().terminal.panes.is_empty());
         assert_eq!(
             runtime.snapshot().ui_state.focused_checkout_id.as_deref(),
@@ -9452,8 +11302,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| (layout.workspace_id.as_str(), layout.tab_id.as_str())),
             Some(("w3V", "w3V:t1"))
         );
@@ -9497,7 +11346,7 @@ mod tests {
         runtime.snapshot.ui_state.selected_pane_id = Some("w-close:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w-close:p1".to_owned());
         runtime.snapshot.focused.pane_id = Some("w-close:p1".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w-close".to_owned(),
             tab_id: "w-close:t1".to_owned(),
             focused_pane_id: "w-close:p1".to_owned(),
@@ -9505,7 +11354,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w-close:p1".to_owned(),
             },
-        });
+        }];
         runtime.restore_hint_pending = false;
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
@@ -9546,8 +11395,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("w-close:p2")
         );
@@ -9591,7 +11439,7 @@ mod tests {
         runtime.snapshot.ui_state.selected_pane_id = Some("w-last:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w-last:p1".to_owned());
         runtime.snapshot.focused.pane_id = Some("w-last:p1".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w-last".to_owned(),
             tab_id: "w-last:t1".to_owned(),
             focused_pane_id: "w-last:p1".to_owned(),
@@ -9599,7 +11447,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w-last:p1".to_owned(),
             },
-        });
+        }];
         runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
             pane_id: "w-last:p1".to_owned(),
             closed: false,
@@ -9625,7 +11473,7 @@ mod tests {
         assert_eq!(runtime.snapshot().terminal.pane_id, None);
         assert_eq!(runtime.snapshot().focused.pane_id, None);
         assert_eq!(runtime.snapshot().ui_state.selected_pane_id, None);
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert!(runtime.snapshot().terminal.panes.is_empty());
         assert!(runtime.snapshot().status.last_error.is_none());
     }
@@ -9672,7 +11520,7 @@ mod tests {
         runtime.snapshot.ui_state.selected_pane_id = Some("w-foreign:p1".to_owned());
         runtime.snapshot.terminal.pane_id = Some("w-foreign:p1".to_owned());
         runtime.snapshot.focused.pane_id = Some("w-foreign:p1".to_owned());
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w-foreign".to_owned(),
             tab_id: "w-foreign:t1".to_owned(),
             focused_pane_id: "w-foreign:p1".to_owned(),
@@ -9680,7 +11528,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w-foreign:p1".to_owned(),
             },
-        });
+        }];
         runtime.restore_hint_pending = false;
 
         let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
@@ -9714,7 +11562,7 @@ mod tests {
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("w-foreign:p1")
         );
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert_eq!(
             runtime
                 .snapshot()
@@ -9775,7 +11623,7 @@ mod tests {
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
-        assert!(runtime.snapshot().pane_layout.is_none());
+        assert!(runtime.snapshot().active_pane_layout().is_none());
         assert_eq!(
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("missing:p1")
@@ -9854,8 +11702,7 @@ mod tests {
         assert_eq!(
             runtime
                 .snapshot()
-                .pane_layout
-                .as_ref()
+                .active_pane_layout()
                 .map(|layout| layout.focused_pane_id.as_str()),
             Some("wL:p1")
         );
@@ -9900,7 +11747,7 @@ mod tests {
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("w19:p1")
         );
-        assert!(runtime.snapshot().pane_layout.is_some());
+        assert!(runtime.snapshot().active_pane_layout().is_some());
     }
 
     #[test]
@@ -9916,7 +11763,7 @@ mod tests {
             exit_code: None,
             ..TerminalPaneSnapshot::default()
         }];
-        runtime.snapshot.pane_layout = Some(PaneLayoutSnapshot {
+        runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
             workspace_id: "w3P".to_owned(),
             tab_id: "w3P:t1".to_owned(),
             focused_pane_id: "w3P:p1".to_owned(),
@@ -9924,7 +11771,7 @@ mod tests {
             root: PaneLayoutNodeSnapshot::Pane {
                 pane_id: "w3P:p1".to_owned(),
             },
-        });
+        }];
         runtime.snapshot.tab = TabSnapshot {
             id: Some("w3P:t1".to_owned()),
             workspace_id: Some("w3P".to_owned()),
@@ -9960,7 +11807,13 @@ mod tests {
                 workspaces: Vec::new(),
             }),
         ));
-        assert!(runtime.snapshot().pane_layout.is_none());
+        // The layout stays in the snapshot because it is Herdr's and it
+        // describes a tab that exists. What must not happen is drawing it,
+        // and that is settled by the tab projection going empty and the
+        // projection-unavailable error being raised, both asserted here. The
+        // shell has no checkout to look a tab up in, so it has no layout to
+        // draw either.
+        assert_eq!(runtime.snapshot().pane_layouts.len(), 1);
         assert!(runtime.snapshot().terminal.panes.is_empty());
         assert!(runtime.snapshot().tab.empty);
         assert!(runtime.snapshot().tab.panes.is_empty());
@@ -10191,7 +12044,6 @@ mod tests {
                 target_id: target_id.to_owned(),
                 state: "not_connected".to_owned(),
                 message: None,
-                last_checked_at_unix_ms: None,
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
             });

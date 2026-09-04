@@ -59,6 +59,14 @@ struct StoredUiState {
     /// schema version and discarding the rest of the operator's state.
     #[serde(default)]
     pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Each pane's last reported terminal size, as (rows, cols). Herdr sizes
+    /// a pane's PTY from the attach, so a launch that already knows a pane's
+    /// size attaches at it and takes one full frame instead of one at a guess
+    /// and a second after the resize. Absent in a store written before that,
+    /// which loads empty and makes the first launch after it wait one canvas
+    /// build for the size, as a first launch always does.
+    #[serde(default)]
+    pane_terminal_sizes: BTreeMap<String, (u16, u16)>,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -74,22 +82,43 @@ pub enum LoadDisposition {
     Corrupt,
 }
 
-pub fn load(path: &Path) -> (UiStateSnapshot, LoadDisposition) {
+/// Terminal sizes are kept beside the UI state rather than inside it: they
+/// are PTY geometry the core attaches with, and the shell never draws them,
+/// so they do not belong on the snapshot wire.
+pub type PaneTerminalSizes = BTreeMap<String, (u16, u16)>;
+
+pub fn load(path: &Path) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition) {
     match fs::read(path) {
         Ok(bytes) => decode(&bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            (UiStateSnapshot::default(), LoadDisposition::Missing)
+            (
+                UiStateSnapshot::default(),
+                PaneTerminalSizes::new(),
+                LoadDisposition::Missing,
+            )
         }
-        Err(_) => (UiStateSnapshot::default(), LoadDisposition::Corrupt),
+        Err(_) => (
+            UiStateSnapshot::default(),
+            PaneTerminalSizes::new(),
+            LoadDisposition::Corrupt,
+        ),
     }
 }
 
-fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
+fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition) {
     let Ok(stored) = serde_json::from_slice::<StoredUiState>(bytes) else {
-        return (UiStateSnapshot::default(), LoadDisposition::Corrupt);
+        return (
+            UiStateSnapshot::default(),
+            PaneTerminalSizes::new(),
+            LoadDisposition::Corrupt,
+        );
     };
     if stored.schema_version != UI_STATE_SCHEMA_VERSION {
-        return (UiStateSnapshot::default(), LoadDisposition::Corrupt);
+        return (
+            UiStateSnapshot::default(),
+            PaneTerminalSizes::new(),
+            LoadDisposition::Corrupt,
+        );
     }
     (
         UiStateSnapshot {
@@ -114,11 +143,16 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, LoadDisposition) {
             editor_text_scale: stored.editor_text_scale,
             pane_read_records: stored.pane_read_records,
         },
+        stored.pane_terminal_sizes,
         LoadDisposition::Loaded,
     )
 }
 
-pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
+pub fn save(
+    path: &Path,
+    state: &UiStateSnapshot,
+    pane_terminal_sizes: &PaneTerminalSizes,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -147,6 +181,7 @@ pub fn save(path: &Path, state: &UiStateSnapshot) -> Result<(), String> {
         pane_text_scales: state.pane_text_scales.clone(),
         editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
+        pane_terminal_sizes: pane_terminal_sizes.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -191,9 +226,9 @@ mod tests {
                 activity: "stopped".to_owned(),
             },
         );
-        save(&path, &state).expect("state saves");
+        save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");
 
-        let (reloaded, disposition) = load(&path);
+        let (reloaded, _sizes, disposition) = load(&path);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(reloaded.pane_read_records, state.pane_read_records);
         let _ = fs::remove_dir_all(&root);
@@ -205,7 +240,7 @@ mod tests {
     #[test]
     fn read_records_default_to_empty_on_an_older_store() {
         let source = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
-        let (state, disposition) = decode(source);
+        let (state, _sizes, disposition) = decode(source);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(state.pane_read_records.is_empty());
     }
@@ -215,7 +250,7 @@ mod tests {
     /// treated as read.
     #[test]
     fn read_records_load_empty_from_a_corrupt_store() {
-        let (state, disposition) = decode(b"{\"schema_version\":1,\"pane_read_records\":\"not-a-map\"}");
+        let (state, _sizes, disposition) = decode(b"{\"schema_version\":1,\"pane_read_records\":\"not-a-map\"}");
         assert_eq!(disposition, LoadDisposition::Corrupt);
         assert!(
             state.pane_read_records.is_empty(),
@@ -226,7 +261,7 @@ mod tests {
     #[test]
     fn valid_state_round_trips_through_the_stable_schema() {
         let source = br#"{"schema_version":1,"expanded_paths":["/repo/src"],"selected_path":"/repo/src/lib.rs","selected_pane_id":"p1"}"#;
-        let (state, disposition) = decode(source);
+        let (state, _sizes, disposition) = decode(source);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
@@ -248,8 +283,8 @@ mod tests {
             ..UiStateSnapshot::default()
         };
 
-        save(&path, &state).expect("persist panel visibility");
-        let (restored, disposition) = load(&path);
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist panel visibility");
+        let (restored, _sizes, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(!restored.left_sidebar_visible);
@@ -269,8 +304,8 @@ mod tests {
             ..UiStateSnapshot::default()
         };
 
-        save(&path, &state).expect("persist pet state");
-        let (restored, disposition) = load(&path);
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist pet state");
+        let (restored, _sizes, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(
@@ -285,7 +320,7 @@ mod tests {
 
         // Saving the same state twice is a no-op the next load cannot tell apart.
         state.pet_visible = false;
-        save(&path, &state).expect("persist pet state again");
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist pet state again");
         assert_eq!(load(&path).0.pet_origin, restored.pet_origin);
 
         let _ = fs::remove_file(path);
@@ -302,8 +337,8 @@ mod tests {
             .shortcut_bindings
             .insert("split_right".to_owned(), "command+option+r".to_owned());
 
-        save(&path, &state).expect("persist shortcut binding");
-        let (restored, disposition) = load(&path);
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist shortcut binding");
+        let (restored, _sizes, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(
@@ -330,15 +365,15 @@ mod tests {
             ..UiStateSnapshot::default()
         };
 
-        save(&path, &state).expect("persist independent expansion state");
-        let (restored, disposition) = load(&path);
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist independent expansion state");
+        let (restored, _sizes, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(restored.expanded_paths, ["/repo/src"]);
         assert_eq!(restored.collapsed_workspace_ids, ["workspace:alpha"]);
 
         state.expanded_paths.push("/repo/tests".to_owned());
-        save(&path, &state).expect("persist file tree expansion independently");
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist file tree expansion independently");
         let restored_again = load(&path).0;
         assert_eq!(restored_again.expanded_paths, ["/repo/src", "/repo/tests"]);
         assert_eq!(restored_again.collapsed_workspace_ids, ["workspace:alpha"]);
@@ -353,7 +388,7 @@ mod tests {
             b"not json".as_slice(),
             br#"{"schema_version":99,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#,
         ] {
-            let (state, disposition) = decode(source);
+            let (state, _sizes, disposition) = decode(source);
             assert_eq!(disposition, LoadDisposition::Corrupt);
             assert!(state.expanded_paths.is_empty());
         }

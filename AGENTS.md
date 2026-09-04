@@ -21,10 +21,22 @@ This rule exists because they were: `docs/verification/`, `docs/screenshots/`, a
 ## Runtime Architecture
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
-The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls state out (`herdr_core_snapshot`) whenever the change notifier fires.
+The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls state out (`herdr_core_snapshot`) when the change notifier announces.
 The event sync coordinator (`session_sync.rs`) bootstraps from `session.snapshot`, resumes ordered topology updates through `events.subscribe`, and refreshes agent telemetry with `agent.list` once per second.
+A tick whose `agent.list` is unchanged publishes nothing, so an idle session recomputes no projection; the catalog's own refresh window still publishes, because the rebuild can only happen inside `publish_replica`.
 Per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
-Everything the shell renders comes from that one snapshot pull; the shell holds no authority.
+Everything the shell renders comes from that one snapshot pull.
+
+The shell holds no authority, but the core does not hand all of it to Herdr either.
+Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
+A core-owned value changes on the event that asked for it and Herdr is told afterwards, so the canvas and the focus ring never wait for a round trip.
+While that notification is pending, a Herdr event of the same kind is read as its confirmation; with nothing pending, a Herdr event naming another value is followed and a diagnostic records the ids and the origin; a refusal or a timeout keeps the core's value and says so.
+The pending model covers the visible tab and the focused pane and nothing else: zoom, splits, closes and resizes still wait for Herdr, because their geometry decides the PTY size (commit 9570a2a).
+
+The notifier announces once per burst rather than once per change.
+`herdr_core_snapshot` clears the announcement flag **before** it takes the lock; clearing it after the read would swallow a change that landed during the read.
+Launch creates the core once, after the runtime resolution (login-shell PATH, binary, version) has finished, and the first window is presented before that resolution completes.
+The first attach uses the size the view reported, or the size persisted from the last launch, and never a placeholder; a pane with no known size is held back and says it is waiting.
 
 ## Herdr API Contract
 
@@ -46,19 +58,34 @@ Follow the official layer boundary when adding behavior:
 
 ## Performance Guide
 
-These rules exist because each one was violated and diagnosed in a real incident (2026-08-30 typing-lag session: main thread spent 47% of wall time waiting on the runtime mutex).
+These rules exist because each one was violated and diagnosed in a real incident.
+
+The figure to measure against is not one number.
+On 2026-09-04, on the assembled dev bundle against a live server with 26 panes and 12 agents, the main thread spent 0.28% of its samples waiting on the runtime mutex while idle at load 4.9, and 1.52% while driven at load 11.4.
+The same measurements read 0.89% idle before any of that day's work and 4.31% driven at `fc80f6c`, before the notifier and the delta boundary changed.
+Quote a mutex-wait figure with the load and the drive it was taken under or it means nothing; the 47% an earlier note carried was measured while typing, on a build three rounds of work ago, and comparing anything to it is a mistake.
 
 - Never hold the runtime mutex across a subprocess, blocking I/O, or a large serialization.
   Every shell snapshot read and every attach thread blocks on that mutex; whatever you hold it through becomes UI latency.
   Precompute outside the lock and pass results in (see `PrecomputedCatalog` in `session_sync.rs`).
+  The snapshot delta is the worked example: `Runtime::snapshot_delta_payload` takes an owned payload under the lock and the free `runtime::serialize_snapshot_delta` writes the bytes outside it.
+  The signature is the enforcement, because the serializing half has no runtime in scope to lock; keep it that way rather than adding a convenience method that does both.
 - Never fork subprocesses (git especially) in a per-tick or per-event path.
   The workspace catalog caches by input equality plus a refresh window (`CatalogCache` in `session_sync.rs`); extend that cache rather than adding a new per-tick invocation.
 - The snapshot wire is sized by what changed, not by total state.
   Terminal chunks ride a sequence cursor; do not re-send retained state wholesale.
   When adding a snapshot field, decide its channel: rarely-changing sections belong in the revisioned `rest`, per-event scalars ride top-level, high-volume streams need their own cursor.
+  A field on the revisioned `rest` section that no reader reads still costs a full-state re-send on every tick that writes it.
+  Two `last_checked_at_unix_ms` fields nobody decoded restamped `rest` on every session heartbeat, which re-sent the whole navigator, ui state, status and pet about once a second; deleting them took an idle twenty-second window from 38 snapshot reads to one.
+- Announce changes once per burst, not once per change.
+  `ChangeNotifier` latches on the false-to-true flip and `herdr_core_snapshot` clears the latch before it takes the lock.
+  Clear-then-read costs at most one read for nothing; read-then-clear loses a change that lands during the read.
 - Verify performance claims with `/usr/bin/sample <pid>` on the running app and `herdr server`, not by reading code.
   Before sampling, confirm exactly one app instance is running and know whether it is the dev build or an installed bundle (rule FACT-dev-runtime-instances).
   Ambient load (Screen Sharing, WindowServer, a stale second instance) routinely masquerades as app slowness; rule it out first.
+  Above roughly load 14 this machine stops symbolicating a `sample` window longer than about five seconds and returns every frame as `???`, which a summing script reads as zero time rather than as no answer.
+  Take the observation as several short windows and check how many failed to symbolicate before believing any ratio.
+  A latency claim about the operator's own input cannot come from a synthetic keystroke: the `osascript` call alone costs about 123 ms before the app is involved, so read the interval between the shell's own trace marks instead.
 
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)
