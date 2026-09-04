@@ -2828,7 +2828,6 @@ impl Runtime {
                 }
             }
         }
-        status.last_checked_at_unix_ms = Some(unix_milliseconds());
 
         let agent_count = status
             .session
@@ -3328,7 +3327,6 @@ impl Runtime {
             self.snapshot.status.herdr.message = message;
             changed = true;
         }
-        self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
             changed |= self.apply_pane_read_state(&mut agents, ReadRecordScope::Local);
@@ -7323,7 +7321,6 @@ mod tests {
             target_id: "mini".to_owned(),
             state: "connected".to_owned(),
             message: None,
-            last_checked_at_unix_ms: Some(1),
             session: Some(RemoteSessionSnapshot {
                 workspaces: vec![remote_workspace],
                 agents: Vec::new(),
@@ -7416,7 +7413,6 @@ mod tests {
             target_id: "mini".to_owned(),
             state: "not_connected".to_owned(),
             message: None,
-            last_checked_at_unix_ms: None,
             session: None,
             files: RemoteFileListSnapshot::idle(),
         });
@@ -7588,7 +7584,6 @@ mod tests {
             target_id: "mini".to_owned(),
             state: "connected".to_owned(),
             message: None,
-            last_checked_at_unix_ms: Some(1),
             session: Some(RemoteSessionSnapshot {
                 workspaces: vec![remote_workspace],
                 agents: Vec::new(),
@@ -8637,6 +8632,53 @@ mod tests {
         assert!(
             bridge.contains("runtimePreparation"),
             "the one core is created after the runtime resolves, so the resolution has to be awaited"
+        );
+    }
+
+    /// R6, AC12. Herdr publishes a session snapshot on every event and on
+    /// every agent refresh, and the wire has to be sized by what changed. A
+    /// republish that moved nothing must leave the reader's cursor current, or
+    /// the whole navigator, ui state, status and pet sections ride the next
+    /// read for nothing.
+    #[test]
+    fn snapshot_delivery_leaves_the_rest_section_alone_when_a_republish_moves_nothing() {
+        fn session() -> SessionSnapshotPayload {
+            serde_json::from_value(serde_json::json!({
+                "agents": [],
+                "workspaces": [{"workspace_id": "w1", "label": "fixture"}],
+                "panes": [{"pane_id": "w1:p1", "cwd": "/tmp/fixture"}],
+                "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}],
+                "layouts": [{
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{
+                        "pane_id": "w1:p1",
+                        "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                    }],
+                    "splits": []
+                }]
+            }))
+            .expect("a session payload")
+        }
+
+        let mut runtime = runtime();
+        runtime.ingest_session(Ok(session()));
+        let first = runtime.snapshot_delta_payload(0, 0);
+        assert!(first.rest.is_some(), "a fresh cursor reads the whole state");
+        let caught_up = first.revision;
+
+        runtime.ingest_session(Ok(session()));
+        let second = runtime.snapshot_delta_payload(caught_up, first.terminal_sequence);
+        assert!(
+            second.rest.is_none(),
+            "an identical republish must not restamp the rest section"
+        );
+        assert_eq!(
+            second.revision, caught_up,
+            "a republish that moved nothing leaves the reader current"
         );
     }
 
@@ -11802,7 +11844,6 @@ mod tests {
                 target_id: target_id.to_owned(),
                 state: "not_connected".to_owned(),
                 message: None,
-                last_checked_at_unix_ms: None,
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
             });

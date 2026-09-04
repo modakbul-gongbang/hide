@@ -937,12 +937,15 @@ pub struct DiagnosticSnapshot {
     pub occurred_at: u64,
 }
 
+/// Carries no "last checked" stamp on purpose. Every check restamped it, the
+/// stamp rides `rest`, and `rest` is compared field by field to decide whether
+/// the reader is current - so a clock reading nothing renders made every
+/// heartbeat re-send the whole navigator, ui state, status and pet.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProviderStatusSnapshot {
     pub state: String,
     pub socket_path: Option<String>,
     pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -950,7 +953,6 @@ pub struct RemoteStatusSnapshot {
     pub target_id: String,
     pub state: String,
     pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
     pub session: Option<RemoteSessionSnapshot>,
     pub files: RemoteFileListSnapshot,
 }
@@ -1119,7 +1121,6 @@ impl Snapshot {
                     state: herdr_state.to_owned(),
                     socket_path: options.herdr_socket_path.clone(),
                     message: herdr_message,
-                    last_checked_at_unix_ms: None,
                 },
                 remote: options
                     .remote_targets
@@ -1128,7 +1129,6 @@ impl Snapshot {
                         target_id: target.id.clone(),
                         state: "not_connected".to_owned(),
                         message: Some("Waiting for the first remote connection attempt".to_owned()),
-                        last_checked_at_unix_ms: None,
                         session: None,
                         files: RemoteFileListSnapshot::idle(),
                     })
