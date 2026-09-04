@@ -230,6 +230,87 @@ impl PendingViewFocus {
     }
 }
 
+/// How many diagnostics the snapshot keeps. Newest are kept; the oldest go.
+const DIAGNOSTIC_RETENTION: usize = 256;
+
+/// What Herdr says about its tabs, kept per Herdr workspace.
+///
+/// A checkout is keyed by path, so several Herdr workspaces can share one
+/// checkout, and each of them names an active tab. Only the focused
+/// workspace's active tab is a tab Herdr has focused; the others are each
+/// workspace's memory of where it was last, and following one of those moved
+/// the canvas away from the tab the operator had just chosen.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct HerdrTabView {
+    /// Herdr's active tab in each Herdr workspace.
+    active_tab_by_workspace: BTreeMap<String, String>,
+    /// The Herdr workspace that owns each tab.
+    workspace_by_tab: BTreeMap<String, String>,
+    /// The active tab of Herdr's focused workspace.
+    focused_tab_id: Option<String>,
+}
+
+impl HerdrTabView {
+    fn from_payload(payload: &SessionSnapshotPayload) -> Self {
+        let active_tab_by_workspace = payload
+            .workspaces
+            .iter()
+            .filter_map(|workspace| {
+                let active_tab_id = workspace.active_tab_id.as_deref()?.trim();
+                (!active_tab_id.is_empty())
+                    .then(|| (workspace.workspace_id.clone(), active_tab_id.to_owned()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut workspace_by_tab = payload
+            .tabs
+            .iter()
+            .filter(|tab| !tab.workspace_id.trim().is_empty())
+            .map(|tab| (tab.tab_id.clone(), tab.workspace_id.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for layout in &payload.layouts {
+            workspace_by_tab
+                .entry(layout.tab_id.clone())
+                .or_insert_with(|| layout.workspace_id.clone());
+        }
+        // The focused pane's workspace stands in when the session names no
+        // focused workspace, which is the shape older payloads and the test
+        // fixtures have.
+        let focused_workspace_id = payload
+            .focused_workspace_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|workspace_id| !workspace_id.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                let focused_pane_id = payload.focused_pane_id.as_deref()?;
+                payload
+                    .layouts
+                    .iter()
+                    .find(|layout| layout.panes.iter().any(|pane| pane.pane_id == focused_pane_id))
+                    .map(|layout| layout.workspace_id.clone())
+            });
+        let focused_tab_id = focused_workspace_id
+            .as_deref()
+            .and_then(|workspace_id| active_tab_by_workspace.get(workspace_id))
+            .cloned();
+        Self {
+            active_tab_by_workspace,
+            workspace_by_tab,
+            focused_tab_id,
+        }
+    }
+
+    /// Whether Herdr shows this tab in the workspace that owns it. That is
+    /// what confirms a tab focus Hide asked for: which workspace Herdr's
+    /// keyboard is in does not decide it.
+    fn is_active_in_its_workspace(&self, tab_id: &str) -> bool {
+        self.workspace_by_tab
+            .get(tab_id)
+            .and_then(|workspace_id| self.active_tab_by_workspace.get(workspace_id))
+            .is_some_and(|active_tab_id| active_tab_id == tab_id)
+    }
+}
+
 /// Which of the two view-state values a pending notification is about.
 ///
 /// The tab and the pane run the same four paths - confirm, follow, refuse,
@@ -926,6 +1007,11 @@ pub struct Runtime {
     /// confirmed. Latest request wins; a second switch replaces the first
     /// rather than queueing behind it.
     pending_tab_focus: Option<PendingViewFocus>,
+    /// The tab Herdr had focused at the last session update. A follow needs
+    /// Herdr's focus to have moved; a focused tab that merely differs from
+    /// Hide's, as it does after a notification Herdr never answered, is not
+    /// an operator action and is not followed.
+    herdr_focused_tab_seen: Option<String>,
     /// The pane focus Hide has told Herdr about and is still waiting to see
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
@@ -1102,6 +1188,7 @@ impl Runtime {
             operator_focused_pane_id: None,
             visible_tab_ids: BTreeMap::new(),
             pending_tab_focus: None,
+            herdr_focused_tab_seen: None,
             pending_pane_focus: None,
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
@@ -2182,8 +2269,14 @@ impl Runtime {
         // visible, so that name is what Hide reconciles against rather than
         // what it obeys: it confirms a switch Hide made, or it is an operator
         // focusing a tab outside Hide and Hide follows it and says so.
+        // A checkout is keyed by path, so two Herdr workspaces at one path
+        // land in one checkout with one active tab each. The view is kept
+        // per Herdr workspace for that reason: folding it to one tab per
+        // checkout let the last workspace in payload order overwrite the
+        // others, and a tab focus on any other workspace was then never
+        // confirmed and always followed back.
         let mut unresolved_active_tabs = BTreeSet::new();
-        let mut herdr_active_tab_by_checkout: BTreeMap<String, String> = BTreeMap::new();
+        let herdr_tabs = HerdrTabView::from_payload(payload);
         for session_workspace in &payload.workspaces {
             let Some(active_tab_id) = session_workspace
                 .active_tab_id
@@ -2193,20 +2286,14 @@ impl Runtime {
             else {
                 continue;
             };
-            let mut resolved = false;
-            for workspace in &workspaces {
-                for checkout in &workspace.checkouts {
-                    if checkout
+            let resolved = workspaces.iter().any(|workspace| {
+                workspace.checkouts.iter().any(|checkout| {
+                    checkout
                         .tabs
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(active_tab_id))
-                    {
-                        herdr_active_tab_by_checkout
-                            .insert(checkout.id.clone(), active_tab_id.to_owned());
-                        resolved = true;
-                    }
-                }
-            }
+                })
+            });
             // A workspace none of whose tabs reached the navigator is not a
             // contradiction, only a workspace outside every registered
             // checkout. An active tab missing from a workspace that did place
@@ -2223,7 +2310,7 @@ impl Runtime {
             }
         }
         self.report_unresolved_active_tabs(unresolved_active_tabs);
-        self.reconcile_visible_tabs(&mut workspaces, &herdr_active_tab_by_checkout);
+        self.reconcile_visible_tabs(&mut workspaces, &herdr_tabs);
 
         let previous = self.snapshot.navigator.clone();
         self.snapshot.navigator.workspaces = workspaces;
@@ -2572,14 +2659,17 @@ impl Runtime {
     /// A checkout that has tabs always ends with one of them visible. Leaving
     /// a sibling checkout of a split workspace without an active tab is what
     /// made its canvas draw the empty-checkout state over real panes.
-    fn reconcile_visible_tabs(
-        &mut self,
-        workspaces: &mut [WorkspaceSnapshot],
-        herdr_active_tab_by_checkout: &BTreeMap<String, String>,
-    ) {
+    fn reconcile_visible_tabs(&mut self, workspaces: &mut [WorkspaceSnapshot], herdr: &HerdrTabView) {
         let mut followed: Vec<(String, String, String)> = Vec::new();
         let mut follow_pane: Option<String> = None;
         let mut confirmed_pending = false;
+        // Herdr's focus moved since the last update. Only then is its focused
+        // tab an action to follow; an unchanged focus that differs from
+        // Hide's tab is the state a timed-out notification leaves behind, and
+        // Hide keeps its value through that.
+        let herdr_focus_moved = herdr.focused_tab_id != self.herdr_focused_tab_seen;
+        self.herdr_focused_tab_seen = herdr.focused_tab_id.clone();
+        let selected_pane_id = self.snapshot.terminal.pane_id.clone();
         // The catalog is rebuilt whole on every pass, so a checkout absent
         // from it is gone rather than momentarily missing. Keeping its tab
         // would grow this map for the life of the process.
@@ -2603,19 +2693,43 @@ impl Runtime {
                     .get(&checkout.id)
                     .filter(|tab_id| has_tab(tab_id))
                     .cloned();
-                let herdr_tab = herdr_active_tab_by_checkout.get(&checkout.id).cloned();
+                let herdr_tab = herdr
+                    .focused_tab_id
+                    .as_deref()
+                    .filter(|tab_id| herdr_focus_moved && has_tab(tab_id))
+                    .map(str::to_owned);
                 let pending_tab = self
                     .pending_tab_focus
                     .as_ref()
                     .filter(|pending| pending.scope_id == checkout.id)
                     .map(|pending| pending.target_id.clone());
+                // A tab focus is confirmed by the workspace that owns the
+                // tab showing it, whichever workspace Herdr's keyboard is in.
+                if pending_tab
+                    .as_deref()
+                    .is_some_and(|tab_id| herdr.is_active_in_its_workspace(tab_id))
+                {
+                    confirmed_pending = true;
+                }
+                // The tab holding the selected pane, when it is in this
+                // checkout. With no tab of its own yet, Hide shows the tab the
+                // keyboard is in rather than one Herdr remembers, so a restore
+                // draws the layout it attaches.
+                let selected_tab = selected_pane_id.as_deref().and_then(|pane_id| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                        .and_then(|tab| tab.id.clone())
+                });
+                // A pending tab Herdr has not listed yet (one just created)
+                // keeps its claim on the checkout instead of being replaced
+                // by whichever tab is drawn while it arrives.
+                let pending_tab_unlisted = pending_tab
+                    .as_deref()
+                    .is_some_and(|tab_id| !has_tab(tab_id));
                 let visible = match (hide_tab, herdr_tab) {
-                    (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => {
-                        if pending_tab.as_deref() == Some(hide_tab.as_str()) {
-                            confirmed_pending = true;
-                        }
-                        Some(hide_tab)
-                    }
+                    (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
                     (Some(hide_tab), Some(herdr_tab)) => {
                         if pending_tab.as_deref() == Some(hide_tab.as_str()) {
                             Some(hide_tab)
@@ -2640,17 +2754,37 @@ impl Runtime {
                         }
                     }
                     (Some(hide_tab), None) => Some(hide_tab),
-                    (None, Some(herdr_tab)) => Some(herdr_tab),
-                    (None, None) => checkout.tabs.first().and_then(|tab| tab.id.clone()),
+                    // With no value of its own yet, Hide takes the first of:
+                    // the tab it asked for, the tab holding the keyboard,
+                    // the tab Herdr has focused, a tab Herdr shows in any of
+                    // the checkout's workspaces, the first tab.
+                    (None, herdr_tab) => pending_tab
+                        .clone()
+                        .filter(|tab_id| has_tab(tab_id))
+                        .or(selected_tab)
+                        .or(herdr_tab)
+                        .or_else(|| {
+                            checkout
+                                .tabs
+                                .iter()
+                                .filter_map(|tab| tab.id.as_deref())
+                                .find(|tab_id| herdr.is_active_in_its_workspace(tab_id))
+                                .map(str::to_owned)
+                        })
+                        .or_else(|| checkout.tabs.first().and_then(|tab| tab.id.clone())),
                 };
                 match visible {
                     Some(tab_id) => {
-                        self.visible_tab_ids
-                            .insert(checkout.id.clone(), tab_id.clone());
+                        if !pending_tab_unlisted {
+                            self.visible_tab_ids
+                                .insert(checkout.id.clone(), tab_id.clone());
+                        }
                         checkout.active_tab_id = Some(tab_id);
                     }
                     None => {
-                        self.visible_tab_ids.remove(&checkout.id);
+                        if !pending_tab_unlisted {
+                            self.visible_tab_ids.remove(&checkout.id);
+                        }
                         checkout.active_tab_id = None;
                     }
                 }
@@ -2661,6 +2795,9 @@ impl Runtime {
         }
         if let Some(pane_id) = follow_pane {
             self.select_terminal_pane(Some(pane_id));
+            // Herdr moved the keyboard, not the operator. The read record
+            // follows only a focus the operator made in Hide.
+            self.operator_focused_pane_id = None;
         }
         for (checkout_id, hide_tab, herdr_tab) in followed {
             eprintln!(
@@ -2691,6 +2828,66 @@ impl Runtime {
             .find(|layout| layout.tab_id == tab_id)
             .map(|layout| layout.focused_pane_id.clone())
             .or(first_pane_id)
+    }
+
+    /// Keeps the focused checkout drawing the tab that holds the keyboard.
+    ///
+    /// The visible tab and the selected pane are two core-owned values with
+    /// one invariant between them: the selected pane lies in the visible tab
+    /// of the focused checkout. A tab action moves the pane into the tab; a
+    /// pane action, a restore or a retirement moves the tab to the pane,
+    /// here. Without it the canvas drew one tab while the pane attached was
+    /// in another, and the operator saw five terminals with nothing in them.
+    fn align_visible_tab_with_selected_pane(&mut self) -> bool {
+        let Some(pane_id) = self.snapshot.terminal.pane_id.clone() else {
+            return false;
+        };
+        let Some(checkout_id) = self.snapshot.navigator.focused_checkout_id.clone() else {
+            return false;
+        };
+        let Some(checkout) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.checkouts.iter_mut())
+            .find(|checkout| checkout.id == checkout_id)
+        else {
+            return false;
+        };
+        let Some(tab_id) = checkout
+            .tabs
+            .iter()
+            .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+            .and_then(|tab| tab.id.clone())
+        else {
+            return false;
+        };
+        if checkout.active_tab_id.as_deref() == Some(tab_id.as_str())
+            && self.visible_tab_ids.get(&checkout_id) == Some(&tab_id)
+        {
+            return false;
+        }
+        let from_tab_id = checkout.active_tab_id.replace(tab_id.clone());
+        self.visible_tab_ids
+            .insert(checkout_id.clone(), tab_id.clone());
+        self.sync_active_tab_projection();
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "view_state",
+                "kind": "tab.visible_aligned",
+                "checkout_id": checkout_id,
+                "from_tab_id": from_tab_id,
+                "to_tab_id": tab_id,
+                "pane_id": pane_id,
+            })
+        );
+        self.push_diagnostic(
+            "tab.visible_aligned",
+            format!("Tab {tab_id} is visible because it holds the selected pane {pane_id}"),
+        );
+        true
     }
 
     /// Stops waiting on a view-state notification Herdr never answered.
@@ -3230,11 +3427,30 @@ impl Runtime {
                 } else if selected_pane_missing || explicit_checkout_missing {
                     None
                 } else if focused_checkout.is_some() {
+                    // With no selection, the keyboard lands in the tab the
+                    // checkout is showing, on that tab's remembered pane, so
+                    // the tab drawn is the tab attached. The first pane of the
+                    // checkout is for a checkout that shows no tab yet.
+                    let visible_tab_pane_id = self
+                        .snapshot
+                        .ui_state
+                        .focused_checkout_id
+                        .as_deref()
+                        .and_then(|checkout_id| self.visible_tab_ids.get(checkout_id))
+                        .and_then(|tab_id| {
+                            payload
+                                .layouts
+                                .iter()
+                                .find(|layout| &layout.tab_id == tab_id)
+                        })
+                        .map(|layout| layout.focused_pane_id.as_str())
+                        .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id));
                     selected_pane_id
                         .as_deref()
                         .filter(|pane_id| {
                             selected_still_exists && focused_checkout_pane_set.contains(*pane_id)
                         })
+                        .or(visible_tab_pane_id)
                         .or_else(|| {
                             focused_checkout_pane_ids
                                 .iter()
@@ -3403,6 +3619,7 @@ impl Runtime {
             }
             changed |= self.apply_pane_layout(layout);
         }
+        changed |= self.align_visible_tab_with_selected_pane();
         changed | self.refresh_pet()
     }
 
@@ -3697,7 +3914,13 @@ impl Runtime {
         self.snapshot.terminal.pane_id = Some(pane_id.clone());
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = Some(pane_id.clone());
+        // The persisted selection follows the ring. The shell echoes this
+        // field back on every UI-state save, and a stale value there put the
+        // keyboard back on the previous pane when the sidebar was toggled.
+        self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
         self.sync_focused_terminal_projection();
+        // A pane in a tab the checkout is not showing brings its tab forward.
+        self.align_visible_tab_with_selected_pane();
         let Some(context) = self.live.as_ref().cloned() else {
             self.set_error(
                 "pane.control_unavailable",
@@ -3709,8 +3932,15 @@ impl Runtime {
         // Rule 11: focusing the pane that already has the keyboard, with
         // nothing in flight, converges without a second notification. The
         // look itself still counts, so only the notification is skipped.
-        let notify =
-            !already_focused || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id);
+        // Settled means Herdr's own layout agrees too. A checkout coming
+        // forward selects a pane locally without telling Herdr, and skipping
+        // the notification then let Herdr's next layout take the focus back.
+        let herdr_agrees = self
+            .layout_holding_pane(&pane_id)
+            .is_none_or(|layout| layout.focused_pane_id == pane_id);
+        let notify = !already_focused
+            || !herdr_agrees
+            || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id);
         if notify {
             self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
             if let Err(message) = live::spawn_pane_control(
@@ -4503,6 +4733,20 @@ impl Runtime {
                     self.snapshot.focused.surface = Surface::Terminal;
                     self.snapshot.focused.pane_id = Some(pane_id.clone());
                     self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
+                    // The tab was created with focus, so it is Hide's visible
+                    // tab from this acknowledgment and Herdr's `tab_focused`
+                    // is its confirmation. Without this the strip's active
+                    // mark stayed where it was until the operator clicked the
+                    // new tab a second time.
+                    if let (Some(tab_id), Some(checkout_id)) = (
+                        created_tab_id.as_ref(),
+                        self.snapshot.navigator.focused_checkout_id.clone(),
+                    ) {
+                        self.visible_tab_ids
+                            .insert(checkout_id.clone(), tab_id.clone());
+                        self.pending_tab_focus =
+                            Some(PendingViewFocus::new(checkout_id, tab_id.clone()));
+                    }
                     self.deactivate_file_tab();
                     self.persist_current_ui_state();
                 }
@@ -4820,6 +5064,18 @@ impl Runtime {
             message: message.into(),
             occurred_at: unix_milliseconds(),
         });
+        // The list rides the revisioned rest section, so it is bounded: a
+        // fault that repeats every few seconds otherwise grows what every
+        // rest re-send carries for the life of the process.
+        let excess = self
+            .snapshot
+            .status
+            .diagnostics
+            .len()
+            .saturating_sub(DIAGNOSTIC_RETENTION);
+        if excess > 0 {
+            self.snapshot.status.diagnostics.drain(..excess);
+        }
     }
 
     pub fn set_error(
@@ -5048,7 +5304,11 @@ impl Runtime {
     }
 
     fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
-        let Some((checkout_path, next_pane_id, has_herdr_tab)) = self
+        // The checkout comes forward on the tab it was showing, with the
+        // keyboard on the pane the operator last had there. Its first pane
+        // is only for a checkout Hide has never shown.
+        let visible_tab_id = self.visible_tab_ids.get(checkout_id).cloned();
+        let Some((checkout_path, first_pane_id, has_herdr_tab)) = self
             .snapshot
             .navigator
             .workspaces
@@ -5060,16 +5320,17 @@ impl Runtime {
                     .iter()
                     .find(|checkout| checkout.id == checkout_id)
                     .map(|checkout| {
-                        (
-                            checkout.path.clone(),
+                        let visible_tab = visible_tab_id.as_deref().and_then(|tab_id| {
                             checkout
                                 .tabs
                                 .iter()
-                                .flat_map(|tab| tab.panes.iter())
-                                .map(|pane| pane.id.clone())
-                                .next(),
-                            !checkout.tabs.is_empty(),
-                        )
+                                .find(|tab| tab.id.as_deref() == Some(tab_id))
+                        });
+                        let first_pane_id = visible_tab
+                            .and_then(|tab| tab.panes.first())
+                            .or_else(|| checkout.tabs.iter().flat_map(|tab| tab.panes.iter()).next())
+                            .map(|pane| pane.id.clone());
+                        (checkout.path.clone(), first_pane_id, !checkout.tabs.is_empty())
                     })
             })
         else {
@@ -5093,11 +5354,20 @@ impl Runtime {
             self.set_error(kind, message, false);
             return true;
         };
+        let next_pane_id = match visible_tab_id.as_deref() {
+            Some(tab_id) => self.tab_focus_pane_id(tab_id, first_pane_id),
+            None => first_pane_id,
+        };
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
         self.reset_terminal_projection(next_pane_id.clone());
         self.sync_active_tab_projection();
+        self.align_visible_tab_with_selected_pane();
+        // The operator chose this checkout; the keyboard, and with it the
+        // read record, moves to the pane it came forward on.
+        self.operator_focused_pane_id = next_pane_id.clone();
+        self.refresh_pane_read_state();
         self.deactivate_file_tab();
         if !has_herdr_tab
             && let Some(file_tab_id) = self
@@ -5497,12 +5767,25 @@ impl Runtime {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
                     return true;
                 }
-                // Herdr closes a workspace with its last pane, so a project
-                // can be listed with no Herdr workspace behind it. A tab
-                // needs one; the shell starts a terminal (which creates the
-                // workspace) for a checkout with no panes instead.
-                let Some(session_workspace_id) =
-                    workspace_snapshot.session_workspace_ids.first().cloned()
+                // The new tab goes next to the tab the operator is looking
+                // at, in that tab's Herdr workspace: a checkout can hold tabs
+                // from several. Herdr closes a workspace with its last pane,
+                // so a project can be listed with no Herdr workspace behind
+                // it. A tab needs one; the shell starts a terminal (which
+                // creates the workspace) for a checkout with no panes instead.
+                let visible_tab_workspace_id = self
+                    .visible_tab_ids
+                    .get(&checkout_id)
+                    .and_then(|tab_id| {
+                        self.snapshot
+                            .pane_layouts
+                            .iter()
+                            .find(|layout| &layout.tab_id == tab_id)
+                    })
+                    .map(|layout| layout.workspace_id.clone())
+                    .filter(|id| workspace_snapshot.session_workspace_ids.contains(id));
+                let Some(session_workspace_id) = visible_tab_workspace_id
+                    .or_else(|| workspace_snapshot.session_workspace_ids.first().cloned())
                 else {
                     self.set_error(
                         "tab.no_live_workspace",
@@ -5608,10 +5891,37 @@ impl Runtime {
                 // its layout in the snapshot, so the canvas draws it on this
                 // frame instead of showing an empty canvas until Herdr
                 // answers.
-                self.select_terminal_pane(next_pane_id);
+                self.select_terminal_pane(next_pane_id.clone());
                 self.sync_active_tab_projection();
+                // The operator chose this tab, so its pane now holds Hide's
+                // keyboard and the read record follows it. Leaving the record
+                // on the pane of the tab just left kept marking that pane read
+                // while nobody was looking at it.
+                self.operator_focused_pane_id = next_pane_id;
+                self.refresh_pane_read_state();
                 self.deactivate_file_tab();
                 self.persist_current_ui_state();
+                // A first visit attaches the tab's panes now. Waiting for the
+                // next session update to do it left the canvas empty until
+                // Herdr happened to emit something, up to the catalog window.
+                if self.live.is_some() {
+                    let pane_ids = self
+                        .snapshot
+                        .pane_layouts
+                        .iter()
+                        .find(|layout| layout.tab_id == payload.tab_id)
+                        .map(|layout| {
+                            layout
+                                .pane_ids()
+                                .into_iter()
+                                .map(str::to_owned)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for pane_id in pane_ids {
+                        self.request_terminal_control(&pane_id);
+                    }
+                }
                 // Rule 11: reaching for the tab already showing, with nothing
                 // in flight, converges on the state it is already in and
                 // sends Herdr no second notification.
@@ -8461,8 +8771,12 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
+        // Herdr's keyboard is in the workspace, on the active tab's pane,
+        // which is what a live `session.snapshot` reports.
         serde_json::from_value(serde_json::json!({
             "agents": [],
+            "focused_workspace_id": "w-order",
+            "focused_pane_id": format!("{active_tab_id}:p"),
             "workspaces": [{
                 "workspace_id": "w-order",
                 "label": "order",
@@ -8473,6 +8787,64 @@ mod tests {
             "layouts": layouts
         }))
         .expect("ordered session payload")
+    }
+
+    /// Two or more Herdr workspaces whose tabs all sit in `checkout_path`, so
+    /// the path-keyed navigator folds them into one checkout. Each entry is
+    /// `(workspace_id, tab_ids, active_tab_id)`; `focused_workspace_id` is
+    /// the one holding Herdr's keyboard, on its active tab's pane. Panes are
+    /// named `<tab>:p`.
+    fn split_checkout_payload(
+        checkout_path: &str,
+        workspaces: &[(&str, &[&str], &str)],
+        focused_workspace_id: &str,
+    ) -> SessionSnapshotPayload {
+        let mut sessions = Vec::new();
+        let mut tabs = Vec::new();
+        let mut panes = Vec::new();
+        let mut layouts = Vec::new();
+        for (workspace_id, tab_ids, active_tab_id) in workspaces {
+            sessions.push(serde_json::json!({
+                "workspace_id": workspace_id,
+                "label": workspace_id,
+                "active_tab_id": active_tab_id
+            }));
+            for tab_id in tab_ids.iter() {
+                tabs.push(serde_json::json!({
+                    "workspace_id": workspace_id, "tab_id": tab_id, "label": ""
+                }));
+                panes.push(serde_json::json!({
+                    "pane_id": format!("{tab_id}:p"), "cwd": checkout_path
+                }));
+                layouts.push(serde_json::json!({
+                    "workspace_id": workspace_id,
+                    "tab_id": tab_id,
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": format!("{tab_id}:p"),
+                    "panes": [{
+                        "pane_id": format!("{tab_id}:p"),
+                        "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                    }],
+                    "splits": []
+                }));
+            }
+        }
+        let focused_pane_id = workspaces
+            .iter()
+            .find(|(workspace_id, _, _)| *workspace_id == focused_workspace_id)
+            .map(|(_, _, active_tab_id)| format!("{active_tab_id}:p"))
+            .expect("the focused workspace is one of the listed workspaces");
+        serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "focused_workspace_id": focused_workspace_id,
+            "focused_pane_id": focused_pane_id,
+            "workspaces": sessions,
+            "tabs": tabs,
+            "panes": panes,
+            "layouts": layouts
+        }))
+        .expect("split checkout session payload")
     }
 
     /// A runtime with one registered checkout focused, ready to ingest
@@ -9501,6 +9873,342 @@ mod tests {
             "a silent Herdr is a reason to report, not to move the screen"
         );
         assert_eq!(diagnostic_count(&runtime, "view_focus.timed_out"), 1);
+    }
+
+    /// Two Herdr workspaces at one path share one checkout, and the second
+    /// one in payload order names a different active tab. A tab focus on the
+    /// first workspace is confirmed by that workspace showing the tab, even
+    /// while Herdr's keyboard stays in the second one.
+    #[test]
+    fn split_checkout_a_tab_focus_is_confirmed_by_the_workspace_that_owns_the_tab() {
+        let checkout_path = "/private/tmp/hide-split-checkout-confirm";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let before: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1", "wa:t2"], "wa:t1"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &before, "wb")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wb:t1"),
+            "with no tab of its own Hide shows the tab Herdr has focused"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("wb:t1:p"),
+            "and the keyboard is in that tab"
+        );
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "wa:t2")));
+        assert!(runtime.pending_tab_focus.is_some());
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("wa:t2:p")
+        );
+
+        // Herdr shows the tab in its workspace; its keyboard stays in wb.
+        let confirmed: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1", "wa:t2"], "wa:t2"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &confirmed, "wb")));
+
+        assert!(runtime.pending_tab_focus.is_none(), "the notification is confirmed");
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t2")
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+        assert_eq!(diagnostic_count(&runtime, "view_focus.timed_out"), 0);
+        assert_eq!(
+            runtime.snapshot().active_pane_layout().map(|layout| layout.tab_id.as_str()),
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            "the tab drawn is the tab attached"
+        );
+    }
+
+    /// The active tab of a workspace Herdr's keyboard is not in is that
+    /// workspace's memory, not a focus. It never moves the canvas; a move of
+    /// Herdr's keyboard into that workspace does.
+    #[test]
+    fn split_checkout_another_workspaces_active_tab_is_not_followed_until_herdr_focuses_it() {
+        let checkout_path = "/private/tmp/hide-split-checkout-follow";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let start: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1"], "wa:t1"),
+            ("wb", &["wb:t1", "wb:t2"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &start, "wa")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t1")
+        );
+
+        // wb remembers another tab; Herdr's keyboard is still in wa.
+        let wb_moved: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1"], "wa:t1"),
+            ("wb", &["wb:t1", "wb:t2"], "wb:t2"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &wb_moved, "wa")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t1"),
+            "a non-focused workspace's active tab is not followed"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+
+        // Herdr's keyboard moves into wb: that is a focus, and it is followed.
+        assert!(runtime.ingest_session(Ok(split_checkout_payload(
+            checkout_path,
+            &wb_moved,
+            "wb"
+        ))));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wb:t2")
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("wb:t2:p"),
+            "the keyboard follows the tab"
+        );
+    }
+
+    /// A restore keeps the persisted pane and draws the tab that holds it,
+    /// not the tab Herdr's last workspace happens to name. The canvas drawn
+    /// is the canvas attached.
+    #[test]
+    fn split_checkout_a_restore_draws_the_tab_holding_the_persisted_pane() {
+        let checkout_path = "/private/tmp/hide-split-checkout-restore";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        runtime.snapshot.terminal.pane_id = Some("wa:t2:p".to_owned());
+        runtime.snapshot.focused.pane_id = Some("wa:t2:p".to_owned());
+        runtime.snapshot.ui_state.selected_pane_id = Some("wa:t2:p".to_owned());
+        let session: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1", "wa:t2"], "wa:t1"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &session, "wb")));
+
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("wa:t2:p"),
+            "the persisted pane survives the first session"
+        );
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t2"),
+            "the visible tab is the one holding that pane"
+        );
+        assert_eq!(
+            runtime.snapshot().active_pane_layout().map(|layout| layout.tab_id.as_str()),
+            Some("wa:t2"),
+            "and it is the layout attached"
+        );
+    }
+
+    /// A timed-out notification keeps Hide's tab through the reconcile that
+    /// follows it: Herdr's focus has not moved, so there is nothing to
+    /// follow.
+    #[test]
+    fn split_checkout_an_expired_notification_keeps_its_tab_through_the_next_reconcile() {
+        let checkout_path = "/private/tmp/hide-split-checkout-expiry";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let session: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1", "wa:t2"], "wa:t1"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &session, "wa")));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "wa:t2")));
+        let requested_at = runtime
+            .pending_tab_focus
+            .as_ref()
+            .expect("a notification is in flight")
+            .requested_at_unix_ms;
+        assert!(
+            runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS)
+        );
+        assert!(runtime.pending_tab_focus.is_none());
+
+        // Herdr never answered; its focus is where it was.
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &session, "wa")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t2"),
+            "a silent Herdr is a reason to report, not to move the screen"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+        assert_eq!(diagnostic_count(&runtime, "view_focus.timed_out"), 1);
+    }
+
+    /// A created tab is the visible tab from Herdr's acknowledgment, and the
+    /// `tab_focused` that follows confirms it rather than being followed.
+    #[test]
+    fn split_checkout_a_created_tab_is_visible_on_the_acknowledgment() {
+        let checkout_path = "/private/tmp/hide-split-checkout-create";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let before: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1"], "wa:t1"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &before, "wa")));
+
+        runtime.ingest_local_control_result(
+            RemoteControlAction::CreateTab {
+                workspace_id: "wa".to_owned(),
+                cwd: checkout_path.to_owned(),
+                label: "2".to_owned(),
+            },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some("wa:t2".to_owned()),
+                created_pane_id: Some("wa:t2:p".to_owned()),
+            }),
+            5,
+        );
+        assert_eq!(
+            runtime.visible_tab_ids.get(&checkout_id).map(String::as_str),
+            Some("wa:t2"),
+            "the created tab is Hide's visible tab before Herdr lists it"
+        );
+        assert!(runtime.pending_tab_focus.is_some());
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("wa:t2:p")
+        );
+
+        let after: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1", "wa:t2"], "wa:t2"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &after, "wa")));
+        assert!(runtime.pending_tab_focus.is_none());
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t2")
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+        assert_eq!(
+            runtime.snapshot().active_pane_layout().map(|layout| layout.tab_id.as_str()),
+            Some("wa:t2")
+        );
+    }
+
+    /// Focusing a pane in a tab the checkout is not showing brings that tab
+    /// forward in the same dispatch, so the keyboard never lands on a pane
+    /// nobody can see.
+    #[test]
+    fn split_checkout_a_pane_focus_in_a_hidden_tab_brings_the_tab_forward() {
+        let checkout_path = "/private/tmp/hide-split-checkout-align";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let session: [(&str, &[&str], &str); 2] = [
+            ("wa", &["wa:t1", "wa:t2"], "wa:t1"),
+            ("wb", &["wb:t1"], "wb:t1"),
+        ];
+        runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &session, "wa")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wa:t1")
+        );
+
+        assert!(runtime.dispatch_json(&operator_focus_event("wb:t1:p")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("wb:t1"),
+            "the tab holding the focused pane is visible on the same dispatch"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.visible_aligned"), 1);
+        assert_eq!(
+            runtime.snapshot().ui_state.selected_pane_id.as_deref(),
+            Some("wb:t1:p"),
+            "the persisted selection follows the ring"
+        );
+    }
+
+    /// Two tabs with one agent each. The operator looks at the pane in tab 1
+    /// and switches to tab 2. The read record follows the keyboard: tab 2's
+    /// pane is read, and a state change in tab 1 afterwards is unread.
+    #[test]
+    fn read_record_follows_a_tab_switch_the_operator_made() {
+        let checkout_path = "/private/tmp/hide-read-record-tab-switch";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let payload = |seq_t1: u64, seq_t2: u64| -> SessionSnapshotPayload {
+            let tab = |tab_id: &str| {
+                serde_json::json!({
+                    "workspace_id": "w-order",
+                    "tab_id": tab_id,
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": format!("{tab_id}:p"),
+                    "panes": [{
+                        "pane_id": format!("{tab_id}:p"),
+                        "rect": {"x": 0, "y": 0, "width": 80, "height": 24}
+                    }],
+                    "splits": []
+                })
+            };
+            let agent = |tab_id: &str, seq: u64| {
+                serde_json::json!({
+                    "pane_id": format!("{tab_id}:p"),
+                    "workspace_label": "order",
+                    "agent": "codex",
+                    "agent_status": "done",
+                    "state_change_seq": seq,
+                    "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                })
+            };
+            serde_json::from_value(serde_json::json!({
+                "agents": [agent("w-order:t1", seq_t1), agent("w-order:t2", seq_t2)],
+                "focused_workspace_id": "w-order",
+                "focused_pane_id": "w-order:t1:p",
+                "workspaces": [{
+                    "workspace_id": "w-order", "label": "order", "active_tab_id": "w-order:t1"
+                }],
+                "tabs": [
+                    {"workspace_id": "w-order", "tab_id": "w-order:t1", "label": ""},
+                    {"workspace_id": "w-order", "tab_id": "w-order:t2", "label": ""}
+                ],
+                "panes": [
+                    {"pane_id": "w-order:t1:p", "cwd": checkout_path},
+                    {"pane_id": "w-order:t2:p", "cwd": checkout_path}
+                ],
+                "layouts": [tab("w-order:t1"), tab("w-order:t2")]
+            }))
+            .expect("two-tab agent payload")
+        };
+        runtime.ingest_session(Ok(payload(1, 1)));
+        assert!(runtime.dispatch_json(&operator_focus_event("w-order:t1:p")));
+        assert_eq!(unread_panes(&runtime), vec!["w-order:t2:p"]);
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        assert!(
+            unread_panes(&runtime).is_empty(),
+            "the pane of the tab the operator switched to holds the keyboard and is read"
+        );
+
+        runtime.ingest_session(Ok(payload(2, 1)));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w-order:t1:p"],
+            "a change in the tab the operator left is unread; the record did not stay there"
+        );
+    }
+
+    /// The diagnostics list rides the revisioned rest section, so it keeps a
+    /// bounded number of the newest entries.
+    #[test]
+    fn diagnostics_keep_the_newest_entries_up_to_the_retention() {
+        let mut runtime = runtime();
+        for index in 0..(DIAGNOSTIC_RETENTION + 10) {
+            runtime.push_diagnostic("test.entry", format!("entry {index}"));
+        }
+        let diagnostics = &runtime.snapshot().status.diagnostics;
+        assert_eq!(diagnostics.len(), DIAGNOSTIC_RETENTION);
+        assert_eq!(diagnostics[0].message, "entry 10", "the oldest entries went first");
+        assert_eq!(
+            diagnostics[DIAGNOSTIC_RETENTION - 1].message,
+            format!("entry {}", DIAGNOSTIC_RETENTION + 9)
+        );
     }
 
     /// AC1, AC7, SC3. The focus ring moves on the click, and the layout that
@@ -10643,10 +11351,13 @@ mod tests {
         // The gap is taken before the end, so closing tab 1 and adding one
         // gives Tab 1 back rather than climbing forever.
         assert_eq!(next(&["2", "3"]), "Tab 1");
-        // Herdr's raw labels, not the formatted ones: a named tab holds no
-        // number, and neither does a tab already written the display way.
+        // A named tab holds no number. A tab Herdr stores the display way
+        // holds its number too: the shell hands `Tab N` to `tab.create`
+        // verbatim, and counting only bare numbers made every new tab
+        // `Tab 2` beside the last one.
         assert_eq!(next(&["1", "notes"]), "Tab 2");
-        assert_eq!(next(&["Tab 1"]), "Tab 1");
+        assert_eq!(next(&["Tab 1"]), "Tab 2");
+        assert_eq!(next(&["1", "Tab 2", "Tab 2"]), "Tab 3");
         assert_eq!(next(&[" 2 ", "1"]), "Tab 3");
     }
 
@@ -11929,8 +12640,18 @@ mod tests {
             runtime.snapshot().ui_state.pane_read_records.is_empty(),
             "a pane Herdr stopped reporting leaves no record behind"
         );
-        let stored = std::fs::read_to_string(&state_path).expect("state file");
-        assert!(!stored.contains("w1:p1"), "the record left the file too");
+        // The persisted selection may still name the pane, so the read
+        // records are checked on their own.
+        let stored: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&state_path).expect("state file"),
+        )
+        .expect("state file is JSON");
+        assert!(
+            stored["pane_read_records"]
+                .as_object()
+                .is_none_or(|records| !records.contains_key("w1:p1")),
+            "the record left the file too"
+        );
         let _ = std::fs::remove_file(&state_path);
     }
 

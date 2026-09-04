@@ -11,6 +11,11 @@ use crate::model::{
 pub struct SessionSnapshotPayload {
     #[serde(default)]
     pub focused_pane_id: Option<String>,
+    /// The Herdr workspace that holds Herdr's keyboard. Its active tab is the
+    /// only tab Herdr can be said to have focused; every other workspace's
+    /// `active_tab_id` is that workspace's memory of where it was last.
+    #[serde(default)]
+    pub focused_workspace_id: Option<String>,
     #[serde(default)]
     pub tabs: Vec<SessionTabPayload>,
     #[serde(default)]

@@ -965,6 +965,12 @@ struct WireAgent {
 struct ProjectionState {
     #[serde(default)]
     focused_pane_id: Option<String>,
+    /// Herdr's focused workspace, read from `session.snapshot` and kept
+    /// current from the focus events. A `tab_focused` or `pane_focused` in
+    /// another workspace moves it too, because Herdr focuses the workspace
+    /// along with the tab and does not always send `workspace_focused` first.
+    #[serde(default)]
+    focused_workspace_id: Option<String>,
     #[serde(default)]
     workspaces: Vec<WorkspaceWire>,
     #[serde(default)]
@@ -1046,6 +1052,7 @@ impl ProjectionState {
             .collect();
         SessionSnapshotPayload {
             focused_pane_id: self.focused_pane_id.clone(),
+            focused_workspace_id: self.focused_workspace_id.clone(),
             tabs,
             layouts: self.layouts.clone(),
             agents,
@@ -1556,6 +1563,7 @@ impl SessionReplica {
                 {
                     return Err(malformed_event(event, "focused workspace does not exist"));
                 }
+                self.state.focused_workspace_id = Some(payload.workspace_id);
             }
             "worktree_created" => {
                 let payload: WorktreeCreatedEvent = decode_event_data(data, event)?;
@@ -1705,6 +1713,7 @@ impl SessionReplica {
                     ));
                 }
                 workspace.active_tab_id = payload.tab_id;
+                self.state.focused_workspace_id = Some(payload.workspace_id.clone());
                 self.pending_active_tab_focuses
                     .remove(&payload.workspace_id);
             }
@@ -1811,6 +1820,7 @@ impl SessionReplica {
                     ));
                 }
                 self.state.focused_pane_id = Some(payload.pane_id.clone());
+                self.state.focused_workspace_id = Some(payload.workspace_id.clone());
                 if let Some(layout) = self.state.layouts.iter_mut().find(|layout| {
                     layout
                         .panes
@@ -1949,6 +1959,9 @@ impl SessionReplica {
         self.state
             .workspaces
             .retain(|workspace| workspace.workspace_id != workspace_id);
+        if self.state.focused_workspace_id.as_deref() == Some(workspace_id) {
+            self.state.focused_workspace_id = None;
+        }
         self.state
             .tabs
             .retain(|tab| tab.workspace_id != workspace_id);
@@ -3359,6 +3372,56 @@ mod tests {
         assert!(
             agent_tick_needs_publish(&replica, &held, Some(&stale)),
             "a catalog past its refresh window has to be rebuilt"
+        );
+    }
+
+    /// Herdr's focused workspace is carried from the snapshot and moved by
+    /// every focus event, because a checkout can hold tabs from several
+    /// workspaces and only the focused one's active tab is a focus.
+    #[test]
+    fn focus_events_move_the_projected_focused_workspace() {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        assert_eq!(
+            replica.project().focused_workspace_id,
+            None,
+            "the fixture snapshot names no focused workspace"
+        );
+
+        replica
+            .apply(event(
+                41,
+                "workspace_focused",
+                json!({"type": "workspace_focused", "workspace_id": "w1"}),
+            ))
+            .expect("workspace focus applies");
+        assert_eq!(replica.project().focused_workspace_id.as_deref(), Some("w1"));
+
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        replica
+            .apply(event(
+                41,
+                "tab_focused",
+                json!({"type": "tab_focused", "workspace_id": "w1", "tab_id": "w1:t1"}),
+            ))
+            .expect("tab focus applies");
+        assert_eq!(
+            replica.project().focused_workspace_id.as_deref(),
+            Some("w1"),
+            "a tab focus names the workspace Herdr moved into"
+        );
+
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        replica
+            .apply(event(
+                41,
+                "pane_focused",
+                json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p1"}),
+            ))
+            .expect("pane focus applies");
+        assert_eq!(
+            replica.project().focused_workspace_id.as_deref(),
+            Some("w1"),
+            "a pane focus names the workspace the pane is in"
         );
     }
 

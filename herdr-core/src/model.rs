@@ -391,12 +391,18 @@ pub fn display_tab_label(raw_label: &str, tab_id: &str) -> String {
 /// time, on the far side of the FFI boundary, where a change to either half
 /// breaks the other silently.
 ///
-/// A tab Herdr labels with a bare number holds that number; a tab labelled
+/// A tab Herdr labels with a bare number, or with the `Tab N` this function
+/// hands out and Herdr stores verbatim, holds that number; a tab labelled
 /// anything else holds none. The answer is the lowest number no tab holds.
+/// Counting only bare numbers made every created tab `Tab 2`.
 pub fn next_tab_label<'a>(raw_labels: impl IntoIterator<Item = &'a str>) -> String {
     let used = raw_labels
         .into_iter()
-        .filter_map(|label| label.trim().parse::<u32>().ok())
+        .filter_map(|label| {
+            let label = label.trim();
+            let number = label.strip_prefix("Tab ").unwrap_or(label);
+            number.trim().parse::<u32>().ok()
+        })
         .collect::<BTreeSet<_>>();
     // Bounded rather than an open range: n labels cannot cover n + 1
     // candidates, so a gap always exists in this span and the search is total.
