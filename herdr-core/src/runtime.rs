@@ -5364,9 +5364,12 @@ impl Runtime {
         self.reset_terminal_projection(next_pane_id.clone());
         self.sync_active_tab_projection();
         self.align_visible_tab_with_selected_pane();
-        // The operator chose this checkout; the keyboard, and with it the
-        // read record, moves to the pane it came forward on.
-        self.operator_focused_pane_id = next_pane_id.clone();
+        // The operator chose a checkout, not a pane: the record stops
+        // following the pane just left, and nothing is raised for the pane
+        // the checkout came forward on. A sidebar row click dispatches this
+        // and then a pane focus, and raising the remembered pane here for
+        // that one frame cleared a question nobody had read.
+        self.operator_focused_pane_id = None;
         self.refresh_pane_read_state();
         self.deactivate_file_tab();
         if !has_herdr_tab
@@ -10192,6 +10195,150 @@ mod tests {
             vec!["w-order:t1:p"],
             "a change in the tab the operator left is unread; the record did not stay there"
         );
+    }
+
+    /// A checkout switch releases the read record without raising one. Two
+    /// checkouts at different paths; the operator reads pane A in the first,
+    /// then reaches pane B, in the second checkout's other tab, through the
+    /// sidebar, which sends a checkout focus and then a pane focus. Pane C,
+    /// on the tab the second checkout comes forward with, is not marked read
+    /// by the checkout switch, and a change on A afterwards is unread.
+    #[test]
+    fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
+        let mut runtime = live_runtime();
+        let root_a = std::env::temp_dir()
+            .join(format!(
+                "hide-checkout-switch-a-{}-{}",
+                std::process::id(),
+                NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned();
+        let root_b = format!("{root_a}-b");
+        std::fs::create_dir_all(&root_a).expect("checkout a");
+        std::fs::create_dir_all(&root_b).expect("checkout b");
+        runtime.snapshot.ui_state.workspace_registrations = vec![
+            WorkspaceRegistration {
+                id: "workspace:a".to_owned(),
+                label: "a".to_owned(),
+                path: root_a.clone(),
+                device_id: "local".to_owned(),
+            },
+            WorkspaceRegistration {
+                id: "workspace:b".to_owned(),
+                label: "b".to_owned(),
+                path: root_b.clone(),
+                device_id: "local".to_owned(),
+            },
+        ];
+        runtime.rebuild_catalog();
+        let checkout_of = |runtime: &Runtime, workspace_id: &str| -> String {
+            runtime
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .and_then(|workspace| workspace.checkouts.first())
+                .map(|checkout| checkout.id.clone())
+                .expect("registered checkout")
+        };
+        let checkout_a = checkout_of(&runtime, "workspace:a");
+        let checkout_b = checkout_of(&runtime, "workspace:b");
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:a".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_a.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_a);
+        runtime.reset_terminal_projection(None);
+
+        let payload = |seq_a: u64| -> SessionSnapshotPayload {
+            let layout = |workspace_id: &str, tab_id: &str, pane_ids: &[&str], focused: &str| {
+                serde_json::json!({
+                    "workspace_id": workspace_id,
+                    "tab_id": tab_id,
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": focused,
+                    "panes": pane_ids.iter().enumerate().map(|(index, pane_id)| serde_json::json!({
+                        "pane_id": pane_id,
+                        "rect": {"x": index * 40, "y": 0, "width": 40, "height": 24}
+                    })).collect::<Vec<_>>(),
+                    "splits": []
+                })
+            };
+            let agent = |pane_id: &str, seq: u64| {
+                serde_json::json!({
+                    "pane_id": pane_id,
+                    "workspace_label": "fixture",
+                    "agent": "codex",
+                    "agent_status": "done",
+                    "state_change_seq": seq,
+                    "tokens": {"status_done_new": "\u{25cf}", "activity": format!("{seq:013}")}
+                })
+            };
+            serde_json::from_value(serde_json::json!({
+                "agents": [agent("wa:pA", seq_a), agent("wb:pB", 1), agent("wb:pC", 1)],
+                "focused_workspace_id": "wa",
+                "focused_pane_id": "wa:pA",
+                "workspaces": [
+                    {"workspace_id": "wa", "label": "a", "active_tab_id": "wa:t1"},
+                    {"workspace_id": "wb", "label": "b", "active_tab_id": "wb:t1"}
+                ],
+                "tabs": [
+                    {"workspace_id": "wa", "tab_id": "wa:t1", "label": ""},
+                    {"workspace_id": "wb", "tab_id": "wb:t1", "label": ""},
+                    {"workspace_id": "wb", "tab_id": "wb:t2", "label": ""}
+                ],
+                "panes": [
+                    {"pane_id": "wa:pA", "cwd": root_a},
+                    {"pane_id": "wb:pB", "cwd": root_b},
+                    {"pane_id": "wb:pC", "cwd": root_b}
+                ],
+                "layouts": [
+                    layout("wa", "wa:t1", &["wa:pA"], "wa:pA"),
+                    layout("wb", "wb:t1", &["wb:pC"], "wb:pC"),
+                    layout("wb", "wb:t2", &["wb:pB"], "wb:pB")
+                ]
+            }))
+            .expect("two-checkout payload")
+        };
+        runtime.ingest_session(Ok(payload(1)));
+        assert!(runtime.dispatch_json(&operator_focus_event("wa:pA")));
+        assert_eq!(unread_panes(&runtime), vec!["wb:pB", "wb:pC"]);
+
+        let focus_b = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": {"workspace_id": "workspace:b", "checkout_id": checkout_b}
+        }))
+        .expect("focus checkout event");
+        assert!(runtime.dispatch_json(&focus_b));
+        assert_eq!(
+            runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+            Some(checkout_b.as_str()),
+            "error: {:?}",
+            runtime.snapshot.status.last_error
+        );
+        assert_eq!(
+            runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+            Some("wb:pC"),
+            "the checkout comes forward on its remembered pane"
+        );
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["wb:pB", "wb:pC"],
+            "the checkout coming forward raises no record for its remembered pane"
+        );
+
+        assert!(runtime.dispatch_json(&operator_focus_event("wb:pB")));
+        assert_eq!(unread_panes(&runtime), vec!["wb:pC"], "only the pane the operator reached is read");
+
+        runtime.ingest_session(Ok(payload(2)));
+        assert!(
+            unread_panes(&runtime).contains(&"wa:pA".to_owned()),
+            "a change on the pane the operator left is unread; the record did not stay there"
+        );
+        std::fs::remove_dir_all(&root_a).ok();
+        std::fs::remove_dir_all(&root_b).ok();
     }
 
     /// The diagnostics list rides the revisioned rest section, so it keeps a
