@@ -2495,7 +2495,18 @@ impl Runtime {
         herdr_active_tab_by_checkout: &BTreeMap<String, String>,
     ) {
         let mut followed: Vec<(String, String, String)> = Vec::new();
+        let mut follow_pane: Option<String> = None;
         let mut confirmed_pending = false;
+        // The catalog is rebuilt whole on every pass, so a checkout absent
+        // from it is gone rather than momentarily missing. Keeping its tab
+        // would grow this map for the life of the process.
+        let live_checkout_ids = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .map(|checkout| checkout.id.clone())
+            .collect::<HashSet<_>>();
+        self.visible_tab_ids
+            .retain(|checkout_id, _| live_checkout_ids.contains(checkout_id));
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
                 let has_tab = |tab_id: &str| {
@@ -2526,6 +2537,21 @@ impl Runtime {
                         if pending_tab.as_deref() == Some(hide_tab.as_str()) {
                             Some(hide_tab)
                         } else {
+                            // Following the tab has to bring the keyboard with
+                            // it. Leaving the projection on the tab that just
+                            // stopped being visible parks the focus ring and
+                            // the first responder on a pane nobody can see.
+                            if self.snapshot.navigator.focused_checkout_id.as_deref()
+                                == Some(checkout.id.as_str())
+                            {
+                                let first_pane_id = checkout
+                                    .tabs
+                                    .iter()
+                                    .find(|tab| tab.id.as_deref() == Some(herdr_tab.as_str()))
+                                    .and_then(|tab| tab.panes.first())
+                                    .map(|pane| pane.id.clone());
+                                follow_pane = self.tab_focus_pane_id(&herdr_tab, first_pane_id);
+                            }
                             followed.push((checkout.id.clone(), hide_tab, herdr_tab.clone()));
                             Some(herdr_tab)
                         }
@@ -2550,6 +2576,9 @@ impl Runtime {
         if confirmed_pending {
             self.pending_tab_focus = None;
         }
+        if let Some(pane_id) = follow_pane {
+            self.select_terminal_pane(Some(pane_id));
+        }
         for (checkout_id, hide_tab, herdr_tab) in followed {
             eprintln!(
                 "{}",
@@ -2567,6 +2596,18 @@ impl Runtime {
                 format!("Herdr focused tab {herdr_tab} in {checkout_id}; Hide was showing {hide_tab}"),
             );
         }
+    }
+
+    /// The pane that becoming visible should put the keyboard on: the one the
+    /// operator last had in that tab, and its first pane before it has ever
+    /// been visited.
+    fn tab_focus_pane_id(&self, tab_id: &str, first_pane_id: Option<String>) -> Option<String> {
+        self.snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.tab_id == tab_id)
+            .map(|layout| layout.focused_pane_id.clone())
+            .or(first_pane_id)
     }
 
     /// Stops waiting on a view-state notification Herdr never answered.
@@ -5462,13 +5503,7 @@ impl Runtime {
                 // Return to the pane the operator last had in that tab. Its
                 // layout is already here, so the tab's own focused pane is
                 // known without asking Herdr for it.
-                let next_pane_id = self
-                    .snapshot
-                    .pane_layouts
-                    .iter()
-                    .find(|layout| layout.tab_id == payload.tab_id)
-                    .map(|layout| layout.focused_pane_id.clone())
-                    .or(first_pane_id);
+                let next_pane_id = self.tab_focus_pane_id(&payload.tab_id, first_pane_id);
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
@@ -8486,6 +8521,74 @@ mod tests {
         assert!(returned.contains(&"w-order:t2:p".to_owned()));
     }
 
+    /// R3, AC5, AC6. The half of retention the canvas cannot show: a tab the
+    /// operator is not looking at keeps producing output, and that output has
+    /// to reach the snapshot on its own sequence while it is hidden. If it
+    /// only arrived once the tab was visible again, coming back would replay
+    /// rather than resume.
+    #[test]
+    fn retained_views_keep_a_hidden_tabs_output_arriving() {
+        let checkout_path = "/private/tmp/hide-retained-views-hidden-output";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        // Visit the second tab, which is what starts its attach, then leave it.
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+        runtime.terminal_session_generations.insert("w-order:t2:p".to_owned(), 7);
+        runtime.terminal_sessions.insert(
+            "w-order:t2:p".to_owned(),
+            TerminalSession::test_stub("w-order:t2:p", 7, TerminalSessionMode::Control),
+        );
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert_eq!(runtime.snapshot().tab.id.as_deref(), Some("w-order:t1"));
+        let before = runtime.snapshot().terminal.sequence;
+
+        assert!(
+            runtime.ingest_terminal_session_frame(
+                "w-order:t2:p",
+                7,
+                TerminalSessionMode::Control,
+                b"hidden tab still talking",
+            ),
+            "the session behind a hidden tab is still delivering"
+        );
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.terminal.sequence,
+            before + 1,
+            "the chunk rides the cursor, so a hidden tab costs one sequence step and no resend"
+        );
+        let arrived = snapshot
+            .terminal
+            .chunks
+            .last()
+            .expect("the chunk that just arrived");
+        assert_eq!(arrived.pane_id, "w-order:t2:p");
+        assert_eq!(arrived.sequence, before + 1);
+        assert_eq!(
+            live::decode_base64(&arrived.bytes_base64).expect("chunk bytes"),
+            b"hidden tab still talking".to_vec()
+        );
+    }
+
     /// AC5. A hidden pane's size is what the shell last reported for it, and a
     /// tab switch neither reports a new one nor lets the core invent one.
     /// Geometry decides the PTY size, so a size that moved while a pane was
@@ -8752,6 +8855,70 @@ mod tests {
             Some("w-order:t2")
         );
         assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+        assert_eq!(
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t2"),
+            "the canvas follows the tab, not only the strip"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t2:p"),
+            "and the keyboard lands in that tab rather than staying on a pane nobody can see"
+        );
+    }
+
+    /// AC1, SC1. Registering a device rebuilds the catalog from scratch, and a
+    /// freshly built checkout names no active tab. The visible tab is Hide's,
+    /// so it survives a rebuild Herdr had no part in.
+    #[test]
+    fn view_authority_a_catalog_rebuild_keeps_the_visible_tab() {
+        let checkout_path = "/private/tmp/hide-view-authority-rebuild";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+        let register_device = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "register_device",
+            "payload": {
+                "id": "device-rebuild",
+                "label": "Rebuild",
+                "ssh_alias": "rebuild-host"
+            }
+        }))
+        .expect("register device event");
+        assert!(runtime.dispatch_json(&register_device));
+
+        // The rebuilt catalog carries no tabs until the next session update,
+        // which is what makes this the interesting moment: the tab the
+        // operator chose has to survive the gap. It survives because a
+        // rebuild is not a reconcile - the catalog says nothing about which
+        // tab is visible, so nothing on this path may read it as Herdr
+        // naming another one.
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "a rebuild is not Herdr moving the tab"
+        );
+        assert_eq!(
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t3"),
+            "and the canvas comes back on the tab it was showing"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
     }
 
     /// AC2, R1. Herdr refusing the notification does not move the operator's
