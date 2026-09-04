@@ -230,6 +230,53 @@ impl PendingViewFocus {
     }
 }
 
+/// Which of the two view-state values a pending notification is about.
+///
+/// The tab and the pane run the same four paths - confirm, follow, refuse,
+/// time out - and differ only in the words their records use. Naming those
+/// words once is what keeps the paths from drifting apart: the refusal and
+/// the timeout had already grown two different reporting shapes for the same
+/// event before this existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewFocusSlot {
+    Tab,
+    Pane,
+}
+
+impl ViewFocusSlot {
+    const ALL: [Self; 2] = [Self::Tab, Self::Pane];
+
+    fn what(self) -> &'static str {
+        match self {
+            Self::Tab => "tab",
+            Self::Pane => "pane",
+        }
+    }
+
+    fn id_key(self) -> &'static str {
+        match self {
+            Self::Tab => "tab_id",
+            Self::Pane => "pane_id",
+        }
+    }
+
+    fn refused_kind(self) -> &'static str {
+        match self {
+            Self::Tab => "tab.focus.refused",
+            Self::Pane => "pane.focus.refused",
+        }
+    }
+
+    /// What Hide does with the value it kept, said the way the operator would
+    /// describe it: a tab is on screen, a pane has the keyboard.
+    fn kept_phrase(self) -> &'static str {
+        match self {
+            Self::Tab => "Hide keeps showing it",
+            Self::Pane => "Hide keeps it focused",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FocusPaneRequestPayload {
     pane_id: String,
@@ -2654,17 +2701,14 @@ impl Runtime {
     /// Herdr event be read as an external focus rather than as a late answer.
     fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
         let mut expired = Vec::new();
-        if let Some(pending) = self.pending_tab_focus.as_ref()
-            && pending.expired_at(now_unix_ms)
-        {
-            expired.push(("tab", pending.target_id.clone()));
-            self.pending_tab_focus = None;
-        }
-        if let Some(pending) = self.pending_pane_focus.as_ref()
-            && pending.expired_at(now_unix_ms)
-        {
-            expired.push(("pane", pending.target_id.clone()));
-            self.pending_pane_focus = None;
+        for slot in ViewFocusSlot::ALL {
+            let pending = self.pending_view_focus(slot);
+            if let Some(pending) = pending.as_ref()
+                && pending.expired_at(now_unix_ms)
+            {
+                expired.push((slot.what(), pending.target_id.clone()));
+                *self.pending_view_focus_mut(slot) = None;
+            }
         }
         let changed = !expired.is_empty();
         for (what, target_id) in expired {
@@ -3665,12 +3709,8 @@ impl Runtime {
         // Rule 11: focusing the pane that already has the keyboard, with
         // nothing in flight, converges without a second notification. The
         // look itself still counts, so only the notification is skipped.
-        let pending_names_this_pane = self
-            .pending_pane_focus
-            .as_ref()
-            .is_some_and(|pending| pending.target_id == pane_id);
         let notify =
-            !already_focused || !(self.pending_pane_focus.is_none() || pending_names_this_pane);
+            !already_focused || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id);
         if notify {
             self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
             if let Err(message) = live::spawn_pane_control(
@@ -3862,56 +3902,62 @@ impl Runtime {
         layout_changed || projection_changed
     }
 
-    /// Ends the wait on a tab focus Herdr refused, keeping the tab Hide is
-    /// showing and reporting the refusal.
-    fn clear_refused_tab_focus(&mut self, tab_id: &str, message: &str) {
+    /// Ends the wait on a view-state focus Herdr refused, keeping the value
+    /// Hide chose and reporting the refusal.
+    ///
+    /// A refusal that names some other target is not this wait's answer and
+    /// is left alone, so a late refusal for a tab the operator has already
+    /// moved on from cannot end the wait on the current one.
+    fn clear_refused_view_focus(&mut self, slot: ViewFocusSlot, target_id: &str, message: &str) {
         if self
-            .pending_tab_focus
+            .pending_view_focus(slot)
             .as_ref()
-            .is_none_or(|pending| pending.target_id != tab_id)
+            .is_none_or(|pending| pending.target_id != target_id)
         {
             return;
         }
-        self.pending_tab_focus = None;
+        *self.pending_view_focus_mut(slot) = None;
+        let what = slot.what();
         eprintln!(
             "{}",
             serde_json::json!({
                 "component": "view_state",
-                "kind": "tab.focus.refused",
-                "tab_id": tab_id,
+                "kind": slot.refused_kind(),
+                slot.id_key(): target_id,
                 "message": message,
             })
         );
         self.push_diagnostic(
-            "tab.focus.refused",
-            format!("Herdr refused tab focus {tab_id}: {message}; Hide keeps showing it"),
+            slot.refused_kind(),
+            format!(
+                "Herdr refused {what} focus {target_id}: {message}; {}",
+                slot.kept_phrase()
+            ),
         );
     }
 
-    /// Ends the wait on a pane focus Herdr refused, keeping the pane Hide
-    /// focused and reporting the refusal.
-    fn clear_refused_pane_focus(&mut self, pane_id: &str, message: &str) {
-        if self
-            .pending_pane_focus
+    /// Rule 11: whether repeating this view-state change would converge on
+    /// what the core already holds, so Herdr needs no second notification.
+    /// True when nothing is in flight for the slot, or what is in flight is
+    /// this very target.
+    fn view_focus_settled_on(&self, slot: ViewFocusSlot, target_id: &str) -> bool {
+        self.pending_view_focus(slot)
             .as_ref()
-            .is_none_or(|pending| pending.target_id != pane_id)
-        {
-            return;
+            .is_none_or(|pending| pending.target_id == target_id)
+    }
+
+    fn pending_view_focus(&self, slot: ViewFocusSlot) -> &Option<PendingViewFocus> {
+        match slot {
+            ViewFocusSlot::Tab => &self.pending_tab_focus,
+            ViewFocusSlot::Pane => &self.pending_pane_focus,
         }
-        self.pending_pane_focus = None;
-        eprintln!(
-            "{}",
-            serde_json::json!({
-                "component": "view_state",
-                "kind": "pane.focus.refused",
-                "pane_id": pane_id,
-                "message": message,
-            })
-        );
-        self.push_diagnostic(
-            "pane.focus.refused",
-            format!("Herdr refused pane focus {pane_id}: {message}; Hide keeps it focused"),
-        );
+    }
+
+    fn pending_view_focus_mut(&mut self, slot: ViewFocusSlot) -> &mut Option<PendingViewFocus> {
+        match slot {
+            ViewFocusSlot::Tab => &mut self.pending_tab_focus,
+            ViewFocusSlot::Pane => &mut self.pending_pane_focus,
+        }
     }
 
     /// Reports that Hide moved its keyboard focus to follow a pane focus made
@@ -4318,7 +4364,7 @@ impl Runtime {
                 // Hide keeps the pane it focused. The refusal is reported and
                 // the wait ends, so the next Herdr event naming another pane
                 // is read as the authority it is rather than as a late answer.
-                self.clear_refused_pane_focus(&pane_id, &message);
+                self.clear_refused_view_focus(ViewFocusSlot::Pane, &pane_id, &message);
                 self.set_error("pane.focus_failed", message, true);
                 true
             }
@@ -4483,7 +4529,7 @@ impl Runtime {
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
                 if let RemoteControlAction::FocusTab { tab_id } = &action {
-                    self.clear_refused_tab_focus(tab_id, &message);
+                    self.clear_refused_view_focus(ViewFocusSlot::Tab, tab_id, &message);
                 }
                 self.set_error(
                     "tab.control.failed",
@@ -5569,11 +5615,9 @@ impl Runtime {
                 // Rule 11: reaching for the tab already showing, with nothing
                 // in flight, converges on the state it is already in and
                 // sends Herdr no second notification.
-                let pending_names_this_tab = self
-                    .pending_tab_focus
-                    .as_ref()
-                    .is_some_and(|pending| pending.target_id == payload.tab_id);
-                if already_visible && (self.pending_tab_focus.is_none() || pending_names_this_tab) {
+                if already_visible
+                    && self.view_focus_settled_on(ViewFocusSlot::Tab, &payload.tab_id)
+                {
                     return true;
                 }
                 let Some(context) = self.live.as_ref().cloned() else {

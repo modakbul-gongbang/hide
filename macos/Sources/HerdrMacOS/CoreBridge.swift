@@ -90,6 +90,20 @@ extension CoreSnapshot {
         guard let paneID = terminal.paneID else { return nil }
         return paneLayouts.first(where: { $0.root.paneIDs.contains(paneID) })
     }
+
+    /// The pane the keyboard belongs to, decided once for everyone who reads
+    /// a snapshot.
+    ///
+    /// The core owns the focused pane, so its own field is the answer. The
+    /// layout's focused pane is Herdr's last word on the same question and
+    /// stands in only before the core has one, because a click has to move
+    /// the ring on its own frame rather than on Herdr's confirming event.
+    /// Written out per call site, that order drifts: `observeAgentFocus`
+    /// carried the reverse of it and pointed the agent recency list at the
+    /// pane Herdr last confirmed instead of the pane just clicked.
+    var focusedPaneID: String? {
+        terminal.paneID ?? activePaneLayout?.focusedPaneID
+    }
 }
 
 struct CoreRestSnapshot: Decodable {
@@ -2328,18 +2342,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             lastLoggedProjection = projection
             HideLaunchTrace.mark("core.snapshot.projection", detail: projection)
         }
-        // The core owns the focused pane. Reading its field first is what
-        // puts the keyboard in the pane the operator clicked on the frame of
-        // the click, rather than one Herdr round trip later.
-        let previousFocusedPaneID = snapshot?.terminal.paneID
-            ?? snapshot?.activePaneLayout?.focusedPaneID
+        let previousFocusedPaneID = snapshot?.focusedPaneID
         snapshot = decoded
         bridgeError = routingError
             ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             ?? startupDiagnostic
         restorePaneSelectionIfNeeded(decoded)
-        let authoritativeFocusedPaneID = decoded.terminal.paneID
-            ?? decoded.activePaneLayout?.focusedPaneID
+        let authoritativeFocusedPaneID = decoded.focusedPaneID
         if authoritativeFocusedPaneID != previousFocusedPaneID,
            let authoritativeFocusedPaneID {
             DispatchQueue.main.async { [weak self] in

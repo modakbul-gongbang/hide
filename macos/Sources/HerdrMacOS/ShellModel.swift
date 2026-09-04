@@ -929,7 +929,7 @@ final class ShellModel: ObservableObject {
     private func observeAgentFocus(in snapshot: CoreSnapshot?) {
         let currentAgents = snapshot?.navigator.agents ?? []
         agentMRU.observe(
-            focusedPaneID: snapshot?.activePaneLayout?.focusedPaneID ?? snapshot?.terminal.paneID,
+            focusedPaneID: snapshot?.focusedPaneID,
             availablePaneIDs: currentAgents.map(\.paneID)
         )
     }
