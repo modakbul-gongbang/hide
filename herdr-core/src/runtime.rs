@@ -3424,6 +3424,21 @@ impl Runtime {
             .iter()
             .find(|stored| stored.tab_id == layout.tab_id)
             != Some(&layout);
+        // The rendered projection is compared on its own, because an
+        // unchanged layout no longer implies an unchanged projection. Layouts
+        // now survive a tab switch, so this runs for a tab whose geometry
+        // Herdr never altered while the panes it puts on the canvas still
+        // change. Returning the layout comparison alone would then withhold
+        // the notification for a canvas that did change.
+        let previous_pane_ids = self
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.clone())
+            .collect::<Vec<_>>();
+        let previous_selected = self.snapshot.terminal.pane_id.clone();
+        let previous_zoomed = self.snapshot.zoomed.clone();
 
         let previous = self
             .snapshot
@@ -3470,6 +3485,7 @@ impl Runtime {
                     .sort_by(|left, right| left.tab_id.cmp(&right.tab_id));
             }
         }
+        let mut notice_cleared = false;
         if self
             .snapshot
             .status
@@ -3478,6 +3494,7 @@ impl Runtime {
             .is_some_and(|error| error.kind == "pane.projection_unavailable")
         {
             self.snapshot.status.last_error = None;
+            notice_cleared = true;
         }
         self.sync_focused_terminal_projection();
 
@@ -3486,7 +3503,19 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
             }
         }
-        layout_changed
+        let projection_changed = notice_cleared
+            || previous_selected != self.snapshot.terminal.pane_id
+            || previous_focus != self.snapshot.focused.pane_id
+            || previous_zoomed != self.snapshot.zoomed
+            || previous_pane_ids
+                != self
+                    .snapshot
+                    .terminal
+                    .panes
+                    .iter()
+                    .map(|pane| pane.pane_id.clone())
+                    .collect::<Vec<_>>();
+        layout_changed || projection_changed
     }
 
     /// Drops the operator focus once Herdr moves focus off the pane the
@@ -7973,6 +8002,45 @@ mod tests {
                 assert_eq!(was, now);
             }
         }
+    }
+
+    /// A layout Herdr has already sent still moves the canvas when it belongs
+    /// to another tab. The return value is what fires the change notifier, so
+    /// it has to report the projection that was rebuilt and not only the
+    /// geometry that was compared. Before layouts survived a tab switch the
+    /// two could not disagree, because a switch emptied the stored layout and
+    /// every following layout counted as new.
+    #[test]
+    fn tab_layouts_report_a_projection_move_under_an_unchanged_layout() {
+        let checkout_path = "/private/tmp/hide-tab-layouts-notify";
+        let (mut runtime, _checkout_id) = tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        let second = runtime
+            .snapshot()
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.tab_id == "w-order:t2")
+            .expect("the second tab's layout")
+            .clone();
+
+        // The geometry is the one already stored, so only the projection
+        // moves. That move still has to be reported.
+        assert!(runtime.apply_pane_layout(second.clone()));
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t2:p")
+        );
+
+        // The same layout over the same projection changes nothing, and
+        // reports nothing, so the canvas is not redrawn for a repeat.
+        assert!(!runtime.apply_pane_layout(second));
     }
 
     /// The shell used to draw an even grid of the tab's panes whenever it had
