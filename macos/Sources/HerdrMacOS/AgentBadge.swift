@@ -26,12 +26,13 @@ enum AgentMark {
     }
 }
 
-/// An agent's mark with its state on it.
+/// An agent's mark, tinted by its state.
 ///
-/// The mark alone says which tool is running but nothing about whether it
-/// needs the user, so the state stays encoded as a dot rather than as a word
-/// (design rule 7). An agent kind with no bundled mark falls back to its
-/// initial instead of drawing an empty square.
+/// The mark says which tool is running. What the agent needs is the row's
+/// status mark, drawn once in its own column beside this, so the badge carries
+/// only the hue and never a second indicator of the same thing (design rule
+/// 7). An agent kind with no bundled mark falls back to its initial instead of
+/// drawing an empty square.
 struct AgentBadge: View {
     let agentKind: String
     let stateColor: Color
@@ -54,15 +55,6 @@ struct AgentBadge: View {
             }
         }
         .frame(width: size, height: size)
-        .overlay(alignment: .bottomTrailing) {
-            Circle()
-                .fill(stateColor)
-                .frame(width: size * 0.36, height: size * 0.36)
-                .overlay(
-                    Circle().stroke(HideTheme.sidebar, lineWidth: size * 0.08)
-                )
-                .offset(x: size * 0.11, y: size * 0.11)
-        }
         .accessibilityHidden(true)
     }
 }

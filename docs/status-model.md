@@ -1,28 +1,67 @@
 # Status Model
 
-How herdr's raw agent state becomes a pet pose and a badge row.
-The rules here are a contract with what the user already sees in the herdr sidebar; the dashboard must not disagree with it.
+How Herdr's raw agent state becomes a group in the sidebar, a pet pose, and a badge row.
 
-## herdr token contract: `_new` means unseen
+The state of an agent is three axes, not one word.
+What it needs from the operator, whether it is running, and whether the operator has looked at it are independent, and mixing them into one string is what made the same agent read differently in different views.
 
-herdr reports attention state as suffixed string tokens, not booleans:
+- Demand: question, approval, error, none.
+- Activity: working, stopped, unknown.
+- Read: read, unread.
 
-- `status_question_new: "?"` - a question the user has **not** looked at yet.
-- `status_question: "?"` - the same question, already acknowledged. herdr also drops `agent_status` back to `idle` for it.
+`herdr-core/src/sidebar.rs` is the single owner of all three.
+It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, and whether closing the pane needs a confirmation - so no surface decides any of it a second time.
 
-The same `_new` / plain split applies to approval and error tokens.
+## Hide owns the read axis, at pane level
 
-Only unseen (`_new`) tokens may be promoted to attention or error.
-Matching on the `status_question` prefix alone pulls acknowledged items back into the waiting list, which is exactly the bug the user caught by comparing the dashboard against the herdr sidebar.
-Legacy boolean form (`status_question: true`) still means unseen and is accepted.
+Herdr's seen is tab-scoped.
+Its own documentation is explicit: focusing a tab, or targeting it with pane focus or agent focus, marks every pane in that tab seen.
+Three finished agents side by side in one tab therefore cleared together on a single click, which is the bug this model exists to fix.
 
-Covered by tests in `herdr-core/src/sidebar.rs` (acknowledged `?` -> idle, unseen `?` -> attention, done -> done), enforced by `INV-herdr-unseen-token`.
-That projection is the single owner of the rule: `herdr-core/src/pet.rs` buckets the states it already decided rather than reading tokens a second time.
+So Hide keeps its own record instead.
+A pane is read when it has held Hide's keyboard focus since its last state change, and a state change is Herdr's `state_change_seq` rising **or** the derived demand and activity pair changing.
+The pair matters because Herdr's sequence does not always rise when only plugin tokens change: with a pane's lifecycle held at `idle`, clearing its idle token so only a question token remained left the sequence where it was.
+
+The record is `pane_read_records` in the persisted UI state, keyed by pane id, so it survives a restart.
+A record whose pane the server stops reporting is dropped on the same pass, scoped to the namespace that pass owns, so a local sync never drops a remote pane's record.
+A corrupt store loads as an empty record, which reads as everything unread, and says so in a diagnostic; it is never silently treated as read.
+
+Nothing reads Herdr's `done` versus `idle` split, or a token's `_new` suffix, to decide the read axis.
+This is enforced by `INV-herdr-unseen-token`.
+
+## Herdr token contract: both forms mean the same demand
+
+Herdr reports attention state as suffixed string tokens, not booleans:
+
+- `status_question_new: "?"` - a question, in the form Herdr uses before it considers the tab seen.
+- `status_question: "?"` - the same question after Herdr considers it acknowledged. Herdr also drops `agent_status` back to `idle` for it.
+
+The same pair applies to approval and error tokens, and the legacy boolean form (`status_question: true`) is still accepted.
+
+Both forms map to the same demand.
+The suffix is Herdr's answer to a question Hide no longer asks it, so reading the suffix as unread would put the tab-scoped verdict back in charge of a pane-level decision.
+
+## The four groups
+
+| Group | Membership |
+| --- | --- |
+| Needs You | An unread demand - question, approval or error - or a pane Herdr reports as blocked right now |
+| Done | No demand, stopped, and unread |
+| Working | Running |
+| Seen | Everything else: read demands, read completions, unknown |
+
+A blocked pane stays in Needs You whether or not it has been read.
+The approval prompt is still on screen waiting, so it leaves the group when the prompt is answered, not when it is looked at.
+
+Done is deliberately separate from Needs You: finished-unseen is "look when you have a moment", an unread demand is "act now".
+
+Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
+The label plugin's `sort_rank` token is not read.
+The Projects view raises Needs You and Done above the project tree and does not repeat those rows inside it; the Agents view draws all four groups with their boundaries visible and omits empty ones.
 
 ## Pet pose priority
 
-An unseen error or question/approval takes precedence over ordinary work so a `!` or `?` is never hidden by a background task.
-The compatibility `top_status` field still exposes the five existing states to the dashboard and badge code.
+An error or an unread demand takes precedence over ordinary work, so a `!` or `?` is never hidden by a background task.
 The behavior layer adds the clawd-style priority used for pose selection (`herdr_core::pet::expanded_state`):
 
 ```
@@ -33,27 +72,27 @@ The current Herdr data has no separate sweeping or thinking token, so those slot
 One working pane maps to `carrying`, two or more to `juggling`.
 After eight idle seconds the pet can roam; after sixty idle seconds it runs `yawning -> dozing -> collapsing -> sleeping`.
 Any pointer activity produces `waking` before returning to the normal priority.
-Urgent error/attention and the badge contract always win over these delight states.
+The pose ladder is the one place an error is counted apart from the rest of Needs You, because the ladder puts it a rung higher; no count on any surface is drawn from that split.
 
-A lost herdr connection outranks all of it: `herdr_core::pet::pose` reports `disconnected`, because a server that stopped answering cannot say anything true about agent state.
+A lost Herdr connection outranks all of it: `herdr_core::pet::pose` reports `disconnected`, because a server that stopped answering cannot say anything true about agent state.
 The last valid agent list is retained so counts do not blink to empty, but every retained agent is counted as disconnected - a stale yellow "act now" badge for a dead server is the failure this prevents.
 
 ## Badges
 
-All badges sit in a single row at the top right, in this order:
+The pet's badge row counts the same four groups the sidebar draws, in the same order:
 
-| Order | Color | Meaning |
+| Order | Color | Group |
 | --- | --- | --- |
-| 1 | blue | agents currently working |
-| 2 | green | finished but not yet confirmed by the user |
-| 3 | yellow | unseen question or approval |
-| 4 | red | error |
+| 1 | yellow | Needs You |
+| 2 | green | Done |
+| 3 | blue | Working |
 
 A count of zero hides that badge.
 Do Not Disturb hides all of them.
 
-Green is deliberately separate from yellow: finished-unconfirmed is "look when you have a moment", unseen question is "act now".
-Acknowledged items disappear from the list entirely.
+The pet's "act now" number is the whole Needs You count and its done number is the whole Done count, so a badge can never disagree with the section it stands for.
+`herdr-core/src/pet.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
+The pet dashboard's count tiles read the same four groups, plus the rows whose server stopped answering.
 
 ## Ambient signals (subagents, background tasks)
 

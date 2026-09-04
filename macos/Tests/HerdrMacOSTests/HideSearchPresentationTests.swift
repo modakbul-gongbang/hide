@@ -9,12 +9,13 @@ private func searchAgent(paneID: String) -> SidebarAgent {
         paneID: paneID,
         workspaceLabel: "Same name",
         agentKind: "codex",
-        state: "working",
-        symbol: "●",
+        demand: "none",
+        activity: "working",
+        group: "working",
+        symbol: "\u{25cf}",
         summary: "Agent in \(paneID)",
         elapsed: "1m",
-        sortRank: "01",
-        activity: "working",
+        lastActivity: "0000000000001",
         ambient: nil
     )
 }
@@ -32,7 +33,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
             "strip":[{"id":"herdr:\(id)-tab","kind":"herdr","source_id":"\(id)-tab","label":"Tab 1"}],"next_tab_label":"Tab 2",\
             "tabs":[{"id":"\(id)-tab","workspace_id":"\(id)",\
             "checkout_id":"\(id)-checkout","label":"1","empty":false,\
-            "panes":[{"id":"\(paneID)","label":"\(paneID)","cwd":"/tmp/\(id)","state":"working"}]}]}]}
+            "panes":[{"id":"\(paneID)","label":"\(paneID)","cwd":"/tmp/\(id)","status_label":"Working","requires_close_confirmation":true}]}]}]}
             """.utf8
         )
     )
@@ -44,12 +45,13 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         paneID: "pane-1",
         workspaceLabel: "hide",
         agentKind: "codex",
-        state: "working",
-        symbol: "●",
+        demand: "none",
+        activity: "working",
+        group: "working",
+        symbol: "\u{25cf}",
         summary: "Build the release",
         elapsed: "2m",
-        sortRank: "01",
-        activity: "building",
+        lastActivity: "0000000000001",
         ambient: nil
     )
     let workspace = try JSONDecoder().decode(

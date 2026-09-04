@@ -304,13 +304,13 @@ fn snapshot_exposes_the_production_schema_and_status() {
     herdr_core_destroy(core);
 }
 
-fn pet_agent(pane_id: &str, token: &str, symbol: &str, rank: &str, activity: &str) -> Value {
+fn pet_agent(pane_id: &str, token: &str, symbol: &str, activity: &str) -> Value {
     json!({
         "pane_id": pane_id,
         "workspace_label": "Fixture",
         "agent": "codex",
         "agent_status": "unknown",
-        "tokens": {token: symbol, "sort_rank": rank, "activity": activity}
+        "tokens": {token: symbol, "activity": activity}
     })
 }
 
@@ -321,9 +321,9 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
-                pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
-                pet_agent("busy-b", "status_working", "\u{25cf}", "05", "0000000000003"),
-                pet_agent("quiet", "status_idle", "\u{25cb}", "10", "0000000000001")
+                pet_agent("busy-a", "status_working", "\u{25cf}", "0000000000002"),
+                pet_agent("busy-b", "status_working", "\u{25cf}", "0000000000003"),
+                pet_agent("quiet", "status_idle", "\u{25cb}", "0000000000001")
             ],
             "layouts": [single_pane_layout("w1", "busy-a")]
         }}),
@@ -334,36 +334,41 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
         "two working panes juggle"
     );
     assert_eq!(working["pet"]["badges"]["working"], 2);
-    assert_eq!(working["pet"]["badges"]["attention"], 0);
-    assert_eq!(working["pet"]["badges"]["error"], 0);
+    assert_eq!(working["pet"]["badges"]["needs_you"], 0);
+    assert_eq!(
+        working["pet"]["badges"]["done"], 1,
+        "the idle pane nobody has focused is unread, so it is Done"
+    );
     assert_eq!(working["pet"]["connection"], "connected");
 
-    // An unseen question outranks the working panes and joins the queue; the
-    // acknowledged one on the same snapshot does not.
+    // A question outranks the working panes and joins the queue. Herdr's own
+    // acknowledgment of the second one does not read it: only Hide's pane
+    // record can, and no pane here has been focused.
     dispatch(
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
-                pet_agent("busy-a", "status_working", "\u{25cf}", "05", "0000000000002"),
+                pet_agent("busy-a", "status_working", "\u{25cf}", "0000000000002"),
                 json!({"pane_id": "asked", "workspace_label": "Fixture", "agent": "claude",
                        "agent_status": "done",
-                       "tokens": {"status_question_new": "?", "sort_rank": "01",
-                                  "activity": "0000000000004"}}),
+                       "tokens": {"status_question_new": "?", "activity": "0000000000004"}}),
                 json!({"pane_id": "acknowledged", "workspace_label": "Fixture", "agent": "claude",
                        "agent_status": "idle",
-                       "tokens": {"status_question": "?", "sort_rank": "10",
-                                  "activity": "0000000000005"}})
+                       "tokens": {"status_question": "?", "activity": "0000000000005"}})
             ],
             "layouts": [single_pane_layout("w1", "busy-a")]
         }}),
     );
     let asked = snapshot(core);
     assert_eq!(asked["pet"]["pose"], "notification");
-    assert_eq!(asked["pet"]["badges"]["attention"], 1);
+    assert_eq!(
+        asked["pet"]["badges"]["needs_you"], 2,
+        "Herdr dropping a question to its read token does not read it for Hide"
+    );
     assert_eq!(
         asked["pet"]["attention_pane_ids"],
-        json!(["asked"]),
-        "only the unseen question is jumpable"
+        json!(["acknowledged", "asked"]),
+        "both questions are jumpable until their panes are focused, most recent first"
     );
 
     herdr_core_destroy(core);
@@ -458,11 +463,10 @@ fn a_broken_agent_record_excludes_only_itself_and_reports_the_exclusion() {
         core,
         json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
             "agents": [
-                pet_agent("intact", "status_working", "\u{25cf}", "05", "0000000000002"),
+                pet_agent("intact", "status_working", "\u{25cf}", "0000000000002"),
                 json!({"pane_id": "broken", "workspace_label": "Fixture", "agent": "codex",
                        "agent_status": "working",
-                       "tokens": {"status_working": "\u{25cf}", "sort_rank": "oops",
-                                  "activity": "0000000000001"}})
+                       "tokens": {"status_working": "\u{25cf}", "activity": "oops"}})
             ],
             "layouts": [single_pane_layout("w1", "intact")]
         }}),
@@ -522,18 +526,22 @@ fn official_agent_statuses_survive_without_optional_plugin_tokens() {
         .as_array()
         .expect("agents array");
     assert_eq!(agents.len(), 3);
-    let state_for = |pane_id: &str| {
-        agents
+    let axes_for = |pane_id: &str| {
+        let agent = agents
             .iter()
             .find(|agent| agent["pane_id"] == pane_id)
-            .and_then(|agent| agent["state"].as_str())
-            .expect("projected agent state")
+            .expect("projected agent");
+        (
+            agent["demand"].as_str().expect("demand"),
+            agent["activity"].as_str().expect("activity"),
+            agent["group"].as_str().expect("group"),
+        )
     };
-    assert_eq!(state_for("working"), "working");
-    assert_eq!(state_for("blocked"), "blocked");
-    assert_eq!(state_for("done"), "unseen_completion");
+    assert_eq!(axes_for("working"), ("none", "working", "working"));
+    assert_eq!(axes_for("blocked"), ("approval", "unknown", "needs_you"));
+    assert_eq!(axes_for("done"), ("none", "stopped", "done"));
     assert_eq!(projected["pet"]["badges"]["working"], 1);
-    assert_eq!(projected["pet"]["badges"]["attention"], 1);
+    assert_eq!(projected["pet"]["badges"]["needs_you"], 1);
     assert_eq!(projected["pet"]["badges"]["done"], 1);
     assert!(
         projected["status"]["diagnostics"]
@@ -648,7 +656,7 @@ fn session_sync_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
 }
 
 #[test]
-fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
+fn close_pane_requires_confirmation_only_while_working_or_unread() {
     let core = create();
     dispatch(
         core,
@@ -657,10 +665,15 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
             "kind": "session_snapshot",
             "payload": {
                 "agents": [
-                    {"pane_id":"working","workspace_label":"Fixture","agent":"codex","agent_status":"working","tokens":{"status_working":"●","sort_rank":"05","activity":"0000000000003","summary":"Running task","elapsed":"1m"}},
-                    {"pane_id":"attention","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_question_new":"?","sort_rank":"01","activity":"0000000000002","summary":"Needs answer","elapsed":"2m"}},
-                    {"pane_id":"idle","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"Idle","elapsed":"3m"}}
-                ]
+                    {"pane_id":"working","workspace_label":"Fixture","agent":"codex","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000003","summary":"Running task","elapsed":"1m"}},
+                    {"pane_id":"attention","workspace_label":"Fixture","agent":"codex","agent_status":"idle","tokens":{"status_question_new":"?","activity":"0000000000002","summary":"Needs answer","elapsed":"2m"}},
+                    {"pane_id":"unknown","workspace_label":"Fixture","agent":"codex","agent_status":"unknown","tokens":{"status_unknown":"~","activity":"0000000000001","summary":"Unknown","elapsed":"3m"}}
+                ],
+                // A pane whose activity nobody can name sits in Seen and
+                // closes without a prompt. Reading is not what puts it there:
+                // only an operator focus reads a pane, and this core has no
+                // live connection to focus one through.
+                "layouts": [single_pane_layout("w1", "unknown")]
             }
         }),
     );
@@ -679,11 +692,11 @@ fn close_pane_requires_confirmation_only_for_working_or_attention_states() {
 
     dispatch(
         core,
-        json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": "idle", "confirmed": false}}),
+        json!({"schema_version": 2, "kind": "close_pane", "payload": {"pane_id": "unknown", "confirmed": false}}),
     );
-    let idle = snapshot(core);
+    let seen = snapshot(core);
     assert_eq!(
-        idle["status"]["last_error"]["kind"],
+        seen["status"]["last_error"]["kind"],
         "pane.control_unavailable"
     );
 
@@ -1239,9 +1252,9 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
             "schema_version": 2,
             "kind": "session_snapshot",
             "payload": {"agents": [
-                {"pane_id":"seen-old","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000010","summary":"Seen older","elapsed":"2h"}},
-                {"pane_id":"blocked","workspace_label":"UI","agent":"claude","agent_status":"done","tokens":{"status_question_new":"?","sort_rank":"01","activity":"0000000000001","summary":"Need a decision","elapsed":"12s"}},
-                {"pane_id":"seen-new","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000020","summary":"Seen newer","elapsed":"4m"}}
+                {"pane_id":"seen-old","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000010","summary":"Seen older","elapsed":"2h"}},
+                {"pane_id":"blocked","workspace_label":"UI","agent":"claude","agent_status":"done","tokens":{"status_question_new":"?","activity":"0000000000001","summary":"Need a decision","elapsed":"12s"}},
+                {"pane_id":"seen-new","workspace_label":"Core","agent":"codex","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000020","summary":"Seen newer","elapsed":"4m"}}
             ]}
         }),
     );
@@ -1252,7 +1265,9 @@ fn session_snapshot_keeps_authoritative_agent_order_and_tokens() {
     assert_eq!(agents[0]["pane_id"], "blocked");
     assert_eq!(agents[1]["pane_id"], "seen-new");
     assert_eq!(agents[2]["pane_id"], "seen-old");
-    assert_eq!(agents[0]["state"], "question");
+    assert_eq!(agents[0]["demand"], "question");
+    assert_eq!(agents[0]["group"], "needs_you");
+    assert_eq!(agents[0]["status_label"], "Question");
     assert_eq!(agents[0]["symbol"], "?");
 
     herdr_core_destroy(core);
@@ -1381,11 +1396,11 @@ fn only_a_detected_agent_with_a_forkable_session_offers_a_fork() {
             "kind": "session_snapshot",
             "payload": {
                 "agents": [
-                    {"pane_id":"claude-with-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000001"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000001","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"codex-with-session","workspace_label":"Fixture","agent":"codex","agent_status":"idle","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000002"},"spawned_from_pane_id":"claude-with-session","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000002","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"claude-no-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000003","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"session-by-path","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"path","value":"/tmp/session.jsonl"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000004","summary":"Idle","elapsed":"1m"}},
-                    {"pane_id":"unknown-agent","workspace_label":"Fixture","agent":"gemini","agent_status":"idle","agent_session":{"source":"herdr:gemini","agent":"gemini","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000005"},"tokens":{"status_idle":"○","sort_rank":"10","activity":"0000000000005","summary":"Idle","elapsed":"1m"}}
+                    {"pane_id":"claude-with-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000001"},"tokens":{"status_idle":"○","activity":"0000000000001","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"codex-with-session","workspace_label":"Fixture","agent":"codex","agent_status":"idle","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000002"},"spawned_from_pane_id":"claude-with-session","tokens":{"status_idle":"○","activity":"0000000000002","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"claude-no-session","workspace_label":"Fixture","agent":"claude","agent_status":"idle","tokens":{"status_idle":"○","activity":"0000000000003","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"session-by-path","workspace_label":"Fixture","agent":"claude","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"path","value":"/tmp/session.jsonl"},"tokens":{"status_idle":"○","activity":"0000000000004","summary":"Idle","elapsed":"1m"}},
+                    {"pane_id":"unknown-agent","workspace_label":"Fixture","agent":"gemini","agent_status":"idle","agent_session":{"source":"herdr:gemini","agent":"gemini","kind":"id","value":"3f2b1c00-0000-4000-8000-000000000005"},"tokens":{"status_idle":"○","activity":"0000000000005","summary":"Idle","elapsed":"1m"}}
                 ]
             }
         }),

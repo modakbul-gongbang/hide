@@ -165,21 +165,24 @@ struct CorePetSnapshot: Decodable, Equatable {
     }
 }
 
+/// The four groups the sidebar draws, counted by the core. `needsYou` is the
+/// pet's act-now number and `done` is what finished unseen, so a badge can
+/// never disagree with the section it stands for.
 struct CorePetBadges: Decodable, Equatable {
-    let working: Int
+    let needsYou: Int
     let done: Int
-    let attention: Int
-    let error: Int
+    let working: Int
+    let seen: Int
     let disconnected: Int
     let subagentsActive: UInt32
     let backgroundRunning: UInt32
     let backgroundFailed: UInt32
 
     enum CodingKeys: String, CodingKey {
-        case working
+        case needsYou = "needs_you"
         case done
-        case attention
-        case error
+        case working
+        case seen
         case disconnected
         case subagentsActive = "subagents_active"
         case backgroundRunning = "background_running"
@@ -187,10 +190,10 @@ struct CorePetBadges: Decodable, Equatable {
     }
 
     static let none = CorePetBadges(
-        working: 0,
+        needsYou: 0,
         done: 0,
-        attention: 0,
-        error: 0,
+        working: 0,
+        seen: 0,
         disconnected: 0,
         subagentsActive: 0,
         backgroundRunning: 0,
@@ -572,7 +575,12 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let terminalTitle: String?
     let workspaceLabel: String?
     let cwd: String
-    let state: String
+    /// The one short human word for the agent in this pane. The core derives
+    /// it; no view builds a label out of a state name.
+    let statusLabel: String
+    /// Whether closing this pane needs confirmation first, as the core derived
+    /// it for the same agent the sidebar row shows.
+    let requiresCloseConfirmation: Bool
     let summary: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
@@ -587,7 +595,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case terminalTitle = "terminal_title"
         case workspaceLabel = "workspace_label"
         case cwd
-        case state
+        case statusLabel = "status_label"
+        case requiresCloseConfirmation = "requires_close_confirmation"
         case summary
         case activityAt = "activity_at_unix_ms"
     }
@@ -598,7 +607,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         terminalTitle: String? = nil,
         workspaceLabel: String? = nil,
         cwd: String,
-        state: String,
+        statusLabel: String,
+        requiresCloseConfirmation: Bool = false,
         summary: String?,
         activityAt: UInt64?,
         fork: CorePaneFork = CorePaneFork(),
@@ -609,7 +619,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.terminalTitle = terminalTitle
         self.workspaceLabel = workspaceLabel
         self.cwd = cwd
-        self.state = state
+        self.statusLabel = statusLabel
+        self.requiresCloseConfirmation = requiresCloseConfirmation
         self.summary = summary
         self.activityAt = activityAt
         self.fork = fork
@@ -628,7 +639,10 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
         workspaceLabel = try container.decodeIfPresent(String.self, forKey: .workspaceLabel)
         cwd = try container.decode(String.self, forKey: .cwd)
-        state = try container.decode(String.self, forKey: .state)
+        statusLabel = try container.decode(String.self, forKey: .statusLabel)
+        requiresCloseConfirmation = try container.decode(
+            Bool.self, forKey: .requiresCloseConfirmation
+        )
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
@@ -656,7 +670,7 @@ struct CorePaneFork: Decodable, Equatable {
     }
 }
 
-struct SidebarAgent: Decodable, Identifiable {
+struct SidebarAgent: Decodable, Equatable, Identifiable {
     let id: String
     let paneID: String
     let workspaceLabel: String
@@ -664,13 +678,71 @@ struct SidebarAgent: Decodable, Identifiable {
     /// project. Absent for a pane the navigator does not hold.
     var checkoutLabel: String? = nil
     let agentKind: String
-    let state: String
+    /// What the agent needs from the operator: `question`, `approval`,
+    /// `error`, or `none`.
+    let demand: String
+    /// Whether the agent is running: `working`, `stopped`, or `unknown`.
+    let activity: String
+    /// Whether this pane has changed since the operator last focused it. Hide
+    /// owns this per pane; Herdr's seen is tab-scoped and is never used here.
+    let unread: Bool
+    /// Herdr reports an approval prompt on this pane right now.
+    let blocked: Bool
+    /// Which of the four sidebar groups this row belongs to.
+    let group: String
     let symbol: String
+    /// Whether the row is drawn bright rather than subdued.
+    let emphasized: Bool
+    /// The one short human word this row shows.
+    let statusLabel: String
+    /// Whether closing this pane needs confirmation first.
+    let requiresCloseConfirmation: Bool
     let summary: String
     let elapsed: String
-    let sortRank: String
-    let activity: String
+    let lastActivity: String
     let ambient: CoreAmbientSignal?
+
+    /// Fixtures and tests build a row directly. Every derived value defaults
+    /// to the quiet reading, so a fixture states only what it is exercising.
+    init(
+        id: String,
+        paneID: String,
+        workspaceLabel: String,
+        checkoutLabel: String? = nil,
+        agentKind: String,
+        demand: String = "none",
+        activity: String = "unknown",
+        unread: Bool = false,
+        blocked: Bool = false,
+        group: String = "seen",
+        symbol: String,
+        emphasized: Bool = false,
+        statusLabel: String = "Idle",
+        requiresCloseConfirmation: Bool = false,
+        summary: String,
+        elapsed: String,
+        lastActivity: String,
+        ambient: CoreAmbientSignal?
+    ) {
+        self.id = id
+        self.paneID = paneID
+        self.workspaceLabel = workspaceLabel
+        self.checkoutLabel = checkoutLabel
+        self.agentKind = agentKind
+        self.demand = demand
+        self.activity = activity
+        self.unread = unread
+        self.blocked = blocked
+        self.group = group
+        self.symbol = symbol
+        self.emphasized = emphasized
+        self.statusLabel = statusLabel
+        self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.summary = summary
+        self.elapsed = elapsed
+        self.lastActivity = lastActivity
+        self.ambient = ambient
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -678,12 +750,18 @@ struct SidebarAgent: Decodable, Identifiable {
         case workspaceLabel = "workspace_label"
         case checkoutLabel = "checkout_label"
         case agentKind = "agent_kind"
-        case state
+        case demand
+        case activity
+        case unread
+        case blocked
+        case group
         case symbol
+        case emphasized
+        case statusLabel = "status_label"
+        case requiresCloseConfirmation = "requires_close_confirmation"
         case summary
         case elapsed
-        case sortRank = "sort_rank"
-        case activity
+        case lastActivity = "last_activity"
         case ambient
     }
 }
@@ -843,6 +921,10 @@ struct CoreUIStateSnapshot: Decodable {
     /// Per-pane content text scale. A pane the user has not zoomed is absent,
     /// so a lookup miss means the default rather than an error.
     let paneTextScales: [String: Double]
+    /// The file editor's own zoom. The editor is one surface rather than one
+    /// per document, and it is not a pane, so it carries a scale of its own
+    /// instead of a row in the pane-keyed map.
+    let editorTextScale: Double
 
     enum CodingKeys: String, CodingKey {
         case leftSidebarVisible = "left_sidebar_visible"
@@ -860,6 +942,7 @@ struct CoreUIStateSnapshot: Decodable {
         case accentHex = "accent_hex"
         case fontSize = "font_size"
         case paneTextScales = "pane_text_scales"
+        case editorTextScale = "editor_text_scale"
     }
 
     init(from decoder: Decoder) throws {
@@ -897,6 +980,7 @@ struct CoreUIStateSnapshot: Decodable {
             [String: Double].self,
             forKey: .paneTextScales
         ) ?? [:]
+        editorTextScale = try container.decodeIfPresent(Double.self, forKey: .editorTextScale) ?? 1
     }
 }
 
@@ -1500,8 +1584,21 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func focusPane(_ paneID: String) {
-        dispatch(kind: "focus_pane", payload: ["pane_id": paneID])
+    /// Why a pane focus is being asked for.
+    ///
+    /// The core raises a pane's read record only for an operator focus, so a
+    /// launch restore reinstating the last session's selection must say so:
+    /// the operator has not looked at what changed while the app was closed.
+    enum PaneFocusOrigin: String {
+        case operatorChoice = "operator"
+        case restore
+    }
+
+    func focusPane(_ paneID: String, origin: PaneFocusOrigin) {
+        dispatch(
+            kind: "focus_pane",
+            payload: ["pane_id": paneID, "origin": origin.rawValue]
+        )
     }
 
     /// The core owns the ladder and its bounds, so the shell sends a direction
@@ -1539,6 +1636,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             kind: "pane_text_scale",
             payload: ["pane_id": paneID, "direction": direction.rawValue]
         )
+    }
+
+    func setEditorTextScale(direction: PaneTextScaleDirection) {
+        dispatch(kind: "editor_text_scale", payload: ["direction": direction.rawValue])
     }
 
     var pet: CorePetSnapshot? { snapshot?.pet }
@@ -2225,7 +2326,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         restoredPaneSelection = true
         guard decoded.terminal.paneID == nil,
               let persisted = decoded.uiState.selectedPaneID else { return }
-        focusPane(persisted)
+        focusPane(persisted, origin: .restore)
     }
 
     private func drainPendingTerminalBytes(for paneID: String) {
@@ -2243,13 +2344,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let workspaceID = "fixture-workspace"
         let tabID = "fixture-tab"
         let agents: [[String: Any]] = [
-            Self.fixtureAgent("error", "×", "00", "1755000007000", "Build failed", "12s", "Core", "codex", "status_error_new"),
-            Self.fixtureAgent("question", "?", "01", "1755000006000", "Choose persistence scope", "4m", "UI", "claude", "status_question_new"),
-            Self.fixtureAgent("approval", "!", "02", "1755000005000", "Approve local save", "8m", "Explorer", "codex", "status_approval_new"),
-            Self.fixtureAgent("done", "●", "04", "1755000004000", "Sidebar contract complete", "2h", "Agents", "claude", "status_done_new"),
-            Self.fixtureAgent("working", "●", "05", "1755000003000", "Connecting Rust bytes", "18s", "Terminal", "codex", "status_working"),
-            Self.fixtureAgent("idle", "○", "10", "1755000002000", "Reviewed fixture", "3d", "Verify", "claude", "status_idle"),
-            Self.fixtureAgent("unknown", "~", "10", "1755000001000", "Awaiting lifecycle token", "9m", "Other", "unknown", "status_unknown"),
+            Self.fixtureAgent("error", "×", "1755000007000", "Build failed", "12s", "Core", "codex", "status_error_new"),
+            Self.fixtureAgent("question", "?", "1755000006000", "Choose persistence scope", "4m", "UI", "claude", "status_question_new"),
+            Self.fixtureAgent("approval", "!", "1755000005000", "Approve local save", "8m", "Explorer", "codex", "status_approval_new"),
+            Self.fixtureAgent("done", "●", "1755000004000", "Sidebar contract complete", "2h", "Agents", "claude", "status_done_new"),
+            Self.fixtureAgent("working", "●", "1755000003000", "Connecting Rust bytes", "18s", "Terminal", "codex", "status_working"),
+            Self.fixtureAgent("idle", "○", "1755000002000", "Reviewed fixture", "3d", "Verify", "claude", "status_idle"),
+            Self.fixtureAgent("unknown", "~", "1755000001000", "Awaiting lifecycle token", "9m", "Other", "unknown", "status_unknown"),
         ]
         dispatch(kind: "create_workspace", payload: [
             "path": workspaceRoot.path,
@@ -2289,7 +2390,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private static func fixtureAgent(
         _ id: String,
         _ symbol: String,
-        _ rank: String,
         _ activity: String,
         _ summary: String,
         _ elapsed: String,
@@ -2305,7 +2405,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "agent_status": id == "working" ? "working" : id == "idle" ? "idle" : "unknown",
             "tokens": [
                 statusToken: symbol,
-                "sort_rank": rank,
                 "activity": activity,
                 "summary": summary,
                 "elapsed": elapsed,

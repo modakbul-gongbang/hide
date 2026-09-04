@@ -371,8 +371,20 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.agents ?? []
     }
 
-    var agentsNeedingAttention: [SidebarAgent] {
-        SidebarGrouping.needingAttention(agents)
+    /// The Needs You and Done sections the Projects view draws above the tree.
+    var raisedAgentSections: [AgentGroupSection] {
+        SidebarGrouping.raised(agents)
+    }
+
+    /// Every non-empty group in group order, for the Agents view.
+    var agentSections: [AgentGroupSection] {
+        SidebarGrouping.sections(agents)
+    }
+
+    /// The rows the Projects view has already drawn at the top, so the tree
+    /// below does not repeat them.
+    var raisedAgents: [SidebarAgent] {
+        raisedAgentSections.flatMap(\.agents)
     }
 
     func agents(in checkout: CoreCheckoutSnapshot) -> [SidebarAgent] {
@@ -558,7 +570,7 @@ final class ShellModel: ObservableObject {
 
     func paneStatus(for paneID: String) -> String {
         if isRemoteContext {
-            return paneMetadata(for: paneID)?.state ?? "unavailable"
+            return paneMetadata(for: paneID)?.statusLabel ?? "Unavailable"
         }
         guard let pane = core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID }) else {
             return "idle"
@@ -617,7 +629,7 @@ final class ShellModel: ObservableObject {
             }
             HideLaunchTrace.mark("pane.selection", detail: "remote_\(paneID)")
         } else {
-            core.focusPane(paneID)
+            core.focusPane(paneID, origin: .operatorChoice)
             HideLaunchTrace.mark("pane.selection", detail: "local_\(paneID)")
         }
         focus(.terminal)
@@ -811,7 +823,7 @@ final class ShellModel: ObservableObject {
             core.focusRemotePane(targetID: targetID, paneID: agent.paneID)
         } else {
             core.focusCheckout(workspaceID: workspace.id, checkoutID: checkout.id)
-            core.focusPane(agent.paneID)
+            core.focusPane(agent.paneID, origin: .operatorChoice)
         }
         focus(.terminal)
     }
@@ -1332,27 +1344,28 @@ final class ShellModel: ObservableObject {
         FindResponderAction.send(.showFindInterface)
     }
 
-    /// The scale key for the file editor. Herdr pane ids always carry a `:`,
-    /// so this cannot collide with one.
-    static let fileEditorScaleKey = "file-editor"
-
     /// What the zoom chords act on: whatever the user is actually looking at.
     /// The editor overlays the terminal surface whenever a file tab is open,
     /// so an open tab means the editor is what is on screen.
-    var textScaleTarget: String? {
+    enum TextScaleTarget: Equatable {
+        case editor
+        case pane(String)
+    }
+
+    var textScaleTarget: TextScaleTarget? {
         if !isRemoteContext, core.snapshot?.editor.activeTabID != nil {
-            return Self.fileEditorScaleKey
+            return .editor
         }
-        return focusedPaneID
+        return focusedPaneID.map(TextScaleTarget.pane)
     }
 
-    /// A target the user has never zoomed is absent from the map, which reads
-    /// as the default rather than as a missing value.
-    func textScale(for target: String) -> CGFloat {
-        CGFloat(core.snapshot?.uiState.paneTextScales[target] ?? 1)
+    /// A pane the user has never zoomed is absent from the map, which reads as
+    /// the default rather than as a missing value.
+    func textScale(for paneID: String) -> CGFloat {
+        CGFloat(core.snapshot?.uiState.paneTextScales[paneID] ?? 1)
     }
 
-    var editorTextScale: CGFloat { textScale(for: Self.fileEditorScaleKey) }
+    var editorTextScale: CGFloat { CGFloat(core.snapshot?.uiState.editorTextScale ?? 1) }
 
     func focus(_ surface: ShellSurface) {
         switch surface {
@@ -1553,14 +1566,16 @@ final class ShellModel: ObservableObject {
             ? [DestructiveTarget(
                 id: tabID,
                 label: tab.label ?? tabID,
-                state: "idle",
+                statusLabel: "Idle",
+                requiresCloseConfirmation: false,
                 summary: "No working or attention state is reported for this tab."
             )]
             : affectedAgents.map {
                 DestructiveTarget(
                     id: $0.paneID,
                     label: $0.workspaceLabel,
-                    state: $0.state,
+                    statusLabel: $0.statusLabel,
+                    requiresCloseConfirmation: $0.requiresCloseConfirmation,
                     summary: $0.summary
                 )
             }
@@ -1638,7 +1653,8 @@ final class ShellModel: ObservableObject {
         let target = DestructiveTarget(
             id: paneID,
             label: paneID,
-            state: agent?.state ?? "idle",
+            statusLabel: agent?.statusLabel ?? "Idle",
+            requiresCloseConfirmation: agent?.requiresCloseConfirmation ?? false,
             summary: agent?.summary ?? "No working or attention state is reported for this pane."
         )
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
@@ -1659,11 +1675,14 @@ final class ShellModel: ObservableObject {
         // the same thing for a local and a remote pane and is settled before
         // the route split rather than twice inside it.
         if let direction = command.textScaleDirection {
-            guard let target = textScaleTarget else {
+            switch textScaleTarget {
+            case .none:
                 interactionNotice = "Select a pane before changing its text size."
-                return
+            case .editor:
+                core.setEditorTextScale(direction: direction)
+            case .pane(let paneID):
+                core.setPaneTextScale(paneID: paneID, direction: direction)
             }
-            core.setPaneTextScale(paneID: target, direction: direction)
             return
         }
         switch paneCommandRoute {
@@ -1747,7 +1766,13 @@ final class ShellModel: ObservableObject {
         pendingTabCloseTarget = nil
         let agents = core.snapshot?.navigator.agents ?? []
         let targets = agents.map {
-            DestructiveTarget(id: $0.paneID, label: $0.workspaceLabel, state: $0.state, summary: $0.summary)
+            DestructiveTarget(
+                id: $0.paneID,
+                label: $0.workspaceLabel,
+                statusLabel: $0.statusLabel,
+                requiresCloseConfirmation: $0.requiresCloseConfirmation,
+                summary: $0.summary
+            )
         }
         consequenceNotice = ConsequencePolicy.notice(kind: kind, targets: targets)
         consequenceResult = nil

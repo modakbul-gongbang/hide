@@ -9,16 +9,13 @@ import Foundation
 enum PaneHeaderControls {
     /// Every pane can be closed. A pane running an agent that is working or
     /// waiting on the operator says so first, because closing it ends that
-    /// work; the core enforces the same rule and rejects an unconfirmed close.
-    static func closeRequiresConfirmation(paneState: String) -> Bool {
-        [
-            "working",
-            "blocked",
-            "question",
-            "approval",
-            "error",
-            "unseen_completion",
-        ].contains(paneState)
+    /// work.
+    ///
+    /// The answer is the core's, carried on the pane. The header used to keep
+    /// its own list of state names, which is exactly how the shell and the
+    /// core came to disagree about what counts as busy.
+    static func closeRequiresConfirmation(_ pane: CorePaneSnapshot) -> Bool {
+        pane.requiresCloseConfirmation
     }
 
     /// A fork control appears only where the core says a fork could succeed.

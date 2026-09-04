@@ -21,13 +21,13 @@ use crate::model::{
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
     SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
     TerminalPaneSnapshot,
-    UiStateSnapshot,
+    UiStateSnapshot, WorkspaceSnapshot,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::model::SidebarAgentSnapshot;
-use crate::sidebar::{SessionSnapshotPayload, project_agents};
+use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
 /// Places one checkout's tab strip.
@@ -175,6 +175,25 @@ enum MouseButton {
 #[derive(Debug, Deserialize)]
 struct FocusPanePayload {
     pane_id: String,
+}
+
+/// Why the shell asked for a pane focus.
+///
+/// The read axis needs the two apart. An operator focus is the act the whole
+/// read record rests on; a launch restore reinstates the selection the last
+/// session ended on, which says nothing about whether the operator has looked
+/// at what changed while the app was closed.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum PaneFocusOrigin {
+    Operator,
+    Restore,
+}
+
+#[derive(Debug, Deserialize)]
+struct FocusPaneRequestPayload {
+    pane_id: String,
+    origin: PaneFocusOrigin,
 }
 
 #[derive(Debug, Deserialize)]
@@ -385,9 +404,94 @@ fn remote_tab_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'
         .filter(|tab_id| !tab_id.trim().is_empty())
 }
 
+/// The prefix every pane id belonging to one remote target carries. It is
+/// both the terminal-pane ownership test and the read record ledger's scope
+/// for that target, so the two cannot disagree about which panes are its own.
+fn remote_pane_id_prefix(target_id: &str) -> String {
+    format!("remote:{target_id}:pane:")
+}
+
+/// Copies each pane's status word and close-confirmation answer from the agent
+/// rows that carry the read axis.
+///
+/// A pane tree is projected separately from the agent rows, by a pass that
+/// cannot see the read record ledger and does not know which pane is focused.
+/// Left alone it publishes `Done` and demands a close confirmation for every
+/// pane the operator has already read. One owner decides the answer; every
+/// tree copies it, local and remote alike, because a pane is a pane.
+fn sync_pane_status(
+    workspaces: &mut [WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+) -> bool {
+    let by_pane = agents
+        .iter()
+        .map(|agent| {
+            (
+                agent.pane_id.as_str(),
+                (
+                    agent.status_label.as_str(),
+                    agent.requires_close_confirmation,
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut changed = false;
+    for pane in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        let Some((status_label, requires_close_confirmation)) =
+            by_pane.get(pane.id.as_str()).copied()
+        else {
+            continue;
+        };
+        if pane.status_label != status_label {
+            pane.status_label = status_label.to_owned();
+            changed = true;
+        }
+        if pane.requires_close_confirmation != requires_close_confirmation {
+            pane.requires_close_confirmation = requires_close_confirmation;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Drops the text scale of a pane the server no longer reports, on the same
+/// pass that drops its read record, so neither map grows forever. Returns
+/// whether anything was dropped.
+///
+/// It runs on every pass that carries a fresh agent list rather than only when
+/// a read record moved: an operator who has looked at nothing moves no record,
+/// and gating on that left dead panes' zoom in the store forever.
+///
+/// A pass only drops keys in the namespace it owns, for the same reason read
+/// record eviction does: a local sync holds no remote pane list, so unscoped it
+/// deleted every remote pane's zoom the moment any local agent changed state.
+fn prune_pane_text_scales(
+    scales: &mut BTreeMap<String, f32>,
+    workspaces: &[WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+    scope: ReadRecordScope<'_>,
+) -> bool {
+    let live = workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .map(|pane| pane.id.as_str())
+        .chain(agents.iter().map(|agent| agent.pane_id.as_str()))
+        .collect::<HashSet<_>>();
+    let before = scales.len();
+    scales.retain(|pane_id, _| !scope.owns(pane_id) || live.contains(pane_id.as_str()));
+    scales.len() != before
+}
+
 fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
     projected_id
-        .strip_prefix(&format!("remote:{target_id}:pane:"))
+        .strip_prefix(&remote_pane_id_prefix(target_id))
         .filter(|pane_id| !pane_id.trim().is_empty())
 }
 
@@ -549,6 +653,13 @@ struct PaneTextScalePayload {
     direction: String,
 }
 
+/// The editor is one surface, not one per document, so its zoom carries a
+/// direction and nothing to key it by.
+#[derive(Debug, Deserialize)]
+struct EditorTextScalePayload {
+    direction: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct PetVisibilityPayload {
     visible: bool,
@@ -595,7 +706,7 @@ enum ValidatedEvent {
     TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
     Click(ClickPayload),
-    FocusPane(FocusPanePayload),
+    FocusPane(FocusPaneRequestPayload),
     OpenBrowser(OpenBrowserPayload),
     BrowserStatus(BrowserStatusPayload),
     CreateWorkspace(CreateWorkspacePayload),
@@ -629,6 +740,7 @@ enum ValidatedEvent {
     TerminalScroll(TerminalScrollPayload),
     PaneFind(PaneFindPayload),
     PaneTextScale(PaneTextScalePayload),
+    EditorTextScale(EditorTextScalePayload),
     ChangesSelect(ChangesSelectPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
@@ -700,6 +812,19 @@ pub struct Runtime {
     pet_active_at_unix_ms: u64,
     pet_waking_until_unix_ms: u64,
     pet_dragging: bool,
+    /// The pane the operator chose to look at, and the only pane whose read
+    /// record may be raised.
+    ///
+    /// Herdr's focus is not the operator's attention. A tab carries the pane
+    /// it last had focused, so bringing a tab forward makes Herdr report a
+    /// focus nobody asked for; a spawned pane takes focus on its own; and a
+    /// relaunch inherits whatever focus the arriving session snapshot names.
+    /// Counting any of those as a look cleared rows the operator never saw
+    /// (one click on a Done row cleared two rows, and a restart cleared the
+    /// last unread one). Only a focus Hide itself dispatched on the
+    /// operator's behalf arms this, and it is memory only: a launch starts
+    /// with the operator having looked at nothing.
+    operator_focused_pane_id: Option<String>,
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
@@ -854,6 +979,7 @@ impl Runtime {
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
+            operator_focused_pane_id: None,
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
@@ -1447,7 +1573,7 @@ impl Runtime {
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
                     && session.agents.iter().any(|agent| {
                         agent.pane_id == pane_id
-                            && crate::sidebar::requires_close_confirmation(&agent.state)
+                            && agent.requires_close_confirmation
                     });
             if needs_confirmation && !payload.request.confirmed() {
                 self.set_error(
@@ -1592,7 +1718,7 @@ impl Runtime {
                     .collect::<HashSet<_>>();
                 let needs_confirmation = session.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str())
-                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                        && agent.requires_close_confirmation
                 });
                 if needs_confirmation && !confirmed {
                     self.set_error(
@@ -1853,13 +1979,20 @@ impl Runtime {
                         terminal_title: source.and_then(|source| source.terminal_title.clone()),
                         workspace_label: agent.map(|agent| agent.workspace_label.clone()),
                         cwd,
-                        state: agent
-                            .map(|agent| agent.state.clone())
-                            .unwrap_or_else(|| "unknown".to_owned()),
+                        // This projection cannot see the read record ledger,
+                        // so both read-dependent values are refilled from the
+                        // navigator's agent rows once those are final; see
+                        // `sync_pane_status_from_agents`.
+                        status_label: agent
+                            .map(|agent| agent.status_label.clone())
+                            .unwrap_or_else(|| "Unknown".to_owned()),
+                        requires_close_confirmation: agent
+                            .is_some_and(|agent| agent.requires_close_confirmation),
                         summary: agent
                             .map(|agent| agent.summary.clone())
                             .filter(|summary| summary != crate::sidebar::MISSING_SUMMARY),
-                        activity_at_unix_ms: agent.and_then(|agent| agent.activity.parse().ok()),
+                        activity_at_unix_ms: agent
+                            .and_then(|agent| agent.last_activity.parse().ok()),
                         fork: pane_fork_snapshot(agent),
                         ports,
                     }
@@ -2361,8 +2494,16 @@ impl Runtime {
     pub fn ingest_remote_session(
         &mut self,
         target_id: &str,
-        fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
+        mut fetched: Result<RemoteSessionSnapshot, SessionFetchError>,
     ) -> bool {
+        // A remote projection is built off the runtime, so it cannot see the
+        // read ledger; without this every stopped remote pane published `Done`
+        // and demanded a close confirmation. Hide never focuses a remote pane,
+        // so the remote server's own focus is the read signal.
+        let mut read_changed = false;
+        if let Ok(session) = fetched.as_mut() {
+            read_changed = self.apply_remote_read_state(target_id, session);
+        }
         let pane_sets = fetched.as_ref().ok().map(|session| {
             remote_terminal_pane_sets(
                 session,
@@ -2384,7 +2525,7 @@ impl Runtime {
             return true;
         };
 
-        let mut changed = false;
+        let mut changed = read_changed;
         match fetched {
             Ok(session) => {
                 if status.state != "connected" || status.message.is_some() {
@@ -2456,7 +2597,7 @@ impl Runtime {
         live_pane_ids: &HashSet<String>,
         active_pane_ids: &HashSet<String>,
     ) -> bool {
-        let target_prefix = format!("remote:{target_id}:pane:");
+        let target_prefix = remote_pane_id_prefix(target_id);
         let belongs_to_target = |pane_id: &str| pane_id.starts_with(&target_prefix);
         let projected_pane_ids = self
             .snapshot
@@ -2916,6 +3057,7 @@ impl Runtime {
         self.snapshot.status.herdr.last_checked_at_unix_ms = Some(unix_milliseconds());
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
+            changed |= self.apply_pane_read_state(&mut agents, ReadRecordScope::Local);
             if self.snapshot.navigator.agents != agents {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
@@ -2987,7 +3129,7 @@ impl Runtime {
         let connected = self.snapshot.status.herdr.state == "connected";
         let agents = &self.snapshot.navigator.agents;
         let summary = pet::summarize(agents, connected);
-        if summary.error + summary.attention + summary.working > 0 {
+        if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
@@ -3008,10 +3150,10 @@ impl Runtime {
             sleep_phase: pet::sleep_phase_for_idle_ms(idle_ms).as_str().to_owned(),
             roam_allowed: connected && pet::is_roam_allowed(summary, idle_ms, self.pet_dragging),
             badges: PetBadgesSnapshot {
-                working: summary.working,
+                needs_you: summary.needs_you,
                 done: summary.done,
-                attention: summary.attention,
-                error: summary.error,
+                working: summary.working,
+                seen: summary.seen,
                 disconnected: summary.disconnected,
                 subagents_active: ambient.subagents_active,
                 background_running: ambient.background_running,
@@ -3060,6 +3202,129 @@ impl Runtime {
         self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
     }
 
+    /// Raises the operator-focused pane's read record and sets the read axis
+    /// on every row, then persists the record when it actually moved.
+    ///
+    /// This is the only place the read axis is decided, and the pane it reads
+    /// is the one the operator chose, not the one Herdr reports focused.
+    /// Herdr marks every pane in a tab seen the moment the tab is focused, so
+    /// three finished agents side by side would clear together; Hide keeps its
+    /// own pane-level record instead and never derives unread from Herdr's
+    /// `done` or `idle`, nor from a focus it merely inherited.
+    ///
+    /// The record moves on a real state change or an operator focus, not on
+    /// every tick, so the save this triggers is not a per-tick disk write.
+    fn apply_pane_read_state(
+        &mut self,
+        agents: &mut [SidebarAgentSnapshot],
+        scope: ReadRecordScope<'_>,
+    ) -> bool {
+        let focused = self.operator_focused_pane_id.clone();
+        let changes = crate::sidebar::apply_read_state(
+            agents,
+            &mut self.snapshot.ui_state.pane_read_records,
+            focused.as_deref(),
+            scope,
+        );
+        let synced = self.sync_pane_status_from_agents(agents);
+        let pruned = prune_pane_text_scales(
+            &mut self.snapshot.ui_state.pane_text_scales,
+            &self.snapshot.navigator.workspaces,
+            agents,
+            scope,
+        );
+        if changes.is_empty() && !pruned {
+            return synced;
+        }
+        self.record_read_record_changes(&changes);
+        true
+    }
+
+    /// Applies the read axis to one remote target's agent rows.
+    ///
+    /// A pane is a pane: a remote row earns its read record the same way a
+    /// local one does, from the focus its own server reports, because Hide
+    /// never focuses a remote pane itself. Eviction is scoped to this target's
+    /// pane id prefix, so a local sync cannot drop what this pass wrote and
+    /// this pass cannot drop another target's records.
+    ///
+    /// The remote pane tree arrives freshly projected on every sync, with no
+    /// read axis applied, so it is synced whether or not the ledger moved.
+    fn apply_remote_read_state(
+        &mut self,
+        target_id: &str,
+        session: &mut RemoteSessionSnapshot,
+    ) -> bool {
+        let focused = session.focused_pane_id.clone();
+        let prefix = remote_pane_id_prefix(target_id);
+        let changes = crate::sidebar::apply_read_state(
+            &mut session.agents,
+            &mut self.snapshot.ui_state.pane_read_records,
+            focused.as_deref(),
+            ReadRecordScope::Remote(&prefix),
+        );
+        let synced = sync_pane_status(&mut session.workspaces, &session.agents);
+        let pruned = prune_pane_text_scales(
+            &mut self.snapshot.ui_state.pane_text_scales,
+            &session.workspaces,
+            &session.agents,
+            ReadRecordScope::Remote(&prefix),
+        );
+        if changes.is_empty() && !pruned {
+            return synced;
+        }
+        self.record_read_record_changes(&changes);
+        true
+    }
+
+    /// Logs each read record move and saves the ledger.
+    ///
+    /// The record moves on a real state change, a focus move, or a pane going
+    /// away, not on every tick, so the save this triggers is not a per-tick
+    /// disk write.
+    fn record_read_record_changes(&mut self, changes: &[crate::sidebar::ReadRecordChange]) {
+        for change in changes {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "session",
+                    "kind": "pane.read_record",
+                    "pane_id": change.pane_id,
+                    "evicted": change.evicted,
+                    "state_change_seq": change.record.state_change_seq,
+                    "demand": change.record.demand,
+                    "activity": change.record.activity,
+                })
+            );
+        }
+        self.persist_ui_state();
+    }
+
+    /// Copies each local pane's status word and close-confirmation answer from
+    /// the agent rows that just had the read axis applied.
+    fn sync_pane_status_from_agents(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
+        sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
+    }
+
+    /// Steps one text scale by a direction the shell sent, or names the
+    /// direction it could not read and answers `None`.
+    fn stepped_text_scale(&mut self, current: f32, direction: &str) -> Option<f32> {
+        match direction {
+            "in" => Some(clamp_pane_text_scale(current + PANE_TEXT_SCALE_STEP)),
+            "out" => Some(clamp_pane_text_scale(current - PANE_TEXT_SCALE_STEP)),
+            "reset" => Some(DEFAULT_PANE_TEXT_SCALE),
+            other => {
+                self.set_error(
+                    "pane.text_scale_unknown_direction",
+                    format!("{other} is not a text scale direction; expected in, out, or reset"),
+                    true,
+                );
+                None
+            }
+        }
+    }
+
+
     /// Saves the current UI state and surfaces a write failure instead of
     /// dropping it.
     fn persist_ui_state(&mut self) {
@@ -3068,7 +3333,13 @@ impl Runtime {
         }
     }
 
-    fn focus_pane(&mut self, pane_id: String) {
+    /// Focuses a pane in Herdr, and for an operator focus makes that pane the
+    /// one the read record follows.
+    ///
+    /// The record is raised here rather than when the resulting layout lands,
+    /// so one click on a Done row clears that row inside the same dispatch.
+    /// A focus that never reaches Herdr arms nothing.
+    fn focus_pane(&mut self, pane_id: String, origin: PaneFocusOrigin) {
         let Some(context) = self.live.as_ref().cloned() else {
             self.set_error(
                 "pane.control_unavailable",
@@ -3078,11 +3349,20 @@ impl Runtime {
             return;
         };
         self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
-        if let Err(message) =
-            live::spawn_pane_control(context, PaneControlAction::Focus { pane_id })
-        {
+        if let Err(message) = live::spawn_pane_control(
+            context,
+            PaneControlAction::Focus {
+                pane_id: pane_id.clone(),
+            },
+        ) {
             self.set_error("pane.focus_worker_failed", message, true);
+            return;
         }
+        if origin == PaneFocusOrigin::Restore {
+            return;
+        }
+        self.operator_focused_pane_id = Some(pane_id);
+        self.refresh_pane_read_state();
     }
 
     fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
@@ -3119,8 +3399,10 @@ impl Runtime {
 
         // Herdr owns focus and input routing. The shell never keeps a second,
         // hover- or click-local focus value alongside the authoritative layout.
+        let previous_focus = self.snapshot.focused.pane_id.clone();
         self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
         self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
+        self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
         self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
         self.snapshot.pane_layout = Some(layout);
         if self
@@ -3140,6 +3422,39 @@ impl Runtime {
             }
         }
         layout_changed
+    }
+
+    /// Drops the operator focus once Herdr moves focus off the pane the
+    /// operator chose.
+    ///
+    /// The pane has to have been focused before it can be moved away from.
+    /// Requiring that is what lets a requested focus survive the stale layout
+    /// a tab brings forward on its way: bringing a checkout forward to reach
+    /// its pane makes Herdr report that tab's remembered pane first, and
+    /// clearing on that would leave the clicked row unread.
+    fn release_operator_focus_if_moved(&mut self, previous: &Option<String>, arriving: &str) {
+        let Some(operator) = self.operator_focused_pane_id.as_deref() else {
+            return;
+        };
+        if arriving == operator || previous.as_deref() != Some(operator) {
+            return;
+        }
+        self.push_diagnostic(
+            "pane.read_focus.released",
+            format!("Herdr moved focus from {operator} to {arriving}"),
+        );
+        self.operator_focused_pane_id = None;
+    }
+
+    /// Re-runs the read axis over the agents already in the snapshot, for the
+    /// moment the operator picks a pane without a new agent list arriving.
+    fn refresh_pane_read_state(&mut self) -> bool {
+        let before = self.snapshot.navigator.agents.clone();
+        let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
+        self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
+        let changed = before != agents;
+        self.snapshot.navigator.agents = agents;
+        changed
     }
 
     fn ensure_terminal_pane(&mut self, pane_id: &str) {
@@ -4429,7 +4744,7 @@ impl Runtime {
                 true
             }
             ValidatedEvent::FocusPane(payload) => {
-                self.focus_pane(payload.pane_id);
+                self.focus_pane(payload.pane_id, payload.origin);
                 true
             }
             ValidatedEvent::ReconnectPane(payload) => {
@@ -4989,7 +5304,7 @@ impl Runtime {
                     .collect::<HashSet<_>>();
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str())
-                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                        && agent.requires_close_confirmation
                 });
                 if requires_confirmation && !payload.confirmed {
                     self.set_error(
@@ -5022,7 +5337,7 @@ impl Runtime {
             ValidatedEvent::ClosePane(payload) => {
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     agent.pane_id == payload.pane_id
-                        && crate::sidebar::requires_close_confirmation(&agent.state)
+                        && agent.requires_close_confirmation
                 });
                 if requires_confirmation && !payload.confirmed {
                     self.set_error(
@@ -5521,20 +5836,8 @@ impl Runtime {
                     .get(&payload.pane_id)
                     .copied()
                     .unwrap_or(DEFAULT_PANE_TEXT_SCALE);
-                let next = match payload.direction.as_str() {
-                    "in" => clamp_pane_text_scale(current + PANE_TEXT_SCALE_STEP),
-                    "out" => clamp_pane_text_scale(current - PANE_TEXT_SCALE_STEP),
-                    "reset" => DEFAULT_PANE_TEXT_SCALE,
-                    other => {
-                        self.set_error(
-                            "pane.text_scale_unknown_direction",
-                            format!(
-                                "{other} is not a text scale direction; expected in, out, or reset"
-                            ),
-                            true,
-                        );
-                        return true;
-                    }
+                let Some(next) = self.stepped_text_scale(current, &payload.direction) else {
+                    return true;
                 };
                 // A pane at the default is absent rather than stored at 1.0,
                 // so resetting every pane leaves an empty map rather than a
@@ -5556,6 +5859,18 @@ impl Runtime {
                     self.persist_ui_state();
                 }
                 changed
+            }
+            ValidatedEvent::EditorTextScale(payload) => {
+                let current = self.snapshot.ui_state.editor_text_scale;
+                let Some(next) = self.stepped_text_scale(current, &payload.direction) else {
+                    return true;
+                };
+                if next == current {
+                    return false;
+                }
+                self.snapshot.ui_state.editor_text_scale = next;
+                self.persist_ui_state();
+                true
             }
             ValidatedEvent::ChangesSelect(payload) => {
                 if self.snapshot.changes.selected_path == payload.path {
@@ -5612,6 +5927,8 @@ impl Runtime {
                     // save must not erase it, for the same reason the pet
                     // fields above are carried through.
                     pane_text_scales: current.pane_text_scales,
+                    editor_text_scale: current.editor_text_scale,
+                    pane_read_records: current.pane_read_records,
                 };
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
@@ -6109,7 +6426,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
         "click" => decode!(ClickPayload, Click),
-        "focus_pane" => decode!(FocusPanePayload, FocusPane),
+        "focus_pane" => decode!(FocusPaneRequestPayload, FocusPane),
         "open_browser" => decode!(OpenBrowserPayload, OpenBrowser),
         "browser_status" => decode!(BrowserStatusPayload, BrowserStatus),
         "create_workspace" => decode!(CreateWorkspacePayload, CreateWorkspace),
@@ -6143,6 +6460,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
         "pane_find" => decode!(PaneFindPayload, PaneFind),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
+        "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
@@ -6986,6 +7304,115 @@ mod tests {
         );
     }
 
+    /// A runtime with a live context pointed at a socket that does not exist.
+    ///
+    /// Pane focus needs a live connection to be dispatched at all, and the
+    /// worker it spawns fails on its own without touching this runtime, so a
+    /// test can drive the real focus event rather than a shortcut into the
+    /// read record.
+    fn live_runtime() -> Runtime {
+        let mut runtime = runtime();
+        let socket_path = std::env::temp_dir()
+            .join(format!(
+                "herdr-core-read-record-{}-{}.sock",
+                std::process::id(),
+                NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned();
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone().into(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+        runtime
+    }
+
+    /// The event the shell sends when the operator clicks an agent row, a
+    /// pane, or picks one from the switcher.
+    fn operator_focus_event(pane_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_pane",
+            "payload": {"pane_id": pane_id, "origin": "operator"}
+        }))
+        .expect("focus pane event")
+    }
+
+    /// The event the shell sends once on launch to put the terminal back on
+    /// the pane the last session ended on.
+    fn restore_focus_event(pane_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_pane",
+            "payload": {"pane_id": pane_id, "origin": "restore"}
+        }))
+        .expect("restore focus event")
+    }
+
+    /// The panes the sidebar still shows as unread, in snapshot order.
+    fn unread_panes(runtime: &Runtime) -> Vec<String> {
+        let mut panes = runtime
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .filter(|agent| agent.unread)
+            .map(|agent| agent.pane_id.clone())
+            .collect::<Vec<_>>();
+        panes.sort();
+        panes
+    }
+
+    /// Three finished panes side by side in one tab, the shape the operator
+    /// reported. `focused` is the pane Herdr names as that tab's focus, which
+    /// is a tab-scoped verdict Hide's read axis must not follow.
+    fn finished_tab_payload(panes: &[(&str, u64)], focused: &str) -> SessionSnapshotPayload {
+        let agents = panes
+            .iter()
+            .map(|(pane_id, seq)| {
+                serde_json::json!({
+                    "pane_id": pane_id,
+                    "workspace_label": "Fixture",
+                    "agent": "codex",
+                    "agent_status": "done",
+                    "state_change_seq": seq,
+                    "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(panes.len(), 3, "the fixture is three panes side by side");
+        let layout_panes = panes
+            .iter()
+            .enumerate()
+            .map(|(index, (pane_id, _))| {
+                serde_json::json!({
+                    "pane_id": pane_id,
+                    "rect": {"x": index * 30, "y": 0, "width": 30, "height": 24}
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(serde_json::json!({
+            "agents": agents,
+            "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
+            "layouts": [{
+                "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 90, "height": 24},
+                "focused_pane_id": focused,
+                "panes": layout_panes,
+                "splits": [
+                    {"direction": "right", "ratio": 0.333_333_34,
+                     "rect": {"x": 0, "y": 0, "width": 90, "height": 24}},
+                    {"direction": "right", "ratio": 0.5,
+                     "rect": {"x": 30, "y": 0, "width": 60, "height": 24}}
+                ]
+            }]
+        }))
+        .expect("session payload")
+    }
+
     fn working_payload() -> SessionSnapshotPayload {
         serde_json::from_value(serde_json::json!({
             "agents": [{
@@ -6993,8 +7420,7 @@ mod tests {
                 "workspace_label": "Fixture",
                 "agent": "codex",
                 "agent_status": "working",
-                "tokens": {"status_working": "\u{25cf}", "sort_rank": "05",
-                           "activity": "0000000000001"}
+                "tokens": {"status_working": "\u{25cf}", "activity": "0000000000001"}
             }],
             "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
             "layouts": [{
@@ -7016,7 +7442,8 @@ mod tests {
             terminal_title: None,
             workspace_label: None,
             cwd: cwd.to_owned(),
-            state: "attached".to_owned(),
+            status_label: "Attached".to_owned(),
+            requires_close_confirmation: false,
             summary: None,
             activity_at_unix_ms: None,
             fork: PaneForkSnapshot::default(),
@@ -9615,6 +10042,547 @@ mod tests {
         runtime.ingest_session(Ok(working_payload()));
         assert_eq!(runtime.snapshot().pet.pose, "carrying");
         assert_eq!(runtime.snapshot().pet.connection, "connected");
+    }
+
+    /// AC2, AC4, SC3. An operator focus writes the pane's read record to the
+    /// store, and a pane Herdr stops reporting is gone from the file on the
+    /// next save, so the record cannot grow without bound.
+    #[test]
+    fn read_record_is_written_for_the_operator_focused_pane_and_evicted_when_it_disappears() {
+        let mut runtime = live_runtime();
+        let state_path = runtime.state_path.clone();
+        runtime.ingest_session(Ok(working_payload()));
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "the focus that arrived with the session is not a look the operator took"
+        );
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p1")));
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .pane_read_records
+                .contains_key("w1:p1"),
+            "the pane the operator chose is read"
+        );
+        let stored = std::fs::read_to_string(&state_path).expect("state file");
+        assert!(stored.contains("w1:p1"), "the record reached the file");
+
+        let empty: SessionSnapshotPayload =
+            serde_json::from_value(serde_json::json!({"agents": []})).expect("empty payload");
+        runtime.ingest_session(Ok(empty));
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "a pane Herdr stopped reporting leaves no record behind"
+        );
+        let stored = std::fs::read_to_string(&state_path).expect("state file");
+        assert!(!stored.contains("w1:p1"), "the record left the file too");
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    /// AC2, AC7, SC1. The defect the PRD was written against, from the other
+    /// side: one click on a Done row clears that row and nothing else, even
+    /// though Herdr reports the whole tab seen and names its own focused pane.
+    #[test]
+    fn read_record_follows_the_row_the_operator_clicked_and_no_other() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2", "w1:p3"],
+            "nothing is read before the operator looks at anything"
+        );
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2"],
+            "only the clicked row leaves Done"
+        );
+    }
+
+    /// AC2, SC1. Bringing a tab forward makes Herdr report the pane that tab
+    /// last had focused. Nobody chose that pane in this session, so no record
+    /// moves and the rows stay where they are.
+    #[test]
+    fn read_record_ignores_the_focus_a_tab_carries_when_it_comes_forward() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "a focus Hide only inherited is not a look the operator took"
+        );
+        assert_eq!(unread_panes(&runtime), vec!["w1:p1", "w1:p2", "w1:p3"]);
+    }
+
+    /// AC4, SC3. A launch inherits Herdr's focus and puts the terminal back on
+    /// the pane the last session ended on. Neither is the operator looking at
+    /// anything, so an item that was unread before the quit is still unread.
+    #[test]
+    fn read_record_survives_a_launch_that_inherits_a_focus() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&restore_focus_event("w1:p1")));
+
+        assert!(
+            runtime.snapshot().ui_state.pane_read_records.is_empty(),
+            "restoring the last session's selection reads nothing"
+        );
+        assert_eq!(unread_panes(&runtime), vec!["w1:p1", "w1:p2", "w1:p3"]);
+    }
+
+    /// AC3, R2. While the operator stays on the pane they chose, what the
+    /// agent does there is read as it happens, so the row does not come back.
+    #[test]
+    fn read_record_keeps_up_with_the_pane_the_operator_is_watching() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+
+        let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
+        runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p3")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2"],
+            "the watched pane stays read as its agent moves"
+        );
+    }
+
+    /// AC2, R2. Once Herdr moves focus off the pane the operator chose, that
+    /// pane stops counting as watched, so its next change comes back unread.
+    #[test]
+    fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        // The requested focus lands, then a spawned pane takes it away.
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
+        runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p1")));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2", "w1:p3"],
+            "a pane nobody is watching comes back unread when it changes"
+        );
+    }
+
+    /// AC2, AC3, AC4, R2. A pane is a pane: a remote pane earns a read record
+    /// from the focus its own server reports, exactly as a local pane earns one
+    /// from Hide's focus. The ledger is pruned by pane id namespace, so a local
+    /// sync cannot drop a remote record and one target cannot drop another's.
+    /// Before this, no record survived for a remote pane and a stopped remote
+    /// pane the operator had read still demanded a close confirmation.
+    #[test]
+    fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
+        let mut runtime = live_runtime();
+        let state_path = runtime.state_path.clone();
+        for target_id in ["mini", "build"] {
+            runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+                target_id: target_id.to_owned(),
+                state: "not_connected".to_owned(),
+                message: None,
+                last_checked_at_unix_ms: None,
+                session: None,
+                files: RemoteFileListSnapshot::idle(),
+            });
+        }
+        let remote_session = |target_id: &str, pane_ids: &[&str], focused: Option<&str>| {
+            let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+                "agents": pane_ids
+                    .iter()
+                    .map(|pane_id| serde_json::json!({
+                        "pane_id": pane_id,
+                        "workspace_label": "Remote",
+                        "agent": "codex",
+                        "agent_status": "idle",
+                        "state_change_seq": 4,
+                        "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                    }))
+                    .collect::<Vec<_>>()
+            }))
+            .expect("remote payload");
+            let mut agents = project_agents(payload).agents;
+            for agent in &mut agents {
+                agent.pane_id = remote_pane_id_prefix(target_id) + &agent.pane_id;
+                agent.id = agent.pane_id.clone();
+            }
+            // The pane tree arrives freshly projected with no read axis
+            // applied, which is what a remote sync actually delivers.
+            let panes = agents
+                .iter()
+                .map(|agent| {
+                    let mut projected = pane(&agent.pane_id, "/tmp/hide-remote-tree");
+                    projected.status_label = agent.status_label.clone();
+                    projected.requires_close_confirmation = agent.requires_close_confirmation;
+                    projected
+                })
+                .collect::<Vec<_>>();
+            let mut remote_workspace = workspace(
+                "remote:ws",
+                "Remote",
+                "/tmp/hide-remote-tree",
+                vec![checkout("remote:ws", "remote:checkout", "/tmp/hide-remote-tree", None)],
+            );
+            remote_workspace.checkouts[0].tabs = vec![TabSnapshot {
+                id: Some("remote:tab".to_owned()),
+                workspace_id: Some("remote:ws".to_owned()),
+                checkout_id: Some("remote:checkout".to_owned()),
+                label: Some("Session".to_owned()),
+                empty: false,
+                panes,
+            }];
+            RemoteSessionSnapshot {
+                workspaces: vec![remote_workspace],
+                agents,
+                active_tab_ids: BTreeMap::new(),
+                focused_workspace_id: None,
+                focused_checkout_id: None,
+                focused_tab_id: None,
+                focused_pane_id: focused
+                    .map(|pane_id| remote_pane_id_prefix(target_id) + pane_id),
+                pane_layouts: Vec::new(),
+            }
+        };
+        let stored_agents = |runtime: &Runtime, target_id: &str| {
+            runtime
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == target_id)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| {
+                    session
+                        .agents
+                        .iter()
+                        .map(|agent| {
+                            (
+                                agent.pane_id.clone(),
+                                (
+                                    agent.status_label.clone(),
+                                    agent.requires_close_confirmation,
+                                    agent.group.clone(),
+                                ),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .expect("remote session")
+        };
+        let tree_panes = |runtime: &Runtime, target_id: &str| {
+            runtime
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == target_id)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| {
+                    session
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .flat_map(|checkout| checkout.tabs.iter())
+                        .flat_map(|tab| tab.panes.iter())
+                        .map(|pane| {
+                            (
+                                pane.id.clone(),
+                                (pane.status_label.clone(), pane.requires_close_confirmation),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .expect("remote session")
+        };
+
+        runtime.ingest_session(Ok(working_payload()));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p1")));
+        assert!(runtime.snapshot.ui_state.pane_read_records.contains_key("w1:p1"));
+
+        runtime.ingest_remote_session(
+            "mini",
+            Ok(remote_session("mini", &["w9:p1", "w9:p2"], Some("w9:p1"))),
+        );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .pane_read_records
+                .contains_key("remote:mini:pane:w9:p1"),
+            "the pane the remote server focuses gets a read record like any other"
+        );
+        let mini = stored_agents(&runtime, "mini");
+        assert_eq!(
+            mini["remote:mini:pane:w9:p1"],
+            ("Idle".to_owned(), false, "seen".to_owned()),
+            "a stopped remote pane the operator has read closes without a prompt"
+        );
+        assert_eq!(
+            mini["remote:mini:pane:w9:p2"],
+            ("Done".to_owned(), true, "done".to_owned()),
+            "the pane beside it is still unread"
+        );
+        // The pane tree is what the remote pane surface reads, so the read
+        // axis has to reach it and not only the agent rows.
+        let tree = tree_panes(&runtime, "mini");
+        assert_eq!(
+            tree["remote:mini:pane:w9:p1"],
+            ("Idle".to_owned(), false),
+            "the remote pane tree carries the read pane's answer, not the projected one"
+        );
+        assert_eq!(
+            tree["remote:mini:pane:w9:p2"],
+            ("Done".to_owned(), true),
+            "the unread pane beside it still says so"
+        );
+
+        runtime.ingest_session(Ok(working_payload()));
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .pane_read_records
+                .contains_key("remote:mini:pane:w9:p1"),
+            "a local sync never prunes a remote record"
+        );
+
+        runtime.ingest_remote_session(
+            "build",
+            Ok(remote_session("build", &["w2:p1"], Some("w2:p1"))),
+        );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .pane_read_records
+                .contains_key("remote:mini:pane:w9:p1"),
+            "one target's sync never prunes another target's record"
+        );
+
+        runtime.ingest_remote_session("mini", Ok(remote_session("mini", &["w9:p2"], None)));
+        let records = runtime
+            .snapshot
+            .ui_state
+            .pane_read_records
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            records,
+            vec![
+                "remote:build:pane:w2:p1".to_owned(),
+                "w1:p1".to_owned(),
+            ],
+            "a target prunes only its own namespace"
+        );
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    /// R2, AC2. The read record pass prunes text scales on the same tick, and
+    /// it may only drop what it has the authority to drop. Unscoped it deleted
+    /// every remote pane's zoom on the next local sync, and it deleted the file
+    /// editor's zoom on every agent state change, because the editor's scale
+    /// was keyed into the pane map under a name no pane is ever reported under.
+    #[test]
+    fn read_record_change_leaves_remote_and_editor_zoom_alone() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        let zoom_pane = |runtime: &mut Runtime, pane_id: &str| {
+            let event = serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "pane_text_scale",
+                "payload": {"pane_id": pane_id, "direction": "in"}
+            }))
+            .expect("pane text scale event");
+            assert!(runtime.dispatch_json(&event));
+        };
+        let idle_payload = || -> SessionSnapshotPayload {
+            serde_json::from_value(serde_json::json!({
+                "agents": [{
+                    "pane_id": "w1:p1",
+                    "workspace_label": "Fixture",
+                    "agent": "codex",
+                    "agent_status": "idle",
+                    "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000002"}
+                }],
+                "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
+                "layouts": [{
+                    "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{"pane_id": "w1:p1",
+                               "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }]
+            }))
+            .expect("idle payload")
+        };
+
+        runtime.ingest_session(Ok(working_payload()));
+        zoom_pane(&mut runtime, "w1:p1");
+        zoom_pane(&mut runtime, "remote:mini:pane:w9:p1");
+        zoom_pane(&mut runtime, "w1:p9");
+        let editor_zoom = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "editor_text_scale",
+            "payload": {"direction": "in"}
+        }))
+        .expect("editor text scale event");
+        assert!(runtime.dispatch_json(&editor_zoom));
+        assert_eq!(runtime.snapshot().ui_state.editor_text_scale, 1.1);
+
+        // The focused pane's state moves, so the read record moves and the
+        // prune runs. This is the tick that used to lose both zooms.
+        runtime.ingest_session(Ok(idle_payload()));
+        let scales = runtime.snapshot().ui_state.pane_text_scales.clone();
+        assert_eq!(
+            scales.get("remote:mini:pane:w9:p1"),
+            Some(&1.1),
+            "a local sync holds no remote pane list and must not prune remote keys"
+        );
+        assert_eq!(scales.get("w1:p1"), Some(&1.1), "a live pane keeps its zoom");
+        assert!(
+            !scales.contains_key("w1:p9"),
+            "a local pane the server stopped reporting still loses its zoom"
+        );
+        assert_eq!(
+            runtime.snapshot().ui_state.editor_text_scale,
+            1.1,
+            "the editor is not a pane, so a pane prune cannot reach its zoom"
+        );
+
+        // A navigator or keyboard save carries the editor zoom through for the
+        // same reason it carries the pane map through.
+        let ui_state_update = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {"left_sidebar_visible": false}
+        }))
+        .expect("ui state update event");
+        runtime.dispatch_json(&ui_state_update);
+        assert_eq!(runtime.snapshot().ui_state.editor_text_scale, 1.1);
+
+        let stored = std::fs::read_to_string(&state_path).expect("state file");
+        assert!(
+            stored.contains("editor_text_scale"),
+            "the editor zoom is persisted, so it survives a restart"
+        );
+        let _ = std::fs::remove_file(&state_path);
+    }
+
+    /// The pane tree is projected separately from the navigator's agent rows.
+    /// It published `Done` and demanded a close confirmation for every pane the
+    /// operator had already read, because that projection never saw the record
+    /// ledger.
+    #[test]
+    fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
+        let mut runtime = live_runtime();
+        let state_path = runtime.state_path.clone();
+        let idle = |pane_id: &str| {
+            serde_json::json!({
+                "pane_id": pane_id,
+                "workspace_label": "Fixture",
+                "agent": "codex",
+                "agent_status": "idle",
+                "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000001"}
+            })
+        };
+        let checkout_path = "/private/tmp/hide-read-record-pane-tree";
+        runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+            id: "workspace:read-record".to_owned(),
+            label: "read-record".to_owned(),
+            path: checkout_path.to_owned(),
+            device_id: "local".to_owned(),
+        }];
+        runtime.rebuild_catalog();
+        let checkout_id =
+            workspace::checkout_id_for_path("workspace:read-record", Path::new(checkout_path));
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:read-record".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+        runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
+        runtime.reset_terminal_projection(None);
+        let tab = |index: u8| {
+            serde_json::json!({
+                "workspace_id": "herdr-workspace",
+                "tab_id": format!("herdr-workspace:t{index}"),
+                "label": index.to_string()
+            })
+        };
+        let layout = |index: u8| {
+            let pane_id = format!("plain:p{index}");
+            serde_json::json!({
+                "workspace_id": "herdr-workspace",
+                "tab_id": format!("herdr-workspace:t{index}"),
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": pane_id,
+                "panes": [{"pane_id": pane_id,
+                           "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            })
+        };
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [idle("plain:p1"), idle("plain:p2")],
+            "focused_pane_id": "plain:p1",
+            "panes": [
+                {"pane_id": "plain:p1", "cwd": checkout_path},
+                {"pane_id": "plain:p2", "cwd": checkout_path}
+            ],
+            "tabs": [tab(1), tab(2)],
+            "layouts": [layout(1), layout(2)]
+        }))
+        .expect("session payload");
+        runtime.ingest_session(Ok(payload));
+        assert!(runtime.dispatch_json(&operator_focus_event("plain:p1")));
+
+        let snapshot = runtime.snapshot();
+        let panes = snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .map(|pane| {
+                (
+                    pane.id.as_str(),
+                    pane.status_label.as_str(),
+                    pane.requires_close_confirmation,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            panes,
+            vec![("plain:p1", "Idle", false), ("plain:p2", "Done", true)],
+            "the read pane is Idle and closes without a prompt; the unread one does not"
+        );
+
+        for agent in &snapshot.navigator.agents {
+            let pane = panes
+                .iter()
+                .find(|(id, _, _)| *id == agent.pane_id)
+                .expect("every agent pane is in the tree");
+            assert_eq!(
+                (pane.1, pane.2),
+                (
+                    agent.status_label.as_str(),
+                    agent.requires_close_confirmation
+                ),
+                "pane {} disagrees with its agent row",
+                agent.pane_id
+            );
+        }
+        let _ = std::fs::remove_file(&state_path);
     }
 
     #[test]

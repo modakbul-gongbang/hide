@@ -302,10 +302,8 @@ mod tests {
 
     #[test]
     fn a_directory_outside_a_repository_states_its_reason() {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-changes-{}",
-            std::process::id()
-        ));
+        let root = crate::workspace::temp_base_outside_any_repository()
+            .join(format!("herdr-core-changes-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("the temporary checkout root is creatable");
         let mut reader = ChangesReader::new();
         let projected = reader

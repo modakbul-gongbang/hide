@@ -2612,7 +2612,6 @@ mod tests {
                     "cwd": "/tmp/project",
                     "tokens": {
                         "status_working": "●",
-                        "sort_rank": "04",
                         "activity": "1787963036671",
                         "summary": "doing things",
                         "elapsed": "6h"
@@ -2621,7 +2620,7 @@ mod tests {
                 {
                     "pane_id": "w9:p2",
                     "workspace_id": "w9",
-                    "tokens": {"status_idle": "○", "sort_rank": "10", "activity": "1787963036672"}
+                    "tokens": {"status_idle": "○", "activity": "1787963036672"}
                 }
             ]
         });
@@ -2640,8 +2639,8 @@ mod tests {
         assert_eq!(payload.agents[1].workspace_label.as_deref(), Some("w9"));
 
         let projected = crate::sidebar::project_agents(payload).agents;
-        assert_eq!(projected[0].state, "working");
-        assert_eq!(projected[1].state, "idle");
+        assert_eq!((projected[0].demand.as_str(), projected[0].activity.as_str()), ("none", "working"));
+        assert_eq!((projected[1].demand.as_str(), projected[1].activity.as_str()), ("none", "stopped"));
     }
 
     #[test]

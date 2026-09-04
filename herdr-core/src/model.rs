@@ -85,10 +85,15 @@ pub struct PetSnapshot {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PetBadgesSnapshot {
-    pub working: usize,
+    /// The four groups the sidebar draws, counted once. `needs_you` is the
+    /// pet's "act now" number and `done` is what finished unseen, so the badge
+    /// row and the sidebar cannot disagree.
+    pub needs_you: usize,
     pub done: usize,
-    pub attention: usize,
-    pub error: usize,
+    pub working: usize,
+    pub seen: usize,
+    /// Retained agents on a server that stopped answering. They are counted
+    /// separately because a stale count of what is waiting would be a lie.
     pub disconnected: usize,
     pub subagents_active: u32,
     pub background_running: u32,
@@ -172,6 +177,14 @@ pub struct DeviceSnapshot {
     pub agent_count: u32,
 }
 
+/// An agent's state on three independent axes, plus the values the shell draws
+/// from them.
+///
+/// The axes answer three different questions that a single flat state string
+/// used to mix: what the agent needs from the operator (`demand`), whether it
+/// is running (`activity`), and whether the operator has looked at it since it
+/// last changed (`unread`). Everything below `unread` is derived here so the
+/// shell only draws (design rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub id: String,
@@ -181,12 +194,37 @@ pub struct SidebarAgentSnapshot {
     #[serde(default)]
     pub checkout_label: Option<String>,
     pub agent_kind: String,
-    pub state: String,
+    /// What the agent needs from the operator: `question`, `approval`, `error`,
+    /// or `none`. Herdr's `blocked` lifecycle is an approval.
+    pub demand: String,
+    /// Whether the agent is running: `working`, `stopped`, or `unknown`.
+    /// Herdr's `done` and `idle` are the same activity; the difference between
+    /// them is a read judgment Herdr makes per tab, and Hide does not use it.
+    pub activity: String,
+    /// Whether this pane has changed since the operator last had it focused.
+    /// Owned by Hide per pane, never by Herdr's tab-scoped seen.
+    pub unread: bool,
+    /// Herdr reports an approval prompt on this pane right now. It holds the
+    /// row in Needs You whether or not the operator has read it.
+    pub blocked: bool,
+    /// Derived: `needs_you`, `done`, `working`, or `seen`.
+    pub group: String,
     pub symbol: String,
+    /// Derived: rows in Needs You and Done are drawn bright, the rest subdued.
+    pub emphasized: bool,
+    /// Derived: the short human word for this row. No view shows an axis value.
+    pub status_label: String,
+    /// Derived: closing this pane would interrupt work or discard a result the
+    /// operator has not read.
+    pub requires_close_confirmation: bool,
     pub summary: String,
     pub elapsed: String,
-    pub sort_rank: String,
-    pub activity: String,
+    /// The ordering key: the label plugin's activity timestamp when it has one,
+    /// otherwise Herdr's state change sequence zero-padded to the same width.
+    pub last_activity: String,
+    /// Herdr's own state change sequence, one of the three inputs to a pane's
+    /// read record.
+    pub state_change_seq: Option<u64>,
     pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
@@ -398,7 +436,13 @@ pub struct PaneSnapshot {
     pub terminal_title: Option<String>,
     pub workspace_label: Option<String>,
     pub cwd: String,
-    pub state: String,
+    /// The one short human word for the agent in this pane, from the same
+    /// derivation the sidebar row uses.
+    pub status_label: String,
+    /// Whether closing this pane needs the operator to confirm first. Derived
+    /// with the agent row's own value so the header and the core cannot
+    /// disagree about it.
+    pub requires_close_confirmation: bool,
     pub summary: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
@@ -616,15 +660,53 @@ pub struct UiStateSnapshot {
     pub accent_hex: String,
     /// The interface font size, in points, that the Appearance slider sets.
     /// It scales the shell's own chrome - every `hideFont` call site - and
-    /// nothing else. A pane's terminal bytes and the editor's code are sized by
-    /// `pane_text_scales` instead, so the two never apply to the same text.
+    /// nothing else. A pane's terminal bytes are sized by `pane_text_scales`
+    /// and the editor's code by `editor_text_scale`, so no two of the three
+    /// ever apply to the same text.
     #[serde(default = "default_font_size")]
     pub font_size: f32,
     /// Text scale for one pane's own content, keyed by pane id. A pane at the
     /// default scale is absent rather than present at 1.0, so the map stays
     /// the size of what the user actually changed.
+    ///
+    /// Every key here is a pane id Herdr reports, which is what lets a pane
+    /// that goes away take its entry with it. Nothing else may be stored here.
     #[serde(default)]
     pub pane_text_scales: BTreeMap<String, f32>,
+    /// Text scale for the file editor's code, which is one surface rather than
+    /// one per document.
+    ///
+    /// It is its own field and not a row in `pane_text_scales` because the
+    /// editor is not a pane: keyed into that map it had no pane id to be
+    /// reported under, so the pass that drops a departed pane's scale dropped
+    /// the editor's zoom on every agent state change.
+    #[serde(default = "default_pane_text_scale")]
+    pub editor_text_scale: f32,
+    /// What the operator had already seen on each pane, keyed by pane id.
+    ///
+    /// This is Hide's own record and the only authority for the read axis.
+    /// Herdr marks every pane in a tab seen the moment that tab is focused, so
+    /// three finished agents side by side would clear together; a pane-level
+    /// record is what keeps them separate. It rides the existing store rather
+    /// than a second file (engineering rule 7), and a store written before it
+    /// existed loads with an empty record, which reads as everything unread.
+    #[serde(default)]
+    pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+}
+
+/// One pane's read mark: the state the operator was looking at the last time
+/// the pane held keyboard focus.
+///
+/// A pane is unread when its current state does not match this record, so a
+/// missing record means unread. Equality rather than "newer than" is
+/// deliberate: a Herdr server restart can reset the sequence, and showing a
+/// pane as unread is the safe answer when the record can no longer be trusted.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PaneReadRecord {
+    #[serde(default)]
+    pub state_change_seq: Option<u64>,
+    pub demand: String,
+    pub activity: String,
 }
 
 /// The scale a pane has until the user zooms it.
@@ -645,6 +727,10 @@ pub const MAX_PANE_TEXT_SCALE: f32 = 2.0;
 pub fn clamp_pane_text_scale(scale: f32) -> f32 {
     let stepped = (scale / PANE_TEXT_SCALE_STEP).round() * PANE_TEXT_SCALE_STEP;
     stepped.clamp(MIN_PANE_TEXT_SCALE, MAX_PANE_TEXT_SCALE)
+}
+
+pub(crate) fn default_pane_text_scale() -> f32 {
+    DEFAULT_PANE_TEXT_SCALE
 }
 
 impl Default for UiStateSnapshot {
@@ -670,6 +756,8 @@ impl Default for UiStateSnapshot {
             accent_hex: default_accent_hex(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
+            editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
+            pane_read_records: BTreeMap::new(),
         }
     }
 }

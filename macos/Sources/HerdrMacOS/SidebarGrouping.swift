@@ -1,27 +1,71 @@
 import Foundation
 
-/// How the sidebar splits agents between the attention list and the space
-/// tree. Kept apart from `ShellModel` so both rules can be exercised without
-/// a live core runtime.
-enum SidebarGrouping {
-    /// States in which an agent has stopped and is waiting on the user.
-    /// Matches the vocabulary the core publishes in `sidebar.rs`.
-    static let attentionStates: Set<String> = [
-        "blocked", "question", "approval", "error", "unseen_completion",
-    ]
+/// The four groups the core sorts every agent into, in the order the sidebar
+/// reads them top to bottom.
+///
+/// Membership and order are decided once in the core projection. This names
+/// the groups for the screen and nothing else, so the two sidebar views, the
+/// pet dashboard, and the project tree cannot end up with different sets.
+enum AgentGroup: String, CaseIterable {
+    case needsYou = "needs_you"
+    case done
+    case working
+    case seen
 
-    static func requiresCloseConfirmation(_ state: String) -> Bool {
-        state == "working" || attentionStates.contains(state)
+    /// The core writes each of these names from its own exhaustive enum, so a
+    /// value this does not recognize can only mean a shell and a core that
+    /// were not built together. Seen is where such a row lands, because Seen
+    /// is already defined as everything the other three do not claim.
+    init(agent: SidebarAgent) {
+        self = AgentGroup(rawValue: agent.group) ?? .seen
     }
 
-    /// Agents that are blocked on the user.
+    /// The section heading above the group.
+    var title: String {
+        switch self {
+        case .needsYou: "Needs You"
+        case .done: "Done"
+        case .working: "Working"
+        case .seen: "Seen"
+        }
+    }
+}
+
+/// One group's rows, ready to draw.
+struct AgentGroupSection: Identifiable, Equatable {
+    var id: String { group.rawValue }
+    let group: AgentGroup
+    let agents: [SidebarAgent]
+}
+
+/// How the sidebar splits agents between the groups it raises to the top and
+/// the space tree. Kept apart from `ShellModel` so both rules can be exercised
+/// without a live core runtime.
+enum SidebarGrouping {
+    /// The two groups the Projects view lifts above the project tree.
     ///
     /// This is the one thing the space tree cannot answer: it says what is
-    /// blocked right now across every space, while the tree says what is in
-    /// one space. An agent that is merely working belongs in its space and
-    /// not here, so the section disappears whenever nothing is blocked.
-    static func needingAttention(_ agents: [SidebarAgent]) -> [SidebarAgent] {
-        agents.filter { attentionStates.contains($0.state) }
+    /// waiting and what finished across every space, while the tree says what
+    /// is in one space. A row in either group is drawn once, at the top, and
+    /// left out of the tree below.
+    static let raisedGroups: [AgentGroup] = [.needsYou, .done]
+
+    /// The rows of one group, in the order the core put them in.
+    static func agents(_ agents: [SidebarAgent], in group: AgentGroup) -> [SidebarAgent] {
+        agents.filter { AgentGroup(agent: $0) == group }
+    }
+
+    /// Every non-empty group in group order, for the Agents view's boundaries.
+    static func sections(_ agents: [SidebarAgent]) -> [AgentGroupSection] {
+        AgentGroup.allCases.compactMap { group in
+            let rows = Self.agents(agents, in: group)
+            return rows.isEmpty ? nil : AgentGroupSection(group: group, agents: rows)
+        }
+    }
+
+    /// The rows the Projects view draws above the tree, Needs You then Done.
+    static func raised(_ agents: [SidebarAgent]) -> [AgentGroupSection] {
+        sections(agents).filter { raisedGroups.contains($0.group) }
     }
 
     /// The agents running in a checkout, found through the panes that checkout

@@ -63,8 +63,9 @@ final class PetAnimator: ObservableObject {
     }
 }
 
-/// The badge row: one capsule per non-zero bucket, in the documented order
-/// blue, green, yellow, red, then the ambient counts.
+/// The badge row: one capsule per non-zero group, in the sidebar's own order -
+/// what needs the operator, what finished unseen, what is still running - then
+/// the ambient counts.
 struct PetBadgeRow: View {
     let badges: CorePetBadges
 
@@ -78,10 +79,9 @@ struct PetBadgeRow: View {
 
     private var badgeList: [Badge] {
         var result: [Badge] = [
+            Badge(id: "needs-you", count: badges.needsYou, color: .yellow, label: "needs you", symbol: nil),
+            Badge(id: "done", count: badges.done, color: .green, label: "finished, not yet seen", symbol: nil),
             Badge(id: "working", count: badges.working, color: .blue, label: "working", symbol: nil),
-            Badge(id: "done", count: badges.done, color: .green, label: "finished, not yet confirmed", symbol: nil),
-            Badge(id: "attention", count: badges.attention, color: .yellow, label: "unseen question or approval", symbol: nil),
-            Badge(id: "error", count: badges.error, color: .red, label: "unseen error", symbol: nil),
         ]
         result.append(
             Badge(
