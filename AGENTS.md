@@ -62,7 +62,7 @@ These rules exist because each one was violated and diagnosed in a real incident
 
 The figure to measure against is not one number.
 On 2026-09-04, on the assembled dev bundle against a live server with 26 panes and 12 agents, the main thread spent 0.28% of its samples waiting on the runtime mutex while idle at load 4.9, and 1.52% while driven at load 11.4.
-Before that day's work the same measurements read 0.89% idle and 4.31% driven.
+The same measurements read 0.89% idle before any of that day's work and 4.31% driven at `fc80f6c`, before the notifier and the delta boundary changed.
 Quote a mutex-wait figure with the load and the drive it was taken under or it means nothing; the 47% an earlier note carried was measured while typing, on a build three rounds of work ago, and comparing anything to it is a mistake.
 
 - Never hold the runtime mutex across a subprocess, blocking I/O, or a large serialization.
