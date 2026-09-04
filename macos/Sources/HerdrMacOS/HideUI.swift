@@ -1600,41 +1600,32 @@ private struct HideTerminalSurface: View {
                 PaneProjectionUnavailableState(notice: notice)
             } else if panes.isEmpty {
                 HideEmptyCheckoutState()
+            } else if model.isRemoteContext {
+                HideTabCanvas(
+                    items: model.remotePaneGridItems,
+                    dividers: [],
+                    isZoomed: false
+                )
+                .id(model.focusedTab?.stableID ?? "no-herdr-tab")
             } else {
-                PaneLayoutCanvas(
-                    items: model.focusedPaneGridItems,
-                    dividers: model.focusedPaneGridDividers,
-                    onResize: model.resizePane
-                ) { item in
-                    if let pane = model.paneMetadata(for: item.paneID) {
-                        PaneTerminalCell(
-                            pane: pane,
-                            status: model.paneStatus(for: pane.id),
-                            statusMessage: model.paneTransportMessage(for: pane.id),
-                            isFocused: item.isFocused,
-                            isZoomed: model.focusedPaneLayout?.zoomed == true,
-                            showsFork: model.canForkPane(pane),
-                            onFocus: { model.focusPane(pane.id) },
-                            onReconnect: { model.reconnectPane(pane.id) },
-                            onClose: { model.closePaneFromHeader(pane.id) },
-                            onFork: { model.forkPaneFromHeader(pane.id) },
-                            onOpenPort: { model.openPanePort($0) }
-                        ) {
-                            TerminalHost(
-                                bridge: model.core,
-                                paneID: pane.id,
-                                textScale: model.textScale(for: pane.id),
-                                onFocus: { model.focusPane(pane.id) },
-                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
-                            )
-                            .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
-                        }
-                    } else {
-                        MissingTerminalPaneCell(paneID: item.paneID)
+                // Every tab the operator has opened keeps its canvas, and
+                // with it the terminal views holding its scrollback. Only
+                // which one is on top changes, so a switch neither rebuilds a
+                // view nor reports a new size to Herdr.
+                ZStack {
+                    ForEach(model.retainedTabCanvases) { canvas in
+                        HideTabCanvas(
+                            items: canvas.items,
+                            dividers: canvas.dividers,
+                            isZoomed: canvas.isZoomed
+                        )
+                        .id(canvas.tabID)
+                        .opacity(canvas.isVisible ? 1 : 0)
+                        .allowsHitTesting(canvas.isVisible)
+                        .accessibilityHidden(!canvas.isVisible)
+                        .zIndex(canvas.isVisible ? 1 : 0)
                     }
                 }
-                .id(model.focusedTab?.stableID ?? "no-herdr-tab")
-                .clipped()
                 .transaction { transaction in
                     transaction.animation = nil
                 }
@@ -1643,6 +1634,54 @@ private struct HideTerminalSurface: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
         .accessibilityIdentifier("hide-terminal-surface")
+    }
+}
+
+/// One tab's panes on the canvas. Kept separate from the surface so every
+/// retained tab builds the same way and only its visibility differs.
+private struct HideTabCanvas: View {
+    @EnvironmentObject private var model: ShellModel
+    let items: [PaneGridItem]
+    let dividers: [PaneGridDivider]
+    let isZoomed: Bool
+
+    var body: some View {
+        PaneLayoutCanvas(
+            items: items,
+            dividers: dividers,
+            onResize: model.resizePane
+        ) { item in
+            if let pane = model.paneMetadata(for: item.paneID) {
+                PaneTerminalCell(
+                    pane: pane,
+                    status: model.paneStatus(for: pane.id),
+                    statusMessage: model.paneTransportMessage(for: pane.id),
+                    isFocused: item.isFocused,
+                    isZoomed: isZoomed,
+                    showsFork: model.canForkPane(pane),
+                    onFocus: { model.focusPane(pane.id) },
+                    onReconnect: { model.reconnectPane(pane.id) },
+                    onClose: { model.closePaneFromHeader(pane.id) },
+                    onFork: { model.forkPaneFromHeader(pane.id) },
+                    onOpenPort: { model.openPanePort($0) }
+                ) {
+                    TerminalHost(
+                        bridge: model.core,
+                        paneID: pane.id,
+                        textScale: model.textScale(for: pane.id),
+                        onFocus: { model.focusPane(pane.id) },
+                        onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                    )
+                    .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                }
+            } else {
+                MissingTerminalPaneCell(paneID: item.paneID)
+            }
+        }
+        .clipped()
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 }
 

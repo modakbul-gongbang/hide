@@ -44,6 +44,108 @@ struct PaneGridPresentationTests {
         ) == "w1:p1")
     }
 
+    private func splitLayout(tabID: String, paneIDs: [String], focused: String, zoomed: Bool = false) throws -> CorePaneLayoutSnapshot {
+        precondition(paneIDs.count == 2)
+        let json = """
+        {"workspace_id":"w1","tab_id":"\(tabID)","focused_pane_id":"\(focused)","zoomed":\(zoomed),        "root":{"type":"split","direction":"right","ratio":0.5,        "first":{"type":"pane","pane_id":"\(paneIDs[0])"},        "second":{"type":"pane","pane_id":"\(paneIDs[1])"}}}
+        """
+        return try JSONDecoder().decode(CorePaneLayoutSnapshot.self, from: Data(json.utf8))
+    }
+
+    /// R3, AC5. Switching tabs changes which canvas is on top, not which
+    /// canvases exist. Every visited tab keeps its panes at exactly the frames
+    /// it had, so its terminal views are never rebuilt and never report a new
+    /// size to Herdr.
+    @Test func aTabSwitchChangesVisibilityAndLeavesEveryVisitedCanvasInPlace() throws {
+        let layouts = [
+            try splitLayout(tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"], focused: "w1:p2"),
+            try splitLayout(tabID: "w1:t2", paneIDs: ["w1:p3", "w1:p4"], focused: "w1:p3"),
+        ]
+        let attached: Set<String> = ["w1:p1", "w1:p2", "w1:p3", "w1:p4"]
+
+        let onFirst = PaneGridPresentation.retainedCanvases(
+            tabIDs: ["w1:t1", "w1:t2"],
+            layouts: layouts,
+            attachedPaneIDs: attached,
+            visibleTabID: "w1:t1",
+            visibleFocusedPaneID: "w1:p2"
+        )
+        let onSecond = PaneGridPresentation.retainedCanvases(
+            tabIDs: ["w1:t1", "w1:t2"],
+            layouts: layouts,
+            attachedPaneIDs: attached,
+            visibleTabID: "w1:t2",
+            visibleFocusedPaneID: "w1:p3"
+        )
+
+        #expect(onFirst.map(\.tabID) == ["w1:t1", "w1:t2"])
+        #expect(onSecond.map(\.tabID) == ["w1:t1", "w1:t2"])
+        #expect(onFirst.map(\.isVisible) == [true, false])
+        #expect(onSecond.map(\.isVisible) == [false, true])
+        for (before, after) in zip(onFirst, onSecond) {
+            #expect(before.items.map(\.paneID) == after.items.map(\.paneID))
+            #expect(
+                before.items.map(\.visualFrame) == after.items.map(\.visualFrame),
+                "a hidden tab keeps the geometry it had, so nothing resizes on a switch"
+            )
+        }
+    }
+
+    /// R3, SC2. A tab nobody has opened has no canvas, because building its
+    /// terminal views would register panes Hide has not attached and report a
+    /// size for them. Visiting it is what brings it in.
+    @Test func anUnvisitedTabHasNoCanvasUntilItIsTheVisibleOne() throws {
+        let layouts = [
+            try splitLayout(tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"], focused: "w1:p1"),
+            try splitLayout(tabID: "w1:t2", paneIDs: ["w1:p3", "w1:p4"], focused: "w1:p3"),
+        ]
+
+        let beforeVisit = PaneGridPresentation.retainedCanvases(
+            tabIDs: ["w1:t1", "w1:t2"],
+            layouts: layouts,
+            attachedPaneIDs: ["w1:p1", "w1:p2"],
+            visibleTabID: "w1:t1",
+            visibleFocusedPaneID: "w1:p1"
+        )
+        #expect(beforeVisit.map(\.tabID) == ["w1:t1"])
+
+        let onVisit = PaneGridPresentation.retainedCanvases(
+            tabIDs: ["w1:t1", "w1:t2"],
+            layouts: layouts,
+            attachedPaneIDs: ["w1:p1", "w1:p2"],
+            visibleTabID: "w1:t2",
+            visibleFocusedPaneID: "w1:p3"
+        )
+        #expect(onVisit.map(\.tabID) == ["w1:t1", "w1:t2"])
+        #expect(
+            onVisit.last?.items.map(\.paneID) == ["w1:p3", "w1:p4"],
+            "the first visit draws Herdr's own layout for that tab, not a stand-in"
+        )
+    }
+
+    /// R3. A hidden tab keeps its own focus ring where it left it. The core's
+    /// focused pane names a pane in the visible tab, and lending it to a
+    /// hidden canvas would ring nothing there at all.
+    @Test func aHiddenCanvasKeepsItsOwnFocusedPaneRinged() throws {
+        let layouts = [
+            try splitLayout(tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"], focused: "w1:p2"),
+            try splitLayout(tabID: "w1:t2", paneIDs: ["w1:p3", "w1:p4"], focused: "w1:p4"),
+        ]
+
+        let canvases = PaneGridPresentation.retainedCanvases(
+            tabIDs: ["w1:t1", "w1:t2"],
+            layouts: layouts,
+            attachedPaneIDs: ["w1:p1", "w1:p2", "w1:p3", "w1:p4"],
+            visibleTabID: "w1:t2",
+            visibleFocusedPaneID: "w1:p3"
+        )
+
+        let hidden = try #require(canvases.first(where: { !$0.isVisible }))
+        let visible = try #require(canvases.first(where: { $0.isVisible }))
+        #expect(hidden.items.filter(\.isFocused).map(\.paneID) == ["w1:p2"])
+        #expect(visible.items.filter(\.isFocused).map(\.paneID) == ["w1:p3"])
+    }
+
     @Test func authoritativeNestedLayoutDecodesWithoutChangingPaneOrder() throws {
         let data = Data(
             #"{"workspace_id":"w1","tab_id":"w1:t1","focused_pane_id":"w1:p3","zoomed":false,"root":{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p1"},"second":{"type":"split","direction":"down","ratio":0.5,"first":{"type":"pane","pane_id":"w1:p2"},"second":{"type":"pane","pane_id":"w1:p3"}}}}"#.utf8

@@ -427,31 +427,32 @@ final class ShellModel: ObservableObject {
         focusedTab?.panes ?? []
     }
 
-    var focusedPaneGridItems: [PaneGridItem] {
-        if isRemoteContext {
-            guard paneProjectionNotice == nil,
-                  let layout = remote.navigation?.focusedPaneLayout
-            else { return [] }
-            let items = PaneGridPresentation.items(
-                remoteLayout: layout,
-                focusedPaneID: focusedPaneID
-            )
-            return items
-        }
-        // The visible tab's layout is always in the snapshot, so there is no
-        // stand-in grid to draw while one is fetched. A tab with no layout
-        // yet draws nothing rather than a guessed geometry, because the
-        // geometry the canvas draws is what sets the PTY size.
-        guard let layout = focusedPaneLayout else { return [] }
+    /// A remote target draws one canvas for the tab it is showing. Only the
+    /// local surface keeps a canvas per visited tab, because only local panes
+    /// are attached through this process.
+    var remotePaneGridItems: [PaneGridItem] {
+        guard isRemoteContext,
+              paneProjectionNotice == nil,
+              let layout = remote.navigation?.focusedPaneLayout
+        else { return [] }
         return PaneGridPresentation.items(
-            layout: layout,
+            remoteLayout: layout,
             focusedPaneID: focusedPaneID
         )
     }
 
-    var focusedPaneGridDividers: [PaneGridDivider] {
-        guard !isRemoteContext, let layout = focusedPaneLayout, !layout.zoomed else { return [] }
-        return PaneGridPresentation.dividers(layout: layout)
+    /// One canvas per tab the operator has already opened in this checkout.
+    /// The rule itself lives in `PaneGridPresentation`; this only reads the
+    /// snapshot it needs.
+    var retainedTabCanvases: [RetainedTabCanvas] {
+        guard !isRemoteContext, let checkout = focusedCheckout else { return [] }
+        return PaneGridPresentation.retainedCanvases(
+            tabIDs: checkout.tabs.compactMap(\.id),
+            layouts: core.snapshot?.paneLayouts ?? [],
+            attachedPaneIDs: Set((core.snapshot?.terminal.panes ?? []).map(\.paneID)),
+            visibleTabID: focusedTab?.id,
+            visibleFocusedPaneID: focusedPaneID
+        )
     }
 
     func resizePane(_ paneID: String, direction: PaneResizeDirection, amount: Double) {

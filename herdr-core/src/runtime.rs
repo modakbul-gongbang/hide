@@ -8429,6 +8429,165 @@ mod tests {
         );
     }
 
+    /// The panes the terminal projection is holding open, in snapshot order.
+    fn projected_pane_ids(runtime: &Runtime) -> Vec<String> {
+        runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.clone())
+            .collect()
+    }
+
+    /// R3, AC5, SC1. A tab the operator leaves keeps its panes in the
+    /// projection, so the attach that feeds its terminal view is never
+    /// dropped and the scrollback is still arriving when they come back. The
+    /// projection used to be rebuilt from the arriving layout alone, which
+    /// took every other tab's panes out of it on each switch.
+    #[test]
+    fn retained_views_keep_a_visited_tab_in_the_projection_across_a_switch() {
+        let checkout_path = "/private/tmp/hide-retained-views-switch";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert_eq!(projected_pane_ids(&runtime), vec!["w-order:t1:p"]);
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+
+        let projected = projected_pane_ids(&runtime);
+        assert!(
+            projected.contains(&"w-order:t1:p".to_owned()),
+            "the tab left behind keeps its pane attached: {projected:?}"
+        );
+        assert!(projected.contains(&"w-order:t2:p".to_owned()));
+
+        // And back again, with nothing having been rebuilt in between.
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        let returned = projected_pane_ids(&runtime);
+        assert!(returned.contains(&"w-order:t1:p".to_owned()));
+        assert!(returned.contains(&"w-order:t2:p".to_owned()));
+    }
+
+    /// AC5. A hidden pane's size is what the shell last reported for it, and a
+    /// tab switch neither reports a new one nor lets the core invent one.
+    /// Geometry decides the PTY size, so a size that moved while a pane was
+    /// out of sight would reflow its contents behind the operator's back.
+    #[test]
+    fn retained_views_leave_a_hidden_panes_size_alone_across_a_switch() {
+        let checkout_path = "/private/tmp/hide-retained-views-size";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        let resize = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": "w-order:t1:p", "rows": 40, "cols": 120}
+        }))
+        .expect("resize event");
+        runtime.dispatch_json(&resize);
+        assert_eq!(
+            runtime.terminal_sizes.get("w-order:t1:p").copied(),
+            Some((40, 120))
+        );
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+
+        assert_eq!(
+            runtime.terminal_sizes.get("w-order:t1:p").copied(),
+            Some((40, 120)),
+            "the hidden pane keeps the size it was last given"
+        );
+    }
+
+    /// AC5, rule 1. Retention is bounded by the session. A pane whose tab has
+    /// gone leaves the projection on the next update rather than accumulating
+    /// there for the life of the process.
+    #[test]
+    fn retained_views_drop_a_pane_whose_tab_left_the_session() {
+        let checkout_path = "/private/tmp/hide-retained-views-closed";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        )));
+        assert!(projected_pane_ids(&runtime).contains(&"w-order:t1:p".to_owned()));
+
+        let remaining = ["w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &remaining,
+            &remaining,
+            "w-order:t2"
+        )));
+
+        assert_eq!(projected_pane_ids(&runtime), vec!["w-order:t2:p"]);
+    }
+
+    /// AC5, R3. The shell drew one canvas keyed by the visible tab, so every
+    /// switch destroyed its terminal views and the new ones started empty and
+    /// reported a size. The surface now draws every visited tab and hides all
+    /// but one, which is the mechanism zoom already uses for panes. Removing
+    /// either half brings the blank frame and the switch-time resize back.
+    #[test]
+    fn retained_views_have_no_single_canvas_keyed_by_the_visible_tab() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let surface = std::fs::read_to_string(shell.join("HideUI.swift"))
+            .expect("the terminal surface source");
+        let presentation = std::fs::read_to_string(shell.join("ShellView.swift"))
+            .expect("the pane grid presentation source");
+        assert!(
+            surface.contains("model.retainedTabCanvases"),
+            "the terminal surface no longer draws every visited tab"
+        );
+        assert!(
+            surface.contains(".opacity(canvas.isVisible ? 1 : 0)"),
+            "a hidden tab is removed from the view tree instead of being hidden"
+        );
+        assert!(
+            presentation.contains("func retainedCanvases("),
+            "the rule deciding which tabs keep a canvas is gone"
+        );
+    }
+
     fn checkout_active_tab_id(runtime: &Runtime, checkout_id: &str) -> Option<String> {
         runtime
             .snapshot()
