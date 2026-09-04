@@ -2176,6 +2176,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             return "kind=focus_checkout workspace_id=\(traceValue(payload, key: "workspace_id")) checkout_id=\(traceValue(payload, key: "checkout_id"))"
         case "ui_state_update":
             return "kind=ui_state_update selected_pane_id=\(traceValue(payload, key: "selected_pane_id")) focused_checkout_id=\(traceValue(payload, key: "focused_checkout_id")) workspace_registrations=\(payload["workspace_registrations"] == nil ? "omitted" : "present")"
+        case "focus_tab", "focus_pane":
+            // The two view-state dispatches. Hide decides both of them itself,
+            // so the interval from this mark to the projection that follows is
+            // the whole of what the operator waits for, with no Herdr round
+            // trip in it. Measuring it any other way costs the synthetic input
+            // harness, which on this machine is over a hundred milliseconds
+            // before a keystroke even reaches the app.
+            return "kind=\(kind) tab_id=\(traceValue(payload, key: "tab_id")) pane_id=\(traceValue(payload, key: "pane_id")) origin=\(traceValue(payload, key: "origin"))"
         case "terminal_resize":
             // When a view first reports its size is when a pane whose size is
             // not yet known can attach, so the launch trace has to be able to
