@@ -368,6 +368,15 @@ pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
     agent_group(demand, activity, unread, agent.blocked)
 }
 
+/// The demand axis of a projected row, for callers outside this module.
+///
+/// It exists so nothing has to compare the published axis name against a
+/// string literal of its own: the vocabulary lives in [`AgentDemand`] and is
+/// read back through it.
+pub fn demand_of(agent: &SidebarAgentSnapshot) -> AgentDemand {
+    axes_of(agent).0
+}
+
 /// Fills in every value the shell draws from the three axes.
 ///
 /// Called again whenever the read axis moves, so the derived values can never

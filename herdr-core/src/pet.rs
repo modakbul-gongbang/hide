@@ -1,18 +1,17 @@
 //! Pet state: how the projected agent list becomes a pose, a badge row, and
 //! an ordered attention queue.
 //!
-//! Ported from herdr-pet's `behavior.rs` (pose ladder, sleep sequence) and
-//! `aggregate.rs` (status buckets, Disconnected handling). The unseen-vs-
-//! acknowledged token rule is *not* re-implemented here: it stays owned by
-//! the sidebar projection (INV-herdr-unseen-token), and this module buckets
-//! the states that projection already decided.
+//! Ported from herdr-pet's `behavior.rs` (pose ladder, sleep sequence). The
+//! unseen-vs-acknowledged token rule is *not* re-implemented here: it stays
+//! owned by the sidebar projection (INV-herdr-unseen-token), and this module
+//! counts the groups that projection already decided.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 use crate::model::SidebarAgentSnapshot;
-use crate::sidebar::AgentGroup;
+use crate::sidebar::{AgentDemand, AgentGroup};
 
 pub const SLEEP_IDLE_MS: u64 = 60_000;
 pub const SLEEP_PHASE_MS: u64 = 4_000;
@@ -169,7 +168,7 @@ pub fn summarize(agents: &[SidebarAgentSnapshot], connected: bool) -> PetSummary
         match crate::sidebar::group_of(agent) {
             AgentGroup::NeedsYou => {
                 summary.needs_you += 1;
-                if agent.demand == "error" {
+                if crate::sidebar::demand_of(agent) == AgentDemand::Error {
                     summary.error += 1;
                 }
             }
