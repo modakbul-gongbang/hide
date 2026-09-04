@@ -3,11 +3,46 @@ import OSLog
 
 enum HideLaunchTrace {
     private static let logger = Logger(subsystem: "me.grab.hide", category: "launch")
+    private static let onceLock = NSLock()
+    nonisolated(unsafe) private static var alreadyMarked: Set<String> = []
+
+    /// When this process was started, read from the kernel rather than from
+    /// the first line of Swift that runs. A launch interval measured against
+    /// it means the same thing inside the process as it does to a stopwatch
+    /// started outside it.
+    static let processStart = processStartDate()
 
     static func mark(_ event: String, detail: String = "", durationMilliseconds: Int? = nil) {
         let duration = durationMilliseconds.map(String.init) ?? "-"
         logger.info(
             "event=\(event, privacy: .public) detail=\(detail, privacy: .public) duration_ms=\(duration, privacy: .public)"
+        )
+    }
+
+    /// Marks a launch milestone that happens once, carrying the milliseconds
+    /// since the process started. Later calls for the same event are dropped,
+    /// so the recorded value always names the first occurrence.
+    static func markOnce(_ event: String, detail: String = "") {
+        onceLock.lock()
+        let isFirst = alreadyMarked.insert(event).inserted
+        onceLock.unlock()
+        guard isFirst else { return }
+        mark(
+            event,
+            detail: detail,
+            durationMilliseconds: Int(Date().timeIntervalSince(processStart) * 1_000)
+        )
+    }
+
+    private static func processStartDate() -> Date {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&name, 4, &info, &size, nil, 0) == 0 else { return Date() }
+        let started = info.kp_proc.p_starttime
+        return Date(
+            timeIntervalSince1970: Double(started.tv_sec)
+                + Double(started.tv_usec) / 1_000_000
         )
     }
 }

@@ -884,6 +884,18 @@ fn multi_pane_terminal_session_destroy_releases_and_reaps_children() {
     assert!(!core.is_null());
 
     let panes = ["w-lifecycle:p1", "w-lifecycle:p2", "w-lifecycle:p3"];
+    // A pane attaches at the size its view reports, so the shell's size
+    // report comes first; without one the attach waits rather than guessing.
+    for pane_id in panes {
+        dispatch(
+            core,
+            json!({
+                "schema_version": 2,
+                "kind": "terminal_resize",
+                "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
+            }),
+        );
+    }
     dispatch(
         core,
         json!({
@@ -1456,4 +1468,277 @@ fn only_a_detected_agent_with_a_forkable_session_offers_a_fork() {
     );
 
     herdr_core_destroy(core);
+}
+
+/// A pane's PTY size is decided by the attach, so attaching before a view has
+/// reported one costs a full frame at a guessed size and a second one after
+/// the resize corrects it. This drives the whole sequence through the FFI
+/// against a fake `herdr` that records every argument and control line it is
+/// given: the attach waits, it starts at the reported size, and a view
+/// re-reporting that same size sends nothing.
+#[test]
+fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
+    let suffix = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "herdr-core-first-attach-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("first attach fixture directory");
+    let herdr_bin = root.join("herdr-first-attach-fixture");
+    fs::write(
+        &herdr_bin,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
+                "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":100,\"height\":30,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                "  while IFS= read -r line; do\n",
+                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "  done\n",
+                "  exit 0\n",
+                "fi\n",
+                "exit 1\n",
+            ),
+            root.display(),
+            root.display()
+        ),
+    )
+    .expect("first attach fixture executable");
+    fs::set_permissions(&herdr_bin, fs::Permissions::from_mode(0o755))
+        .expect("first attach fixture permissions");
+    let state_path = root.join("state.json");
+    let options = slow_live_options(&state_path, &herdr_bin);
+    let core = create_with_socket_override_hidden(&options);
+    assert!(!core.is_null());
+
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
+            "agents": [],
+            "workspaces": [{"workspace_id": "w-attach", "label": "Attach"}],
+            "tabs": [{"workspace_id": "w-attach", "tab_id": "w-attach:t1", "label": "1"}],
+            "panes": [{"pane_id": "w-attach:p1", "cwd": root}],
+            "layouts": [single_pane_layout("w-attach", "w-attach:p1")]
+        }}),
+    );
+
+    // No view has reported a size, so nothing was attached and the wait is
+    // visible rather than silent.
+    std::thread::sleep(Duration::from_millis(200));
+    let argv_path = root.join("attach.argv");
+    assert!(
+        !argv_path.exists(),
+        "a pane whose view has not reported a size must not be attached yet"
+    );
+    let waiting = snapshot(core);
+    let diagnostics = waiting["status"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|entry| entry["kind"] == "terminal.attach_deferred"),
+        "a held attach must say so rather than look like nothing happened: {waiting}"
+    );
+
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": "w-attach:p1", "rows": 30, "cols": 100}
+        }),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !argv_path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the reported size did not start the attach"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let argv = fs::read_to_string(&argv_path).expect("recorded attach arguments");
+    assert_eq!(
+        argv.lines().count(),
+        1,
+        "each pane attaches once per launch: {argv}"
+    );
+    assert!(
+        argv.contains("30") && argv.contains("100"),
+        "the attach must carry the size the view reported: {argv}"
+    );
+
+    // The view reporting the size the pane is already running at is the
+    // ordinary case right after an attach. Passing it on would make Herdr
+    // answer with a second full frame for a size that never changed.
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": "w-attach:p1", "rows": 30, "cols": 100}
+        }),
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    let control_lines = fs::read_to_string(root.join("w-attach:p1.stdin")).unwrap_or_default();
+    assert!(
+        !control_lines.contains("resize"),
+        "a size the pane already has must not be sent on: {control_lines}"
+    );
+    assert_eq!(
+        fs::read_to_string(&argv_path)
+            .expect("recorded attach arguments")
+            .lines()
+            .count(),
+        1,
+        "a repeated size must not start a second session"
+    );
+
+    herdr_core_destroy(core);
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// R5, AC9. The warm launch: a state file that already carries a pane's size
+/// attaches at it the moment the session arrives, with no wait for a view to
+/// be built, and the view's matching report afterwards sends nothing on. This
+/// is the launch AC11's budget is written about; the cold path, where no size
+/// is known yet, is covered by the test above.
+#[test]
+fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
+    let suffix = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "herdr-core-warm-attach-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("warm attach fixture directory");
+    let herdr_bin = root.join("herdr-warm-attach-fixture");
+    fs::write(
+        &herdr_bin,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
+                "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  while IFS= read -r line; do\n",
+                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "  done\n",
+                "  exit 0\n",
+                "fi\n",
+                "exit 1\n",
+            ),
+            root.display(),
+            root.display()
+        ),
+    )
+    .expect("warm attach fixture executable");
+    fs::set_permissions(&herdr_bin, fs::Permissions::from_mode(0o755))
+        .expect("warm attach fixture permissions");
+
+    // A store written by an earlier launch, carrying the size that launch's
+    // view reported for the pane.
+    let state_path = root.join("state.json");
+    fs::write(
+        &state_path,
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "left_sidebar_visible": true,
+            "right_panel_visible": true,
+            "right_panel_section": "explorer",
+            "expanded_paths": [],
+            "collapsed_workspace_ids": [],
+            "selected_path": null,
+            "selected_pane_id": null,
+            "shortcut_bindings": {},
+            "pet_visible": true,
+            "pet_origin": null,
+            "pet_shortcut": null,
+            "focused_device_id": null,
+            "focused_checkout_id": null,
+            "workspace_registrations": [],
+            "device_registrations": [],
+            "accent_hex": "#B9FF66",
+            "font_size": 13.0,
+            "pane_text_scales": {},
+            "editor_text_scale": 1.0,
+            "pane_read_records": {},
+            "pane_terminal_sizes": {"w-warm:p1": [44, 152]}
+        }))
+        .expect("stored state serialize"),
+    )
+    .expect("stored state file");
+
+    let options = slow_live_options(&state_path, &herdr_bin);
+    let core = create_with_socket_override_hidden(&options);
+    assert!(!core.is_null());
+
+    dispatch(
+        core,
+        json!({"schema_version": 2, "kind": "session_snapshot", "payload": {
+            "agents": [],
+            "workspaces": [{"workspace_id": "w-warm", "label": "Warm"}],
+            "tabs": [{"workspace_id": "w-warm", "tab_id": "w-warm:t1", "label": "1"}],
+            "panes": [{"pane_id": "w-warm:p1", "cwd": root}],
+            "layouts": [single_pane_layout("w-warm", "w-warm:p1")]
+        }}),
+    );
+
+    let argv_path = root.join("attach.argv");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !argv_path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "a launch that already knows the pane's size must attach without waiting"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let argv = fs::read_to_string(&argv_path).expect("recorded attach arguments");
+    assert!(
+        argv.contains("44") && argv.contains("152"),
+        "the attach must carry the size the last launch recorded: {argv}"
+    );
+    let waiting = snapshot(core);
+    assert!(
+        !waiting["status"]["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .iter()
+            .any(|entry| entry["kind"] == "terminal.attach_deferred"),
+        "nothing was waited for: {waiting}"
+    );
+
+    dispatch(
+        core,
+        json!({
+            "schema_version": 2,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": "w-warm:p1", "rows": 44, "cols": 152}
+        }),
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    let control_lines = fs::read_to_string(root.join("w-warm:p1.stdin")).unwrap_or_default();
+    assert!(
+        !control_lines.contains("resize"),
+        "the view confirming the size it attached at must send nothing: {control_lines}"
+    );
+    assert_eq!(
+        fs::read_to_string(&argv_path)
+            .expect("recorded attach arguments")
+            .lines()
+            .count(),
+        1,
+        "each pane attaches once per launch: {argv}"
+    );
+
+    herdr_core_destroy(core);
+    let _ = fs::remove_dir_all(&root);
 }

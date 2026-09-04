@@ -840,6 +840,10 @@ pub struct Runtime {
     next_terminal_session_generation: u64,
     next_remote_file_generation: u64,
     terminal_sizes: HashMap<String, (u16, u16)>,
+    /// Panes whose attach is held until a view reports their size. Herdr
+    /// sizes the PTY from the attach, so starting one at a guess costs a
+    /// full frame at the wrong size and a second one after the resize.
+    panes_awaiting_size: HashSet<String>,
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
@@ -966,7 +970,7 @@ impl Runtime {
                 );
             }
         }
-        let (ui_state, disposition) = persistence::load(&state_path);
+        let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
         snapshot.navigator.devices =
             workspace::devices(&remote_targets, &snapshot.ui_state.device_registrations);
@@ -1022,7 +1026,8 @@ impl Runtime {
             terminal_session_lifecycles: HashMap::new(),
             next_terminal_session_generation: 0,
             next_remote_file_generation: 0,
-            terminal_sizes: HashMap::new(),
+            terminal_sizes: pane_terminal_sizes.into_iter().collect(),
+            panes_awaiting_size: HashSet::new(),
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -3043,6 +3048,7 @@ impl Runtime {
             self.terminal_session_lifecycles
                 .retain(|pane_id, _| keep(pane_id));
             self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
+            self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         }
         let mut excluded = Vec::new();
         let mut rejected_layouts: Vec<(String, String)> = Vec::new();
@@ -3580,8 +3586,24 @@ impl Runtime {
 
     /// Saves the current UI state and surfaces a write failure instead of
     /// dropping it.
+    /// Writes the operator's UI state and the pane sizes the next launch
+    /// attaches with. The sizes are not part of the UI state the shell draws,
+    /// so they are collected here rather than carried on the snapshot.
+    fn write_ui_state(&self) -> Result<(), String> {
+        let pane_terminal_sizes: persistence::PaneTerminalSizes = self
+            .terminal_sizes
+            .iter()
+            .map(|(pane_id, size)| (pane_id.clone(), *size))
+            .collect();
+        persistence::save(
+            &self.state_path,
+            &self.snapshot.ui_state,
+            &pane_terminal_sizes,
+        )
+    }
+
     fn persist_ui_state(&mut self) {
-        if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
+        if let Err(message) = self.write_ui_state() {
             self.set_error("ui_state.save_failed", message, true);
         }
     }
@@ -4867,9 +4889,7 @@ impl Runtime {
             self.snapshot.navigator.focused_device_id.clone();
         self.snapshot.ui_state.focused_checkout_id =
             self.snapshot.navigator.focused_checkout_id.clone();
-        if let Err(message) = persistence::save(&self.state_path, &self.snapshot.ui_state) {
-            self.set_error("ui_state.save_failed", message, true);
-        }
+        self.persist_ui_state();
     }
 
     /// Drops the rendered terminal state before selecting a pane in another
@@ -6285,13 +6305,37 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.terminal_sizes
-                    .insert(payload.pane_id.clone(), (payload.rows, payload.cols));
-                if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
-                    && session.mode == TerminalSessionMode::Control
-                    && let Err(message) = session.resize(payload.rows, payload.cols)
-                {
-                    self.set_error("terminal.resize_failed", message, true);
+                let size = (payload.rows, payload.cols);
+                let previous = self.terminal_sizes.insert(payload.pane_id.clone(), size);
+                // A view reporting the size the pane is already running at is
+                // the common case right after an attach. Sending it on would
+                // make Herdr answer with a second full frame for a size that
+                // never changed.
+                if previous == Some(size) {
+                    return false;
+                }
+                // A pane's first size is what the next launch attaches with,
+                // so it is written now. Later sizes ride the next UI-state
+                // save rather than putting a file write in the middle of a
+                // window drag.
+                if previous.is_none() {
+                    self.persist_ui_state();
+                }
+                if self.terminal_sessions.contains_key(&payload.pane_id) {
+                    if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
+                        && session.mode == TerminalSessionMode::Control
+                        && let Err(message) = session.resize(payload.rows, payload.cols)
+                    {
+                        self.set_error("terminal.resize_failed", message, true);
+                        return true;
+                    }
+                    return false;
+                }
+                // The pane's attach was held back because no view had reported
+                // a size yet. This is that size, so it can start now, at the
+                // size it will keep.
+                if self.panes_awaiting_size.remove(&payload.pane_id) {
+                    self.request_terminal_control(&payload.pane_id);
                     return true;
                 }
                 false
@@ -6476,7 +6520,7 @@ impl Runtime {
                 // Session sync owns session-derived temporary workspaces.
                 // UI-state persistence must not rebuild from an empty session
                 // and erase the catalog that the user is currently viewing.
-                match persistence::save(&self.state_path, &self.snapshot.ui_state) {
+                match self.write_ui_state() {
                     Ok(()) => true,
                     Err(message) => {
                         self.set_error("ui_state.save_failed", message, true);
@@ -6499,6 +6543,22 @@ impl Runtime {
             current.state,
             self.terminal_sessions.contains_key(pane_id),
         ) {
+            self.sync_transport_projection(pane_id);
+            return;
+        }
+        // Herdr sizes the PTY from the attach, so attaching before a view has
+        // reported a size costs a full frame at a guessed size and a second
+        // one after the resize. The pane's own view reports within a frame of
+        // the layout arriving, and the resize handler starts the attach then.
+        if !self.terminal_sizes.contains_key(pane_id) {
+            if self.panes_awaiting_size.insert(pane_id.to_owned()) {
+                self.push_diagnostic(
+                    "terminal.attach_deferred",
+                    format!(
+                        "Pane {pane_id} is waiting for its view to report a size before attaching"
+                    ),
+                );
+            }
             self.sync_transport_projection(pane_id);
             return;
         }
@@ -6608,13 +6668,34 @@ impl Runtime {
             self.set_error("terminal.transport_unavailable", message, true);
             return;
         };
+        // Herdr sizes the PTY from the attach, so there is no honest size to
+        // send when no view has reported one. Every path here has one:
+        // `request_terminal_control` holds a pane back until its view reports,
+        // and an observe session only follows a control session that already
+        // had a size. A pane that arrives here without one is a routing bug,
+        // and saying so beats attaching at a guess and hiding it.
+        let Some((rows, cols)) = self.terminal_sizes.get(pane_id).copied() else {
+            let message =
+                format!("Pane {pane_id} has no reported terminal size, so it cannot be attached");
+            self.record_terminal_session_failure(
+                pane_id,
+                generation,
+                attempt,
+                mode,
+                "size_unknown",
+                &message,
+                0,
+            );
+            self.set_error("terminal.size_unknown", message, true);
+            return;
+        };
         if let Err(message) = live::spawn_terminal_session(
             context,
             pane_id.to_owned(),
             generation,
             mode,
-            self.terminal_sizes.get(pane_id).map_or(24, |size| size.0),
-            self.terminal_sizes.get(pane_id).map_or(80, |size| size.1),
+            rows,
+            cols,
         ) {
             self.record_terminal_session_failure(
                 pane_id,
@@ -7366,6 +7447,9 @@ mod tests {
                 .all(|pane| pane.transport_state == "idle")
         );
 
+        // The canvas that draws this pane reports its size, and an attach is
+        // held back until one has arrived.
+        runtime.terminal_sizes.insert(pane_id.to_owned(), (40, 120));
         let focus_remote = serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION,
             "kind": "focus_device",
@@ -7590,6 +7674,9 @@ mod tests {
             ..TerminalPaneSnapshot::default()
         }];
         runtime.next_terminal_session_generation = 40;
+        // The pane is one the operator is looking at, so its view has already
+        // reported a size; an attach is held back until one has.
+        runtime.terminal_sizes.insert("w1:p1".to_owned(), (40, 120));
         runtime
             .terminal_session_generations
             .insert("w1:p1".to_owned(), 40);
@@ -8462,6 +8549,92 @@ mod tests {
             offenders.is_empty(),
             "a uniform pane grid stand-in is back in {offenders:?}"
         );
+    }
+
+    /// R5, AC9. A launch used to create a core without the resolved Herdr
+    /// binary, start its session sync, and then throw both away for a second
+    /// core once the runtime was known. Destroying the first one joined a
+    /// worker mid-bootstrap, which is where the measured 360 ms between the
+    /// runtime resolving and the second core being ready went. One core per
+    /// launch means one `session.snapshot`, one subscription and one catalog
+    /// build, and the shell is the only place that can put the second one
+    /// back.
+    #[test]
+    fn one_launch_creates_the_core_once_and_never_replaces_it() {
+        let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+        let mut creations = Vec::new();
+        let mut destructions = Vec::new();
+        for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
+            let path = entry.expect("a shell source entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a readable Swift source");
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            for line in source.lines().map(str::trim) {
+                if line.starts_with("//") {
+                    continue;
+                }
+                if line.contains("herdr_core_create(") {
+                    creations.push(format!("{name}: {line}"));
+                }
+                if line.contains("herdr_core_destroy(") {
+                    destructions.push(format!("{name}: {line}"));
+                }
+            }
+        }
+        assert_eq!(
+            creations.len(),
+            1,
+            "the shell must call herdr_core_create from one place: {creations:?}"
+        );
+        assert_eq!(
+            destructions.len(),
+            1,
+            "a core is destroyed only when the bridge goes away: {destructions:?}"
+        );
+        let bridge = std::fs::read_to_string(shell.join("CoreBridge.swift"))
+            .expect("the core bridge source");
+        assert!(
+            !bridge.contains("replaceCore"),
+            "replacing a live core with a second one is the path this removed"
+        );
+        assert!(
+            bridge.contains("runtimePreparation"),
+            "the one core is created after the runtime resolves, so the resolution has to be awaited"
+        );
+    }
+
+    /// R5, AC9. Herdr sizes a pane's PTY from the attach, so an attach before
+    /// any view has reported a size draws a full frame at a guess and a
+    /// second one after the resize corrects it. The wait is reported, because
+    /// a pane that never attaches must not look like a pane with no output.
+    #[test]
+    fn one_launch_holds_an_attach_until_the_view_reports_a_size() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        runtime.live = None;
+
+        runtime.request_terminal_control("w-size:p1");
+        assert!(
+            runtime.terminal_session_lifecycles.get("w-size:p1").is_none(),
+            "no session may be started for a pane with no reported size"
+        );
+        assert!(
+            runtime
+                .snapshot
+                .status
+                .diagnostics
+                .iter()
+                .any(|entry| entry.kind == "terminal.attach_deferred"),
+            "the wait must be reported: {:?}",
+            runtime.snapshot.status.diagnostics
+        );
+        assert!(runtime.panes_awaiting_size.contains("w-size:p1"));
     }
 
     /// The panes the terminal projection is holding open, in snapshot order.

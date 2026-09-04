@@ -117,14 +117,19 @@ import Testing
     #expect(message.hasPrefix("Herdr could not start:"))
 }
 
-@Test @MainActor func coreBridgeHasAnImmediateSnapshotBeforeRuntimeResolution() {
+/// A launch creates one core, and it cannot be created before the Herdr
+/// binary it needs is resolved. Until then the bridge holds no core and says
+/// what it is waiting for, rather than standing up a throwaway core whose
+/// empty navigator reads as "no workspaces" and whose teardown blocks the
+/// main thread joining its half-finished session sync.
+@Test @MainActor func coreBridgeWaitsForTheRuntimeAndSaysSoBeforeItsOnlyCore() {
     let bridge = CoreBridge(arguments: [
         "HerdrMacOS",
         "--state-path",
         "/tmp/hide-p0-startup-test-state.json",
     ])
 
-    #expect(bridge.snapshot != nil)
+    #expect(bridge.snapshot == nil)
     #expect(bridge.runtimeSelection == nil)
     #expect(bridge.bridgeError == HideStartupDiagnostic.initializing)
 }
