@@ -8577,6 +8577,75 @@ mod tests {
         );
     }
 
+    /// R8, AC14. The agent notes are what the next person reads before they
+    /// touch this subsystem, and both of their claims about it were wrong: the
+    /// shell was described as reading the snapshot on every change
+    /// notification, and the only measured figure in the performance guide was
+    /// a mutex wait from an incident measured while typing on a build three
+    /// rounds of work ago. A document drifts silently, so the claims that
+    /// matter are asserted here rather than trusted.
+    #[test]
+    fn agent_notes_state_the_view_authority_and_the_announcement_rule() {
+        let notes = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../AGENTS.md"),
+        )
+        .expect("the agent notes");
+        let (architecture, rest) = notes
+            .split_once("## Runtime Architecture")
+            .expect("a Runtime Architecture section");
+        assert!(
+            architecture.len() < rest.len(),
+            "the split must put the section body on the right"
+        );
+        let (architecture, _) = rest
+            .split_once("## Herdr API Contract")
+            .expect("Runtime Architecture ends at the Herdr API Contract");
+        let (_, performance) = notes
+            .split_once("## Performance Guide")
+            .expect("a Performance Guide section");
+
+        for (section, name, wanted) in [
+            (
+                architecture,
+                "Runtime Architecture",
+                vec![
+                    // The boundary itself, both halves of it.
+                    "visible tab",
+                    "keyboard focus pane",
+                    // The four paths a core-owned value can take.
+                    "pending",
+                    "followed",
+                    "refusal",
+                    // What replaced the per-change read and the second core.
+                    "once per burst",
+                    "before** it takes the lock",
+                    "creates the core once",
+                ],
+            ),
+            (
+                performance,
+                "Performance Guide",
+                vec![
+                    "serialize_snapshot_delta",
+                    "ChangeNotifier",
+                    "idle",
+                    "driven",
+                ],
+            ),
+        ] {
+            for phrase in wanted {
+                assert!(
+                    section.contains(phrase),
+                    "AGENTS.md {name} does not say {phrase:?}"
+                );
+            }
+        }
+        assert!(
+            !performance.contains("main thread spent 47% of wall time"),
+            "the stale 47% figure is replaced by measurements with their load, not kept beside them"
+        );
+    }
+
     /// R5, AC9. A launch used to create a core without the resolved Herdr
     /// binary, start its session sync, and then throw both away for a second
     /// core once the runtime was known. Destroying the first one joined a
