@@ -3412,6 +3412,23 @@ impl Runtime {
                                     .as_deref()
                                     .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
                             })
+                            .or_else(|| {
+                                // A close moves Herdr's keyboard to another
+                                // tab, and the pane focus for it can arrive
+                                // after this snapshot; the tab Herdr names now
+                                // is where the operator is looking, not the
+                                // checkout's first pane.
+                                HerdrTabView::from_payload(&payload)
+                                    .focused_tab_id
+                                    .and_then(|tab_id| {
+                                        payload
+                                            .layouts
+                                            .iter()
+                                            .find(|layout| layout.tab_id == tab_id)
+                                    })
+                                    .map(|layout| layout.focused_pane_id.as_str())
+                                    .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
+                            })
                             .or_else(|| focused_checkout_pane_ids.first().map(String::as_str))
                             .map(str::to_owned)
                     })
@@ -10194,6 +10211,37 @@ mod tests {
             unread_panes(&runtime),
             vec!["w-order:t1:p"],
             "a change in the tab the operator left is unread; the record did not stay there"
+        );
+    }
+
+    /// Closing the visible tab lands on the tab Herdr moved to. Three tabs;
+    /// the operator is on the third and closes it. The snapshot that follows
+    /// names the second tab active and no focused pane yet, and the keyboard
+    /// goes to that tab's pane, not to the checkout's first.
+    #[test]
+    fn closing_the_visible_tab_lands_on_the_tab_herdr_moved_to() {
+        let checkout_path = "/private/tmp/hide-close-lands-on-herdr-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t3")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w-order:t3:p")));
+        assert_eq!(runtime.visible_tab_ids.get(&checkout_id).map(String::as_str), Some("w-order:t3"));
+
+        let remaining = ["w-order:t1", "w-order:t2"];
+        let mut after_close =
+            tab_order_payload(checkout_path, &remaining, &remaining, "w-order:t2");
+        after_close.focused_pane_id = None;
+        runtime.ingest_session(Ok(after_close));
+
+        assert_eq!(
+            runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+            Some("w-order:t2:p"),
+            "the keyboard follows Herdr to the tab it focused after the close"
+        );
+        assert_eq!(
+            runtime.visible_tab_ids.get(&checkout_id).map(String::as_str),
+            Some("w-order:t2"),
+            "the strip draws the tab Herdr moved to"
         );
     }
 
