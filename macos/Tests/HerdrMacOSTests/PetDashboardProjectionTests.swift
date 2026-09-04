@@ -65,7 +65,7 @@ struct PetDashboardProjectionTests {
                         backgroundFailed: 1
                     )
                 ),
-                agent("p2", group: "seen"),
+                agent("p2", group: "needs_you", demand: "question"),
             ],
             workspaces: [workspace("w1", label: "Workspace A", paneIDs: ["p1", "p2"])],
             connection: "unavailable",
@@ -85,6 +85,15 @@ struct PetDashboardProjectionTests {
         #expect(projection.groups[0].agents.allSatisfy { $0.connection == "disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.ambient == nil })
         #expect(projection.connectionMessage == "Herdr server is not answering")
+
+        // The connection is the only thing a lost server changes about a row.
+        // The axes stay the core's own values, so nothing here has to invent a
+        // second copy of the axis vocabulary to blank them out.
+        #expect(projection.groups[0].agents[0].activity == "working")
+        #expect(projection.groups[0].agents[0].group == .working)
+        #expect(projection.groups[0].agents[1].demand == "question")
+        #expect(projection.groups[0].agents[1].group == .needsYou)
+        #expect(projection.groups[0].agents[1].emphasized)
     }
 
     @Test func duplicatePaneProjectionIsIdempotentAndEmptySnapshotStaysEmpty() {

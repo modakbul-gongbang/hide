@@ -22,10 +22,13 @@ struct PetDashboardRow: Identifiable, Equatable {
     /// server went away, so one field never has to mean two things.
     let group: AgentGroup
     /// What the agent needs from the operator, for the row's mark and color.
+    /// The core's value, carried through unchanged like `group`.
     let demand: String
-    /// Whether the agent is running.
+    /// Whether the agent is running. The core's value, carried through
+    /// unchanged like `group`.
     let activity: String
-    /// Whether the row is drawn bright rather than subdued.
+    /// Whether the row is drawn bright rather than subdued. The core's value,
+    /// carried through unchanged like `group`.
     let emphasized: Bool
     let symbol: String
     let statusLabel: String
@@ -62,21 +65,20 @@ enum PetDashboardProjector {
         let connected = connection == "connected"
         var rowsByPaneID: [String: PetDashboardRow] = [:]
         for agent in agents {
-            let agentConnected = connected
             rowsByPaneID[agent.paneID] = PetDashboardRow(
                 id: agent.paneID,
                 paneID: agent.paneID,
                 agentKind: agent.agentKind,
                 group: AgentGroup(agent: agent),
-                demand: agentConnected ? agent.demand : "none",
-                activity: agentConnected ? agent.activity : "unknown",
-                emphasized: agentConnected && agent.emphasized,
+                demand: agent.demand,
+                activity: agent.activity,
+                emphasized: agent.emphasized,
                 symbol: agent.symbol,
-                statusLabel: agentConnected ? agent.statusLabel : "Disconnected",
+                statusLabel: connected ? agent.statusLabel : "Disconnected",
                 summary: agent.summary,
                 elapsed: agent.elapsed,
-                connection: agentConnected ? "connected" : "disconnected",
-                ambient: agentConnected ? agent.ambient : nil
+                connection: connected ? "connected" : "disconnected",
+                ambient: connected ? agent.ambient : nil
             )
         }
 
