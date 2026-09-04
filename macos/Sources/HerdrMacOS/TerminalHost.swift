@@ -9,6 +9,10 @@ struct TerminalHost: NSViewRepresentable {
     let textScale: CGFloat
     let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
+    /// False on a retained canvas that is not the one showing. The NSView is
+    /// hidden then, which is what makes AppKit skip its display pass; the
+    /// frame, and so the PTY size, is untouched.
+    @Environment(\.hideCanvasVisible) private var canvasVisible
 
     /// Pushes the core's search result into this pane's find bar.
     ///
@@ -52,6 +56,11 @@ struct TerminalHost: NSViewRepresentable {
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         terminal.linkReporting = .implicit
         terminal.linkHighlightMode = .hover
+        // The bidi pass was 30% of the draw for a pane streaming an agent's
+        // TUI (151 of 507 draw samples, 2026-09-04), and nothing this shell
+        // shows is right-to-left. Legacy left-to-right returns from the
+        // layout before it scans a row.
+        terminal.bidiHostPolicy = .legacyLeftToRight
         terminal.searchHighlightColor = HideTheme.Native.searchMatchHighlight
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
         terminal.onPointerFocus = onFocus
@@ -79,6 +88,11 @@ struct TerminalHost: NSViewRepresentable {
             },
             focus: { [weak terminal] in
                 guard let terminal, let window = terminal.window else { return }
+                // The core names a focused pane only inside the visible tab,
+                // so a hidden view asked for the keyboard is one whose
+                // canvas is coming forward in the same pass. A hidden view
+                // cannot become first responder, so it is shown first.
+                terminal.isHidden = false
                 window.makeFirstResponder(terminal)
             }
         )
@@ -90,6 +104,14 @@ struct TerminalHost: NSViewRepresentable {
         context.coordinator.onOpenLink = onOpenLink
         (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
         applyPaneFind(to: terminal)
+        if terminal.isHidden == canvasVisible {
+            terminal.isHidden = !canvasVisible
+            // Bytes fed while hidden were parsed but not drawn, so the first
+            // frame after coming forward has to be drawn from the buffer.
+            if canvasVisible {
+                terminal.needsDisplay = true
+            }
+        }
         // SwiftTerm's font setter recomputes the cell metrics and resizes the
         // grid, and its delegate reports the new size on to the PTY, so the
         // reflow follows from this assignment. It also clears the selection,

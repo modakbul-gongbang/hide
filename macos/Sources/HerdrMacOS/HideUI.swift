@@ -128,10 +128,22 @@ private struct HideFontScaleKey: EnvironmentKey {
     static let defaultValue = CGFloat(1)
 }
 
+/// Whether the canvas a view sits on is the one on top. A retained canvas
+/// for a tab that is not showing is kept in the tree for its scrollback,
+/// and the terminal views on it read this to stop drawing while hidden.
+private struct HideCanvasVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 extension EnvironmentValues {
     var hideAccent: Color {
         get { self[HideAccentKey.self] }
         set { self[HideAccentKey.self] = newValue }
+    }
+
+    var hideCanvasVisible: Bool {
+        get { self[HideCanvasVisibleKey.self] }
+        set { self[HideCanvasVisibleKey.self] = newValue }
     }
 
     var hideFontScale: CGFloat {
@@ -1621,6 +1633,10 @@ private struct HideTerminalSurface: View {
                         )
                         .id(canvas.tabID)
                         .opacity(canvas.isVisible ? 1 : 0)
+                        // Opacity alone leaves AppKit drawing every hidden
+                        // terminal at full cost whenever it is fed; the
+                        // terminal host hides its NSView on this value.
+                        .environment(\.hideCanvasVisible, canvas.isVisible)
                         .allowsHitTesting(canvas.isVisible)
                         .accessibilityHidden(!canvas.isVisible)
                         .zIndex(canvas.isVisible ? 1 : 0)
