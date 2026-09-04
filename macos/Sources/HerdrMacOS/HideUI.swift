@@ -1411,6 +1411,7 @@ private struct HideTabStrip: View {
 
             if model.focusedWorkspace != nil {
                 HStack(spacing: 0) {
+                    ScrollViewReader { scroll in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
                             ForEach(model.unifiedTabs) { tab in
@@ -1509,6 +1510,14 @@ private struct HideTabStrip: View {
                             Task { @MainActor in tabWidths = widths }
                         }
                     }
+                    // The active tab is always in view. With more tabs than
+                    // the strip can show, the one the operator just chose
+                    // sat past the edge with no indicator that it existed.
+                    .onChange(of: model.unifiedTabs.first(where: \.active)?.id, initial: true) { _, activeID in
+                        guard let activeID else { return }
+                        scroll.scrollTo(activeID)
+                    }
+                    }
                     Button {
                         model.addTab()
                     } label: {
@@ -1525,6 +1534,10 @@ private struct HideTabStrip: View {
                     .accessibilityLabel("New Herdr tab")
                     .accessibilityIdentifier("hide-new-tab")
                 }
+                // The strip takes the row before the drag area does. Sharing
+                // the row equally cut the strip to four tabs while the rest
+                // of the row stayed empty.
+                .layoutPriority(1)
             }
 
             WindowDragArea()
