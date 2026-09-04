@@ -2315,15 +2315,18 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             lastLoggedProjection = projection
             HideLaunchTrace.mark("core.snapshot.projection", detail: projection)
         }
-        let previousFocusedPaneID = snapshot?.activePaneLayout?.focusedPaneID
-            ?? snapshot?.terminal.paneID
+        // The core owns the focused pane. Reading its field first is what
+        // puts the keyboard in the pane the operator clicked on the frame of
+        // the click, rather than one Herdr round trip later.
+        let previousFocusedPaneID = snapshot?.terminal.paneID
+            ?? snapshot?.activePaneLayout?.focusedPaneID
         snapshot = decoded
         bridgeError = routingError
             ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             ?? startupDiagnostic
         restorePaneSelectionIfNeeded(decoded)
-        let authoritativeFocusedPaneID = decoded.activePaneLayout?.focusedPaneID
-            ?? decoded.terminal.paneID
+        let authoritativeFocusedPaneID = decoded.terminal.paneID
+            ?? decoded.activePaneLayout?.focusedPaneID
         if authoritativeFocusedPaneID != previousFocusedPaneID,
            let authoritativeFocusedPaneID {
             DispatchQueue.main.async { [weak self] in

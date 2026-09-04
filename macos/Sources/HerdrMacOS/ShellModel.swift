@@ -525,8 +525,12 @@ final class ShellModel: ObservableObject {
         if isRemoteContext {
             return remote.navigation?.focusedPaneID
         }
-        return focusedPaneLayout?.focusedPaneID
-            ?? core.snapshot?.terminal.paneID
+        // The core owns the focused pane, so its own field is the answer. The
+        // layout's focused pane is Herdr's last word on the same question and
+        // stands in only before the core has one, because a click has to move
+        // the ring on its own frame rather than on Herdr's confirming event.
+        return core.snapshot?.terminal.paneID
+            ?? focusedPaneLayout?.focusedPaneID
     }
 
     func paneMetadata(for paneID: String) -> CorePaneSnapshot? {

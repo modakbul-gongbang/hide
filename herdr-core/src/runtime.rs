@@ -190,6 +190,46 @@ enum PaneFocusOrigin {
     Restore,
 }
 
+/// How long a view-state notification may stay unconfirmed before Hide stops
+/// treating Herdr's answer as pending.
+///
+/// The round trip measured on this machine is roughly 130 ms for the request
+/// and 170 ms more for the confirming event, so three seconds never trips on
+/// a healthy server while still releasing a value quickly when Herdr has
+/// stopped answering. The value is kept when the wait expires; only the
+/// waiting stops.
+const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
+
+/// A view-state change Hide has already made and told Herdr about.
+///
+/// Hide owns the visible tab and the focused pane, so the value in the
+/// snapshot is not a prediction to be undone. This records only that a
+/// notification is in flight, which is what tells a Herdr event naming an
+/// older value apart from an operator focusing something outside Hide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingViewFocus {
+    /// The checkout the tab belongs to. Empty for a pane focus, which is
+    /// identified by its pane id alone.
+    scope_id: String,
+    /// The tab or pane id Hide asked Herdr to focus.
+    target_id: String,
+    requested_at_unix_ms: u64,
+}
+
+impl PendingViewFocus {
+    fn new(scope_id: impl Into<String>, target_id: impl Into<String>) -> Self {
+        Self {
+            scope_id: scope_id.into(),
+            target_id: target_id.into(),
+            requested_at_unix_ms: unix_milliseconds(),
+        }
+    }
+
+    fn expired_at(&self, now_unix_ms: u64) -> bool {
+        now_unix_ms.saturating_sub(self.requested_at_unix_ms) >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FocusPaneRequestPayload {
     pane_id: String,
@@ -825,6 +865,19 @@ pub struct Runtime {
     /// operator's behalf arms this, and it is memory only: a launch starts
     /// with the operator having looked at nothing.
     operator_focused_pane_id: Option<String>,
+    /// The tab Hide is showing in each checkout it has been asked about.
+    ///
+    /// Hide owns the visible tab. The navigator is rebuilt from Herdr's
+    /// session on every update, so the choice has to live outside it or every
+    /// tick would hand the decision back to Herdr.
+    visible_tab_ids: BTreeMap<String, String>,
+    /// The tab focus Hide has told Herdr about and is still waiting to see
+    /// confirmed. Latest request wins; a second switch replaces the first
+    /// rather than queueing behind it.
+    pending_tab_focus: Option<PendingViewFocus>,
+    /// The pane focus Hide has told Herdr about and is still waiting to see
+    /// confirmed.
+    pending_pane_focus: Option<PendingViewFocus>,
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
@@ -980,6 +1033,9 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
+            visible_tab_ids: BTreeMap::new(),
+            pending_tab_focus: None,
+            pending_pane_focus: None,
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
@@ -2039,11 +2095,12 @@ impl Runtime {
             }
         }
 
-        // Herdr names one active tab per workspace, and that name is the only
-        // authority for which tab is active. A workspace whose panes are split
-        // across checkouts leaves the sibling checkouts with none rather than
-        // letting each promote its own first tab.
+        // Herdr names one active tab per workspace. Hide owns which tab is
+        // visible, so that name is what Hide reconciles against rather than
+        // what it obeys: it confirms a switch Hide made, or it is an operator
+        // focusing a tab outside Hide and Hide follows it and says so.
         let mut unresolved_active_tabs = BTreeSet::new();
+        let mut herdr_active_tab_by_checkout: BTreeMap<String, String> = BTreeMap::new();
         for session_workspace in &payload.workspaces {
             let Some(active_tab_id) = session_workspace
                 .active_tab_id
@@ -2054,14 +2111,15 @@ impl Runtime {
                 continue;
             };
             let mut resolved = false;
-            for workspace in &mut workspaces {
-                for checkout in &mut workspace.checkouts {
+            for workspace in &workspaces {
+                for checkout in &workspace.checkouts {
                     if checkout
                         .tabs
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(active_tab_id))
                     {
-                        checkout.active_tab_id = Some(active_tab_id.to_owned());
+                        herdr_active_tab_by_checkout
+                            .insert(checkout.id.clone(), active_tab_id.to_owned());
                         resolved = true;
                     }
                 }
@@ -2082,6 +2140,7 @@ impl Runtime {
             }
         }
         self.report_unresolved_active_tabs(unresolved_active_tabs);
+        self.reconcile_visible_tabs(&mut workspaces, &herdr_active_tab_by_checkout);
 
         let previous = self.snapshot.navigator.clone();
         self.snapshot.navigator.workspaces = workspaces;
@@ -2416,6 +2475,142 @@ impl Runtime {
         self.sync_active_tab_projection();
     }
 
+    /// Decides which tab each checkout shows, given what Herdr says is active
+    /// and what Hide has already chosen.
+    ///
+    /// Hide owns the visible tab, so Herdr's name is read four ways:
+    /// it agrees with Hide and confirms a switch in flight; it disagrees while
+    /// Hide's notification is still unconfirmed, and Hide keeps its own value
+    /// until Herdr answers; it disagrees with nothing in flight, which is an
+    /// operator focusing that tab outside Hide, so Hide follows it and reports
+    /// the tab and where the change came from; or Herdr names no tab in this
+    /// checkout, and Hide keeps showing what it was showing.
+    ///
+    /// A checkout that has tabs always ends with one of them visible. Leaving
+    /// a sibling checkout of a split workspace without an active tab is what
+    /// made its canvas draw the empty-checkout state over real panes.
+    fn reconcile_visible_tabs(
+        &mut self,
+        workspaces: &mut [WorkspaceSnapshot],
+        herdr_active_tab_by_checkout: &BTreeMap<String, String>,
+    ) {
+        let mut followed: Vec<(String, String, String)> = Vec::new();
+        let mut confirmed_pending = false;
+        for workspace in workspaces.iter_mut() {
+            for checkout in workspace.checkouts.iter_mut() {
+                let has_tab = |tab_id: &str| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(tab_id))
+                };
+                let hide_tab = self
+                    .visible_tab_ids
+                    .get(&checkout.id)
+                    .filter(|tab_id| has_tab(tab_id))
+                    .cloned();
+                let herdr_tab = herdr_active_tab_by_checkout.get(&checkout.id).cloned();
+                let pending_tab = self
+                    .pending_tab_focus
+                    .as_ref()
+                    .filter(|pending| pending.scope_id == checkout.id)
+                    .map(|pending| pending.target_id.clone());
+                let visible = match (hide_tab, herdr_tab) {
+                    (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => {
+                        if pending_tab.as_deref() == Some(hide_tab.as_str()) {
+                            confirmed_pending = true;
+                        }
+                        Some(hide_tab)
+                    }
+                    (Some(hide_tab), Some(herdr_tab)) => {
+                        if pending_tab.as_deref() == Some(hide_tab.as_str()) {
+                            Some(hide_tab)
+                        } else {
+                            followed.push((checkout.id.clone(), hide_tab, herdr_tab.clone()));
+                            Some(herdr_tab)
+                        }
+                    }
+                    (Some(hide_tab), None) => Some(hide_tab),
+                    (None, Some(herdr_tab)) => Some(herdr_tab),
+                    (None, None) => checkout.tabs.first().and_then(|tab| tab.id.clone()),
+                };
+                match visible {
+                    Some(tab_id) => {
+                        self.visible_tab_ids
+                            .insert(checkout.id.clone(), tab_id.clone());
+                        checkout.active_tab_id = Some(tab_id);
+                    }
+                    None => {
+                        self.visible_tab_ids.remove(&checkout.id);
+                        checkout.active_tab_id = None;
+                    }
+                }
+            }
+        }
+        if confirmed_pending {
+            self.pending_tab_focus = None;
+        }
+        for (checkout_id, hide_tab, herdr_tab) in followed {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "view_state",
+                    "kind": "tab.focus.followed",
+                    "checkout_id": checkout_id,
+                    "from_tab_id": hide_tab,
+                    "to_tab_id": herdr_tab,
+                    "origin": "herdr",
+                })
+            );
+            self.push_diagnostic(
+                "tab.focus.followed",
+                format!("Herdr focused tab {herdr_tab} in {checkout_id}; Hide was showing {hide_tab}"),
+            );
+        }
+    }
+
+    /// Stops waiting on a view-state notification Herdr never answered.
+    ///
+    /// The value Hide chose is kept: the operator's tab and pane are Hide's,
+    /// and a silent Herdr is a reason to report, not a reason to move the
+    /// screen out from under them. Dropping the wait is what lets the next
+    /// Herdr event be read as an external focus rather than as a late answer.
+    fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
+        let mut expired = Vec::new();
+        if let Some(pending) = self.pending_tab_focus.as_ref()
+            && pending.expired_at(now_unix_ms)
+        {
+            expired.push(("tab", pending.target_id.clone()));
+            self.pending_tab_focus = None;
+        }
+        if let Some(pending) = self.pending_pane_focus.as_ref()
+            && pending.expired_at(now_unix_ms)
+        {
+            expired.push(("pane", pending.target_id.clone()));
+            self.pending_pane_focus = None;
+        }
+        let changed = !expired.is_empty();
+        for (what, target_id) in expired {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "view_state",
+                    "kind": "view_focus.timed_out",
+                    "what": what,
+                    "target_id": target_id,
+                    "timeout_ms": VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS,
+                })
+            );
+            self.push_diagnostic(
+                "view_focus.timed_out",
+                format!(
+                    "Herdr did not confirm {what} focus {target_id} within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms; Hide keeps it"
+                ),
+            );
+        }
+        changed
+    }
+
     fn sync_active_tab_projection(&mut self) {
         let Some(focused_checkout_id) = self.snapshot.navigator.focused_checkout_id.as_deref()
         else {
@@ -2452,9 +2647,11 @@ impl Runtime {
             };
             return;
         };
-        // The active tab is the one Herdr named, looked up by id. The first
-        // tab is not a stand-in for a missing one: reading position as focus
-        // is what made a tab move look like a focus change.
+        // The visible tab is looked up by the id Hide holds for this checkout.
+        // The first tab is not a stand-in for a missing one: reading position
+        // as focus is what made a tab move look like a focus change. A
+        // checkout that has tabs always names one, so the only tabless case
+        // left is a checkout with no tabs at all.
         let active = checkout.active_tab_id.as_deref().and_then(|active_tab_id| {
             checkout
                 .tabs
@@ -2468,11 +2665,7 @@ impl Runtime {
                 id: None,
                 workspace_id: Some(workspace_id),
                 checkout_id: Some(checkout.id.clone()),
-                label: Some(if checkout.tabs.is_empty() {
-                    "No tabs".to_owned()
-                } else {
-                    "No active tab".to_owned()
-                }),
+                label: Some("No tabs".to_owned()),
                 empty: true,
                 panes: Vec::new(),
             };
@@ -2755,6 +2948,11 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        // The session update is this runtime's only regular tick, so it is
+        // also where a notification Herdr never answered stops being pending.
+        // Doing it first lets this same update be read as an external focus
+        // rather than as a late answer to a request that has gone quiet.
+        let timed_out = self.expire_pending_view_focus(unix_milliseconds());
         let previously_projected_pane = self
             .snapshot
             .terminal
@@ -3043,7 +3241,8 @@ impl Runtime {
             );
         }
 
-        let mut changed = catalog_changed || selection_changed || !excluded.is_empty();
+        let mut changed =
+            catalog_changed || selection_changed || timed_out || !excluded.is_empty();
         if self.snapshot.status.herdr.state != state
             || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
         {
@@ -3346,13 +3545,23 @@ impl Runtime {
         }
     }
 
-    /// Focuses a pane in Herdr, and for an operator focus makes that pane the
-    /// one the read record follows.
+    /// Moves the keyboard focus to a pane and tells Herdr afterwards.
     ///
-    /// The record is raised here rather than when the resulting layout lands,
-    /// so one click on a Done row clears that row inside the same dispatch.
-    /// A focus that never reaches Herdr arms nothing.
+    /// Hide owns the focused pane, so the focus ring and the first responder
+    /// move on this frame rather than on Herdr's confirming event. What Herdr
+    /// still owns is which panes exist and how they are split; this only says
+    /// which of them has the keyboard.
+    ///
+    /// For an operator focus the pane also becomes the one the read record
+    /// follows. The record is raised here rather than when the resulting
+    /// layout lands, so one click on a Done row clears that row inside the
+    /// same dispatch. A focus that never reaches Herdr arms nothing.
     fn focus_pane(&mut self, pane_id: String, origin: PaneFocusOrigin) {
+        let already_focused = self.snapshot.focused.pane_id.as_deref() == Some(pane_id.as_str());
+        self.snapshot.terminal.pane_id = Some(pane_id.clone());
+        self.snapshot.focused.surface = Surface::Terminal;
+        self.snapshot.focused.pane_id = Some(pane_id.clone());
+        self.sync_focused_terminal_projection();
         let Some(context) = self.live.as_ref().cloned() else {
             self.set_error(
                 "pane.control_unavailable",
@@ -3361,15 +3570,30 @@ impl Runtime {
             );
             return;
         };
-        self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
-        if let Err(message) = live::spawn_pane_control(
-            context,
-            PaneControlAction::Focus {
-                pane_id: pane_id.clone(),
-            },
-        ) {
-            self.set_error("pane.focus_worker_failed", message, true);
-            return;
+        // Rule 11: focusing the pane that already has the keyboard, with
+        // nothing in flight, converges without a second notification. The
+        // look itself still counts, so only the notification is skipped.
+        let pending_names_this_pane = self
+            .pending_pane_focus
+            .as_ref()
+            .is_some_and(|pending| pending.target_id == pane_id);
+        let notify =
+            !already_focused || !(self.pending_pane_focus.is_none() || pending_names_this_pane);
+        if notify {
+            self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
+            if let Err(message) = live::spawn_pane_control(
+                context,
+                PaneControlAction::Focus {
+                    pane_id: pane_id.clone(),
+                },
+            ) {
+                self.set_error("pane.focus_worker_failed", message, true);
+                return;
+            }
+            // Latest request wins, so a second click while the first is
+            // unconfirmed cannot be pulled back by Herdr's answer to the
+            // first.
+            self.pending_pane_focus = Some(PendingViewFocus::new(String::new(), pane_id.clone()));
         }
         if origin == PaneFocusOrigin::Restore {
             return;
@@ -3440,50 +3664,78 @@ impl Runtime {
         let previous_selected = self.snapshot.terminal.pane_id.clone();
         let previous_zoomed = self.snapshot.zoomed.clone();
 
-        let previous = self
-            .snapshot
-            .terminal
-            .panes
-            .drain(..)
-            .map(|pane| (pane.pane_id.clone(), pane))
-            .collect::<HashMap<_, _>>();
-        let mut terminal_panes = pane_ids
-            .iter()
-            .map(|pane_id| {
-                previous
-                    .get(pane_id)
-                    .cloned()
-                    .unwrap_or_else(|| self.terminal_pane_snapshot(pane_id))
-            })
-            .collect::<Vec<_>>();
-        let mut remote_panes = previous
-            .into_values()
-            .filter(|pane| pane.pane_id.starts_with("remote:"))
-            .collect::<Vec<_>>();
-        remote_panes.sort_by(|left, right| left.pane_id.cmp(&right.pane_id));
-        terminal_panes.extend(remote_panes);
-        self.snapshot.terminal.panes = terminal_panes;
-
-        // Herdr owns focus and input routing. The shell never keeps a second,
-        // hover- or click-local focus value alongside the authoritative layout.
-        let previous_focus = self.snapshot.focused.pane_id.clone();
-        self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
-        self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
-        self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
-        self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
+        // A pane a visited tab left behind keeps its projection entry. The
+        // terminal view the shell holds open for that tab reads its transport
+        // state from here, and dropping the entry on every switch is what
+        // dropped the attach with it and made the tab come back empty. Only a
+        // pane that has left the session goes, and the session is the union
+        // of every tab's layout.
+        let arriving_tab_id = layout.tab_id.clone();
         match self
             .snapshot
             .pane_layouts
             .iter_mut()
-            .find(|stored| stored.tab_id == layout.tab_id)
+            .find(|stored| stored.tab_id == arriving_tab_id)
         {
-            Some(stored) => *stored = layout,
+            Some(stored) => *stored = layout.clone(),
             None => {
-                self.snapshot.pane_layouts.push(layout);
+                self.snapshot.pane_layouts.push(layout.clone());
                 self.snapshot
                     .pane_layouts
                     .sort_by(|left, right| left.tab_id.cmp(&right.tab_id));
             }
+        }
+        let session_pane_ids = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .flat_map(|stored| stored.pane_ids())
+            .map(str::to_owned)
+            .collect::<HashSet<_>>();
+        self.snapshot.terminal.panes.retain(|pane| {
+            pane.pane_id.starts_with("remote:") || session_pane_ids.contains(&pane.pane_id)
+        });
+        for pane_id in &pane_ids {
+            self.ensure_terminal_pane(pane_id);
+        }
+
+        // Hide owns the focused pane. An arriving layout confirms the focus
+        // Hide notified Herdr about, or - with nothing in flight - it is a
+        // focus made outside Hide and Hide follows it and says so. While a
+        // notification is unconfirmed the layout's geometry is taken and its
+        // focus is not, so the operator's click is not undone by the frame
+        // that was already on its way.
+        let previous_focus = self.snapshot.focused.pane_id.clone();
+        let pending_pane = self
+            .pending_pane_focus
+            .as_ref()
+            .map(|pending| pending.target_id.clone());
+        let arriving_confirms_pending_tab = self
+            .pending_tab_focus
+            .as_ref()
+            .is_some_and(|pending| pending.target_id == arriving_tab_id);
+        let adopt_focus = match pending_pane.as_deref() {
+            Some(pending) if pending == layout.focused_pane_id => {
+                self.pending_pane_focus = None;
+                true
+            }
+            Some(_) => false,
+            None => true,
+        };
+        if adopt_focus {
+            if previous_focus.as_deref() != Some(layout.focused_pane_id.as_str())
+                && pending_pane.is_none()
+                && !arriving_confirms_pending_tab
+            {
+                self.report_followed_pane_focus(previous_focus.as_deref(), &layout.focused_pane_id);
+            }
+            self.snapshot.terminal.pane_id = Some(layout.focused_pane_id.clone());
+            self.snapshot.focused.pane_id = Some(layout.focused_pane_id.clone());
+            self.release_operator_focus_if_moved(&previous_focus, &layout.focused_pane_id);
+            // Zoom is Herdr's, and its subject is the focused pane. While
+            // Hide keeps a focus Herdr has not confirmed, taking the zoom
+            // would hide the pane the operator just clicked behind another.
+            self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
         }
         let mut notice_cleared = false;
         if self
@@ -3516,6 +3768,81 @@ impl Runtime {
                     .map(|pane| pane.pane_id.clone())
                     .collect::<Vec<_>>();
         layout_changed || projection_changed
+    }
+
+    /// Ends the wait on a tab focus Herdr refused, keeping the tab Hide is
+    /// showing and reporting the refusal.
+    fn clear_refused_tab_focus(&mut self, tab_id: &str, message: &str) {
+        if self
+            .pending_tab_focus
+            .as_ref()
+            .is_none_or(|pending| pending.target_id != tab_id)
+        {
+            return;
+        }
+        self.pending_tab_focus = None;
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "view_state",
+                "kind": "tab.focus.refused",
+                "tab_id": tab_id,
+                "message": message,
+            })
+        );
+        self.push_diagnostic(
+            "tab.focus.refused",
+            format!("Herdr refused tab focus {tab_id}: {message}; Hide keeps showing it"),
+        );
+    }
+
+    /// Ends the wait on a pane focus Herdr refused, keeping the pane Hide
+    /// focused and reporting the refusal.
+    fn clear_refused_pane_focus(&mut self, pane_id: &str, message: &str) {
+        if self
+            .pending_pane_focus
+            .as_ref()
+            .is_none_or(|pending| pending.target_id != pane_id)
+        {
+            return;
+        }
+        self.pending_pane_focus = None;
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "view_state",
+                "kind": "pane.focus.refused",
+                "pane_id": pane_id,
+                "message": message,
+            })
+        );
+        self.push_diagnostic(
+            "pane.focus.refused",
+            format!("Herdr refused pane focus {pane_id}: {message}; Hide keeps it focused"),
+        );
+    }
+
+    /// Reports that Hide moved its keyboard focus to follow a pane focus made
+    /// outside it.
+    ///
+    /// Rule 9: the record names the panes and where the change came from, and
+    /// carries nothing about what is in them.
+    fn report_followed_pane_focus(&mut self, previous: Option<&str>, arriving: &str) {
+        let from = previous.unwrap_or("<none>").to_owned();
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "view_state",
+                "kind": "pane.focus.followed",
+                "from_pane_id": from,
+                "to_pane_id": arriving,
+                "origin": "herdr",
+            })
+        );
+        self.push_diagnostic(
+            "pane.focus.followed",
+            format!("Herdr focused pane {arriving}; Hide was on {from}"),
+        );
     }
 
     /// Drops the operator focus once Herdr moves focus off the pane the
@@ -3895,7 +4222,11 @@ impl Runtime {
                 self.set_error("pane.projection_failed", message, true);
                 true
             }
-            (PaneControlAction::Focus { .. }, Err(message)) => {
+            (PaneControlAction::Focus { pane_id }, Err(message)) => {
+                // Hide keeps the pane it focused. The refusal is reported and
+                // the wait ends, so the next Herdr event naming another pane
+                // is read as the authority it is rather than as a late answer.
+                self.clear_refused_pane_focus(&pane_id, &message);
                 self.set_error("pane.focus_failed", message, true);
                 true
             }
@@ -4056,6 +4387,12 @@ impl Runtime {
                 );
             }
             Err(message) => {
+                // Hide keeps the tab it made visible. The refusal is reported
+                // and the wait ends, so the next Herdr event naming another
+                // tab is read as an external focus rather than a late answer.
+                if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    self.clear_refused_tab_focus(tab_id, &message);
+                }
                 self.set_error(
                     "tab.control.failed",
                     format!("{action_kind} failed: {message}"),
@@ -5110,10 +5447,14 @@ impl Runtime {
                     return true;
                 };
                 let checkout_path = checkout.path.clone();
-                // Focusing a tab does not reorder the strip. Herdr owns the
-                // order and the active mark alike, and it confirms this focus
-                // with `tab_focused`; moving the tab here made every switch
-                // look like a reorder until the next catalog rebuild undid it.
+                // Hide owns the visible tab, so the active mark moves here,
+                // on the frame the operator asked for it, and Herdr is told
+                // afterwards. Focusing a tab still does not reorder the
+                // strip: Herdr owns the order, and moving the tab here made
+                // every switch look like a reorder until the next catalog
+                // rebuild undid it.
+                let already_visible = checkout.active_tab_id.as_deref() == Some(&payload.tab_id);
+                checkout.active_tab_id = Some(payload.tab_id.clone());
                 let first_pane_id = checkout.tabs[index]
                     .panes
                     .first()
@@ -5129,8 +5470,10 @@ impl Runtime {
                     .map(|layout| layout.focused_pane_id.clone())
                     .or(first_pane_id);
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
-                self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id);
+                self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
+                self.visible_tab_ids
+                    .insert(payload.checkout_id.clone(), payload.tab_id.clone());
                 // Nothing is cleared here. The tab being selected already has
                 // its layout in the snapshot, so the canvas draws it on this
                 // frame instead of showing an empty canvas until Herdr
@@ -5139,6 +5482,16 @@ impl Runtime {
                 self.sync_active_tab_projection();
                 self.deactivate_file_tab();
                 self.persist_current_ui_state();
+                // Rule 11: reaching for the tab already showing, with nothing
+                // in flight, converges on the state it is already in and
+                // sends Herdr no second notification.
+                let pending_names_this_tab = self
+                    .pending_tab_focus
+                    .as_ref()
+                    .is_some_and(|pending| pending.target_id == payload.tab_id);
+                if already_visible && (self.pending_tab_focus.is_none() || pending_names_this_tab) {
+                    return true;
+                }
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.set_error(
                         "tab.control_unavailable",
@@ -5150,11 +5503,20 @@ impl Runtime {
                 if let Err(message) = live::spawn_local_control(
                     context,
                     RemoteControlAction::FocusTab {
-                        tab_id: payload.tab_id,
+                        tab_id: payload.tab_id.clone(),
                     },
                 ) {
                     self.set_error("tab.focus_worker_failed", message, true);
+                    return true;
                 }
+                // Latest request wins. A second switch while the first is
+                // unconfirmed replaces it, so Herdr's answer to the first
+                // cannot pull the canvas back off the tab the operator is
+                // now on.
+                self.pending_tab_focus = Some(PendingViewFocus::new(
+                    payload.checkout_id,
+                    payload.tab_id,
+                ));
                 true
             }
             ValidatedEvent::ReorderTab(payload) => self.reorder_tab(payload),
@@ -8080,6 +8442,323 @@ mod tests {
             .clone()
     }
 
+    /// A [`tab_order_runtime`] with a live Herdr context, so a view-state
+    /// notification actually leaves and a wait is armed.
+    fn live_tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
+        let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+        let socket_path = std::env::temp_dir()
+            .join(format!(
+                "herdr-core-view-authority-{}-{}.sock",
+                std::process::id(),
+                NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned();
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone().into(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+        (runtime, checkout_id)
+    }
+
+    fn focus_tab_event(checkout_id: &str, tab_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_tab",
+            "payload": {
+                "workspace_id": "workspace:order",
+                "checkout_id": checkout_id,
+                "tab_id": tab_id
+            }
+        }))
+        .expect("focus tab event")
+    }
+
+    fn diagnostic_count(runtime: &Runtime, kind: &str) -> usize {
+        runtime
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == kind)
+            .count()
+    }
+
+    /// AC1, SC1. The strip's active mark and the canvas are the same field, so
+    /// asking for a tab moves both on the dispatch that asked, without waiting
+    /// for Herdr to answer.
+    #[test]
+    fn view_authority_a_tab_switch_moves_the_strip_and_the_canvas_in_one_snapshot() {
+        let checkout_path = "/private/tmp/hide-view-authority-switch";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "the strip's active mark moves on the frame the operator asked for"
+        );
+        assert_eq!(snapshot.tab.id.as_deref(), Some("w-order:t3"));
+        assert_eq!(
+            snapshot.active_pane_layout().map(|layout| layout.tab_id.as_str()),
+            Some("w-order:t3"),
+            "the canvas is drawing the requested tab in the same snapshot"
+        );
+    }
+
+    /// AC1, SC1. Herdr's next session update still names the tab the operator
+    /// left, because the notification has not landed. That is the answer to a
+    /// question already asked, not a new focus, so it must not pull the canvas
+    /// back.
+    #[test]
+    fn view_authority_a_stale_herdr_tab_does_not_undo_an_unconfirmed_switch() {
+        let checkout_path = "/private/tmp/hide-view-authority-stale-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3")
+        );
+        assert_eq!(
+            diagnostic_count(&runtime, "tab.focus.followed"),
+            0,
+            "an unconfirmed notification is not an external focus"
+        );
+
+        // The confirmation ends the wait, and the value is unchanged by it.
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t3"
+        )));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3")
+        );
+        assert!(runtime.pending_tab_focus.is_none());
+    }
+
+    /// AC1, R1. With nothing in flight, a Herdr session naming another tab is
+    /// somebody focusing that tab outside Hide. Hide follows it and says so.
+    #[test]
+    fn view_authority_an_external_tab_focus_is_followed_and_reported() {
+        let checkout_path = "/private/tmp/hide-view-authority-external-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.pending_tab_focus.is_none());
+
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2"
+        ))));
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t2")
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+    }
+
+    /// AC2, R1. Herdr refusing the notification does not move the operator's
+    /// screen. The tab stays where they put it and the refusal is reported.
+    #[test]
+    fn view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it() {
+        let checkout_path = "/private/tmp/hide-view-authority-refused-tab";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+        assert!(runtime.pending_tab_focus.is_some());
+
+        runtime.ingest_local_control_result(
+            RemoteControlAction::FocusTab {
+                tab_id: "w-order:t3".to_owned(),
+            },
+            Err("tab.focus rejected".to_owned()),
+            12,
+        );
+
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "a refusal is reported, not acted on by moving the screen"
+        );
+        assert_eq!(diagnostic_count(&runtime, "tab.focus.refused"), 1);
+        assert!(runtime.pending_tab_focus.is_none());
+    }
+
+    /// AC2, R1. A notification Herdr never answers stops being pending, the
+    /// value Hide chose is kept, and the silence is reported rather than
+    /// waited on forever.
+    #[test]
+    fn view_authority_an_unanswered_notification_times_out_and_keeps_its_value() {
+        let checkout_path = "/private/tmp/hide-view-authority-timeout";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        )));
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+        let requested_at = runtime
+            .pending_tab_focus
+            .as_ref()
+            .expect("a notification is in flight")
+            .requested_at_unix_ms;
+
+        assert!(!runtime.expire_pending_view_focus(requested_at + 1));
+        assert!(runtime.pending_tab_focus.is_some());
+        assert!(
+            runtime
+                .expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS)
+        );
+
+        assert!(runtime.pending_tab_focus.is_none());
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "a silent Herdr is a reason to report, not to move the screen"
+        );
+        assert_eq!(diagnostic_count(&runtime, "view_focus.timed_out"), 1);
+    }
+
+    /// AC1, AC7, SC3. The focus ring moves on the click, and the layout that
+    /// was already on its way carrying the old focus does not take it back.
+    /// The read record stays on the clicked pane through that arrival.
+    #[test]
+    fn view_authority_a_pane_click_moves_focus_and_a_stale_layout_does_not_undo_it() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        assert_eq!(
+            runtime.snapshot().focused.pane_id.as_deref(),
+            Some("w1:p3"),
+            "the ring moves on the click, not on Herdr's confirming event"
+        );
+        assert_eq!(runtime.snapshot().terminal.pane_id.as_deref(), Some("w1:p3"));
+
+        // Herdr's in-flight frame still names the pane the tab came forward
+        // with. Its geometry is taken; its focus is not.
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+        assert_eq!(
+            unread_panes(&runtime),
+            vec!["w1:p1", "w1:p2"],
+            "the clicked row stays read through the stale arrival"
+        );
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+    }
+
+    /// AC1, AC8, R1. With nothing in flight, a Herdr layout naming another
+    /// pane is a focus made outside Hide. Hide follows it and reports the
+    /// panes and where the change came from.
+    #[test]
+    fn view_authority_an_external_pane_focus_is_followed_and_reported() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.pending_pane_focus.is_none());
+
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+    }
+
+    /// AC2, R1. A refused pane focus leaves the keyboard where the operator
+    /// put it and reports the refusal.
+    #[test]
+    fn view_authority_a_refused_pane_focus_keeps_the_pane_and_reports_it() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+
+        runtime.ingest_pane_control_result(
+            PaneControlAction::Focus {
+                pane_id: "w1:p3".to_owned(),
+            },
+            Err("pane.focus rejected".to_owned()),
+            9,
+        );
+
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.refused"), 1);
+        assert!(runtime.pending_pane_focus.is_none());
+    }
+
+    /// Rule 11. Reaching for the pane that already has the keyboard converges
+    /// on the state it is already in and sends Herdr nothing a second time.
+    /// The look itself still counts, because clicking the pane you are on is
+    /// still looking at it.
+    #[test]
+    fn view_authority_repeating_a_focus_sends_no_second_notification() {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+        assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+        assert!(runtime.pending_pane_focus.is_none());
+        let notifications = diagnostic_count(&runtime, "pane.focus.requested");
+
+        runtime.dispatch_json(&operator_focus_event("w1:p3"));
+
+        assert_eq!(
+            diagnostic_count(&runtime, "pane.focus.requested"),
+            notifications,
+            "no second request leaves for a pane Herdr has already focused"
+        );
+        assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+        assert_eq!(unread_panes(&runtime), vec!["w1:p1", "w1:p2"]);
+    }
+
     #[test]
     fn tab_order_follows_herdr_and_not_layout_arrival() {
         let checkout_path = "/private/tmp/hide-tab-order-arrival";
@@ -8170,12 +8849,14 @@ mod tests {
             tabs.map(str::to_owned).to_vec(),
             "a tab switch must not move the tab it switched to"
         );
-        // Herdr has not confirmed the switch yet, so the active mark has not
-        // moved either. It is never inferred from position.
+        // The active mark moves on the dispatch that asked for it, because
+        // Hide owns the visible tab. It is still never inferred from
+        // position: the strip order above did not change.
         assert_eq!(
             checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
-            Some("w-order:t1")
+            Some("w-order:t3")
         );
+        assert_eq!(runtime.snapshot().tab.id.as_deref(), Some("w-order:t3"));
     }
 
     #[test]
@@ -8212,15 +8893,17 @@ mod tests {
             "w-order:t9"
         ))));
 
-        assert_eq!(checkout_active_tab_id(&runtime, &checkout_id), None);
+        // Hide owns the visible tab, so a checkout that has tabs shows one of
+        // them. What Herdr named is still reported, because a name that
+        // matches no tab in the session is worth knowing about.
         assert_eq!(
-            runtime.snapshot().tab.id,
-            None,
-            "no tab stands in for the one Herdr named"
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t1")
         );
         assert_eq!(
-            runtime.snapshot().tab.label.as_deref(),
-            Some("No active tab")
+            runtime.snapshot().tab.id.as_deref(),
+            Some("w-order:t1"),
+            "a checkout with tabs never draws the empty-checkout state"
         );
         let unresolved = runtime
             .snapshot()
