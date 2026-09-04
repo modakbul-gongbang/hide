@@ -105,11 +105,18 @@ struct TerminalHost: NSViewRepresentable {
         (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
         applyPaneFind(to: terminal)
         if terminal.isHidden == canvasVisible {
-            terminal.isHidden = !canvasVisible
-            // Bytes fed while hidden were parsed but not drawn, so the first
-            // frame after coming forward has to be drawn from the buffer.
-            if canvasVisible {
-                terminal.needsDisplay = true
+            // Applied on the next run-loop turn: hiding an NSView inside
+            // SwiftUI's update pass re-enters the layout that is running and
+            // trips the attribute graph's cycle detector.
+            let visible = canvasVisible
+            DispatchQueue.main.async { [weak terminal] in
+                guard let terminal, terminal.isHidden == visible else { return }
+                terminal.isHidden = !visible
+                // Bytes fed while hidden were parsed but not drawn, so the
+                // first frame after coming forward is drawn from the buffer.
+                if visible {
+                    terminal.needsDisplay = true
+                }
             }
         }
         // SwiftTerm's font setter recomputes the cell metrics and resizes the
