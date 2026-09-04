@@ -1750,13 +1750,18 @@ fn spawn_terminal_control_writer(
                     let _ = acknowledgement.send(());
                 }
                 if let Err(error) = result {
-                    deliver_terminal_session_write_failure(
-                        &runtime,
-                        &notifier,
-                        &writer_pane,
-                        generation,
-                        format!("terminal control write failed: {error}"),
-                    );
+                    // A release is the session letting go; a child that
+                    // already left, the pane having closed under it, has
+                    // nothing to be told and no failure to report.
+                    if !is_release {
+                        deliver_terminal_session_write_failure(
+                            &runtime,
+                            &notifier,
+                            &writer_pane,
+                            generation,
+                            format!("terminal control write failed: {error}"),
+                        );
+                    }
                     return;
                 }
                 if is_release {

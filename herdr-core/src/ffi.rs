@@ -158,9 +158,28 @@ fn notify_change(core: &HerdrCore) {
     core.notifier.notify();
 }
 
+/// Makes a write to a closed pipe or socket return `EPIPE` instead of
+/// terminating the process.
+///
+/// A Rust binary does this in its own startup, but this core is a static
+/// library inside a Swift host, which leaves SIGPIPE at its default action:
+/// terminate, with no crash report. On 2026-09-04 closing a tab exited the app
+/// that way: the pane's control child had already left on `terminal_closed`,
+/// and the release line the session drop writes to its stdin hit the closed
+/// pipe. Every pipe write in this core reports its error to the runtime, so
+/// this is what lets those reports happen.
+fn ignore_sigpipe() {
+    // SAFETY: installing SIG_IGN for SIGPIPE has no handler to race with and
+    // no memory to hand over; the call only changes the process signal table.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut HerdrCore {
     catch_unwind(AssertUnwindSafe(|| {
+        ignore_sigpipe();
         let Some(bytes) = input_bytes(options_json, len) else {
             return ptr::null_mut();
         };
@@ -387,4 +406,37 @@ pub extern "C" fn herdr_core_destroy(core: *mut HerdrCore) {
             drop_core(core);
         }
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A write to a pipe whose reader is gone comes back as an error the
+    /// caller sees, instead of ending the process. The test harness already
+    /// ignores SIGPIPE for its own process, so the default action is
+    /// restored first to make the call under test do the work.
+    #[test]
+    fn a_write_to_a_closed_pipe_fails_instead_of_terminating_the_process() {
+        use std::io::Write;
+        use std::os::fd::FromRawFd;
+
+        // SAFETY: restoring the default disposition and creating a pipe are
+        // plain libc calls with no memory handed across the boundary.
+        let (reader, mut writer) = unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+            let mut fds = [0; 2];
+            assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+            (
+                std::fs::File::from_raw_fd(fds[0]),
+                std::fs::File::from_raw_fd(fds[1]),
+            )
+        };
+        ignore_sigpipe();
+        drop(reader);
+        let error = writer
+            .write_all(b"release\n")
+            .expect_err("the reader is gone");
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
 }
