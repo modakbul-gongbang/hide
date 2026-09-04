@@ -84,25 +84,22 @@ struct CoreSnapshotDelta: Decodable {
 }
 
 extension CoreSnapshot {
-    /// The layout being drawn: the one holding the selected pane. It mirrors
-    /// the core's own rule so both sides name the same layout.
-    var activePaneLayout: CorePaneLayoutSnapshot? {
-        guard let paneID = terminal.paneID else { return nil }
-        return paneLayouts.first(where: { $0.root.paneIDs.contains(paneID) })
-    }
-
     /// The pane the keyboard belongs to, decided once for everyone who reads
     /// a snapshot.
     ///
-    /// The core owns the focused pane, so its own field is the answer. The
-    /// layout's focused pane is Herdr's last word on the same question and
-    /// stands in only before the core has one, because a click has to move
-    /// the ring on its own frame rather than on Herdr's confirming event.
-    /// Written out per call site, that order drifts: `observeAgentFocus`
-    /// carried the reverse of it and pointed the agent recency list at the
-    /// pane Herdr last confirmed instead of the pane just clicked.
+    /// The core owns the focused pane, so its own field is the whole answer:
+    /// a click has to move the ring on its own frame rather than on Herdr's
+    /// confirming event. Callers used to reach for a layout's focused pane
+    /// when this was nil, and the order drifted between them - the agent
+    /// recency list read the layout first and so pointed at the pane Herdr
+    /// last confirmed instead of the pane just clicked. That stand-in never
+    /// worked in any case: the layout it read was found by looking this same
+    /// field up in each layout's pane list, so it was nil in exactly the case
+    /// the fallback existed for. Reading a layout here is not the way to fill
+    /// the gap; `ShellModel.focusedPaneLayout` resolves one by the focused
+    /// tab, which does not defeat itself.
     var focusedPaneID: String? {
-        terminal.paneID ?? activePaneLayout?.focusedPaneID
+        terminal.paneID
     }
 }
 
