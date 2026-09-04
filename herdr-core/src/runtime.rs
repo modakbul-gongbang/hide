@@ -7679,6 +7679,93 @@ mod tests {
         assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
     }
 
+    /// AC6's failure half: an attach that fails names its reason on the pane
+    /// it failed for and leaves every other pane alone.
+    ///
+    /// A launch pointed at a Herdr binary that is not there reaches the
+    /// runtime as exactly this spawn error. That launch cannot be staged from
+    /// outside the app - `HerdrRuntimeResolver.resolve` searches absolute
+    /// paths that ignore both HOME and PATH, so any staging finds the
+    /// operator's installed Herdr - which is why the failure is proven here,
+    /// at the boundary the failure actually crosses, rather than by a window
+    /// screenshot.
+    #[test]
+    fn attach_failure_names_its_reason_on_that_pane_and_leaves_the_others_idle() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        // Both panes are projected the way the runtime projects them, so the
+        // untouched one carries a real resting state rather than a zero value
+        // a hand-built struct would have handed the assertion for free.
+        runtime.ensure_terminal_pane("w1:p1");
+        runtime.ensure_terminal_pane("w1:p2");
+        runtime
+            .terminal_session_generations
+            .insert("w1:p1".to_owned(), 7);
+        runtime.terminal_session_lifecycles.insert(
+            "w1:p1".to_owned(),
+            TerminalSessionLifecycle {
+                state: "starting",
+                generation: 7,
+                attempt: 1,
+                mode: Some(TerminalSessionMode::Control),
+                ..TerminalSessionLifecycle::default()
+            },
+        );
+
+        let reason = "herdr terminal control failed: no such file or directory";
+        assert!(runtime.ingest_terminal_session_spawn(
+            7,
+            "w1:p1",
+            TerminalSessionMode::Control,
+            Err(reason.to_owned()),
+            12,
+            Weak::new(),
+            crate::ffi::ChangeNotifier::noop(),
+        ));
+
+        let failed = runtime
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "w1:p1")
+            .expect("the pane whose attach failed is still projected");
+        assert_eq!(failed.transport_state, "unavailable");
+        assert_eq!(failed.transport_message.as_deref(), Some(reason));
+        assert_eq!(failed.transport_exit_category.as_deref(), Some("spawn_failed"));
+        assert_eq!(failed.transport_retry_decision, "manual");
+
+        let untouched = runtime
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "w1:p2")
+            .expect("the other pane is still projected");
+        assert_eq!(
+            untouched.transport_state, "idle",
+            "one pane's attach failure must not mark another pane unavailable"
+        );
+        assert_eq!(untouched.transport_message, None);
+        assert_eq!(untouched.transport_exit_category, None);
+
+        // The reason is also written into that pane's own byte stream, so the
+        // operator reads it where the terminal would have been and nowhere
+        // else on the canvas.
+        let notices: Vec<&TerminalChunk> = runtime
+            .snapshot
+            .terminal
+            .chunks
+            .iter()
+            .filter(|chunk| {
+                String::from_utf8(live::decode_base64(&chunk.bytes_base64).expect("chunk bytes"))
+                    .is_ok_and(|text| text.contains(reason))
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "the reason is announced once");
+        assert_eq!(notices[0].pane_id, "w1:p1");
+    }
+
     #[test]
     fn runtime_owner_conflict_observes_ignores_stale_delivery_and_reconnects_once() {
         let mut runtime = runtime();
