@@ -16,9 +16,16 @@ temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/hide-bundle.XXXXXX")
 temporary_bundle="$temporary_root/hide.app"
 downloaded_herdr="$temporary_root/herdr"
 
-herdr_version="0.8.2"
-herdr_url="https://github.com/herdrdev/herdr/releases/download/v${herdr_version}/herdr-macos-aarch64"
-herdr_sha256="a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
+# The pin is read, never restated. jq -er fails the build on a missing or null
+# field rather than bundling an unverified binary.
+herdr_manifest="$macos_root/Sources/HerdrMacOS/Resources/herdr-bundle.json"
+[[ -f "$herdr_manifest" ]] || {
+  print -u2 "pinned Herdr runtime manifest is missing: $herdr_manifest"
+  exit 1
+}
+herdr_version=$(jq -er '.version' "$herdr_manifest")
+herdr_url=$(jq -er '.source_url' "$herdr_manifest")
+herdr_sha256=$(jq -er '.sha256' "$herdr_manifest")
 
 cleanup() {
   rm -rf -- "$temporary_root"
@@ -83,9 +90,6 @@ actual_sha=$(/usr/bin/shasum -a 256 "$herdr_source" | /usr/bin/awk '{print $1}')
 [[ "$actual_sha" == "$herdr_sha256" ]] || { print -u2 "bundled herdr SHA-256 mismatch: $actual_sha"; exit 1; }
 install -m 755 "$herdr_source" "$temporary_bundle/Contents/Resources/herdr-runtime/herdr"
 
-install -m 644 \
-  "$macos_root/Resources/herdr-bundle.json" \
-  "$temporary_bundle/Contents/Resources/herdr-bundle.json"
 # Ship every notice, not a named one: a mark added to the app without a
 # matching line here would ship unattributed.
 /usr/bin/ditto \

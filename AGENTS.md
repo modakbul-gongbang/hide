@@ -58,6 +58,11 @@ Follow the official layer boundary when adding behavior:
 - Do not guess method names, parameters, response fields, or protocol compatibility from existing call sites alone.
   Check the target binary with `herdr --version` and `herdr api schema --json`, then compare it with `contracts/herdr-api.schema.json` through `scripts/check-herdr-contract.sh` before relying on new behavior.
 
+The bundled Herdr version is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`.
+`herdr-core/build.rs` generates `BUNDLED_HERDR_VERSION` from it, the Swift shell reads it at launch, and `scripts/build-app.sh` downloads and verifies the asset against it; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
+Move the pin with `scripts/bump-herdr.sh <version>`, which verifies the asset before writing and rewrites the version tokens in the README, install guide and third-party notice.
+`.github/workflows/herdr-update.yml` polls for a new stable release weekly and opens a PR with that bump after running both test suites; it never merges, because the core's Herdr behavior assumptions are only asserted against fixtures this repository wrote.
+
 ## Performance Guide
 
 These rules exist because each one was violated and diagnosed in a real incident.

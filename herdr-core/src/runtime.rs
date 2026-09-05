@@ -11188,6 +11188,8 @@ mod tests {
                     .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
                     .env("GIT_COMMITTER_NAME", "fixture")
                     .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
                     .status()
                     .expect("git runs")
                     .success(),

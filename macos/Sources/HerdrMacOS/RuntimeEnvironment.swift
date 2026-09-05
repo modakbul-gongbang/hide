@@ -72,8 +72,6 @@ enum HideStartupDiagnostic {
 /// PATH and non-secret process routing values are carried into child tools.
 /// No key, password, token, or passphrase is read, stored, or displayed.
 enum HideRuntimeEnvironment {
-    static let bundledVersion = "0.8.2"
-    static let bundledSHA256 = "a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
     private static let loginShellTimeout: TimeInterval = 2
     private static let resolvedLoginShellPath: String? = resolveLoginShellPath()
 
@@ -195,6 +193,10 @@ enum HerdrRuntimeResolver {
     }
 
     static func resolve(bundlePath: String?) -> HerdrRuntimeSelection? {
+        // Without the shipped pin there is no version floor and no digest to
+        // verify a bundled binary against, so no runtime may be selected at
+        // all. The loader has already reported why on stderr.
+        guard let pin = HerdrRuntimePinLoader.pinned else { return nil }
         let hasLiveSocket = FileManager.default.fileExists(
             atPath: NSHomeDirectory() + "/.config/herdr/herdr.sock"
         )
@@ -207,7 +209,7 @@ enum HerdrRuntimeResolver {
         for path in deduplicated(installedCandidates) where FileManager.default.isExecutableFile(atPath: path) {
             guard let version = version(of: path) else { continue }
             firstInstalled = firstInstalled ?? (path, version)
-            if compare(version, with: HideRuntimeEnvironment.bundledVersion) != .orderedAscending {
+            if compare(version, with: pin.version) != .orderedAscending {
                 let source = hasLiveSocket ? "live-socket" : "installed"
                 return HerdrRuntimeSelection(
                     path: path,
@@ -222,15 +224,15 @@ enum HerdrRuntimeResolver {
 
         if let bundlePath,
            FileManager.default.isExecutableFile(atPath: bundlePath),
-           sha256(of: bundlePath) == HideRuntimeEnvironment.bundledSHA256 {
+           sha256(of: bundlePath) == pin.sha256 {
             let guidance = oldInstalledVersion.map {
-                "Installed Herdr \($0) is below \(HideRuntimeEnvironment.bundledVersion); hide is using its bundled runtime."
+                "Installed Herdr \($0) is below \(pin.version); hide is using its bundled runtime."
             }
             return HerdrRuntimeSelection(
                 path: bundlePath,
                 source: hasLiveSocket ? "live-socket" : "bundled",
-                version: HideRuntimeEnvironment.bundledVersion,
-                sha256: HideRuntimeEnvironment.bundledSHA256,
+                version: pin.version,
+                sha256: pin.sha256,
                 guidance: guidance
             )
         }
@@ -241,7 +243,7 @@ enum HerdrRuntimeResolver {
                 source: "installed-below-minimum",
                 version: firstInstalled.version,
                 sha256: sha256(of: firstInstalled.path),
-                guidance: "The installed Herdr CLI is below \(HideRuntimeEnvironment.bundledVersion), but the verified bundled runtime is unavailable."
+                guidance: "The installed Herdr CLI is below \(pin.version), but the verified bundled runtime is unavailable."
             )
         }
         return nil

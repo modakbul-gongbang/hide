@@ -6,16 +6,23 @@ export LC_CTYPE=en_US.UTF-8
 export LANG=en_US.UTF-8
 
 usage() {
-  print -u2 -- "usage: $0 [--herdr-bin PATH]"
+  print -u2 -- "usage: $0 [--herdr-bin PATH] [--schema-only]"
+  print -u2 -- "       --schema-only compares the CLI schema against the contract and skips"
+  print -u2 -- "       every check that needs a running server, so it runs on a bare machine"
 }
 
 herdr_bin=""
+schema_only=false
 while (( $# > 0 )); do
   case "$1" in
     --herdr-bin)
       (( $# >= 2 )) || { usage; exit 2; }
       herdr_bin=$2
       shift 2
+      ;;
+    --schema-only)
+      schema_only=true
+      shift
       ;;
     *)
       usage
@@ -59,6 +66,23 @@ if ! cmp -s "$contract_normalized" "$cli_normalized"; then
   exit 1
 fi
 
+cli_version=$("$herdr_bin" --version | awk '{print $2}')
+schema_sha256=$(/usr/bin/shasum -a 256 "$contract_normalized" | awk '{print $1}')
+
+# `herdr api schema --json` is answered by the binary itself, so the comparison
+# above is the whole of what a machine with no Herdr session can verify. The
+# remaining checks read live server state and are a local step, not a CI one.
+if [[ "$schema_only" == true ]]; then
+  jq -n \
+    --arg herdr_bin "$herdr_bin" \
+    --arg version "$cli_version" \
+    --arg schema_sha256 "$schema_sha256" \
+    --argjson protocol "$contract_protocol" \
+    '{status: "pass", scope: "schema-only", herdr_bin: $herdr_bin, version: $version,
+      protocol: $protocol, schema_sha256: $schema_sha256}'
+  exit 0
+fi
+
 snapshot=$("$herdr_bin" api snapshot)
 server_protocol=$(print -r -- "$snapshot" | jq -er '.result.snapshot.protocol')
 if [[ "$server_protocol" != "$contract_protocol" ]]; then
@@ -67,7 +91,6 @@ if [[ "$server_protocol" != "$contract_protocol" ]]; then
   exit 1
 fi
 
-cli_version=$("$herdr_bin" --version | awk '{print $2}')
 server_status=$("$herdr_bin" status server)
 server_version=$(print -r -- "$server_status" | awk '/^version:/ {print $2}')
 if [[ -z "$server_version" || "$server_version" != "$cli_version" ]]; then
@@ -78,7 +101,6 @@ fi
 
 workspace_count=$(print -r -- "$snapshot" | jq -er '.result.snapshot.workspaces | length')
 pane_count=$(print -r -- "$snapshot" | jq -er '.result.snapshot.panes | length')
-schema_sha256=$(/usr/bin/shasum -a 256 "$contract_normalized" | awk '{print $1}')
 jq -n \
   --arg herdr_bin "$herdr_bin" \
   --arg version "$cli_version" \
@@ -86,4 +108,4 @@ jq -n \
   --argjson protocol "$contract_protocol" \
   --argjson workspaces "$workspace_count" \
   --argjson panes "$pane_count" \
-  '{status: "pass", herdr_bin: $herdr_bin, version: $version, protocol: $protocol, schema_sha256: $schema_sha256, workspaces: $workspaces, panes: $panes}'
+  '{status: "pass", scope: "full", herdr_bin: $herdr_bin, version: $version, protocol: $protocol, schema_sha256: $schema_sha256, workspaces: $workspaces, panes: $panes}'
