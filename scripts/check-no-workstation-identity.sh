@@ -16,7 +16,9 @@ cd "$(dirname "$0")/.."
 pattern='/Users/|hoyeonlee|grabs-mac-mini|tail56d7a2'
 allowed='/Users/example'
 
-hits="$(git grep -nE "$pattern" -- . ':!macos/Vendor' ':!agents' | grep -vF "$allowed" || true)"
+# This script carries the pattern itself, so it is the one file excluded.
+hits="$(git grep -nE "$pattern" -- . ':!macos/Vendor' ':!agents' ':!scripts/check-no-workstation-identity.sh' \
+    | grep -vF "$allowed" || true)"
 if [[ -n "$hits" ]]; then
     printf 'workstation identities are present in tracked files:\n%s\n' "$hits" >&2
     exit 1
