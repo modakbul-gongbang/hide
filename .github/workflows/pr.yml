@@ -34,9 +34,11 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2.4.0
-        with:
-          swift-version: "6.0.3"
+      # The tests build with the Xcode toolchain the runner ships. The
+      # open-source 6.0.3 toolchain the release uses crashes in IRGen on a
+      # debug build of MainWindowChrome.swift, which -O never reaches.
+      - name: Show the Swift toolchain
+        run: swift --version
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"

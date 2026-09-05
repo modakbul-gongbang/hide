@@ -13,9 +13,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2.4.0
-        with:
-          swift-version: "6.0.3"
+      - name: Show the Swift toolchain
+        run: swift --version
       - name: Test the core
         run: cargo test --locked --manifest-path herdr-core/Cargo.toml
       - name: Build the core archive the shell links
