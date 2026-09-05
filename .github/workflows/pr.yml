@@ -1,0 +1,99 @@
+# Every pull request and every push to main runs the same three lanes, and the
+# single `verify` job is what branch protection requires. Adding a lane means
+# adding it to `verify`'s `needs`; the protection rule never changes.
+#
+# Each gate here has a local command in CONTRIBUTING.md under "CI gates".
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust core
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Test the core
+        run: cargo test --locked --manifest-path herdr-core/Cargo.toml
+
+  swift:
+    name: swift shell
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2.4.0
+        with:
+          swift-version: "6.0.3"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - uses: actions/cache@v4
+        with:
+          path: macos/.build
+          key: swift-build-${{ runner.os }}-${{ hashFiles('macos/Package.swift') }}
+          restore-keys: swift-build-${{ runner.os }}-
+      - name: Build the core archive the shell links
+        # The package links target/release/libherdr_core.a as a system library.
+        run: cargo build --release --locked -p herdr-core
+      - name: Test the shell
+        run: swift test --package-path macos
+      - name: Assert the shell's user-facing contracts
+        # Both scripts pair a targeted test with a source search no test can
+        # perform; the search half is what the full suite above does not cover.
+        run: |
+          bash scripts/check-right-panel-sections.sh
+          bash scripts/check-shortcut-contract.sh
+
+  scripts:
+    name: repository invariants
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Structural checks
+        run: |
+          bash scripts/check-harness-ignore-anchor.sh
+          bash scripts/check-agent-asset-committed.sh
+          bash scripts/check-capability-readers-off-lock.sh
+          bash scripts/check-no-workstation-identity.sh
+          zsh scripts/check-herdr-pin-single-source.sh
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        # The manifest is the pin; the download is verified against its digest
+        # before the binary answers anything.
+        run: |
+          manifest=macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+          url="$(jq -er .source_url "$manifest")"
+          expected="$(jq -er .sha256 "$manifest")"
+          curl -sSfL "$url" -o "$RUNNER_TEMP/herdr"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/herdr" | awk '{print $1}')"
+          [[ "$actual" == "$expected" ]] || { echo "pinned Herdr digest mismatch: $actual" >&2; exit 1; }
+          chmod +x "$RUNNER_TEMP/herdr"
+          echo "bin=$RUNNER_TEMP/herdr" >> "$GITHUB_OUTPUT"
+      - name: Compare the Herdr API schema with the contract
+        run: zsh scripts/check-herdr-contract.sh --herdr-bin "${{ steps.herdr.outputs.bin }}" --schema-only
+
+  verify:
+    name: verify
+    needs: [rust, swift, scripts]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every lane succeeded
+        # A skipped or cancelled lane is a failure here; `needs` alone would
+        # let one through.
+        run: |
+          echo '${{ toJSON(needs) }}' | jq -e 'all(.[]; .result == "success")' >/dev/null \
+            || { echo 'a lane did not succeed:'; echo '${{ toJSON(needs) }}' | jq '.'; exit 1; }

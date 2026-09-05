@@ -1,0 +1,30 @@
+# Version updates for the three ecosystems this repository builds from. Each
+# waits seven days after a release before proposing it, so a version that is
+# yanked or patched within its first week never reaches a pull request here.
+# The bundled Herdr runtime is not a package; herdr-update.yml owns that pin.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: swift
+    directory: /macos
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7

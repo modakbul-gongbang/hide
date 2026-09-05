@@ -81,6 +81,8 @@ See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verifica
 
 ## Development
 
+Contributions go through pull requests gated by the `verify` workflow; `CONTRIBUTING.md` lists the gates and how to run them locally, and `SECURITY.md` says how to report a vulnerability privately.
+
 Prerequisites are Swift 6, the macOS 14 SDK or newer, and a Rust toolchain with Rust 2024 edition support.
 
 ```sh
