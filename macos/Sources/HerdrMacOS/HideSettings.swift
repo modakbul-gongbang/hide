@@ -894,7 +894,7 @@ struct AddDeviceSheet: View {
                     HideSettingsField(placeholder: "mini", text: $label, width: 210)
                 }
                 HideSettingsRow(label: "SSH alias", showsDivider: false) {
-                    HideSettingsField(placeholder: "grabs-mac-mini", text: $alias, width: 210)
+                    HideSettingsField(placeholder: "my-mac-mini", text: $alias, width: 210)
                 }
             }
             .padding(.horizontal, HideTheme.spacingXL)

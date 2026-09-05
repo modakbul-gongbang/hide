@@ -9,7 +9,7 @@ model: opus
 
 You review one change for two things only: code the change made obsolete, and structure the change duplicated or complicated. You report; you never edit.
 
-Read `AGENTS.md` and `/Users/hoyeonlee/projects/oh-my-principle/engineering/principles.md` before judging. Rules 1, 2, 5, 6 and 7 are the ones this review enforces.
+Read `AGENTS.md` and `~/projects/oh-my-principle/engineering/principles.md` before judging. Rules 1, 2, 5, 6 and 7 are the ones this review enforces.
 
 ## Scope
 

@@ -3954,7 +3954,7 @@ mod tests {
     fn host() -> SshAlias {
         SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User grab\n  Port 2200\n  IdentityFile ~/.ssh/id_ed25519\n",
+            "Host mini\n  HostName mini.example.test\n  User example\n  Port 2200\n  IdentityFile ~/.ssh/id_ed25519\n",
             "/tmp/known_hosts",
         )
         .unwrap()
@@ -3963,7 +3963,7 @@ mod tests {
     #[test]
     fn remote_terminal_command_uses_official_structured_session_contract() {
         let command = remote_terminal_command(
-            "/Users/grab/.config/herdr/herdr.sock",
+            "/Users/example/.config/herdr/herdr.sock",
             "w1:pane with ' quote",
             "control",
             42,
@@ -3972,7 +3972,7 @@ mod tests {
         .expect("valid terminal command");
         assert_eq!(
             command,
-            "env HERDR_SOCKET_PATH='/Users/grab/.config/herdr/herdr.sock' PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr terminal session 'control' 'w1:pane with '\\'' quote' --cols 120 --rows 42"
+            "env HERDR_SOCKET_PATH='/Users/example/.config/herdr/herdr.sock' PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr terminal session 'control' 'w1:pane with '\\'' quote' --cols 120 --rows 42"
         );
         assert!(!command.contains("pane attach"));
         assert!(!command.contains("ssh "));
@@ -4264,7 +4264,7 @@ mod tests {
     fn alias_import_preserves_paths_but_never_reads_key_contents() {
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User grab\n  Port 2200\n  IdentityFile /private/tmp/hide-remote-home/.ssh/id_ed25519\n",
+            "Host mini\n  HostName mini.example.test\n  User example\n  Port 2200\n  IdentityFile /private/tmp/hide-remote-home/.ssh/id_ed25519\n",
             "/tmp/known_hosts",
         )
         .unwrap();
@@ -4282,7 +4282,7 @@ mod tests {
     fn wildcard_identity_agent_reaches_the_alias_it_covers() {
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host *\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User grab\n",
+            "Host *\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User example\n",
             "/tmp/known_hosts",
         )
         .unwrap();
@@ -4296,7 +4296,7 @@ mod tests {
     fn the_first_matching_identity_agent_wins() {
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent /private/tmp/hide-remote-home/first.sock\n\nHost *\n  IdentityAgent /private/tmp/hide-remote-home/second.sock\n",
+            "Host mini\n  HostName mini.example.test\n  User example\n  IdentityAgent /private/tmp/hide-remote-home/first.sock\n\nHost *\n  IdentityAgent /private/tmp/hide-remote-home/second.sock\n",
             "/tmp/known_hosts",
         )
         .unwrap();
@@ -4310,7 +4310,7 @@ mod tests {
     fn an_identity_agent_for_another_host_does_not_reach_this_alias() {
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host github.com\n  IdentityAgent /private/tmp/hide-remote-home/github.sock\n\nHost mini\n  HostName mini.example.test\n  User grab\n",
+            "Host github.com\n  IdentityAgent /private/tmp/hide-remote-home/github.sock\n\nHost mini\n  HostName mini.example.test\n  User example\n",
             "/tmp/known_hosts",
         )
         .unwrap();
@@ -4321,14 +4321,14 @@ mod tests {
     fn identity_agent_none_and_the_environment_spelling_are_distinct() {
         let disabled = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent none\n",
+            "Host mini\n  HostName mini.example.test\n  User example\n  IdentityAgent none\n",
             "/tmp/known_hosts",
         )
         .unwrap();
         assert_eq!(disabled.agent_socket, AgentSocket::Disabled);
         let environment = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent SSH_AUTH_SOCK\n",
+            "Host mini\n  HostName mini.example.test\n  User example\n  IdentityAgent SSH_AUTH_SOCK\n",
             "/tmp/known_hosts",
         )
         .unwrap();
@@ -4339,7 +4339,7 @@ mod tests {
     fn an_identity_agent_this_shell_cannot_resolve_fails_visibly() {
         let error = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User grab\n  IdentityAgent $HIDE_AGENT_SOCK\n",
+            "Host mini\n  HostName mini.example.test\n  User example\n  IdentityAgent $HIDE_AGENT_SOCK\n",
             "/tmp/known_hosts",
         )
         .unwrap_err();
@@ -4356,7 +4356,7 @@ mod tests {
     fn a_negated_host_pattern_keeps_its_identity_agent_away() {
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host * !mini\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User grab\n",
+            "Host * !mini\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User example\n",
             "/tmp/known_hosts",
         )
         .unwrap();
@@ -4679,7 +4679,7 @@ mod tests {
         let first = registry.ensure(&host(), "op-1");
         let changed = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName another.example.test\n  User grab\n  Port 2201\n",
+            "Host mini\n  HostName another.example.test\n  User example\n  Port 2201\n",
             "/tmp/known_hosts",
         )
         .unwrap();

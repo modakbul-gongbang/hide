@@ -1523,7 +1523,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 "id": "mini",
                 "label": "Mac mini",
                 "ssh_alias": "mini",
-                "herdr_socket_path": "/Users/grab/.config/herdr/herdr.sock",
+                "herdr_socket_path": "/Users/example/.config/herdr/herdr.sock",
             ]],
             "app_state_path": statePath,
         ]
