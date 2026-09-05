@@ -64,6 +64,7 @@ install -m 644 \
     -c "Set :CFBundleIdentifier $bundle_identifier" \
     -c "Set :CFBundleName $bundle_name" \
     -c "Set :CFBundleDisplayName $bundle_name" \
+    -c "Set :CFBundleShortVersionString 0.0.0-dev+$(git -C "$worktree_root" rev-parse --short HEAD)" \
     "$app_root/Contents/Info.plist" >/dev/null
 install -m 644 \
     "$icon_path" \
