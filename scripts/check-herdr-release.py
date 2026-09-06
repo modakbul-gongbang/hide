@@ -5,6 +5,7 @@ import hashlib
 import json
 import pwd
 import re
+import shutil
 import os
 from pathlib import Path
 import subprocess
@@ -83,7 +84,23 @@ def bump(args):
     planned = json.loads(run('zsh', 'scripts/bump-herdr.sh', '--repo', 'herdrdev/herdr', 'v0.8.2', '--dry-run'))
     require(planned['outcome'] == 'planned', 'cross-repository dry run is not planned')
     require(planned['source_url'] == 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-aarch64', 'cross-repository URL differs')
-    print(json.dumps({'bump': 'pass', 'current': unchanged, 'upstream': planned}))
+    documents = ['README.md', 'docs/INSTALL.md', 'contracts/README.md', 'AGENTS.md',
+                 'macos/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt']
+    with tempfile.TemporaryDirectory(prefix='herdr-doc-bump-') as directory:
+        fixture = Path(directory)
+        for relative in documents + ['scripts/bump-herdr.sh', 'contracts/herdr-api.schema.json', str(MANIFEST.relative_to(ROOT))]:
+            target = fixture / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        run('zsh', 'scripts/bump-herdr.sh', '--repo', 'herdrdev/herdr', 'v0.8.2', cwd=fixture)
+        for relative in documents:
+            text = (fixture / relative).read_text()
+            require('modified Herdr preview' not in text and pin['tag'].rsplit('-', 1)[-1] not in text, f'stale fork provenance in {relative}')
+            require('not modified by hide' in text, f'upstream provenance missing in {relative}')
+        run('zsh', 'scripts/bump-herdr.sh', '--repo', pin['repo'], pin['tag'], cwd=fixture)
+        for relative in documents:
+            require((fixture / relative).read_text() == (ROOT / relative).read_text(), f'provenance round trip differs in {relative}')
+    print(json.dumps({'bump': 'pass', 'current': unchanged, 'upstream': planned, 'provenance_round_trip': 'pass'}))
 
 
 def workflow(args):

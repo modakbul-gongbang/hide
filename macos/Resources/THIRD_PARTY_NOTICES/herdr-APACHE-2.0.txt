@@ -6,11 +6,12 @@ Copyright 2025 herdr contributors.
 This application bundles the herdr binary from:
 https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033
 
-This is a modified Herdr preview built by the hide project from fork
-modakbul-gongbang/herdr, commit 13d8d0b99033e6855ce66bc0f96654615c8a17a6.
-The modifications provide host scope, event sequences, and agent lineage not
-available in upstream stable. hide monitors upstream stable releases through
-herdr-update.yml and can return when contract and runtime checks pass.
+BEGIN HERDR PROVENANCE
+This is a modified Herdr preview from modakbul-gongbang/herdr,
+built from commit 13d8d0b99033 (tag preview-2026-09-06-13d8d0b99033).
+It supplies host scope, event sequences, and agent lineage not available in upstream stable.
+hide monitors upstream stable through herdr-update.yml and returns when contract and runtime checks pass.
+END HERDR PROVENANCE
 
 herdr is distributed under the Apache License, Version 2.0.
 The complete license text is available at:

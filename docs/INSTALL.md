@@ -8,7 +8,7 @@ You can install a published release when one is available or build the same app 
 - An Apple Silicon Mac with macOS 14 or later.
 - Xcode Command Line Tools or full Xcode with Swift 6.
 - A current stable Rust toolchain with Rust 2024 edition support for source builds.
-- Network access during the first source build for pinned Rust crates, Swift packages, and the fork Herdr runtime asset.
+- Network access during the first source build for pinned Rust crates, Swift packages, and the pinned Herdr runtime asset.
 - Claude Code or Codex installed and signed in only if you want hide to launch that agent.
 
 Check the build tools before a source install:
@@ -81,7 +81,7 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned fork Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
 
 ## Verify the installed app
 
@@ -133,9 +133,11 @@ Delete that directory only when you deliberately want to reset hide's saved stat
 A source fix is not visible to an app bundle that was built earlier.
 Quit every `HerdrMacOS` process, rebuild, reinstall, and launch the exact `/Applications/hide.app` bundle.
 
-hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033e6855ce66bc0f96654615c8a17a6`.
+<!-- herdr-provenance:start -->
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
 This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
 The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
+<!-- herdr-provenance:end -->
 
 ### hide says its bundled Herdr is missing or failed verification
 

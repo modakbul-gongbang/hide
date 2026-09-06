@@ -80,9 +80,11 @@ See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verifica
 - Remote Workbench trees are read-only.
   Remote edits stay in the terminal attached to that remote Herdr session.
 
-hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033e6855ce66bc0f96654615c8a17a6`.
+<!-- herdr-provenance:start -->
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
 This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
 The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
+<!-- herdr-provenance:end -->
 
 ## Development
 

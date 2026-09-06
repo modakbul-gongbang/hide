@@ -150,14 +150,13 @@ else
   outcome=bumped
 fi
 
-# Documents quote the pin inside prose and inside a licence notice. Only the
-# release URL, version and digest tokens are substituted; the sentences around them
-# are not generated and must survive untouched. The tag goes first because a
-# stable tag contains the version, and replacing the version inside a tag
-# would corrupt the release URL.
+# Update pin tokens and the complete provenance block together so changing
+# repositories cannot leave a stale source or modification notice.
 derived_documents=(
   README.md
   docs/INSTALL.md
+  contracts/README.md
+  AGENTS.md
   macos/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt
 )
 
@@ -188,6 +187,26 @@ for prefix in ("releases/tag/", "releases/download/"):
     text = text.replace(f"https://github.com/{old_repo}/{prefix}{old_tag}",
                         f"https://github.com/{repo}/{prefix}{tag}")
 text = text.replace(old_version, version).replace(old_digest, digest)
+notice = p.suffix == ".txt"
+begin, end = ("BEGIN HERDR PROVENANCE", "END HERDR PROVENANCE") if notice else ("<!-- herdr-provenance:start -->", "<!-- herdr-provenance:end -->")
+assert text.count(begin) == text.count(end) == 1, f"missing or ambiguous provenance block: {p}"
+if repo == "herdrdev/herdr":
+    if notice:
+        prose = f"This application distributes the upstream Herdr release {tag} from {repo}.\nThe bundled binary is not modified by hide.\nhide monitors upstream stable through herdr-update.yml; updates must pass contract and runtime checks."
+    else:
+        prose = f"hide distributes the [upstream Herdr release {tag}](https://github.com/{repo}/releases/tag/{tag}).\nThe bundled binary is not modified by hide.\nThe weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks."
+else:
+    commit = tag.rsplit("-", 1)[-1] if tag.startswith("preview-") else None
+    if notice:
+        source = f"built from commit {commit} (tag {tag})." if commit else f"released as {tag}."
+        prose = f"This is a modified Herdr preview from {repo},\n{source}\nIt supplies host scope, event sequences, and agent lineage not available in upstream stable.\nhide monitors upstream stable through herdr-update.yml and returns when contract and runtime checks pass."
+    else:
+        source = f", built from commit `{commit}`" if commit else ""
+        prose = f"hide distributes a modified Herdr preview from the [{repo} fork](https://github.com/{repo}/releases/tag/{tag}){source}.\nThis fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.\nThe weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass."
+start = text.index(begin) + len(begin)
+finish = text.index(end, start)
+text = text[:start] + "\n" + prose + "\n" + text[finish:]
+
 p.write_text(text)
 PYDOC
   fi
