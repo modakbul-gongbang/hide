@@ -14939,9 +14939,14 @@ mod tests {
         )
         .expect("the shell's SwiftUI source");
 
+        let tokens = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS/HideTheme.swift"),
+        )
+        .expect("the shell's theme token source");
+
         for token in ["tabStripHeight", "trafficLightInset"] {
             assert!(
-                source.contains(&format!("static let {token}: CGFloat")),
+                tokens.contains(&format!("static let {token}: CGFloat")),
                 "HideTheme.Layout no longer declares {token}"
             );
         }

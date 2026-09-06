@@ -1,12 +1,23 @@
 ---
 version: alpha
 name: Raycast-design-analysis
-属于: A dark-canvas developer-tools system that treats the marketing page like an extended product screenshot — pure-near-black background, command-palette mockups as the hero, Inter typography with the ss03 stylistic set turned on, and a single white CTA pill that doesn't break the inky atmosphere. The chrome reads like Raycast's own command-palette UI scaled up to a marketing page: monochrome dark surfaces with a faint surface ladder (#07080a → #0d0d0d → #101111), tight 6–10px radius on cards, hairline 1px borders in #242728, and rare splashes of saturated accent (Hacker News yellow, Slack red, Mac green, info blue) reserved for product-tile category illustrations. The signature visual moment is a red gradient hero wordmark — three diagonal red stripes laid across the very top of the home page like a launch-banner — paired with full-bleed product UI screenshots that show Raycast's actual command palette, store, and AI chat surfaces.
+essence: |
+  A dark-canvas developer-tools system that treats the marketing page like an extended product screenshot — pure-near-black background, command-palette mockups as the hero, Inter typography with the ss03 stylistic set turned on, and a single white CTA pill that doesn't break the inky atmosphere. The chrome reads like Raycast's own command-palette UI scaled up to a marketing page: monochrome dark surfaces with a faint surface ladder (#07080a → #0d0d0d → #101111), tight 6–10px radius on cards, hairline 1px borders in #242728, and rare splashes of saturated accent (Hacker News yellow, Slack red, Mac green, info blue) reserved for product-tile category illustrations. The signature visual moment is a red gradient hero wordmark — three diagonal red stripes laid across the very top of the home page like a launch-banner — paired with full-bleed product UI screenshots that show Raycast's actual command palette, store, and AI chat surfaces.
 description: |
   Raycast's marketing system reads like an extended product screenshot. The chrome IS the in-product chrome at marketing scale: pure-near-black canvas, hairline 1px borders, command-palette-style cards, Inter typography with the ss03 stylistic set enabled site-wide, white CTA pill, and a small set of saturated category accent colors (yellow / red / green / blue) reserved for extension and feature illustrations. Section rhythm is generous (~96px) but the page never breaks tonal continuity — the whole site sits in one continuous dark mode.
 
 colors:
-  primary: "#ffffff"
+  background: "#101112"
+  sidebar: "#171819"
+  panel: "#1D1F21"
+  elevated: "#27292C"
+  balloon: "#34373B"
+  divider: "#34363A"
+  primary: "#F4F4F6"
+  secondary: "#A4A5A8"
+  muted: "#92959A"
+  accent: "#D3D3D4"
+  marketing-primary: "#ffffff"
   primary-pressed: "#e8e8e8"
   on-primary: "#000000"
   ink: "#f4f4f6"
@@ -26,7 +37,7 @@ colors:
   hairline-soft: "rgba(255,255,255,0.08)"
   hairline-strong: "rgba(255,255,255,0.16)"
   accent-blue: "#57c1ff"
-  accent-blue-soft: "rgba(87,193,255,0.15)"
+  accent-blue-soft: "#182831"
   accent-red: "#ff6161"
   accent-red-soft: "rgba(255,97,97,0.15)"
   accent-green: "#59d499"
@@ -39,6 +50,48 @@ colors:
   key-bg-end: "#0d0d0d"
 
 typography:
+  micro:
+    fontFamily: Inter
+    fontSize: 9px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
+  caption:
+    fontFamily: Inter
+    fontSize: 10px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
+  body:
+    fontFamily: Inter
+    fontSize: 11px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
+  subhead:
+    fontFamily: Inter
+    fontSize: 12px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
+  title:
+    fontFamily: Inter
+    fontSize: 13px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
+  headline:
+    fontFamily: Inter
+    fontSize: 17px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
+  display:
+    fontFamily: Inter
+    fontSize: 30px
+    fontWeight: 400
+    lineHeight: 1.4
+    fontFeature: '"ss03"'
   display-xl:
     fontFamily: Inter
     fontSize: 64px
@@ -146,6 +199,11 @@ typography:
     fontFeature: '"calt", "kern", "liga", "ss03"'
 
 rounded:
+  radiusExtraSmall: 4px
+  radiusSmall: 6px
+  radiusMedium: 8px
+  radiusLarge: 10px
+  radiusExtraLarge: 16px
   none: 0px
   xs: 4px
   sm: 6px
@@ -155,6 +213,15 @@ rounded:
   full: 9999px
 
 spacing:
+  spacingNone: 0px
+  spacingXXS: 2px
+  spacingXS: 4px
+  spacingSM: 8px
+  spacingMD: 12px
+  spacingLG: 16px
+  spacingXL: 24px
+  spacingXXL: 32px
+  spacingXXXL: 40px
   xxs: 2px
   xs: 4px
   sm: 8px
@@ -165,8 +232,80 @@ spacing:
   section: 96px
 
 components:
+  shell-hairline:
+    backgroundColor: "{colors.divider}"
+  marketing-card-hairline:
+    backgroundColor: "{colors.hairline}"
+  marketing-soft-hairline:
+    backgroundColor: "{colors.hairline-soft}"
+  marketing-focus-hairline:
+    backgroundColor: "{colors.hairline-strong}"
+  marketing-inner-card:
+    backgroundColor: "{colors.button-fg}"
+  marketing-illustration-outline:
+    backgroundColor: "{colors.stone}"
+  marketing-red-illustration:
+    backgroundColor: "{colors.accent-red}"
+  marketing-red-wash:
+    backgroundColor: "{colors.accent-red-soft}"
+  marketing-green-illustration:
+    backgroundColor: "{colors.accent-green}"
+  marketing-green-wash:
+    backgroundColor: "{colors.accent-green-soft}"
+  marketing-yellow-illustration:
+    backgroundColor: "{colors.accent-yellow}"
+  marketing-yellow-wash:
+    backgroundColor: "{colors.accent-yellow-soft}"
+  hero-stripe-light-layer:
+    backgroundColor: "{colors.hero-stripe-start}"
+  hero-stripe-dark-layer:
+    backgroundColor: "{colors.hero-stripe-end}"
+  keycap-top-layer:
+    backgroundColor: "{colors.key-bg-start}"
+  keycap-bottom-layer:
+    backgroundColor: "{colors.key-bg-end}"
+  shell-metadata:
+    textColor: "{colors.muted}"
+  shell-supporting-copy:
+    textColor: "{colors.secondary}"
+  marketing-disabled-icon:
+    textColor: "{colors.ash}"
+
+  shell-sidebar:
+    backgroundColor: "{colors.sidebar}"
+    textColor: "{colors.primary}"
+    typography: "{typography.body}"
+    rounded: "{rounded.radiusSmall}"
+  shell-panel:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.primary}"
+  shell-keycap:
+    backgroundColor: "{colors.elevated}"
+    textColor: "{colors.primary}"
+    typography: "{typography.micro}"
+    rounded: "{rounded.radiusSmall}"
+    height: 18px
+    padding: "{spacing.spacingXS}"
+  shell-tooltip:
+    backgroundColor: "{colors.balloon}"
+    textColor: "{colors.primary}"
+    typography: "{typography.subhead}"
+    rounded: "{rounded.radiusMedium}"
+  shell-primary-action:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.background}"
+    typography: "{typography.body}"
+    rounded: "{rounded.radiusSmall}"
+  marketing-heading:
+    textColor: "{colors.ink}"
+    typography: "{typography.heading-xl}"
+  marketing-supporting-copy:
+    textColor: "{colors.charcoal}"
+    typography: "{typography.body-md}"
+  marketing-category-illustration:
+    backgroundColor: "{colors.surface-card}"
   button-primary:
-    backgroundColor: "{colors.primary}"
+    backgroundColor: "{colors.marketing-primary}"
     textColor: "{colors.on-primary}"
     typography: "{typography.button-md}"
     rounded: "{rounded.md}"
@@ -193,7 +332,7 @@ components:
     height: 36px
   button-disabled:
     backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.ash}"
+    textColor: "{colors.mute}"
     rounded: "{rounded.md}"
   install-button:
     backgroundColor: "transparent"
@@ -337,7 +476,7 @@ The design philosophy is "the marketing page is the product." Section rhythm is 
 
 **Key Characteristics:**
 - Single dark surface mode with a 4-step surface ladder: `{colors.canvas}` (#07080a) → `{colors.surface}` (#0d0d0d) → `{colors.surface-elevated}` (#101111) → `{colors.surface-card}` (#121212)
-- White CTA pill (`{colors.primary}` — #ffffff) is the universal primary action; everything else is monochrome dark
+- White CTA pill (`{colors.marketing-primary}` — #ffffff) is the universal primary action; everything else is monochrome dark
 - Inter typography with `font-feature-settings: "calt", "kern", "liga", "ss03"` enabled site-wide — the ss03 alternate `g` is part of the brand voice
 - Hairline 1px borders (`{colors.hairline}` — #242728) carry every card edge; there are no drop shadows in the system
 - Multi-radius card vocabulary: `{rounded.sm}` (6px) for keycaps, `{rounded.md}` (8px) for buttons and small cards, `{rounded.lg}` (10px) for feature cards, `{rounded.xl}` (16px) for hero command-palette mockup containers
@@ -349,7 +488,7 @@ The design philosophy is "the marketing page is the product." Section rhythm is 
 > **Source pages:** `/` (home), `/store` (extension marketplace), `/core-features/ai` (feature page), `/pricing` (plan tiers), `/thomas/hacker-news` (single extension detail). The chrome palette is identical across all five pages — the dark surface ladder, hairline borders, white CTA, and ss03-enabled typography are the same on every page.
 
 ### Brand & Accent
-- **White** (`{colors.primary}` — `#ffffff`): the universal primary CTA pill background. "Download" / "Install Extension" / "Get Pro" — every primary action carries it.
+- **White** (`{colors.marketing-primary}` — `#ffffff`): the universal primary CTA pill background. "Download" / "Install Extension" / "Get Pro" — every primary action carries it.
 - **White Pressed** (`{colors.primary-pressed}` — `#e8e8e8`): pressed-state for the primary pill — a single notch dimmer.
 - **On Primary** (`{colors.on-primary}` — `#000000`): pure black text on the white CTA — the only place black appears as text in the system.
 
@@ -374,7 +513,7 @@ The design philosophy is "the marketing page is the product." Section rhythm is 
 - **On Dark Mute** (`{colors.on-dark-mute}` — `rgba(255,255,255,0.72)`): translucent secondary text on dark surfaces.
 
 ### Semantic
-- **Accent Blue** (`{colors.accent-blue}` — `#57c1ff`) + **Soft** (`{colors.accent-blue-soft}` — `rgba(87,193,255,0.15)`): info and informational badge — used inside feature illustrations and the rare "New" pill.
+- **Accent Blue** (`{colors.accent-blue}` — `#57c1ff`) + **Soft** (`{colors.accent-blue-soft}` — `the 15% blue overlay composited on the dark surface (#182831)`): info and informational badge — used inside feature illustrations and the rare "New" pill.
 - **Accent Red** (`{colors.accent-red}` — `#ff6161`) + **Soft** (`{colors.accent-red-soft}` — `rgba(255,97,97,0.15)`): destructive/error indicator + Slack/Apple category accent in extension illustrations.
 - **Accent Green** (`{colors.accent-green}` — `#59d499`) + **Soft** (`{colors.accent-green-soft}` — `rgba(89,212,153,0.15)`): success state + productivity category accent in extension illustrations.
 - **Accent Yellow** (`{colors.accent-yellow}` — `#ffc533`) + **Soft** (`{colors.accent-yellow-soft}` — `rgba(255,197,51,0.15)`): "warning" semantic + the Hacker News orange-yellow that appears as the most prominent accent illustration on the home page hero.
@@ -477,12 +616,13 @@ There is no traditional photography. Visual elements are limited to:
 
 ## Components
 
-> **No hover states documented** per system policy. Each spec covers Default and Active/Pressed only.
+> The marketing reference below covers Default and Active/Pressed.
+> Native shell hover, tooltip, and held-key states are specified in In-Product Components.
 
 ### Buttons
 
 **`button-primary`** — the universal Raycast CTA
-- Background `{colors.primary}` (white), text `{colors.on-primary}` (black), type `{typography.button-md}`, padding `8px 16px`, height ~36px, rounded `{rounded.md}`.
+- Background `{colors.marketing-primary}` (white), text `{colors.on-primary}` (black), type `{typography.button-md}`, padding `8px 16px`, height ~36px, rounded `{rounded.md}`.
 - Used for "Download" (sticky top-nav CTA), "Get Pro", "Install" — every primary action across every surface.
 - Pressed state lives in `button-primary-pressed` — background dims to `{colors.primary-pressed}`.
 
@@ -495,7 +635,7 @@ There is no traditional photography. Visual elements are limited to:
 - Mid-emphasis: "Watch demo", "View extension", "Manage" buttons inside cards.
 
 **`button-disabled`**
-- Background `{colors.surface-elevated}`, text `{colors.ash}` — dim utility state.
+- Background `{colors.surface-elevated}`, text `{colors.mute}`; the disabled icon retains `{colors.ash}`.
 
 **`install-button`** — the store-page install pill
 - Background transparent with 1px solid `{colors.hairline-strong}` border, text `{colors.on-dark}`, type `{typography.button-md}`, padding `6px 14px`, rounded `{rounded.md}`.
@@ -599,7 +739,7 @@ There is no traditional photography. Visual elements are limited to:
 
 ### Do
 - Render the entire site in one continuous dark mode. There is no light variant in the system.
-- Use `{colors.primary}` (white pill) for every primary CTA. There is no second primary color — white IS the brand action.
+- Use `{colors.marketing-primary}` (white pill) for every primary CTA. There is no second primary color — white IS the brand action.
 - Build elevation from the surface-color ladder (`{colors.canvas}` → `{colors.surface}` → `{colors.surface-elevated}` → `{colors.surface-card}`), never from drop shadows.
 - Enable `font-feature-settings: "calt", "kern", "liga", "ss03"` on the body element. The ss03 alternate `g` is part of the brand identity.
 - Anchor a `{component.command-palette-card}` mockup as the hero's load-bearing visual. Real Raycast UI is the brand.
@@ -608,9 +748,12 @@ There is no traditional photography. Visual elements are limited to:
 - Use saturated category accents (`{colors.accent-yellow}`, `{colors.accent-red}`, `{colors.accent-green}`, `{colors.accent-blue}`) only inside extension and feature illustrations — never on chrome buttons or text.
 
 ### Don't
+
+- Do not use native `.help()` tooltips in the main shell; use the shared command tooltip.
+  The excluded Pet view retains its native tooltip.
 - Don't introduce a light mode. The system is dark-only by design.
 - Don't add drop shadows on cards. Elevation is built from the surface ladder, not from shadows.
-- Don't replace `{colors.primary}` (white) with a tinted accent for the primary CTA. Pure white is the brand action color.
+- Don't replace `{colors.marketing-primary}` (white) with a tinted accent for the primary CTA. Pure white is the brand action color.
 - Don't use the saturated accent colors (`{colors.accent-yellow}`, `{colors.accent-red}`, `{colors.accent-green}`, `{colors.accent-blue}`) on text, buttons, or chrome surfaces. They belong inside extension illustrations.
 - Don't repeat the hero stripe gradient outside the top hero band. The one-band rule is the system's restraint.
 - Don't use Inter without the `ss03` feature flag enabled. The chrome will lose its signature voice.
@@ -652,18 +795,19 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 ## Iteration Guide
 
 1. Focus on ONE component at a time. Pull its YAML entry and verify every property resolves.
-2. Reference component names and tokens directly (`{colors.primary}`, `{component.button-primary-pressed}`, `{rounded.md}`) — do not paraphrase.
+2. Reference component names and tokens directly (`{colors.marketing-primary}`, `{component.button-primary-pressed}`, `{rounded.md}`) — do not paraphrase.
 3. Run `npx @google/design.md lint DESIGN.md` after edits — `broken-ref`, `contrast-ratio`, and `orphaned-tokens` warnings flag issues automatically.
 4. Add new variants as separate component entries (`-pressed`, `-disabled`, `-active`) — do not bury them inside prose.
 5. Default body to `{typography.body-md}` (16px / 400 / 1.6); reach for `{typography.body-strong}` for emphasis; reserve `{typography.display-xl}` strictly for the hero band.
-6. Keep `{colors.primary}` (white CTA pill) scarce per viewport — at most one solid white pill per fold.
+6. Keep `{colors.marketing-primary}` (white CTA pill) scarce per viewport — at most one solid white pill per fold.
 7. When introducing a new component, ask whether it can be expressed with the existing surface-ladder + 8px-radius + ss03-Inter vocabulary before adding new tokens. The system's strength is that it almost never needs new ones.
 
 ## Known Gaps
 
 - **Mobile screenshots not captured** — responsive behavior synthesizes Raycast's mobile pattern (hamburger drawer, single-column grid, hero downscale) from desktop evidence and the breakpoint stack.
-- **Hover states not documented** by system policy. Raycast's in-product app has rich hover behavior on command-palette rows that this document doesn't capture.
-- **In-product app chrome** (the actual Raycast launcher running on macOS) is referenced in marketing screenshots but not documented as a separate UI system here. The marketing site is documented; the in-product app surface is its own design system.
+- Native shell hover and held-key states are documented in In-Product Components; the marketing reference does not claim measured hover behavior.
+- Hide native shell chrome is specified in In-Product Components below.
+  Raycast launcher screenshots remain design references, not a separate implementation contract.
 - **Dark mode is the only mode** — no light variant exists in the captured surfaces.
 - **Form validation states** beyond the focused-input border treatment are not present in the captured surfaces.
 - **Authenticated chrome** (account dashboard, billing settings, team management) not in the captured pages.
@@ -672,7 +816,136 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 
 `HideTheme.lineageIndent` is 12pt for the first two descendant levels, and `lineageDeepIndent` is 6pt per level from depth three onward.
 `lineageChevronWidth` reserves 16pt for the parent disclosure control.
-`gitRowFontSize` is 11pt and `gitDetailFontSize` is 10pt, with the existing spacing and neutral surface tokens used for worktree rows.
+Worktree rows use `{typography.body}` and their detail lines `{typography.caption}`, with the existing spacing and neutral surface tokens.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
 `HideTheme.GitIcon` names refresh (`arrow.clockwise`), merged (`checkmark.circle`), unmerged (`circle`), dirty (`circle.fill`), clean (`checkmark`), merged PR (`arrow.triangle.merge`), closed PR (`xmark.circle`), unavailable (`exclamationmark.circle`), and absent PR (`minus.circle`).
+
+## In-Product Components
+
+This section is the native shell contract.
+It applies to the sidebar, checkout cards, tab strip, terminal and browser headers, right panel, status bar, empty and unavailable states, Search, New Agent, Settings, file search, and editor overlays.
+The earlier marketing analysis remains reference material; these native values govern the application.
+The direction is compact Orca chrome expressed through the existing Hide components, with neutral controls and semantic state marks.
+Pet windows, the menu bar dashboard, and native context menus retain their existing appearance.
+The dashboard's active preservation tokens remain in the token definition file and its shared rows retain their existing system font.
+
+### Surfaces and text
+
+Frontmatter names below map directly to the same property on `HideTheme`.
+Depth comes from the four surfaces and a hairline, without drop shadows.
+
+| Token | Use |
+| --- | --- |
+| `{colors.background}` | Terminal surround, empty checkout and main canvas |
+| `{colors.sidebar}` | Sidebar and navigation base |
+| `{colors.panel}` | Pane headers, right panel, status bar and sheet containers |
+| `{colors.elevated}` | Selected rows, compact controls, keycaps and input surfaces |
+| `{colors.balloon}` | Tooltip surface, one step above elevated |
+| `{colors.divider}` | One-point hairline and neutral focus outlines |
+| `{colors.primary}` | Primary labels |
+| `{colors.secondary}` | Supporting labels and inactive controls |
+| `{colors.muted}` | Metadata and unheld search shortcut |
+| `{colors.accent}` | Neutral primary action and control tint |
+
+Semantic danger, warning, and success keep their existing state meanings.
+Project and provider illustrations retain their category colors.
+A selected agent retains the core's state mark and a panel fill; text remains readable on that fill.
+No new state or copy is derived in the renderer.
+
+### Typography scale
+
+The bundled Inter variable font uses stylistic set ss03 for chrome.
+Keycaps and numeric metadata use the system monospaced face.
+Font scale continues to multiply these sizes; terminal and editor content retain their separate content-size tokens.
+The font is bundled under its OFL license and does not require installation on the machine.
+
+| Token | Size | Use |
+| --- | --- | --- |
+| `{typography.micro}` | 9px | Keycaps, small marks and numeric metadata |
+| `{typography.caption}` | 10px | Supporting labels and badges |
+| `{typography.body}` | 11px | Rows and control labels |
+| `{typography.subhead}` | 12px | Tooltip text and explanatory text |
+| `{typography.title}` | 13px | Section emphasis |
+| `{typography.headline}` | 17px | Sheet headings and empty-state titles |
+| `{typography.display}` | 30px | Large empty-state symbol or title |
+
+### Spacing and radius
+
+Frontmatter spacing and radius names map directly to `HideTheme`.
+Fixed content geometry remains in its named Layout tokens rather than changing with text emphasis.
+
+| Spacing token | Role |
+| --- | --- |
+| `{spacing.spacingNone}` | Flush structural stacks |
+| `{spacing.spacingXXS}` | Tight label stacks |
+| `{spacing.spacingXS}` | Keycap horizontal padding and small gaps |
+| `{spacing.spacingSM}` | Control gaps and tooltip horizontal inset |
+| `{spacing.spacingMD}` | Compact group padding |
+| `{spacing.spacingLG}` | Sheet and panel content inset |
+| `{spacing.spacingXL}` | Larger section and empty-state spacing |
+| `{spacing.spacingXXL}` | Search empty state |
+| `{spacing.spacingXXXL}` | Main empty-state surround |
+
+| Radius token | Role |
+| --- | --- |
+| `{rounded.radiusExtraSmall}` | Micro shapes |
+| `{rounded.radiusSmall}` | Keycaps, inline rows and buttons |
+| `{rounded.radiusMedium}` | Tooltips, small cards and controls |
+| `{rounded.radiusLarge}` | Search input and larger cards |
+| `{rounded.radiusExtraLarge}` | Container vocabulary |
+
+### Keycaps, hint chips, and tooltips
+
+`HideKeycap.swift` owns every shortcut glyph.
+An 18-point high keycap uses `{typography.micro}`, medium monospaced weight, `{colors.elevated}`, `{rounded.radiusSmall}`, and a one-point `{colors.divider}` border.
+Its horizontal inset is `{spacing.spacingXS}`.
+Search keeps its keycap visible in `{colors.muted}` and emphasizes it with `{colors.primary}` during an exact Command hold.
+Tab and agent number keycaps reserve their inline space so holding a modifier does not move labels.
+
+`HideBalloon.swift` owns tooltip and floating-hint modes.
+Hint mode renders the same keycap.
+Tooltip mode uses `{typography.subhead}`, `{colors.balloon}`, `{rounded.radiusMedium}`, the same hairline, horizontal `{spacing.spacingSM}`, and vertical `{spacing.spacingXS}`.
+Tooltip width is limited to 360 points.
+There is no native tooltip layered underneath it.
+
+Both take a command resolved from the menu registry, effective pane binding, direct selection number, or chordless label.
+A chorded tooltip reads label followed by the registry chord in parentheses; chordless controls show only the label.
+The identical formatter supplies the control's accessibility help.
+
+`HideOverlay.swift` gathers control anchors into the content root.
+The overlay does not take pointer events or add layout space.
+A balloon sits four points above its control, flips below when needed, and stays eight points inside the window horizontally.
+Tooltip hover delay is 400 milliseconds; exact modifier holds reveal hints after 150 milliseconds.
+Release, app deactivation, and opening a sheet clear hints.
+Pane focus, active tab, tab order, zoom state, and disappearing anchors update the exposure set.
+Pointer exit, mouse down, scroll, key down, resign-key, and anchor removal dismiss tooltips.
+Fades last 120 milliseconds, or zero with Reduce Motion enabled.
+The event monitor observes and returns key events.
+
+### Icon buttons and badges
+
+`HideIconButton.swift` owns icon controls and the pane header button variant.
+Icons use primary or secondary text, an elevated active surface, small radius, and the shared command tooltip.
+Pressed and disabled appearances use the named opacity tokens.
+`HideBadge.swift` owns compact labels; agent provider artwork remains in the existing agent badge.
+A state keeps its symbol and semantic color when read, with reduced emphasis instead of a new word.
+
+### Sheets, overlays, and abnormal states
+
+Search, New Agent, Settings, and file search each host the same tooltip overlay.
+Sheets use panel containers, headline titles, body or caption supporting text, and the same spacing scale.
+The selected provider card uses an elevated fill and stronger neutral border; its status remains readable.
+Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
+
+The right panel's Explorer and Changes sections use the same panel and text ladder.
+Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
+Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
+Content and accessibility identifiers are unchanged; only the visual hierarchy changes.
+
+### Enforcement
+
+Add a named token before using a new visual value.
+`scripts/check-hide-theme-literals.sh` rejects inline styling, native tooltips, and shortcut glyph literals outside token definitions and Pet files.
+`scripts/check-hide-components.sh` prevents duplicated component ownership and checks every migrated tooltip file.
+The shell test parses this document's frontmatter and typography table against actual token values.

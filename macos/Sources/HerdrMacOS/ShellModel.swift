@@ -262,10 +262,10 @@ final class ShellModel: ObservableObject {
     @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
-    @Published var showComposer = false
-    @Published var showSearch = false
-    @Published var showFileSearch = false
-    @Published var showSettings = false
+    @Published var showComposer = false { didSet { refreshHintSheetState() } }
+    @Published var showSearch = false { didSet { refreshHintSheetState() } }
+    @Published var showFileSearch = false { didSet { refreshHintSheetState() } }
+    @Published var showSettings = false { didSet { refreshHintSheetState() } }
     @Published var showPetDashboard = false
     @Published private(set) var agentSwitcherCycle: AgentSwitcherCycle?
     @Published private(set) var tabSwitcherCycle: TabSwitcherCycle?
@@ -296,11 +296,8 @@ final class ShellModel: ObservableObject {
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
     @Published private(set) var checkoutStartState: CheckoutStartState = .idle
-    /// True once Control has been held past the reveal delay, which is what
-    /// draws the ⌃n keycaps on the agent rows.
-    @Published private(set) var agentShortcutHintsVisible = false
-    /// The same reveal for Command, which draws the ⌘n keycaps on the tabs.
-    @Published private(set) var tabShortcutHintsVisible = false
+    @Published private(set) var shortcutHintState = HideHintState()
+
     let core: CoreBridge
     let browser: BrowserRuntimeModel
     let remote: RemoteRuntimeModel
@@ -313,10 +310,7 @@ final class ShellModel: ObservableObject {
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
     private var agentMRU = AgentMRU()
-    private var controlModifierHeld = false
-    private var commandModifierHeld = false
-    private var agentShortcutHintTask: Task<Void, Never>?
-    private var tabShortcutHintTask: Task<Void, Never>?
+    private var shortcutHintTask: Task<Void, Never>?
     private var tabMRU = TabMRU()
 
     init(
@@ -357,6 +351,16 @@ final class ShellModel: ObservableObject {
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
         }
+        #if DEBUG
+        // Replay a supplied remote projection without asking an SSH target to
+        // connect. The fixture uses the same navigation and file presentation.
+        if CommandLine.arguments.contains("--verification-ui-fixture"),
+           CommandLine.arguments.contains("--verification-remote-preview"),
+           let device = core.snapshot?.navigator.devices.first(where: { $0.kind == "remote" }) {
+            activeRemoteDevice = device
+            remote.refresh(targetID: device.id, label: device.label)
+        }
+        #endif
     }
 
     /// A fork that failed has to say so where the operator is looking, and
@@ -991,48 +995,40 @@ final class ShellModel: ObservableObject {
         AgentShortcutNumbering.number(ofPaneID: paneID, in: shortcutAgents)
     }
 
-    /// A modifier held past the reveal delay shows its keycaps; releasing it
-    /// hides them at once. The delay exists so that every ordinary chord -
-    /// ⌘K, ⌘W, ⌃C - does not flash the sidebar or the tab strip on its way
-    /// through. Control numbers the agents, Command numbers the tabs.
-    func setShortcutModifiersHeld(control: Bool, command: Bool) {
-        setControlModifierHeld(control)
-        setCommandModifierHeld(command)
+    private var hintSuppressingSheetVisibility: [Bool] {
+        [showComposer, showSearch, showFileSearch, showSettings]
     }
 
-    private func setControlModifierHeld(_ held: Bool) {
-        guard held != controlModifierHeld else { return }
-        controlModifierHeld = held
-        agentShortcutHintTask?.cancel()
-        agentShortcutHintTask = nil
-        guard held else {
-            agentShortcutHintsVisible = false
-            return
-        }
-        agentShortcutHintTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: ShellModel.shortcutHintDelayNanoseconds)
-            guard !Task.isCancelled, let self, self.controlModifierHeld else { return }
-            self.agentShortcutHintsVisible = true
-        }
+    var hintSheetPresented: Bool {
+        hintSuppressingSheetVisibility.contains(true)
     }
 
-    private func setCommandModifierHeld(_ held: Bool) {
-        guard held != commandModifierHeld else { return }
-        commandModifierHeld = held
-        tabShortcutHintTask?.cancel()
-        tabShortcutHintTask = nil
-        guard held else {
-            tabShortcutHintsVisible = false
-            return
-        }
-        tabShortcutHintTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: ShellModel.shortcutHintDelayNanoseconds)
-            guard !Task.isCancelled, let self, self.commandModifierHeld else { return }
-            self.tabShortcutHintsVisible = true
+    func setShortcutModifiersHeld(_ modifiers: Set<PaneShortcut.Modifier>) {
+        guard !hintSheetPresented else { clearShortcutHints(); return }
+        shortcutHintState.update(modifiers, at: ProcessInfo.processInfo.systemUptime)
+        shortcutHintTask?.cancel()
+        shortcutHintTask = nil
+        guard let deadline = shortcutHintState.deadline else { return }
+        let delay = max(0, deadline - ProcessInfo.processInfo.systemUptime)
+        shortcutHintTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            catch { return } // Cancellation is the release/replacement path.
+            guard let self, !Task.isCancelled, !self.hintSheetPresented else { return }
+            self.shortcutHintState.advance(to: ProcessInfo.processInfo.systemUptime)
         }
     }
 
-    static let shortcutHintDelayNanoseconds: UInt64 = 150_000_000
+    func clearShortcutHints() {
+        shortcutHintTask?.cancel()
+        shortcutHintTask = nil
+        shortcutHintState.clear()
+    }
+
+    private func refreshHintSheetState() {
+        clearShortcutHints()
+        guard !hintSheetPresented else { return }
+        setShortcutModifiersHeld(HideHintState.modifiers(in: NSEvent.modifierFlags))
+    }
 
     func loadRemoteFiles(path: String) {
         guard isRemoteContext,

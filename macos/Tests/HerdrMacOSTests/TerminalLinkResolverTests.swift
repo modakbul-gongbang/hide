@@ -152,6 +152,9 @@ struct TerminalLinkResolverTests {
     /// `/tmp/x` - and a reveal that carried that spelling switched the
     /// checkout and opened the tab while the tree stayed exactly where it was.
     @Test func aResolvedPathIsSpelledTheWayEveryOtherLayerSpellsIt() throws {
+        // This regression specifically exercises macOS's /tmp -> /private/tmp
+        // alias. A runner may put its general TMPDIR anywhere, so arrange that
+        // alias explicitly rather than assuming the runner's directory has it.
         let fixture = try LocalFileFixture()
         defer { fixture.remove() }
         let physical = TerminalLinkResolver.canonical(fixture.root)

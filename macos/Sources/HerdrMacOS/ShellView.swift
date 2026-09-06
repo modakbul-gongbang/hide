@@ -418,7 +418,7 @@ private struct PaneResizeHandle: View {
             .background { PaneResizeCursorArea(cursor: isVertical ? .resizeLeftRight : .resizeUpDown) }
             .onHover { isHovering = $0 }
             .gesture(dragGesture)
-            .help(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
+            .hideTooltip(isVertical ? "Drag to resize pane width" : "Drag to resize pane height")
             .accessibilityLabel(isVertical ? "Resize pane width" : "Resize pane height")
             .animation(.easeOut(duration: 0.12), value: isActive)
             .position(
@@ -582,40 +582,6 @@ struct PaneTerminalCell<Content: View>: View {
     }
 }
 
-/// One icon control in a pane header.
-///
-/// The header has a single 28pt row to spend, so these are icon-only and carry
-/// their meaning in a tooltip and an accessibility label rather than in text.
-struct PaneHeaderButton: View {
-    let systemImage: String
-    let help: String
-    let accessibilityLabel: String
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .hideFont(size: 9, weight: .semibold)
-                .foregroundStyle(isHovering ? HideTheme.primary : HideTheme.secondary)
-                .frame(
-                    width: HideTheme.Layout.panelCollapseControlSize,
-                    height: HideTheme.Layout.panelCollapseControlSize
-                )
-                .background(
-                    RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
-                        .fill(isHovering ? HideTheme.elevated : Color.clear)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .help(help)
-        .accessibilityLabel(accessibilityLabel)
-    }
-}
-
 enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
@@ -718,11 +684,11 @@ struct HideTerminalPaneCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingXS) {
                 Button(action: onFocus) {
                     Text(title + activity)
-                        .hideFont(size: 10, weight: .semibold)
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -739,9 +705,9 @@ struct HideTerminalPaneCard<Content: View>: View {
                     // than accent: it is state, not something to act on.
                     HStack(spacing: HideTheme.spacingXXS) {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .hideFont(size: 8, weight: .bold)
+                            .hideFont(size: HideTheme.Typography.micro, weight: .bold)
                         Text("Zoomed")
-                            .hideFont(size: 9, weight: .semibold)
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                     }
                     .foregroundStyle(HideTheme.secondary)
                     .padding(.horizontal, HideTheme.spacingXS)
@@ -750,14 +716,14 @@ struct HideTerminalPaneCard<Content: View>: View {
                         RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
                             .fill(HideTheme.elevated)
                     )
-                    .help("Zoomed: the other panes in this tab are hidden. Toggle zoom to bring them back.")
+                    .hideTooltip("Zoomed: the other panes in this tab are hidden. Toggle zoom to bring them back.", command: .pane(.toggleZoom), paneID: paneID)
                     .accessibilityLabel("Pane \(paneID) is zoomed")
                 }
 
                 ForEach(ports, id: \.self) { port in
                     Button { onOpenPort(port) } label: {
                         Text(":\(String(port))")
-                            .hideFont(size: 9, weight: .semibold)
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                             .foregroundStyle(HideTheme.accent)
                             .padding(.horizontal, HideTheme.spacingXS)
                             .frame(height: HideTheme.Layout.panelCollapseControlSize)
@@ -768,7 +734,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Open http://localhost:\(String(port))")
+                    .hideTooltip("Open http://localhost:\(String(port))")
                     .accessibilityLabel("Open port \(String(port)) for pane \(paneID)")
                 }
 
@@ -776,9 +742,9 @@ struct HideTerminalPaneCard<Content: View>: View {
                     // The mark is the state; the parent's id is on the tooltip
                     // rather than in the row, which has one line to spend.
                     Image(systemName: "arrow.triangle.branch")
-                        .hideFont(size: 9, weight: .semibold)
+                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                         .foregroundStyle(HideTheme.secondary)
-                        .help("Forked from pane \(forkedFrom)")
+                        .hideTooltip("Forked from pane \(forkedFrom)")
                         .accessibilityLabel("Forked from pane \(forkedFrom)")
                 }
 
@@ -795,6 +761,8 @@ struct HideTerminalPaneCard<Content: View>: View {
                     systemImage: "xmark",
                     help: closeHelp,
                     accessibilityLabel: "Close pane \(paneID)",
+                    command: .pane(.closePane),
+                    paneID: paneID,
                     action: onClose
                 )
             }
@@ -811,35 +779,35 @@ struct HideTerminalPaneCard<Content: View>: View {
                 .frame(height: 1)
 
             if let notice {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: HideTheme.spacingSM) {
                     Image(systemName: "exclamationmark.triangle.fill")
                     Text(notice)
                         .lineLimit(2)
                     Spacer(minLength: HideTheme.spacingSM)
                 }
-                .hideFont(size: 9)
+                .hideFont(size: HideTheme.Typography.micro)
                 .foregroundStyle(HideTheme.warning)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .padding(.horizontal, HideTheme.spacingSM)
+                .padding(.vertical, HideTheme.spacingXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(HideTheme.elevated)
                 .accessibilityIdentifier("pane-notice-\(paneID)")
             }
 
             if let transportNotice {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: HideTheme.spacingSM) {
                     Image(systemName: status == "observing" ? "lock.fill" : "exclamationmark.triangle.fill")
                     Text(transportNotice)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: HideTheme.spacingSM)
                     Button("Reconnect", action: onReconnect)
                         .buttonStyle(.borderless)
-                        .hideFont(size: 9, weight: .semibold)
+                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                 }
-                .hideFont(size: 9)
+                .hideFont(size: HideTheme.Typography.micro)
                 .foregroundStyle(status == "observing" ? HideTheme.warning : HideTheme.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .padding(.horizontal, HideTheme.spacingSM)
+                .padding(.vertical, HideTheme.spacingXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(HideTheme.elevated)
             }
@@ -852,7 +820,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity)
         .background(HideTheme.panel)
         .overlay {
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
                 .stroke(
                     isFocused ? HideTheme.accent : HideTheme.divider,
                     lineWidth: HideTheme.Layout.hairlineWidth
@@ -914,17 +882,12 @@ struct PanelHeader: View {
     let sections: Sections?
     let collapseAction: (() -> Void)?
     let collapseAccessibilityLabel: String?
-    let collapseShortcut: String?
+    let collapseCommand: HideCommand?
     let collapseAccessibilityIdentifier: String?
 
     /// The tooltip says what the control does and how to reach it from the
     /// keyboard; the accessibility label stays bare because VoiceOver announces
     /// the shortcut itself and would otherwise say it twice.
-    private var collapseHelp: String {
-        let label = collapseAccessibilityLabel ?? "Collapse panel"
-        guard let collapseShortcut else { return label }
-        return "\(label) (\(collapseShortcut))"
-    }
 
     init(
         title: String,
@@ -933,10 +896,10 @@ struct PanelHeader: View {
         sections: Sections? = nil,
         collapseAction: (() -> Void)? = nil,
         collapseAccessibilityLabel: String? = nil,
-        collapseShortcut: String? = nil,
+        collapseCommand: HideCommand? = nil,
         collapseAccessibilityIdentifier: String? = nil
     ) {
-        self.collapseShortcut = collapseShortcut
+        self.collapseCommand = collapseCommand
         self.title = title
         self.systemImage = systemImage
         self.trailing = trailing
@@ -952,11 +915,11 @@ struct PanelHeader: View {
                 PanelSectionPicker(active: sections.active, select: sections.select)
             } else {
                 Label(title, systemImage: systemImage)
-                    .font(.headline)
+                    .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
             }
             Spacer(minLength: ShellMetrics.compactSpacing)
             Text(trailing)
-                .font(.caption)
+                .hideFont(size: HideTheme.Typography.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             if let collapseAction {
@@ -969,7 +932,7 @@ struct PanelHeader: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HideTheme.secondary)
-                .help(collapseHelp)
+                .hideTooltip(collapseAccessibilityLabel ?? "Collapse panel", command: collapseCommand)
                 .accessibilityLabel(collapseAccessibilityLabel ?? "Collapse panel")
                 .accessibilityIdentifier(collapseAccessibilityIdentifier ?? "collapse-panel")
             }
@@ -994,7 +957,7 @@ private struct PanelSectionPicker: View {
                     select(section)
                 } label: {
                     Label(section.title, systemImage: section.systemImage)
-                        .hideFont(size: 11, weight: .medium)
+                        .hideFont(size: HideTheme.Typography.body, weight: .medium)
                         .foregroundStyle(isActive ? HideTheme.primary : HideTheme.secondary)
                         .padding(.horizontal, HideTheme.spacingSM)
                         .padding(.vertical, HideTheme.spacingXS)
@@ -1045,21 +1008,21 @@ private struct PetStatus: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+            HStack(spacing: HideTheme.spacingMD) {
                 ZStack {
                     RoundedRectangle(cornerRadius: ShellMetrics.cardRadius)
-                        .fill(Color.accentColor.opacity(0.12))
+                        .fill(Color.accentColor.opacity(HideTheme.Opacity.selectedFill))
                     Image(systemName: "pawprint.fill")
                         .foregroundStyle(Color.accentColor)
                 }
                 .frame(width: 34, height: 34)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                     Text(petHeadline)
-                        .font(.callout.weight(.medium))
+                        .hideFont(size: HideTheme.Typography.subhead, weight: .medium)
                     Text(petDetail)
-                        .font(.caption)
+                        .hideFont(size: HideTheme.Typography.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -1085,7 +1048,7 @@ private struct PetStatus: View {
 
             if let result = model.consequenceResult {
                 Text(result)
-                    .font(.caption)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1099,12 +1062,12 @@ private struct RuntimeStatusCards: View {
     @EnvironmentObject private var model: ShellModel
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: HideTheme.spacingSM) {
             BrowserStatusCard()
             RemoteStatusCard()
         }
-        .padding(10)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(HideTheme.spacingMD)
+        .background(HideTheme.background)
     }
 }
 
@@ -1113,21 +1076,21 @@ private struct BrowserStatusCard: View {
     private var receipt: BrowserRuntimeReceipt { model.browser.receipt }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
             HStack {
                 Label("Chrome", systemImage: "globe")
-                    .font(.caption.weight(.semibold))
+                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                 Spacer()
                 Text(receipt.phase.rawValue)
-                    .font(.caption2.monospaced())
+                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                     .foregroundStyle(phaseColor(receipt.phase))
             }
             Text(receipt.currentTitle ?? receipt.message)
-                .font(.caption)
+                .hideFont(size: HideTheme.Typography.caption)
                 .lineLimit(2)
             if let url = receipt.currentURL {
                 Text(url)
-                    .font(.caption2.monospaced())
+                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -1141,13 +1104,13 @@ private struct BrowserStatusCard: View {
             .controlSize(.small)
             if receipt.phase == .stale || receipt.phase == .failed || receipt.phase == .unavailable {
                 Text(receipt.message + " Last checked: " + receipt.checkedAt)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .hideFont(size: HideTheme.Typography.micro)
+                    .foregroundStyle(HideTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(9)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .padding(HideTheme.spacingSM)
+        .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
         .accessibilityIdentifier("chromux-status-card")
     }
 }
@@ -1156,13 +1119,13 @@ private struct RemoteStatusCard: View {
     @EnvironmentObject private var model: ShellModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
             HStack {
                 Label("mini", systemImage: "externaldrive.connected.to.line.below")
-                    .font(.caption.weight(.semibold))
+                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                 Spacer()
                 Text(model.remote.phase.rawValue)
-                    .font(.caption2.monospaced())
+                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                     .foregroundStyle(phaseColor(model.remote.phase))
             }
             if model.remote.phase == .loading {
@@ -1170,15 +1133,15 @@ private struct RemoteStatusCard: View {
                     .controlSize(.small)
             } else {
                 Text(model.remote.message)
-                    .font(.caption)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .lineLimit(3)
             }
             if let workspace = model.remote.workspaces.first {
                 Label("\(workspace.label) · \(workspace.paneCount) pane(s)", systemImage: "rectangle.3.group")
-                    .font(.caption2)
+                    .hideFont(size: HideTheme.Typography.micro)
                     .lineLimit(1)
                 Text("Remote inline editing is disabled. Use the attached remote terminal to modify files.")
-                    .font(.caption2)
+                    .hideFont(size: HideTheme.Typography.micro)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1187,19 +1150,19 @@ private struct RemoteStatusCard: View {
                 .disabled(model.remote.phase == .loading)
                 .accessibilityIdentifier("remote-mini-refresh")
         }
-        .padding(9)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .padding(HideTheme.spacingSM)
+        .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
         .accessibilityIdentifier("remote-mini-status-card")
     }
 }
 
 private func phaseColor(_ phase: RuntimePhase) -> Color {
     switch phase {
-    case .ready: .green
-    case .loading: .blue
-    case .stale, .unavailable: .orange
-    case .failed: .red
-    case .idle: .secondary
+    case .ready: HideTheme.success
+    case .loading: HideTheme.secondary
+    case .stale, .unavailable: HideTheme.warning
+    case .failed: HideTheme.danger
+    case .idle: HideTheme.muted
     }
 }
 
@@ -1219,20 +1182,20 @@ private struct StatusBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: HideTheme.spacingLG) {
             Label(statusMessage, systemImage: "circle.fill")
                 .symbolRenderingMode(.palette)
-                .foregroundStyle(.orange, .orange)
+                .foregroundStyle(HideTheme.warning, HideTheme.warning)
             Spacer()
             Text("Chromux \(model.browser.receipt.phase.rawValue)")
             Text("mini \(model.remote.phase.rawValue)")
             Text("Core schema v1")
         }
-        .font(.caption)
+        .hideFont(size: HideTheme.Typography.caption)
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, HideTheme.spacingMD)
         .frame(height: 28)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(HideTheme.panel)
         .accessibilityIdentifier("status-bar")
     }
 }

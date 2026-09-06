@@ -12,7 +12,7 @@ struct FileViewerOverlay: View {
     var body: some View {
         Group {
             if let selectedURL {
-                VStack(spacing: 0) {
+                VStack(spacing: HideTheme.spacingNone) {
                     editorContent(for: selectedURL)
                     if let conflict = editor?.conflict {
                         conflictBar(conflict)
@@ -68,7 +68,7 @@ struct FileViewerOverlay: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    .padding(18)
+                    .padding(HideTheme.spacingLG)
             } else {
                 unavailable(title: "Image unavailable", message: "The image could not be decoded.")
             }
@@ -76,29 +76,29 @@ struct FileViewerOverlay: View {
     }
 
     private func conflictBar(_ conflict: CoreEditorConflict) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
             Label("This file changed on disk. Your draft is preserved.", systemImage: "exclamationmark.triangle.fill")
             HStack {
                 Button("Reload disk version") { model.core.resolveConflict("reload") }
                 Button("Keep editing") { model.core.resolveConflict("keep_editing") }
             }
             Text("Opened \(conflict.openedModifiedAt), disk \(conflict.diskModifiedAt)")
-                .hideFont(size: 9, design: .monospaced)
+                .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                 .foregroundStyle(HideTheme.secondary)
         }
-        .hideFont(size: 10)
+        .hideFont(size: HideTheme.Typography.caption)
         .foregroundStyle(HideTheme.primary)
-        .padding(10)
-        .background(HideTheme.warning.opacity(0.14))
+        .padding(HideTheme.spacingMD)
+        .background(HideTheme.warning.opacity(HideTheme.Opacity.selectedFill))
     }
 
     private func noticeBar(systemImage: String, message: String, color: Color) -> some View {
         Label(message, systemImage: systemImage)
-            .hideFont(size: 10)
+            .hideFont(size: HideTheme.Typography.caption)
             .foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(color.opacity(0.1))
+            .padding(HideTheme.spacingMD)
+            .background(color.opacity(HideTheme.Opacity.subtleFill))
     }
 
     private func unavailable(title: String, message: String) -> some View {

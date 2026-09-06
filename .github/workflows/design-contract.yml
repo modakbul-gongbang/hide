@@ -1,0 +1,22 @@
+name: Native design contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static-design:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reject style literals and duplicated components
+        run: |
+          bash scripts/check-hide-theme-literals.sh
+          bash scripts/check-hide-components.sh

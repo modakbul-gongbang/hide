@@ -48,7 +48,7 @@ final class BrowserCanvasView: NSView, @preconcurrency NSTextInputClient {
         }
         if hasMarkedText() {
             let attributed = NSAttributedString(string: composition.string, attributes: [
-                .font: NSFont.systemFont(ofSize: HideTheme.terminalBaseFontSize),
+                .font: HideTheme.nativeFont(size: HideTheme.Typography.body),
                 .foregroundColor: HideTheme.Native.primary,
                 .backgroundColor: HideTheme.Native.elevated,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,

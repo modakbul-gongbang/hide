@@ -43,7 +43,7 @@ struct BrowserPaneView: View {
                     .disabled(!controller.connected)
                     TextField("Page address", text: $addressDraft)
                         .textFieldStyle(.plain)
-                        .hideFont(size: 12)
+                        .hideFont(size: HideTheme.Typography.subhead)
                         .focused($editingAddress)
                         .onSubmit { controller.navigate(addressDraft) }
                         .accessibilityIdentifier("browser-address-\(pane.id)")
@@ -65,7 +65,7 @@ struct BrowserPaneView: View {
                         VStack(spacing: HideTheme.spacingSM) {
                             if controller.notice == nil { ProgressView().controlSize(.small) }
                             Text(controller.notice == nil ? "Connecting to \(binding.profile)…" : "Browser disconnected")
-                                .hideFont(size: 12)
+                                .hideFont(size: HideTheme.Typography.subhead)
                                 .foregroundStyle(HideTheme.secondary)
                         }
                         .allowsHitTesting(false)

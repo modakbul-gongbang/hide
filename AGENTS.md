@@ -224,3 +224,6 @@ Saturated accent colors belong to category illustration, never to chrome.
 When the existing system does not cover a case, say so and propose the addition; do not settle it with a one-off value in a view.
 
 `DESIGN.md` also records the Raycast public design references and their MIT attribution context.
+
+The native shell components live in `macos/Sources/HerdrMacOS/`: `HideTheme.swift` defines tokens, `HideKeycap.swift` draws registry-derived shortcuts, `HideBalloon.swift` draws tooltips and hint chips, `HideIconButton.swift` owns icon controls, `HideBadge.swift` owns labels, and `HideOverlay.swift` attaches the shared renderer to window content.
+Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception; run `scripts/check-hide-theme-literals.sh` and `scripts/check-hide-components.sh` before delivery.
