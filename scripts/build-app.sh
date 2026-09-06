@@ -11,7 +11,16 @@ macos_root="$project_root/macos"
 dist_root="$project_root/dist"
 bundle_path="$dist_root/hide.app"
 icon_path="$macos_root/Resources/hide.icns"
-archive_path="$dist_root/hide-v${HIDE_VERSION:-0.1.0}-macos-arm64.zip"
+# The app version comes from the release tag (release.yml passes HIDE_VERSION)
+# or, for a local build, from the nearest tag; a placeholder would ship an
+# app that reports a version nothing was released under.
+hide_version=${HIDE_VERSION:-$(git -C "$project_root" describe --tags --match 'v[0-9]*' --dirty 2>/dev/null || true)}
+hide_version=${hide_version#v}
+[[ "$hide_version" == [0-9]* ]] || {
+  print -u2 "HIDE_VERSION is unset and no v<version> tag describes this tree (got '${hide_version:-nothing}')"
+  exit 1
+}
+archive_path="$dist_root/hide-v${hide_version}-macos-arm64.zip"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/hide-bundle.XXXXXX")
 temporary_bundle="$temporary_root/hide.app"
 
@@ -42,6 +51,12 @@ install -m 755 \
 install -m 644 \
   "$macos_root/Resources/Info.plist" \
   "$temporary_bundle/Contents/Info.plist"
+# CFBundleVersion must be a dotted integer; the numeric prefix of the version
+# is that, and the full string carries any suffix a local build appends.
+/usr/libexec/PlistBuddy \
+  -c "Set :CFBundleShortVersionString $hide_version" \
+  -c "Set :CFBundleVersion ${hide_version%%[^0-9.]*}" \
+  "$temporary_bundle/Contents/Info.plist" >/dev/null
 install -m 644 \
   "$icon_path" \
   "$temporary_bundle/Contents/Resources/hide.icns"
@@ -86,6 +101,7 @@ archive_digest=$(/usr/bin/shasum -a 256 "$archive_path" | /usr/bin/awk '{print $
 printf '%s  %s\n' "$archive_digest" "$archive_name" > "$archive_path.sha256"
 
 print -r -- "bundle=$bundle_path"
+print -r -- "hide_version=$hide_version"
 print -r -- "archive=$archive_path"
 print -r -- "herdr_version=$actual_version"
 print -r -- "herdr_sha256=$actual_sha"
