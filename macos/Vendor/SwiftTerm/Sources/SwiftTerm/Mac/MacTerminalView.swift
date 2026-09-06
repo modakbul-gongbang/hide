@@ -337,8 +337,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    
-    
+
+    // Per-row render state, keyed by everything the row is drawn from, so a
+    // draw rebuilds only the rows that changed. Cleared wherever the inputs
+    // the key does not name change: fonts and colors.
+    var preparedRowCache: [PreparedRowKey: PreparedRow] = [:]
+
     // Cache for the colors in the 0..255 range
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:NSColor] = [:]
@@ -1006,6 +1010,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls whether this view applies the terminal's BiDi presentation state.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
             updateCursorPosition()
@@ -1015,6 +1020,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
         didSet {
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1055,6 +1061,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             _selectedTextBackgroundColor = newValue
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1068,6 +1075,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             _selectedTextForegroundColor = newValue
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -3207,7 +3215,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         autoScrollDelta = 0
         let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
-            if screenRow <= 0 {
+            // Strictly past the top edge, mirroring the bottom test below.
+            // `calculateMouseHit` clamps the row into the buffer, so the
+            // pointer resting on the first visible line reports screenRow 0;
+            // treating that as "past the edge" armed the auto-scroll timer for
+            // an ordinary selection that never left the view, and
+            // `calcScrollingVelocity(delta: 0)` returns 1, so the row marched
+            // and the whole view repainted every 50ms until the mouse came up.
+            if screenRow < 0 {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow * -1) * -1
             } else if screenRow >= displayBuffer.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
