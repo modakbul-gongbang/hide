@@ -3207,7 +3207,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         autoScrollDelta = 0
         let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
-            if screenRow <= 0 {
+            // Strictly past the top edge, mirroring the bottom test below.
+            // `calculateMouseHit` clamps the row into the buffer, so the
+            // pointer resting on the first visible line reports screenRow 0;
+            // treating that as "past the edge" armed the auto-scroll timer for
+            // an ordinary selection that never left the view, and
+            // `calcScrollingVelocity(delta: 0)` returns 1, so the row marched
+            // and the whole view repainted every 50ms until the mouse came up.
+            if screenRow < 0 {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow * -1) * -1
             } else if screenRow >= displayBuffer.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
