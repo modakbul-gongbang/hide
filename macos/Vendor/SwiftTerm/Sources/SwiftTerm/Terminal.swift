@@ -7567,7 +7567,7 @@ open class Terminal {
                 continue
             }
             let isContinuationRow = isImplicitContinuationRow(row, startRow: startRow, in: buffer)
-            let startCol = isContinuationRow ? firstNonWhitespaceColumn(in: line, lineLimit: lineLimit) : 0
+            let startCol = isContinuationRow ? implicitContentStartColumn(in: line, lineLimit: lineLimit) : 0
             guard startCol < lineLimit else {
                 continue
             }
@@ -7641,10 +7641,33 @@ open class Terminal {
             return false
         }
 
-        // Heuristic for editor-rendered wraps: the upper segment should reach
-        // near the visual right edge and the seam should form a valid link.
-        let continuationThreshold = max(0, cols - max(2, cols / 5))
-        guard upperInfo.lastCol >= continuationThreshold else {
+        // Two rows are one wrapped line only when a wrapper had a reason to
+        // break there. A wrapper that fills the row (an editor, a hard wrap)
+        // leaves the upper row full. A wrapper that breaks after a path
+        // separator (the Codex transcript) leaves it short and ending in `/`,
+        // and the lower row then opens with a unit that could not have fit
+        // in the room the upper row had left. The room is measured against
+        // `cols` because every observed wrapper lays out at the terminal
+        // width; a wrapper that stays k columns short of it needs k of slack.
+        //
+        // The `/` ending is what tells a wrap from a listing: two long paths
+        // printed one under the other leave the same room and the same unit,
+        // but the upper one ends in a file name. The earlier rule accepted
+        // any upper row past 80% of the width, which joined such listings and
+        // refused the Codex shape, whose first row ends wherever the last
+        // separator fell: `Ran tail -45 /Users/hoyeonlee/projects/` at 40 of
+        // 50 columns, then `│ herdr-ide.worktrees/...` on the next row. A
+        // listing of directories with trailing slashes stays ambiguous.
+        let upperRowIsFull = upperInfo.lastCol >= cols - 2
+        let room = cols - (upperInfo.lastCol + 1)
+        let lowerLine = buffer.lines[lower]
+        let lowerUnit = leadingPathUnitWidth(
+            line: lowerLine,
+            startCol: lowerInfo.firstCol,
+            lineLimit: min(min(cols, lowerLine.count), lowerLine.getTrimmedLength())
+        )
+        let brokeAfterSeparator = upperInfo.lastChar == "/" && lowerUnit > room
+        guard upperRowIsFull || brokeAfterSeparator else {
             return false
         }
 
@@ -7686,7 +7709,9 @@ open class Terminal {
         var first: (col: Int, char: Character)?
         var col = 0
         while col < lineLimit {
-            if let ch = linkCharacterAt(line: line, col: col), !ch.isWhitespace {
+            if let ch = linkCharacterAt(line: line, col: col),
+               !ch.isWhitespace,
+               !Self.isImplicitGutterCharacter(ch) {
                 first = (col, ch)
                 break
             }
@@ -7817,7 +7842,9 @@ open class Terminal {
         return nil
     }
 
-    private func firstNonWhitespaceColumn(in line: BufferLine, lineLimit: Int) -> Int
+    /// Where a continuation row's text starts: after its indentation and after
+    /// any gutter a transcript draws in front of it.
+    private func implicitContentStartColumn(in line: BufferLine, lineLimit: Int) -> Int
     {
         guard lineLimit > 0 else {
             return 0
@@ -7826,18 +7853,61 @@ open class Terminal {
         while col < lineLimit {
             let cell = line[col]
             if cell.code != 0 {
-                if !getCharacter(for: cell).isWhitespace {
+                let ch = getCharacter(for: cell)
+                if !ch.isWhitespace && !Self.isImplicitGutterCharacter(ch) {
                     return col
                 }
             } else if col > 0 && line[col - 1].width == 2 {
                 let base = line[col - 1]
-                if base.code != 0 && !getCharacter(for: base).isWhitespace {
-                    return col
+                if base.code != 0 {
+                    let ch = getCharacter(for: base)
+                    if !ch.isWhitespace && !Self.isImplicitGutterCharacter(ch) {
+                        return col
+                    }
                 }
             }
             col += 1
         }
         return lineLimit
+    }
+
+    /// A cell a transcript draws in front of a continuation row rather than
+    /// as part of its text: the box-drawing block, which Codex uses for the
+    /// `│` and `└` gutter of a command block. Skipping it lets the row's
+    /// content start where the wrapped text does, and it can never cut a
+    /// path short, because no path contains one.
+    private static func isImplicitGutterCharacter(_ ch: Character) -> Bool
+    {
+        ch.unicodeScalars.allSatisfy { (0x2500...0x257F).contains($0.value) }
+    }
+
+    /// Columns the row's first path unit occupies from `startCol`: through
+    /// the first `/`, or through the end of the whitespace-delimited token
+    /// when it carries none. This is the smallest piece a separator-aware
+    /// wrapper moves to the next row, so a unit wider than the room left on
+    /// the row above is proof the wrapper had to break there.
+    private func leadingPathUnitWidth(line: BufferLine, startCol: Int, lineLimit: Int) -> Int
+    {
+        var col = max(0, startCol)
+        while col < lineLimit {
+            let cell = line[col]
+            if cell.code == 0 {
+                if col > 0 && line[col - 1].width == 2 {
+                    col += 1
+                    continue
+                }
+                break
+            }
+            let ch = getCharacter(for: cell)
+            if ch.isWhitespace {
+                break
+            }
+            col += 1
+            if ch == "/" {
+                break
+            }
+        }
+        return col - max(0, startCol)
     }
 
     private func suppressGhosttyLikeMatch(_ range: Range<String.Index>, in text: String) -> Bool
