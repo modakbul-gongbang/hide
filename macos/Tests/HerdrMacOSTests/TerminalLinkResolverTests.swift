@@ -315,8 +315,16 @@ struct TerminalLinkResolverTests {
 private struct LocalFileFixture {
     let root: URL
 
+    /// Rooted at `/tmp` rather than at `FileManager.temporaryDirectory`.
+    ///
+    /// These cases are about the difference between a symlinked spelling and
+    /// the physical one, so the fixture has to sit under a symlinked path:
+    /// `/tmp` is a link to `/private/tmp` on macOS. `temporaryDirectory`
+    /// follows `TMPDIR`, and a runner that points `TMPDIR` at an ordinary
+    /// directory left the fixture with no symlink to resolve and the case
+    /// failing on where it was run rather than on what it tests.
     init() throws {
-        root = FileManager.default.temporaryDirectory
+        root = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("hide-terminal-links-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }

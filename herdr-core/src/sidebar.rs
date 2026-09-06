@@ -552,6 +552,11 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
+    // The title the composer wrote onto this pane when it started the chat.
+    // Herdr holds it, so it survives a Hide restart the way the pane does.
+    let chat_title = token_string(&agent.tokens, crate::scratch::TITLE_TOKEN)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
 
     Ok(SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
@@ -585,6 +590,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
+        chat_title,
         lineage_depth: 0,
         lineage_child_pane_ids: Vec::new(),
         lineage_root_checkout_id: None,

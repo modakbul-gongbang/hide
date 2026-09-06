@@ -127,6 +127,47 @@ pub struct NavigatorSnapshot {
     pub workspaces: Vec<WorkspaceSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
+    /// The one space that is not a project. Its own section, never a row in
+    /// `workspaces` and never counted with them.
+    pub scratch: ScratchSnapshot,
+}
+
+/// The Scratch node: one fixed folder, and the Herdr tabs living in it.
+///
+/// It is deliberately not a `WorkspaceSnapshot`. A project is a repository
+/// with checkouts, worktrees, a branch and a card; Scratch is a folder with
+/// tabs, and giving it the project shape would have meant answering all of
+/// that with placeholders and then keeping it out of every project view by
+/// hand.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct ScratchSnapshot {
+    /// Always `scratch::NODE_ID`. Carried so the shell addresses the node by
+    /// the value the core sent rather than by a string it repeats.
+    pub id: String,
+    pub label: String,
+    /// The folder every Scratch pane runs in. The shell creates it on the
+    /// first submission; the core only decides where it is.
+    pub path: String,
+    /// Collapsed by default, so this is false until the operator opens it.
+    pub expanded: bool,
+    /// The Herdr workspaces holding Scratch panes, in Herdr order. Empty when
+    /// Herdr has none yet, which is what tells a new tab to create one.
+    pub session_workspace_ids: Vec<String>,
+    pub tabs: Vec<ScratchTabSnapshot>,
+}
+
+/// One row in the Scratch section.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ScratchTabSnapshot {
+    /// Herdr's tab id.
+    pub id: String,
+    /// Herdr's own tab label, which is what a tab with no agent shows.
+    pub label: String,
+    /// The chat's title, read from the pane metadata token an agent tab was
+    /// started with. Absent for a terminal tab, and for an agent tab whose
+    /// title was never written, which then falls back to the label.
+    pub title: Option<String>,
+    pub panes: Vec<PaneSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -246,6 +287,10 @@ pub struct SidebarAgentSnapshot {
     /// The pane this agent was spawned from, as Herdr's own lineage records it.
     #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
+    /// The chat title the composer wrote onto this agent's pane, read back
+    /// from Herdr's pane metadata token. Absent for an agent Hide did not
+    /// start through the composer, which falls back to its tab label.
+    pub chat_title: Option<String>,
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,
@@ -783,6 +828,24 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// The agent the composer offers next time, which is the one the operator
+    /// last started. Written on submission only, so it costs the revisioned
+    /// section nothing between submissions.
+    #[serde(default = "default_agent_kind")]
+    pub last_agent_kind: String,
+    /// Whether the composer's bypass toggle is on. The operator's choice
+    /// survives a restart because they asked for it to (D-15); the warning
+    /// beside the chip is what keeps it visible rather than forgetting it.
+    #[serde(default)]
+    pub last_agent_bypass: bool,
+    /// Whether the Scratch section is open.
+    ///
+    /// Its own field rather than a row in `collapsed_workspace_ids`, because
+    /// that list records the exceptions to a default of expanded and Scratch
+    /// defaults to collapsed. Encoding "collapsed by default" in a collapsed
+    /// list needs a sentinel for "never recorded"; one boolean says it.
+    #[serde(default)]
+    pub scratch_expanded: bool,
 }
 
 /// One pane's read mark: the state the operator was looking at the last time
@@ -851,6 +914,9 @@ impl Default for UiStateSnapshot {
             pane_text_scales: BTreeMap::new(),
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             pane_read_records: BTreeMap::new(),
+            last_agent_kind: default_agent_kind(),
+            last_agent_bypass: false,
+            scratch_expanded: false,
         }
     }
 }
@@ -874,6 +940,11 @@ pub struct DeviceRegistration {
 
 pub(crate) fn default_local_device_id() -> String {
     "local".to_owned()
+}
+
+/// The composer's agent before the operator has started one.
+pub(crate) fn default_agent_kind() -> String {
+    "claude".to_owned()
 }
 
 pub(crate) fn default_accent_hex() -> String {
@@ -1394,6 +1465,14 @@ impl Snapshot {
                 workspaces: Vec::new(),
                 agents: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
+                scratch: ScratchSnapshot {
+                    id: crate::scratch::NODE_ID.to_owned(),
+                    label: crate::scratch::LABEL.to_owned(),
+                    path: crate::scratch::root().to_string_lossy().into_owned(),
+                    expanded: false,
+                    session_workspace_ids: Vec::new(),
+                    tabs: Vec::new(),
+                },
             },
             overlay: OverlaySnapshot {
                 kind: None,

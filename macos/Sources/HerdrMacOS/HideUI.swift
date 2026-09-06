@@ -92,6 +92,9 @@ enum HideTheme {
     static let radiusExtraLarge: CGFloat = 16
 
     static let compactControlSize: CGFloat = 36
+    /// The composer is a message box, not a form: wide enough for a sentence
+    /// to breathe and short enough to read as a prompt rather than a page.
+    static let composerSheetSize = CGSize(width: 560, height: 250)
     static let searchSheetSize = CGSize(width: 570, height: 430)
     static let settingsSheetSize = CGSize(width: 720, height: 560)
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
@@ -247,8 +250,8 @@ struct ShellView: View {
         .environment(\.hideAccent, HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
         .environment(\.hideFontScale, CGFloat((model.core.snapshot?.uiState.fontSize ?? 13) / 13))
         .tint(HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
-        .sheet(isPresented: $model.showNewAgent) {
-            NewAgentSheet()
+        .sheet(isPresented: $model.showComposer) {
+            ChatComposerSheet()
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.showSearch) {
@@ -625,6 +628,10 @@ private struct HideSidebar: View {
 
     @ViewBuilder
     private var projectsContent: some View {
+        // The one thing the operator does most often is at the top, above
+        // everything that is only a place to look.
+        NewChatRow()
+
         // What is waiting, then what finished while the operator was away,
         // come before where things live: they are the only parts that ask for
         // an action. An empty group is not drawn at all.
@@ -634,6 +641,8 @@ private struct HideSidebar: View {
                 AgentNavigatorRow(agent: agent, showsWorkspace: true)
             }
         }
+
+        ScratchSection()
 
         HideSectionLabel(title: "Projects", count: model.workspaces.count)
         if model.workspaces.isEmpty {
@@ -667,6 +676,129 @@ private struct HideSidebar: View {
                     AgentNavigatorRow(agent: agent, showsWorkspace: true)
                 }
             }
+        }
+    }
+}
+
+/// The row that starts a chat. First in the list, because starting one is
+/// the most frequent thing done here and every other row is a place rather
+/// than an action.
+private struct NewChatRow: View {
+    @EnvironmentObject private var model: ShellModel
+    @Environment(\.hideAccent) private var accent
+
+    var body: some View {
+        Button(action: { model.openComposer() }) {
+            HStack(spacing: HideTheme.spacingSM + 1) {
+                Image(systemName: "plus.bubble")
+                    .hideFont(size: 11, weight: .semibold)
+                    .foregroundStyle(accent)
+                Text("New chat")
+                    .hideFont(size: 11, weight: .medium)
+                    .foregroundStyle(HideTheme.primary)
+                Spacer(minLength: 4)
+                Text("⌘N")
+                    .hideFont(size: 9, design: .monospaced)
+                    .foregroundStyle(HideTheme.muted)
+            }
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("hide-new-chat")
+    }
+}
+
+/// The Scratch section: a header that is always drawn, and the tabs under it
+/// once the operator opens it.
+///
+/// The header stays at a count of zero on purpose. Scratch is a permanent
+/// place, and a section that disappeared when it emptied would make the space
+/// look like something that has to be created.
+private struct ScratchSection: View {
+    @EnvironmentObject private var model: ShellModel
+
+    private var scratch: CoreScratchSnapshot { model.scratch }
+
+    var body: some View {
+        Button(action: model.toggleScratchExpanded) {
+            HStack(spacing: 7) {
+                Image(systemName: scratch.expanded ? "chevron.down" : "chevron.right")
+                    .hideFont(size: 8, weight: .bold)
+                    .foregroundStyle(HideTheme.muted)
+                Text(scratch.label.uppercased())
+                    .hideFont(size: 11, weight: .semibold)
+                    .foregroundStyle(HideTheme.secondary)
+                Text("\(scratch.tabs.count)")
+                    .hideFont(size: 9, weight: .medium, design: .monospaced)
+                    .foregroundStyle(HideTheme.muted)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 13)
+            .padding(.bottom, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(scratch.expanded ? "Collapse Scratch" : "Expand Scratch")
+        .accessibilityIdentifier("hide-scratch-header")
+
+        if scratch.expanded {
+            if scratch.tabs.isEmpty {
+                EmptySidebarRow(
+                    systemImage: "tray",
+                    title: "Nothing in Scratch",
+                    detail: "⌘N starts a chat that belongs to no project."
+                )
+            } else {
+                ForEach(model.scratchTabsBelowRaisedSections) { tab in
+                    ScratchRow(tab: tab)
+                }
+            }
+        }
+    }
+}
+
+/// One Scratch row: an agent row when the tab holds an agent, a tab row when
+/// it does not. The agent row is the sidebar's own component, so a Scratch
+/// chat and a project chat read as the same kind of thing.
+private struct ScratchRow: View {
+    @EnvironmentObject private var model: ShellModel
+    @Environment(\.hideAccent) private var accent
+    let tab: CoreScratchTabSnapshot
+
+    var body: some View {
+        if let agent = model.scratchAgent(for: tab) {
+            AgentRow(
+                presentation: AgentRowPresentation(
+                    agent: agent,
+                    title: tab.displayName,
+                    accent: accent
+                ),
+                density: .compact,
+                isFocused: model.focusedPaneID == agent.paneID,
+                action: { model.selectAgent(agent) }
+            )
+            .accessibilityIdentifier("hide-scratch-agent-\(agent.paneID)")
+        } else {
+            Button(action: { model.focusScratchTab(tab) }) {
+                HStack(spacing: HideTheme.spacingSM) {
+                    Image(systemName: "terminal")
+                        .hideFont(size: 10, weight: .semibold)
+                        .foregroundStyle(HideTheme.muted)
+                    Text(tab.displayName)
+                        .hideFont(size: 11)
+                        .foregroundStyle(HideTheme.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("hide-scratch-tab-\(tab.id)")
         }
     }
 }
@@ -744,9 +876,9 @@ private struct SidebarCommandBar: View {
             )
             SidebarIconButton(
                 systemImage: "plus",
-                help: "New agent (⌘N)",
-                accessibilityLabel: "New agent",
-                action: { model.openNewAgent() }
+                help: "New chat (⌘N)",
+                accessibilityLabel: "New chat",
+                action: { model.openComposer() }
             )
         }
         .padding(.horizontal, 12)
@@ -1178,8 +1310,8 @@ private struct WorkspaceNavigatorRow: View {
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
-                    Button("New Agent") {
-                        model.openNewAgent(checkoutID: workspace.checkouts.first?.id)
+                    Button("New chat here") {
+                        model.openComposer(checkoutID: workspace.checkouts.first?.id)
                     }
                     Divider()
                     Button("Remove registration", role: .destructive) {
@@ -1334,7 +1466,7 @@ private struct CheckoutNavigatorRow: View {
         )
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
         .contextMenu {
-            Button("Start agent here") { model.openNewAgent(checkoutID: checkout.id) }
+            Button("Start agent here") { model.openComposer(checkoutID: checkout.id) }
             if checkout.isWorktree {
                 Divider()
                 Button(checkout.worktree?.deletionGate.buttonLabel ?? "Delete worktree…", role: .destructive) {
@@ -2002,132 +2134,250 @@ private struct HideStatusBar: View {
     }
 }
 
-private struct NewAgentSheet: View {
+/// The chat composer: three chips on one line, a message, and Send.
+///
+/// It replaces the form this shell used to open. That form asked four
+/// questions before the
+/// operator could type anything and refused to start without a checkout; this
+/// asks one - what do you want - and answers the other three with defaults
+/// already filled in.
+private struct ChatComposerSheet: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.dismiss) private var dismiss
-    @State private var draft = NewAgentDraft.empty
+    @Environment(\.hideAccent) private var accent
+    @State private var message = ""
+    @State private var provider: AgentProvider = .claude
+    @State private var bypassWarnings = false
+    @FocusState private var messageFocused: Bool
 
-    private var checkouts: [(workspace: CoreWorkspaceSnapshot, checkout: CoreCheckoutSnapshot)] {
-        model.workspaces.flatMap { workspace in
-            workspace.checkouts.map { (workspace: workspace, checkout: $0) }
-        }
+    private var agentIsInstalled: Bool {
+        AgentCLIAvailability.isUsable(provider.rawValue)
+    }
+
+    private var canSend: Bool {
+        ChatComposerPolicy.canSend(
+            message: message,
+            agentIsInstalled: agentIsInstalled,
+            isSubmitting: model.composerSubmitting
+        )
+    }
+
+    private var whereLabel: String {
+        guard let checkout = model.composerCheckout else { return model.scratch.label }
+        return checkout.label
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SheetHeader(title: "New Agent", subtitle: "Run the selected CLI inside a checkout through Herdr.")
-            Form {
-                Section("Device") {
-                    Picker("Run on", selection: $draft.selectedDeviceID) {
-                        ForEach(model.devices) { device in
-                            Text(device.label).tag(device.id)
-                        }
-                    }
-                }
-                Section("Agent") {
-                    HStack(spacing: 9) {
-                        ForEach(NewAgentProvider.allCases, id: \.rawValue) { provider in
-                            AgentChoiceTile(
-                                kind: provider.rawValue,
-                                selected: draft.selectedKind == provider.rawValue
-                            ) {
-                                draft.selectedKind = provider.rawValue
-                            }
-                        }
-                    }
-                    if !AgentCLIAvailability.isUsable(draft.selectedKind) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Label("\(draft.selectedKind) is not on the login-shell PATH. Install it, then reopen this dialog.", systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(HideTheme.warning)
-                            Link("Install \(draft.selectedKind)", destination: draft.selectedKind == "claude"
-                                ? URL(string: "https://docs.anthropic.com/en/docs/claude-code/overview")!
-                                : URL(string: "https://developers.openai.com/codex/")!)
-                                .font(.caption)
-                        }
-                    }
-                }
-                Section("Workspace") {
-                    Picker("Workspace / checkout", selection: $draft.selectedCheckoutID) {
-                        Text("Choose a checkout").tag("")
-                        ForEach(checkouts, id: \.checkout.id) { item in
-                            Text("\(item.workspace.repoName) / \(item.checkout.label)").tag(item.checkout.id)
-                        }
-                    }
-                }
-                Section("Options") {
-                    Toggle("Pass the CLI bypass flag", isOn: $draft.bypassWarnings)
-                    if draft.bypassWarnings {
-                        Label("This passes a provider-specific bypass flag to \(draft.selectedKind). Review its consequences before starting.", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(HideTheme.warning)
-                    } else {
-                        Text("Off by default. Hide never hides this choice behind a global setting.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Start agent") {
-                    let bypassWarnings = draft.consumeBypassWarnings()
-                    model.selectedAgentKind = draft.selectedKind
-                    model.selectedAgentCheckoutID = draft.selectedCheckoutID.isEmpty ? nil : draft.selectedCheckoutID
-                    model.selectedAgentDeviceID = draft.selectedDeviceID
-                    model.startAgent(bypassWarnings: bypassWarnings)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(draft.selectedCheckoutID.isEmpty || !AgentCLIAvailability.isUsable(draft.selectedKind))
-            }
-            .padding(18)
+        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
+            chips
+            messageField
+            footer
         }
-        .frame(width: 590, height: 620)
+        .padding(HideTheme.spacingLG)
+        .frame(width: HideTheme.composerSheetSize.width, height: HideTheme.composerSheetSize.height)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
+        .accessibilityIdentifier("hide-chat-composer")
         .onAppear {
-            draft = NewAgentDraft.fresh(
-                selectedKind: model.selectedAgentKind,
-                selectedCheckoutID: model.selectedAgentCheckoutID,
-                focusedCheckoutID: model.focusedCheckout?.id,
-                selectedDeviceID: model.selectedAgentDeviceID
-            )
+            provider = AgentProvider(rawValue: model.core.snapshot?.uiState.lastAgentKind ?? "")
+                ?? .claude
+            bypassWarnings = model.core.snapshot?.uiState.lastAgentBypass ?? false
+            messageFocused = true
         }
+        .onExitCommand {
+            guard !model.composerSubmitting else { return }
+            dismiss()
+        }
+    }
+
+    /// Where, Run on, Agent - one line, each already answered.
+    private var chips: some View {
+        HStack(spacing: HideTheme.spacingSM) {
+            Menu {
+                Button(model.scratch.label) { model.composerCheckoutID = nil }
+                ForEach(model.composerCheckouts, id: \.checkout.id) { item in
+                    Button("\(item.workspace.repoName) / \(item.checkout.label)") {
+                        model.composerCheckoutID = item.checkout.id
+                    }
+                }
+            } label: {
+                ComposerChipLabel(icon: "tray", title: whereLabel)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityIdentifier("hide-composer-where")
+
+            Menu {
+                ForEach(model.devices) { device in
+                    Button(device.label) { model.composerDeviceID = device.id }
+                }
+            } label: {
+                ComposerChipLabel(
+                    icon: "desktopcomputer",
+                    title: model.devices.first(where: { $0.id == model.composerDeviceID })?.label
+                        ?? "This Mac"
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityIdentifier("hide-composer-device")
+
+            Menu {
+                ForEach(AgentProvider.allCases, id: \.rawValue) { candidate in
+                    Button(candidate.rawValue.capitalized) { provider = candidate }
+                }
+                Divider()
+                Toggle("Pass the CLI bypass flag", isOn: $bypassWarnings)
+            } label: {
+                ComposerChipLabel(
+                    icon: "sparkles",
+                    title: provider.rawValue.capitalized,
+                    markKind: provider.rawValue
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityIdentifier("hide-composer-agent")
+
+            if bypassWarnings {
+                Label(
+                    "Bypass flag on",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .hideFont(size: 10, weight: .medium)
+                .foregroundStyle(HideTheme.warning)
+                .accessibilityIdentifier("hide-composer-bypass-warning")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var messageField: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+            TextEditor(text: $message)
+                .focused($messageFocused)
+                .hideFont(size: 13)
+                .foregroundStyle(HideTheme.primary)
+                .scrollContentBackground(.hidden)
+                .padding(HideTheme.spacingSM)
+                .background(
+                    HideTheme.elevated,
+                    in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: HideTheme.radiusLarge)
+                        .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+                }
+                .overlay(alignment: .topLeading) {
+                    if message.isEmpty {
+                        Text("Ask anything")
+                            .hideFont(size: 13)
+                            .foregroundStyle(HideTheme.muted)
+                            .padding(.horizontal, HideTheme.spacingSM + 5)
+                            .padding(.vertical, HideTheme.spacingSM + 8)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .disabled(model.composerSubmitting)
+                .accessibilityIdentifier("hide-composer-message")
+
+            if !agentIsInstalled {
+                VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                    Label(
+                        "\(provider.rawValue) is not on the login-shell PATH.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .hideFont(size: 10)
+                    .foregroundStyle(HideTheme.warning)
+                    Link("Install \(provider.rawValue)", destination: provider == .claude
+                        ? URL(string: "https://docs.anthropic.com/en/docs/claude-code/overview")!
+                        : URL(string: "https://developers.openai.com/codex/")!)
+                        .hideFont(size: 10)
+                }
+                .accessibilityIdentifier("hide-composer-agent-missing")
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: HideTheme.spacingSM) {
+            Spacer(minLength: 0)
+            Button(action: send) {
+                HStack(spacing: HideTheme.spacingXS + 2) {
+                    if model.composerSubmitting {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Starting")
+                            .hideFont(size: 11, weight: .semibold)
+                    } else {
+                        Text("Send")
+                            .hideFont(size: 11, weight: .semibold)
+                        Text("⌘↩")
+                            .hideFont(size: 9, design: .monospaced)
+                            .opacity(0.7)
+                    }
+                }
+                .foregroundStyle(canSend ? HideTheme.background : HideTheme.muted)
+                .padding(.horizontal, HideTheme.spacingMD)
+                .frame(height: 28)
+                .background(
+                    canSend ? accent : HideTheme.elevated,
+                    in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityIdentifier("hide-composer-send")
+        }
+    }
+
+    private func send() {
+        guard canSend else { return }
+        model.sendComposerMessage(
+            provider: provider,
+            message: message,
+            bypassWarnings: bypassWarnings
+        )
     }
 }
 
-private struct AgentChoiceTile: View {
-    @Environment(\.hideAccent) private var accent
-    let kind: String
-    let selected: Bool
-    let action: () -> Void
+/// One composer chip. The three read as one control strip, so they are drawn
+/// once here rather than three times with drifting padding.
+private struct ComposerChipLabel: View {
+    /// How big the agent mark is drawn. It is applied to the image rather than
+    /// to a frame around it, because this label is a `Menu`'s and AppKit sizes
+    /// it from the NSImage.
+    private static let markSide: CGFloat = 12
+
+    let icon: String
+    let title: String
+    /// The agent kind whose mark replaces `icon`, on the chip that names one.
+    var markKind: String?
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                if let mark = AgentMark.image(for: kind) {
-                    Image(nsImage: mark)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
-                }
-                Text(kind.capitalized)
-                    .hideFont(size: 11, weight: .semibold)
-                Text(AgentCLIAvailability.isUsable(kind) ? "installed" : "not found")
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(AgentCLIAvailability.isUsable(kind) ? HideTheme.success : HideTheme.warning)
+        HStack(spacing: HideTheme.spacingXS + 1) {
+            if let markKind, let mark = AgentMark.image(for: markKind, side: Self.markSide) {
+                Image(nsImage: mark)
+                    .interpolation(.high)
+            } else {
+                Image(systemName: icon)
+                    .hideFont(size: 9, weight: .semibold)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .foregroundStyle(selected ? HideTheme.background : HideTheme.primary)
-            .background(selected ? accent : HideTheme.elevated, in: RoundedRectangle(cornerRadius: 8))
+            Text(title)
+                .hideFont(size: 11, weight: .medium)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .hideFont(size: 7, weight: .semibold)
+                .foregroundStyle(HideTheme.muted)
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(HideTheme.secondary)
+        .padding(.horizontal, HideTheme.spacingSM + 2)
+        .frame(height: 26)
+        .background(HideTheme.elevated, in: Capsule())
+        .overlay {
+            Capsule().stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+        }
     }
 }
 

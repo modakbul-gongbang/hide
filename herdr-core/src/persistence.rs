@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, UiStateSnapshot,
-    WorkspaceRegistration, default_accent_hex, default_font_size, default_pane_text_scale,
-    default_panel_visible,
+    WorkspaceRegistration, default_accent_hex, default_agent_kind, default_font_size,
+    default_pane_text_scale, default_panel_visible,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -71,6 +71,16 @@ struct StoredUiState {
     /// build for the size, as a first launch always does.
     #[serde(default)]
     pane_terminal_sizes: BTreeMap<String, (u16, u16)>,
+    /// Absent in a store written before the composer existed, which loads the
+    /// composer's own defaults: Claude, bypass off, Scratch collapsed. None of
+    /// the three is worth discarding the rest of the operator's state for, so
+    /// the schema version does not move.
+    #[serde(default = "default_agent_kind")]
+    last_agent_kind: String,
+    #[serde(default)]
+    last_agent_bypass: bool,
+    #[serde(default)]
+    scratch_expanded: bool,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -146,6 +156,9 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             pane_text_scales: stored.pane_text_scales,
             editor_text_scale: stored.editor_text_scale,
             pane_read_records: stored.pane_read_records,
+            last_agent_kind: stored.last_agent_kind,
+            last_agent_bypass: stored.last_agent_bypass,
+            scratch_expanded: stored.scratch_expanded,
         },
         stored.pane_terminal_sizes,
         LoadDisposition::Loaded,
@@ -188,6 +201,9 @@ pub fn save(
         editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
         pane_terminal_sizes: pane_terminal_sizes.clone(),
+        last_agent_kind: state.last_agent_kind.clone(),
+        last_agent_bypass: state.last_agent_bypass,
+        scratch_expanded: state.scratch_expanded,
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -355,6 +371,63 @@ mod tests {
                 .map(String::as_str),
             Some("command+option+r")
         );
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
+    }
+
+    /// AC9/AC6: the composer's remembered agent and bypass choice, and the
+    /// Scratch section's open state, come back the way they were left. The
+    /// regression this blocks is the operator picking Codex, restarting, and
+    /// being handed Claude again.
+    #[test]
+    fn the_composer_choices_and_the_scratch_section_survive_a_relaunch() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-core-composer-state-{}",
+            std::process::id()
+        ));
+        let path = root.join("state.json");
+        let state = UiStateSnapshot {
+            last_agent_kind: "codex".to_owned(),
+            last_agent_bypass: true,
+            scratch_expanded: true,
+            ..UiStateSnapshot::default()
+        };
+
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist composer state");
+        let (restored, _sizes, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(restored.last_agent_kind, "codex");
+        assert!(restored.last_agent_bypass);
+        assert!(restored.scratch_expanded);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
+    }
+
+    /// A store written before the composer existed still loads, with the
+    /// composer's own defaults rather than a discarded file.
+    #[test]
+    fn a_store_written_before_the_composer_loads_with_its_defaults() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-core-composer-legacy-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("legacy store directory");
+        let path = root.join("state.json");
+        fs::write(
+            &path,
+            br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null,"pet_visible":true}"#,
+        )
+        .expect("write a legacy store");
+
+        let (restored, _sizes, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(restored.last_agent_kind, "claude");
+        assert!(!restored.last_agent_bypass);
+        assert!(!restored.scratch_expanded);
+
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);
     }

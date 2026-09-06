@@ -296,6 +296,7 @@ mod tests {
             ambient: None,
             session_id: None,
             spawned_from_pane_id: None,
+            chat_title: None,
             lineage_depth: 0,
             lineage_child_pane_ids: Vec::new(),
             lineage_root_checkout_id: None,

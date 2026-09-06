@@ -183,6 +183,25 @@ struct PaneShortcutSettingsTests {
             hasActiveHerdrTab: false,
             tabCount: 0
         ) == .nothingToClose)
+        // A Scratch pane has no checkout and no workspace behind it, so every
+        // other input reads as an empty shell. ⌘W still closes the pane the
+        // operator is looking at (R7), and a file tab still wins over it.
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: false,
+            hasActiveFileTab: false,
+            hasActiveHerdrTab: false,
+            hasFocusedPane: true,
+            hasFocusedScratchPane: true,
+            tabCount: 0
+        ) == .closePane)
+        #expect(CloseShortcutPolicy.action(
+            hasWorkspace: false,
+            hasActiveFileTab: true,
+            hasActiveHerdrTab: false,
+            hasFocusedPane: true,
+            hasFocusedScratchPane: true,
+            tabCount: 0
+        ) == .closeFile)
         #expect(CloseShortcutPolicy.action(
             hasWorkspace: false,
             hasActiveFileTab: false,
