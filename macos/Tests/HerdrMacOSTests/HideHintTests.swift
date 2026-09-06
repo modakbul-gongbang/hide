@@ -22,7 +22,7 @@ struct HideHintTests {
 
     @Test func exactMatrixAndEffectiveBindings() {
         let cases: [(Set<PaneShortcut.Modifier>, Set<String>)] = [
-            ([.command], ["search", "new_agent", "toggle_sidebar_view", "toggle_left_sidebar", "new_tab", "close-a", "tab-1"]),
+            ([.command], ["search", "new_chat", "toggle_sidebar_view", "toggle_left_sidebar", "new_tab", "close-a", "tab-1"]),
             ([.command, .shift], ["new_workspace", "toggle_right_panel", "pane-a"]),
             ([.control], ["agent-1"]), ([.command, .option], ["zoom-a"]),
             ([.option], []), ([.shift], []), ([.control, .command], []),

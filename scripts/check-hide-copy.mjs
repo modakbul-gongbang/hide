@@ -47,7 +47,7 @@ assert(shortcutOnly('⌘\\(n)'));
 assert(!shortcutOnly('Press ⌘K to search'));
 assert.equal(quoted('"Close \\(item.name ?? "Untitled")"', 0).value, 'Close \\(item.name ?? "Untitled")');
 assert.deepEqual(inventory([['view.swift', '// Text("ignore")\nText("Search")\nText("⌘K")']]), [{kind:'Text',value:'Search'}]);
-assert.equal(label('New agent (⌘N)'), 'New agent');
+assert.equal(label('New chat (⌘N)'), 'New chat');
 
 const names = execFileSync('git', ['ls-tree', '-r', '--name-only', base, directory], {encoding:'utf8'})
   .trim().split('\n').filter(file => file.endsWith('.swift'));

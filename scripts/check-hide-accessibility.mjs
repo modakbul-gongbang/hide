@@ -14,7 +14,7 @@ for (const key of ['SSH_AUTH_SOCK', 'HERDR_SESSION', 'HERDR_WORKSPACE_ID', 'HERD
 const child = spawn(executable, ['--verification-background', '--verification-ui-fixture', '--workspace-root', root, '--state-path', path.join(root, 'ui.json')], {env, stdio: ['ignore', 'inherit', 'inherit']});
 try {
     // The built-in UI fixture bypasses live transport. No user server is read.
-    const expected = ['New agent (⌘N)', 'New project (⇧⌘N)', 'Search (⌘K)', 'Hide left sidebar (⌘B)', 'Settings'];
+    const expected = ['New chat (⌘N)', 'New project (⇧⌘N)', 'Search (⌘K)', 'Hide left sidebar (⌘B)', 'Settings'];
     const deadline = Date.now() + 45_000;
     let observation = {controls: []};
     let missing = expected;
