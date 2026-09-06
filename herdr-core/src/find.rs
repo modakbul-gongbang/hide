@@ -76,11 +76,7 @@ fn compile(term: &str, options: &PaneFindOptions) -> Result<regex::Regex, String
         .map_err(|_| "Not a valid pattern".to_owned())
 }
 
-fn regex_line_matches(
-    line: &str,
-    pattern: &regex::Regex,
-    line_index: usize,
-) -> Vec<PaneFindMatch> {
+fn regex_line_matches(line: &str, pattern: &regex::Regex, line_index: usize) -> Vec<PaneFindMatch> {
     pattern
         .find_iter(line)
         .filter(|found| !found.is_empty())
@@ -229,13 +225,26 @@ mod tests {
     #[test]
     fn a_match_is_reported_for_every_occurrence_across_every_line() {
         let text = "alpha needle\nbeta\nneedle needle\n";
-        let found = find_matches(text, "needle", &options(false, false)).expect("a literal term compiles");
+        let found =
+            find_matches(text, "needle", &options(false, false)).expect("a literal term compiles");
         assert_eq!(
             found,
             vec![
-                PaneFindMatch { line: 0, column: 6, length: 6 },
-                PaneFindMatch { line: 2, column: 0, length: 6 },
-                PaneFindMatch { line: 2, column: 7, length: 6 },
+                PaneFindMatch {
+                    line: 0,
+                    column: 6,
+                    length: 6
+                },
+                PaneFindMatch {
+                    line: 2,
+                    column: 0,
+                    length: 6
+                },
+                PaneFindMatch {
+                    line: 2,
+                    column: 7,
+                    length: 6
+                },
             ]
         );
     }
@@ -252,7 +261,8 @@ mod tests {
                 text.push_str(&format!("line {index} filler\n"));
             }
         }
-        let found = find_matches(&text, "NEEDLEWORD", &options(false, false)).expect("a literal term compiles");
+        let found = find_matches(&text, "NEEDLEWORD", &options(false, false))
+            .expect("a literal term compiles");
         assert_eq!(found.len(), 5);
         assert_eq!(found.first().map(|m| m.line), Some(1));
         assert_eq!(found.last().map(|m| m.line), Some(161));
@@ -269,7 +279,10 @@ mod tests {
     fn a_whole_word_search_skips_a_term_inside_a_longer_word() {
         let text = "cat catalog the_cat cat_alog cat.\n";
         let found = matches_of(text, "cat", options(false, true));
-        assert_eq!(found.iter().map(|m| m.column).collect::<Vec<_>>(), vec![0, 29]);
+        assert_eq!(
+            found.iter().map(|m| m.column).collect::<Vec<_>>(),
+            vec![0, 29]
+        );
     }
 
     #[test]
@@ -291,8 +304,16 @@ mod tests {
         assert_eq!(
             found,
             vec![
-                PaneFindMatch { line: 0, column: 0, length: 9 },
-                PaneFindMatch { line: 2, column: 0, length: 9 },
+                PaneFindMatch {
+                    line: 0,
+                    column: 0,
+                    length: 9
+                },
+                PaneFindMatch {
+                    line: 2,
+                    column: 0,
+                    length: 9
+                },
             ]
         );
     }
@@ -303,7 +324,10 @@ mod tests {
     fn a_whole_word_pattern_keeps_an_alternation_together() {
         let text = "cat dog category\n";
         let found = matches_of(text, "cat|dog", regex_options(true));
-        assert_eq!(found.iter().map(|m| m.column).collect::<Vec<_>>(), vec![0, 4]);
+        assert_eq!(
+            found.iter().map(|m| m.column).collect::<Vec<_>>(),
+            vec![0, 4]
+        );
     }
 
     /// Half a pattern is a normal thing to be holding while typing one, so it
@@ -378,4 +402,3 @@ mod tests {
         assert_eq!(scroll_delta(10, 0, 0), 0);
     }
 }
-

@@ -770,6 +770,7 @@ struct DestructiveTarget: Identifiable, Equatable, Sendable {
     /// result. Decided by the core, never by a list of state names here.
     let requiresCloseConfirmation: Bool
     let summary: String
+    var contentConsequence: String? = nil
 }
 
 struct ConsequenceNotice: Equatable, Identifiable, Sendable {
@@ -786,6 +787,12 @@ enum ConsequencePolicy {
         let risky = targets.filter(\.requiresCloseConfirmation)
         switch kind {
         case .pane:
+            if let consequence = targets.first?.contentConsequence {
+                return ConsequenceNotice(
+                    title: "Close this pane?", consequence: consequence,
+                    affected: targets, requiresConfirmation: true
+                )
+            }
             return ConsequenceNotice(
                 title: risky.isEmpty ? "Close idle pane" : "Stop the active pane?",
                 consequence: risky.isEmpty
@@ -810,9 +817,12 @@ enum ConsequencePolicy {
 
     private static func aggregate(_ title: String, _ consequence: String, _ targets: [DestructiveTarget]) -> ConsequenceNotice {
         let affected = targets.filter(\.requiresCloseConfirmation)
+        let contentConsequences = targets.compactMap(\.contentConsequence).reduce(into: [String]()) { values, value in
+            if !values.contains(value) { values.append(value) }
+        }
         return ConsequenceNotice(
             title: title,
-            consequence: consequence,
+            consequence: ([consequence] + contentConsequences).joined(separator: " "),
             affected: affected,
             requiresConfirmation: !affected.isEmpty
         )

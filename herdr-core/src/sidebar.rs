@@ -3,9 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{
-    AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot,
-};
+use crate::model::{AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
@@ -127,6 +125,8 @@ pub struct SessionAgentSessionPayload {
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionPanePayload {
     pub pane_id: String,
+    #[serde(default)]
+    pub tokens: BTreeMap<String, Value>,
     #[serde(default)]
     pub cwd: Option<String>,
     /// The name the user gave this pane in Herdr, when they gave it one.
@@ -275,8 +275,7 @@ fn agent_status_label(demand: AgentDemand, activity: AgentActivity, unread: bool
 /// Closing this pane would interrupt running work or throw away a result the
 /// operator has not read yet.
 fn agent_requires_close_confirmation(activity: AgentActivity, group: AgentGroup) -> bool {
-    activity == AgentActivity::Working
-        || matches!(group, AgentGroup::NeedsYou | AgentGroup::Done)
+    activity == AgentActivity::Working || matches!(group, AgentGroup::NeedsYou | AgentGroup::Done)
 }
 
 /// One agent that could not be read out of an otherwise valid snapshot.
@@ -459,8 +458,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .filter(|session| session.kind == "id")
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
-        spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
-            .map(str::to_owned),
+        spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
     })
 }
 
@@ -743,15 +741,50 @@ mod tests {
     #[test]
     fn axes_classify_every_token_form_and_lifecycle() {
         let cases = [
-            (json!({"status_question_new": "?"}), "question", "unknown", "?"),
+            (
+                json!({"status_question_new": "?"}),
+                "question",
+                "unknown",
+                "?",
+            ),
             (json!({"status_question": "?"}), "question", "unknown", "?"),
-            (json!({"status_approval_new": "!"}), "approval", "unknown", "!"),
+            (
+                json!({"status_approval_new": "!"}),
+                "approval",
+                "unknown",
+                "!",
+            ),
             (json!({"status_approval": "!"}), "approval", "unknown", "!"),
-            (json!({"status_error_new": "\u{d7}"}), "error", "unknown", "\u{d7}"),
-            (json!({"status_error": "\u{d7}"}), "error", "unknown", "\u{d7}"),
-            (json!({"status_working": "\u{25cf}"}), "none", "working", "\u{25cf}"),
-            (json!({"status_done_new": "\u{25cf}"}), "none", "stopped", "\u{25cf}"),
-            (json!({"status_idle": "\u{25cb}"}), "none", "stopped", "\u{25cf}"),
+            (
+                json!({"status_error_new": "\u{d7}"}),
+                "error",
+                "unknown",
+                "\u{d7}",
+            ),
+            (
+                json!({"status_error": "\u{d7}"}),
+                "error",
+                "unknown",
+                "\u{d7}",
+            ),
+            (
+                json!({"status_working": "\u{25cf}"}),
+                "none",
+                "working",
+                "\u{25cf}",
+            ),
+            (
+                json!({"status_done_new": "\u{25cf}"}),
+                "none",
+                "stopped",
+                "\u{25cf}",
+            ),
+            (
+                json!({"status_idle": "\u{25cb}"}),
+                "none",
+                "stopped",
+                "\u{25cf}",
+            ),
             (json!({"status_unknown": "~"}), "none", "unknown", "~"),
         ];
         let agents = cases
@@ -842,13 +875,49 @@ mod tests {
     #[test]
     fn axes_require_close_confirmation_for_working_needs_you_and_done() {
         let cases = [
-            (AgentDemand::None, AgentActivity::Working, false, false, true),
-            (AgentDemand::Question, AgentActivity::Stopped, true, false, true),
-            (AgentDemand::Approval, AgentActivity::Unknown, false, true, true),
+            (
+                AgentDemand::None,
+                AgentActivity::Working,
+                false,
+                false,
+                true,
+            ),
+            (
+                AgentDemand::Question,
+                AgentActivity::Stopped,
+                true,
+                false,
+                true,
+            ),
+            (
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                false,
+                true,
+                true,
+            ),
             (AgentDemand::None, AgentActivity::Stopped, true, false, true),
-            (AgentDemand::None, AgentActivity::Stopped, false, false, false),
-            (AgentDemand::Question, AgentActivity::Stopped, false, false, false),
-            (AgentDemand::None, AgentActivity::Unknown, true, false, false),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                false,
+                false,
+                false,
+            ),
+            (
+                AgentDemand::Question,
+                AgentActivity::Stopped,
+                false,
+                false,
+                false,
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Unknown,
+                true,
+                false,
+                false,
+            ),
         ];
         for (demand, activity, unread, blocked, expected) in cases {
             let group = agent_group(demand, activity, unread, blocked);
@@ -890,7 +959,10 @@ mod tests {
             scanned += 1;
             let text = std::fs::read_to_string(&entry).expect("readable source");
             if text.contains("unseen_completion") {
-                offenders.push(format!("{}: the retired unseen_completion state", entry.display()));
+                offenders.push(format!(
+                    "{}: the retired unseen_completion state",
+                    entry.display()
+                ));
             }
             let mut rest = text.as_str();
             while let Some(open) = rest.find('[') {
@@ -915,8 +987,18 @@ mod tests {
     #[test]
     fn axes_status_labels_are_short_human_words() {
         let labels = [
-            (AgentDemand::Question, AgentActivity::Unknown, true, "Question"),
-            (AgentDemand::Approval, AgentActivity::Unknown, true, "Approval"),
+            (
+                AgentDemand::Question,
+                AgentActivity::Unknown,
+                true,
+                "Question",
+            ),
+            (
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                true,
+                "Approval",
+            ),
             (AgentDemand::Error, AgentActivity::Unknown, true, "Error"),
             (AgentDemand::None, AgentActivity::Working, true, "Working"),
             (AgentDemand::None, AgentActivity::Stopped, true, "Done"),
@@ -1028,7 +1110,10 @@ mod tests {
             ["good", "also-good"]
         );
         assert_eq!(projection.excluded.len(), 2);
-        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("bad-activity"));
+        assert_eq!(
+            projection.excluded[0].pane_id.as_deref(),
+            Some("bad-activity")
+        );
         assert!(projection.excluded[0].reason.contains("invalid activity"));
         assert_eq!(projection.excluded[1].pane_id, None);
         assert!(projection.excluded[1].reason.contains("pane id"));
@@ -1077,12 +1162,18 @@ mod tests {
     /// pane-level record instead of reading Herdr's tab-scoped seen.
     #[test]
     fn read_record_clears_one_pane_of_a_finished_tab() {
-        let mut agents = projected(json!([finished("a", 1), finished("b", 2), finished("c", 3)]));
+        let mut agents = projected(json!([
+            finished("a", 1),
+            finished("b", 2),
+            finished("c", 3)
+        ]));
         let mut records = BTreeMap::new();
 
         apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
         assert!(
-            agents.iter().all(|agent| agent.unread && agent.group == "done"),
+            agents
+                .iter()
+                .all(|agent| agent.unread && agent.group == "done"),
             "nothing is read before the operator focuses anything"
         );
 
@@ -1131,7 +1222,12 @@ mod tests {
         let mut records = BTreeMap::new();
 
         let mut watched = projected(asking.clone());
-        apply_read_state(&mut watched, &mut records, Some("a"), ReadRecordScope::Local);
+        apply_read_state(
+            &mut watched,
+            &mut records,
+            Some("a"),
+            ReadRecordScope::Local,
+        );
         assert!(!watched[0].unread, "a question on the focused pane is read");
         assert_eq!(watched[0].group, "seen");
 
@@ -1140,7 +1236,12 @@ mod tests {
             "tokens":{"status_question_new":"?","activity":"0000000000003"}
         }]);
         let mut later = projected(moved_on);
-        apply_read_state(&mut later, &mut records, Some("elsewhere"), ReadRecordScope::Local);
+        apply_read_state(
+            &mut later,
+            &mut records,
+            Some("elsewhere"),
+            ReadRecordScope::Local,
+        );
         assert!(later[0].unread, "a new question raised elsewhere is unread");
         assert_eq!(later[0].group, "needs_you");
     }
@@ -1154,7 +1255,12 @@ mod tests {
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut working, &mut records, Some("a"), ReadRecordScope::Local);
+        apply_read_state(
+            &mut working,
+            &mut records,
+            Some("a"),
+            ReadRecordScope::Local,
+        );
         assert!(!working[0].unread);
 
         let mut asking = projected(json!([{
@@ -1162,7 +1268,10 @@ mod tests {
             "tokens":{"status_question_new":"?","status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
         apply_read_state(&mut asking, &mut records, None, ReadRecordScope::Local);
-        assert!(asking[0].unread, "a new demand is unread even at the same sequence");
+        assert!(
+            asking[0].unread,
+            "a new demand is unread even at the same sequence"
+        );
     }
 
     /// AC4. Records for panes Herdr no longer reports are dropped, but only
@@ -1174,7 +1283,10 @@ mod tests {
         let mut records = BTreeMap::new();
         apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local);
         let after_first = records.clone();
-        assert!(apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local).is_empty());
+        assert!(
+            apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local)
+                .is_empty()
+        );
         assert_eq!(records, after_first, "a repeated apply changes nothing");
 
         let mut none: Vec<SidebarAgentSnapshot> = Vec::new();
@@ -1184,7 +1296,10 @@ mod tests {
             "an empty list from before the first sync must not wipe the record"
         );
         apply_read_state(&mut none, &mut records, None, ReadRecordScope::Local);
-        assert!(records.is_empty(), "a pane Herdr stopped reporting is dropped");
+        assert!(
+            records.is_empty(),
+            "a pane Herdr stopped reporting is dropped"
+        );
     }
 
     /// The ordering key falls back to Herdr's own sequence, zero padded to the

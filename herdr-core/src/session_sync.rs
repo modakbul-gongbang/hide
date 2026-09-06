@@ -1081,6 +1081,7 @@ pub(crate) struct ProjectedPane {
     pub(crate) workspace_id: String,
     pub(crate) tab_id: String,
     pub(crate) cwd: Option<String>,
+    pub(crate) tokens: BTreeMap<String, Value>,
     pub(crate) label: Option<String>,
     pub(crate) terminal_title: Option<String>,
     pub(crate) terminal_title_stripped: Option<String>,
@@ -1164,6 +1165,7 @@ impl ProjectionState {
             .iter()
             .map(|pane| SessionPanePayload {
                 pane_id: pane.pane_id.clone(),
+                tokens: pane.tokens.clone(),
                 cwd: pane.cwd.clone(),
                 label: non_blank(pane.label.as_deref()),
                 terminal_title: non_blank(
@@ -1369,6 +1371,10 @@ impl SessionReplica {
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
                                     id: remote_pane_id(target_id, &pane.pane_id),
+                                    content: crate::pane_content::PaneContent::from_tokens(
+                                        &pane.tokens,
+                                        true,
+                                    ),
                                     herdr_label: non_blank(pane.label.as_deref()),
                                     terminal_title: non_blank(
                                         pane.terminal_title_stripped
@@ -2840,6 +2846,41 @@ mod tests {
         assert!(updated.publish);
         assert_eq!(replica.project().panes.len(), 2);
         assert_eq!(replica.project().layouts[0].panes.len(), 2);
+    }
+
+    #[test]
+    fn browser_host_identity_follows_pane_updates_and_rejects_remote_attachment() {
+        let value = snapshot();
+        let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+        let mut pane = value["panes"][0].clone();
+        pane["tokens"] = json!({
+            "hide_content": "browser-v1",
+            "hide_browser_binding": "login-qa",
+            "hide_browser_profile": "team",
+            "hide_browser_target": "A12B",
+            "hide_browser_session": "hide-login-qa",
+            "hide_browser_cdp_port": "9300",
+            "hide_browser_owns_target": "false"
+        });
+        replica
+            .apply(event(41, "pane_updated", json!({"type": "pane_updated", "pane": pane})))
+            .expect("host report");
+        let projected = replica.project();
+        let content = crate::pane_content::PaneContent::from_tokens(&projected.panes[0].tokens, false);
+        assert!(matches!(content,
+            crate::pane_content::PaneContent::Browser { target_id, .. } if target_id == "A12B"));
+        let (remote, _) = replica.project_remote("mini").expect("remote projection");
+        assert!(matches!(remote.workspaces[0].checkouts[0].tabs[0].panes[0].content,
+            crate::pane_content::PaneContent::Unavailable { .. }));
+        // A host release must remove its content identity without leaving a
+        // stale browser over a shell that now occupies the same layout leaf.
+        pane["tokens"] = json!({});
+        replica
+            .apply(event(42, "pane_updated", json!({"type": "pane_updated", "pane": pane})))
+            .expect("host release");
+        assert!(crate::pane_content::PaneContent::from_tokens(
+            &replica.project().panes[0].tokens, false
+        ).is_terminal());
     }
 
     #[test]

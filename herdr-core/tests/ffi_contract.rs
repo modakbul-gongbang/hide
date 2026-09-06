@@ -653,7 +653,11 @@ fn session_sync_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
         .expect("pane_layouts is an array");
     assert_eq!(layouts.len(), 1);
     assert_eq!(layouts[0]["tab_id"], "user:t1");
-    assert!(!layouts.iter().any(|layout| layout["focused_pane_id"] == "fixture:p1"));
+    assert!(
+        !layouts
+            .iter()
+            .any(|layout| layout["focused_pane_id"] == "fixture:p1")
+    );
     assert!(
         snapshot["terminal"]["panes"]
             .as_array()

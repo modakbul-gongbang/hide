@@ -276,7 +276,12 @@ mod tests {
             checkout_label: None,
             agent_kind: "codex".to_owned(),
             demand: demand.to_owned(),
-            activity: if group == "working" { "working" } else { "stopped" }.to_owned(),
+            activity: if group == "working" {
+                "working"
+            } else {
+                "stopped"
+            }
+            .to_owned(),
             unread: group != "seen",
             blocked: false,
             group: group.to_owned(),

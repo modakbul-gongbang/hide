@@ -218,9 +218,9 @@ pub fn build_catalog(
     // so the row survives Herdr closing that workspace.
     for registration in registrations {
         let comparison = normalized_for_comparison(&project_root(Path::new(&registration.path)));
-        let occupied = result
-            .iter()
-            .position(|workspace| normalized_for_comparison(Path::new(&workspace.path)) == comparison);
+        let occupied = result.iter().position(|workspace| {
+            normalized_for_comparison(Path::new(&workspace.path)) == comparison
+        });
         match occupied {
             // A second registration for a repository that already carries
             // one is not a second row, and it must not rename the first.
@@ -311,10 +311,9 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         let project_comparison = normalized_for_comparison(&project_path);
         let root_comparison = normalized_for_comparison(&root);
         let workspace_id = workspace_id_for_path(&project_path);
-        let index = match projects
-            .iter()
-            .position(|project| normalized_for_comparison(Path::new(&project.path)) == project_comparison)
-        {
+        let index = match projects.iter().position(|project| {
+            normalized_for_comparison(Path::new(&project.path)) == project_comparison
+        }) {
             Some(index) => index,
             None => {
                 let name = project_path
@@ -860,7 +859,11 @@ mod tests {
         let catalog = build_catalog(&registrations, &[space], &no_worktrees());
 
         assert_eq!(unregistered.len(), 2);
-        assert!(unregistered.iter().all(|project| project.label != "hide main"));
+        assert!(
+            unregistered
+                .iter()
+                .all(|project| project.label != "hide main")
+        );
         assert_eq!(catalog.len(), 2);
         let labels = catalog.iter().map(|p| p.label.as_str()).collect::<Vec<_>>();
         assert_eq!(labels, vec!["First", "Second"]);
@@ -897,8 +900,16 @@ mod tests {
         let root = temp_dir("shared-root");
         let cwd = root.to_string_lossy().into_owned();
         let spaces = [
-            SessionSpace { id: "w1".to_owned(), label: "first".to_owned(), cwds: vec![cwd.clone()] },
-            SessionSpace { id: "w2".to_owned(), label: "second".to_owned(), cwds: vec![cwd] },
+            SessionSpace {
+                id: "w1".to_owned(),
+                label: "first".to_owned(),
+                cwds: vec![cwd.clone()],
+            },
+            SessionSpace {
+                id: "w2".to_owned(),
+                label: "second".to_owned(),
+                cwds: vec![cwd],
+            },
         ];
 
         let catalog = build_catalog(&[], &spaces, &no_worktrees());

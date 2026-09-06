@@ -183,7 +183,10 @@ mod tests {
     #[test]
     fn a_claude_fork_resumes_the_parent_session_as_a_new_one() {
         let arguments = fork_arguments(&request(ForkableAgent::Claude));
-        let separator = arguments.iter().position(|argument| argument == "--").unwrap();
+        let separator = arguments
+            .iter()
+            .position(|argument| argument == "--")
+            .unwrap();
         assert_eq!(
             &arguments[separator + 1..],
             [
@@ -197,7 +200,10 @@ mod tests {
     #[test]
     fn a_codex_fork_uses_that_agents_own_fork_subcommand() {
         let arguments = fork_arguments(&request(ForkableAgent::Codex));
-        let separator = arguments.iter().position(|argument| argument == "--").unwrap();
+        let separator = arguments
+            .iter()
+            .position(|argument| argument == "--")
+            .unwrap();
         assert_eq!(
             &arguments[separator + 1..],
             ["fork", "3f2b1c00-0000-4000-8000-000000000001"]
@@ -223,7 +229,11 @@ mod tests {
     fn a_blank_working_directory_is_left_to_herdr_rather_than_passed_empty() {
         let mut blank = request(ForkableAgent::Claude);
         blank.cwd = Some("   ".to_owned());
-        assert!(!fork_arguments(&blank).iter().any(|argument| argument == "--cwd"));
+        assert!(
+            !fork_arguments(&blank)
+                .iter()
+                .any(|argument| argument == "--cwd")
+        );
     }
 
     #[test]

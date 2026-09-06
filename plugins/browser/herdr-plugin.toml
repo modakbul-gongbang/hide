@@ -1,0 +1,12 @@
+id = "hide.browser"
+name = "Hide Browser"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Chromux browser content for Hide panes"
+platforms = ["macos"]
+
+[[panes]]
+id = "browser"
+title = "Browser"
+placement = "split"
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/browser-pane.mjs\" host"]

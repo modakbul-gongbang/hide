@@ -1712,29 +1712,48 @@ private struct HideTabCanvas: View {
             onResize: model.resizePane
         ) { item in
             if let pane = model.paneMetadata(for: item.paneID) {
-                PaneTerminalCell(
-                    pane: pane,
-                    status: model.paneStatus(for: pane.id),
-                    statusMessage: model.paneTransportMessage(for: pane.id),
-                    isFocused: item.isFocused,
-                    isZoomed: isZoomed,
-                    showsFork: model.canForkPane(pane),
-                    activity: model.paneActivity(for: pane.id),
-                    notice: model.paneNotice(for: pane.id),
-                    onFocus: { model.focusPane(pane.id) },
-                    onReconnect: { model.reconnectPane(pane.id) },
-                    onClose: { model.closePaneFromHeader(pane.id) },
-                    onFork: { model.forkPaneFromHeader(pane.id) },
-                    onOpenPort: { model.openPanePort($0) }
-                ) {
-                    TerminalHost(
-                        bridge: model.core,
-                        paneID: pane.id,
-                        textScale: model.textScale(for: pane.id),
+                switch pane.content {
+                case .browser(let binding):
+                    BrowserPaneView(
+                        pane: pane, binding: binding,
+                        isFocused: item.isFocused, isZoomed: isZoomed,
                         onFocus: { model.focusPane(pane.id) },
-                        onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                        onClose: { model.closePaneFromHeader(pane.id) }
                     )
-                    .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                case .unavailable(let reason):
+                    HideTerminalPaneCard(
+                        paneID: pane.id, kind: "unavailable", title: pane.herdrLabel ?? "Pane unavailable",
+                        status: "ready", isFocused: item.isFocused, isZoomed: isZoomed,
+                        onFocus: { model.focusPane(pane.id) },
+                        onClose: { model.closePaneFromHeader(pane.id) }
+                    ) {
+                        ContentUnavailableView("Pane unavailable", systemImage: "exclamationmark.triangle", description: Text(reason))
+                    }
+                case .terminal:
+                    PaneTerminalCell(
+                        pane: pane,
+                        status: model.paneStatus(for: pane.id),
+                        statusMessage: model.paneTransportMessage(for: pane.id),
+                        isFocused: item.isFocused,
+                        isZoomed: isZoomed,
+                        showsFork: model.canForkPane(pane),
+                        activity: model.paneActivity(for: pane.id),
+                        notice: model.paneNotice(for: pane.id),
+                        onFocus: { model.focusPane(pane.id) },
+                        onReconnect: { model.reconnectPane(pane.id) },
+                        onClose: { model.closePaneFromHeader(pane.id) },
+                        onFork: { model.forkPaneFromHeader(pane.id) },
+                        onOpenPort: { model.openPanePort($0) }
+                    ) {
+                        TerminalHost(
+                            bridge: model.core,
+                            paneID: pane.id,
+                            textScale: model.textScale(for: pane.id),
+                            onFocus: { model.focusPane(pane.id) },
+                            onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                        )
+                        .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                    }
                 }
             } else {
                 MissingTerminalPaneCell(paneID: item.paneID)
