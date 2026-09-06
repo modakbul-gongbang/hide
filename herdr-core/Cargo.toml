@@ -10,7 +10,7 @@ name = "herdr_core"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-anyhow = "=1.0.100"
+anyhow = "=1.0.104"
 base64 = "=0.22.1"
 libc = "=0.2.189"
 regress = "=0.12.0"
@@ -19,12 +19,12 @@ russh = { version = "=0.63.1", default-features = false, features = ["ring", "rs
 russh-config = "=0.58.0"
 russh-sftp = "=2.4.0"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.150"
+serde_json = "=1.0.151"
 tokio = { version = "=1.53.1", features = ["io-util", "net", "rt-multi-thread", "sync", "time"] }
 
 [build-dependencies]
 typify = "=0.7.0"
-serde_json = "=1.0.150"
+serde_json = "=1.0.151"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
