@@ -1,10 +1,10 @@
 {
   "name": "herdr",
-  "tag": "preview-2026-08-31-b1ff4582e968",
-  "version": "0.8.2-preview.2026-08-31-b1ff4582e968",
+  "tag": "preview-2026-09-06-13d8d0b99033",
+  "version": "0.8.2-preview.2026-09-06-13d8d0b99033",
   "platform": "macos-aarch64",
-  "source_url": "https://github.com/herdrdev/herdr/releases/download/preview-2026-08-31-b1ff4582e968/herdr-macos-aarch64",
-  "sha256": "93bb174c2962e1282a0fa4df5f986956a4253e08aaf7eecdca3d919d2704106b",
+  "source_url": "https://github.com/modakbul-gongbang/herdr/releases/download/preview-2026-09-06-13d8d0b99033/herdr-macos-aarch64",
+  "sha256": "55ea8b80c9f1a172539b9aa082773968b1a2e9a332a21a0a5a1ca24609fc9df1",
   "verification": "This file is the single source of the pin. scripts/fetch-herdr-runtime.sh downloads and verifies the asset against it for every app build, and the Swift shell reads it at launch to verify the bundled binary before starting it. contracts/herdr-api.schema.json is the schema this binary reports. Change both with scripts/bump-herdr.sh <release-tag>, never by hand.",
-  "repo": "herdrdev/herdr"
+  "repo": "modakbul-gongbang/herdr"
 }

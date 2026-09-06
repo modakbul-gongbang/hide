@@ -39,6 +39,69 @@
     },
     "event": {
       "$defs": {
+        "AgentLineageInfo": {
+          "properties": {
+            "agent_instance_id": {
+              "type": "string"
+            },
+            "host": {
+              "$ref": "#/schemas/event/$defs/HostScope"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "parent_agent_instance_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "spawned_from_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "$ref": "#/schemas/event/$defs/AgentLineageState"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_instance_id",
+            "idempotency_key",
+            "name",
+            "kind",
+            "host",
+            "workspace_id",
+            "tab_id",
+            "pane_id",
+            "state"
+          ],
+          "type": "object"
+        },
+        "AgentLineageState": {
+          "enum": [
+            "active",
+            "ended",
+            "orphaned"
+          ],
+          "type": "string"
+        },
         "AgentSessionInfo": {
           "properties": {
             "agent": {
@@ -497,6 +560,22 @@
             },
             {
               "properties": {
+                "lineage": {
+                  "$ref": "#/schemas/event/$defs/AgentLineageInfo"
+                },
+                "type": {
+                  "const": "agent_lineage_changed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "lineage"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "pane_id": {
                   "type": "string"
                 },
@@ -753,9 +832,26 @@
             "pane_exited",
             "pane_agent_detected",
             "pane_agent_status_changed",
-            "layout_updated"
+            "layout_updated",
+            "agent_lineage_changed"
           ],
           "type": "string"
+        },
+        "HostScope": {
+          "description": "Identifies the Herdr service that owns public resource IDs.\n\nPublic pane IDs are durable inside this scope. Runtime IDs such as a\nterminal ID may change when the service restores a session.",
+          "properties": {
+            "host_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "host_id",
+            "session_id"
+          ],
+          "type": "object"
         },
         "PaneInfo": {
           "properties": {
@@ -829,10 +925,10 @@
               },
               "type": "object"
             },
-            "tab_id": {
-              "type": "string"
+            "surface": {
+              "$ref": "#/schemas/event/$defs/PaneSurface"
             },
-            "terminal_id": {
+            "tab_id": {
               "type": "string"
             },
             "terminal_title": {
@@ -869,7 +965,7 @@
           },
           "required": [
             "pane_id",
-            "terminal_id",
+            "surface",
             "workspace_id",
             "tab_id",
             "focused",
@@ -1022,6 +1118,68 @@
           ],
           "type": "object"
         },
+        "PaneSurface": {
+          "oneOf": [
+            {
+              "properties": {
+                "agent_instance_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attach": {
+                  "$ref": "#/schemas/event/$defs/TerminalAttachEndpoint"
+                },
+                "kind": {
+                  "const": "terminal",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "attach"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "editor_id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "editor",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "editor_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "browser",
+                  "type": "string"
+                },
+                "source_pane_id": {
+                  "type": "string"
+                },
+                "view_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "view_id",
+                "source_pane_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "SplitDirection": {
           "enum": [
             "right",
@@ -1067,6 +1225,38 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "TerminalAttachEndpoint": {
+          "description": "A fresh endpoint for attaching to the terminal runtime behind a pane.\n\nThe host connection registry resolves `host` to a local socket or an SSH\ntunnel. Persisted clients must refresh this endpoint from a snapshot after\nreconnect because `terminal_id` is a runtime identity.",
+          "properties": {
+            "host": {
+              "$ref": "#/schemas/event/$defs/HostScope"
+            },
+            "protocol": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "transport": {
+              "$ref": "#/schemas/event/$defs/TerminalAttachTransport"
+            }
+          },
+          "required": [
+            "host",
+            "transport",
+            "protocol",
+            "terminal_id"
+          ],
+          "type": "object"
+        },
+        "TerminalAttachTransport": {
+          "enum": [
+            "herdr_client"
+          ],
+          "type": "string"
         },
         "WorkspaceInfo": {
           "properties": {
@@ -1222,6 +1412,63 @@
     },
     "request": {
       "$defs": {
+        "AgentNewParams": {
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "direction": {
+              "$ref": "#/schemas/request/$defs/SplitDirection",
+              "default": "right"
+            },
+            "focus": {
+              "default": false,
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "operation": {
+              "$ref": "#/schemas/request/$defs/OperationContext"
+            },
+            "spawned_from_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target_pane_id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "operation",
+            "name",
+            "kind",
+            "target_pane_id"
+          ],
+          "type": "object"
+        },
         "AgentPromptParams": {
           "properties": {
             "target": {
@@ -2061,6 +2308,12 @@
         },
         "EventsSubscribeParams": {
           "properties": {
+            "after_sequence": {
+              "description": "Resume strictly after this domain event sequence.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "subscriptions": {
               "items": {
                 "$ref": "#/schemas/request/$defs/Subscription"
@@ -2069,6 +2322,7 @@
             }
           },
           "required": [
+            "after_sequence",
             "subscriptions"
           ],
           "type": "object"
@@ -2332,6 +2586,18 @@
             "request"
           ],
           "type": "string"
+        },
+        "OperationContext": {
+          "description": "Retry identity for a mutation that must converge when submitted twice.\n\nEach method that supports replay embeds this context in its params. The\nrequest correlation `id` is intentionally separate and is never used as an\nidempotency key.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "idempotency_key"
+          ],
+          "type": "object"
         },
         "OutputMatch": {
           "oneOf": [
@@ -4046,6 +4312,18 @@
                 "type"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "agent.lineage_changed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -4144,20 +4422,6 @@
             "bottom-right"
           ],
           "type": "string"
-        },
-        "WorkspaceCloseParams": {
-          "properties": {
-            "close_group": {
-              "type": "boolean"
-            },
-            "workspace_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "workspace_id"
-          ],
-          "type": "object"
         },
         "WorkspaceCreateParams": {
           "properties": {
@@ -4358,9 +4622,6 @@
                 "null"
               ]
             },
-            "trust_repository": {
-              "type": "boolean"
-            },
             "workspace_id": {
               "type": [
                 "string",
@@ -4377,9 +4638,6 @@
                 "string",
                 "null"
               ]
-            },
-            "trust_repository": {
-              "type": "boolean"
             },
             "workspace_id": {
               "type": [
@@ -4420,9 +4678,6 @@
                 "null"
               ]
             },
-            "trust_repository": {
-              "type": "boolean"
-            },
             "workspace_id": {
               "type": [
                 "string",
@@ -4436,9 +4691,6 @@
           "properties": {
             "force": {
               "default": false,
-              "type": "boolean"
-            },
-            "trust_repository": {
               "type": "boolean"
             },
             "workspace_id": {
@@ -4748,7 +5000,7 @@
               "type": "string"
             },
             "params": {
-              "$ref": "#/schemas/request/$defs/WorkspaceCloseParams"
+              "$ref": "#/schemas/request/$defs/WorkspaceTarget"
             }
           },
           "required": [
@@ -5085,6 +5337,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/AgentStartParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "agent.new",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/AgentNewParams"
             }
           },
           "required": [
@@ -6144,6 +6412,12 @@
                 "null"
               ]
             },
+            "agent_instance_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "agent_session": {
               "anyOf": [
                 {
@@ -6156,6 +6430,17 @@
             },
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
+            },
+            "ambient": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/AmbientInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present only when `[experimental] ambient_reader` is enabled and this\npane's session file could be read; absent for every other case\n(disabled, unsupported agent kind, unreadable file). See\n`AmbientInfo`."
             },
             "cwd": {
               "type": [
@@ -6193,6 +6478,12 @@
             "pane_id": {
               "type": "string"
             },
+            "parent_agent_instance_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "revision": {
               "format": "uint64",
               "minimum": 0,
@@ -6200,6 +6491,12 @@
             },
             "screen_detection_skipped": {
               "type": "boolean"
+            },
+            "spawned_from_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "state_change_seq": {
               "default": 0,
@@ -6261,6 +6558,69 @@
             "revision"
           ],
           "type": "object"
+        },
+        "AgentLineageInfo": {
+          "properties": {
+            "agent_instance_id": {
+              "type": "string"
+            },
+            "host": {
+              "$ref": "#/schemas/success_response/$defs/HostScope"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "parent_agent_instance_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "spawned_from_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "$ref": "#/schemas/success_response/$defs/AgentLineageState"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_instance_id",
+            "idempotency_key",
+            "name",
+            "kind",
+            "host",
+            "workspace_id",
+            "tab_id",
+            "pane_id",
+            "state"
+          ],
+          "type": "object"
+        },
+        "AgentLineageState": {
+          "enum": [
+            "active",
+            "ended",
+            "orphaned"
+          ],
+          "type": "string"
         },
         "AgentManifestInfo": {
           "properties": {
@@ -6362,6 +6722,30 @@
             "unknown"
           ],
           "type": "string"
+        },
+        "AmbientInfo": {
+          "description": "Optional counts read from a pane's Claude/Codex session file, gated by\n`[experimental] ambient_reader` (off by default). Only counts and a\ncoarse status ever cross this boundary - never task names, commands,\nprompts, or output. See `crate::app::ambient`.",
+          "properties": {
+            "background_failed": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "background_running": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "subagents_active": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
         },
         "ClientWindowTitleReason": {
           "enum": [
@@ -6797,6 +7181,22 @@
             },
             {
               "properties": {
+                "lineage": {
+                  "$ref": "#/schemas/success_response/$defs/AgentLineageInfo"
+                },
+                "type": {
+                  "const": "agent_lineage_changed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "lineage"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "pane_id": {
                   "type": "string"
                 },
@@ -7068,9 +7468,26 @@
             "pane_exited",
             "pane_agent_detected",
             "pane_agent_status_changed",
-            "layout_updated"
+            "layout_updated",
+            "agent_lineage_changed"
           ],
           "type": "string"
+        },
+        "HostScope": {
+          "description": "Identifies the Herdr service that owns public resource IDs.\n\nPublic pane IDs are durable inside this scope. Runtime IDs such as a\nterminal ID may change when the service restores a session.",
+          "properties": {
+            "host_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "host_id",
+            "session_id"
+          ],
+          "type": "object"
         },
         "InstalledPluginInfo": {
           "properties": {
@@ -7489,10 +7906,10 @@
               },
               "type": "object"
             },
-            "tab_id": {
-              "type": "string"
+            "surface": {
+              "$ref": "#/schemas/success_response/$defs/PaneSurface"
             },
-            "terminal_id": {
+            "tab_id": {
               "type": "string"
             },
             "terminal_title": {
@@ -7529,7 +7946,7 @@
           },
           "required": [
             "pane_id",
-            "terminal_id",
+            "surface",
             "workspace_id",
             "tab_id",
             "focused",
@@ -7963,6 +8380,68 @@
             "viewport_rows"
           ],
           "type": "object"
+        },
+        "PaneSurface": {
+          "oneOf": [
+            {
+              "properties": {
+                "agent_instance_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attach": {
+                  "$ref": "#/schemas/success_response/$defs/TerminalAttachEndpoint"
+                },
+                "kind": {
+                  "const": "terminal",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "attach"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "editor_id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "editor",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "editor_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "browser",
+                  "type": "string"
+                },
+                "source_pane_id": {
+                  "type": "string"
+                },
+                "view_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "view_id",
+                "source_pane_id"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "PaneSwapReason": {
           "enum": [
@@ -8963,6 +9442,37 @@
                 "agent": {
                   "$ref": "#/schemas/success_response/$defs/AgentInfo"
                 },
+                "argv": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "lineage": {
+                  "$ref": "#/schemas/success_response/$defs/AgentLineageInfo"
+                },
+                "replayed": {
+                  "type": "boolean"
+                },
+                "type": {
+                  "const": "agent_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "agent",
+                "lineage",
+                "argv",
+                "replayed"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "agent": {
+                  "$ref": "#/schemas/success_response/$defs/AgentInfo"
+                },
                 "type": {
                   "const": "agent_prompted",
                   "type": "string"
@@ -9398,13 +9908,29 @@
             },
             {
               "properties": {
+                "host": {
+                  "$ref": "#/schemas/success_response/$defs/HostScope"
+                },
+                "oldest_available_sequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
                 "type": {
                   "const": "subscription_started",
                   "type": "string"
                 }
               },
               "required": [
-                "type"
+                "type",
+                "host",
+                "sequence",
+                "oldest_available_sequence"
               ],
               "type": "object"
             },
@@ -9845,6 +10371,12 @@
               },
               "type": "array"
             },
+            "event_sequence": {
+              "description": "Last domain event included in this snapshot.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "focused_pane_id": {
               "type": [
                 "string",
@@ -9863,9 +10395,18 @@
                 "null"
               ]
             },
+            "host": {
+              "$ref": "#/schemas/success_response/$defs/HostScope"
+            },
             "layouts": {
               "items": {
                 "$ref": "#/schemas/success_response/$defs/PaneLayoutSnapshot"
+              },
+              "type": "array"
+            },
+            "lineage": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/AgentLineageInfo"
               },
               "type": "array"
             },
@@ -9899,11 +10440,14 @@
           "required": [
             "version",
             "protocol",
+            "host",
+            "event_sequence",
             "workspaces",
             "tabs",
             "panes",
             "layouts",
-            "agents"
+            "agents",
+            "lineage"
           ],
           "type": "object"
         },
@@ -9952,6 +10496,38 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "TerminalAttachEndpoint": {
+          "description": "A fresh endpoint for attaching to the terminal runtime behind a pane.\n\nThe host connection registry resolves `host` to a local socket or an SSH\ntunnel. Persisted clients must refresh this endpoint from a snapshot after\nreconnect because `terminal_id` is a runtime identity.",
+          "properties": {
+            "host": {
+              "$ref": "#/schemas/success_response/$defs/HostScope"
+            },
+            "protocol": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "transport": {
+              "$ref": "#/schemas/success_response/$defs/TerminalAttachTransport"
+            }
+          },
+          "required": [
+            "host",
+            "transport",
+            "protocol",
+            "terminal_id"
+          ],
+          "type": "object"
+        },
+        "TerminalAttachTransport": {
+          "enum": [
+            "herdr_client"
+          ],
+          "type": "string"
         },
         "WorkspaceInfo": {
           "properties": {

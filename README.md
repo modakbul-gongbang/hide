@@ -67,7 +67,7 @@ open /Applications/hide.app
 ```
 
 The source build creates an ad-hoc signed `dist/hide.app`, a versioned zip archive, and a SHA-256 sidecar.
-It also bundles the pinned Herdr v0.8.2-preview.2026-08-31-b1ff4582e968 runtime, so a separate Herdr install is not required for a first launch.
+It also bundles the pinned Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 runtime, so a separate Herdr install is not required for a first launch.
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
@@ -79,6 +79,10 @@ See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verifica
 - Claude Code and Codex remain separate tools and must already be installed and signed in if you want to launch them from hide.
 - Remote Workbench trees are read-only.
   Remote edits stay in the terminal attached to that remote Herdr session.
+
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033e6855ce66bc0f96654615c8a17a6`.
+This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
+The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
 
 ## Development
 
