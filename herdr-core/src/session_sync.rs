@@ -1407,10 +1407,7 @@ impl SessionReplica {
 
     fn apply(&mut self, event: SequencedEventEnvelope) -> Result<ApplyOutcome, SessionFetchError> {
         if event.protocol != HERDR_PROTOCOL_REVISION {
-            return Err(SessionFetchError::Protocol(format!(
-                "Herdr event protocol revision {} does not match required {}",
-                event.protocol, HERDR_PROTOCOL_REVISION
-            )));
+            return Err(protocol_mismatch(event.protocol));
         }
         if event.host != self.host {
             return Err(SessionFetchError::Stale(format!(
@@ -2190,11 +2187,21 @@ fn validate_protocol(snapshot: &Value) -> Result<(), SessionFetchError> {
         .and_then(Value::as_u64)
         .ok_or_else(|| SessionFetchError::Malformed("snapshot is missing protocol".to_owned()))?;
     if protocol != HERDR_PROTOCOL_REVISION {
-        return Err(SessionFetchError::Protocol(format!(
-            "Herdr protocol revision {protocol} does not match required {HERDR_PROTOCOL_REVISION}"
-        )));
+        return Err(protocol_mismatch(protocol));
     }
     Ok(())
+}
+
+/// The one message for a server built against another protocol revision. The
+/// app only ever starts its own bundled Herdr, so a mismatch means a server
+/// started elsewhere owns the socket, and the remedy is to stop it or to move
+/// to a hide built against it; both are named rather than left to guess.
+fn protocol_mismatch(received: u64) -> SessionFetchError {
+    SessionFetchError::Protocol(format!(
+        "The running Herdr speaks protocol {received}; this hide needs protocol {HERDR_PROTOCOL_REVISION}. \
+         Stop it with `herdr server stop` and reopen hide so it starts its bundled Herdr, \
+         or update hide to a release built against that Herdr."
+    ))
 }
 
 fn remote_workspace_id(target_id: &str, workspace_id: &str) -> String {
@@ -3458,9 +3465,14 @@ mod tests {
                 SubscriptionLine::Event(event) => event,
                 SubscriptionLine::Error { .. } => unreachable!(),
             };
-        assert_eq!(
-            replica.apply(event).expect_err("protocol mismatch").state(),
-            "protocol_mismatch"
+        let mismatch = replica.apply(event).expect_err("protocol mismatch");
+        assert_eq!(mismatch.state(), "protocol_mismatch");
+        let message = mismatch.message();
+        assert!(
+            message.contains(&format!("protocol {}", HERDR_PROTOCOL_REVISION + 1))
+                && message.contains(&format!("needs protocol {HERDR_PROTOCOL_REVISION}"))
+                && message.contains("herdr server stop"),
+            "the mismatch names both revisions and the remedy: {message}"
         );
         assert_eq!(replica.project().focused_pane_id, before.focused_pane_id);
     }

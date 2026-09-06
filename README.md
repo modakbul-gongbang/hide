@@ -15,7 +15,7 @@
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-arm64-111111">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white">
   <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
-  <img alt="Herdr 0.8.2" src="https://img.shields.io/badge/Herdr-0.8.2-B9FF66">
+  <img alt="Bundled Herdr runtime" src="https://img.shields.io/badge/Herdr-bundled-B9FF66">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
@@ -73,7 +73,8 @@ See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verifica
 
 ## Runtime boundaries
 
-- A compatible installed Herdr or an existing live local Herdr socket takes precedence over the bundled runtime.
+- hide starts the Herdr it bundles when no local Herdr server is running.
+  A server that is already running is used as it is when it speaks the protocol hide was built against, and hide says what to do when it does not.
 - hide does not collect or store SSH credentials, Herdr credentials, or agent CLI credentials.
 - Claude Code and Codex remain separate tools and must already be installed and signed in if you want to launch them from hide.
 - Remote Workbench trees are read-only.

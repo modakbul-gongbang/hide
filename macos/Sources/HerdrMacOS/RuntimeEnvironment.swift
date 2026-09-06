@@ -47,17 +47,18 @@ enum HideLaunchTrace {
     }
 }
 
+/// The Herdr binary this launch runs: always the one shipped inside the app,
+/// verified against the manifest digest before anything is started.
 struct HerdrRuntimeSelection: Equatable, Sendable {
     let path: String
-    let source: String
     let version: String
-    let sha256: String?
-    let guidance: String?
+    let sha256: String
 }
 
 enum HideStartupDiagnostic {
     static let initializing = "Starting Herdr…"
-    static let runtimeUnavailable = "Herdr is unavailable. Install Herdr or repair hide, then reopen the app."
+    static let runtimeUnavailable =
+        "hide's bundled Herdr runtime is missing or failed verification. Reinstall hide, then reopen it."
 
     static func serverStartFailed(_ reason: String) -> String {
         "Herdr could not start: \(reason). Check the runtime installation and reopen hide."
@@ -181,80 +182,62 @@ enum HideRuntimeEnvironment {
             .map { URL(fileURLWithPath: $0).appendingPathComponent(name).path }
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
+
+    /// The socket the shell, the core and every child `herdr` share. The
+    /// core's environment registry applies the same rule to the same
+    /// variable, so an override moves all three together; the shell once read
+    /// only the default here and started a server on a socket the core was
+    /// not watching.
+    static func herdrSocketPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: String = NSHomeDirectory()
+    ) -> String {
+        if let override = environment["HERDR_SOCKET_PATH"], override.hasPrefix("/") {
+            return override
+        }
+        return homeDirectory + "/.config/herdr/herdr.sock"
+    }
 }
 
+/// hide runs the Herdr it ships. There is no installed-CLI search and no
+/// version floor: the manifest names one digest, and the binary inside the
+/// bundle either carries it or is not started.
 enum HerdrRuntimeResolver {
     private static let probeTimeout: TimeInterval = 2
 
     static func resolve(bundle: Bundle = .main) -> HerdrRuntimeSelection? {
         resolve(
-            bundlePath: bundle.path(forResource: "herdr", ofType: nil, inDirectory: "herdr-runtime")
+            bundlePath: bundle.path(forResource: "herdr", ofType: nil, inDirectory: "herdr-runtime"),
+            pin: HerdrRuntimePinLoader.pinned
         )
     }
 
-    static func resolve(bundlePath: String?) -> HerdrRuntimeSelection? {
-        // Without the shipped pin there is no version floor and no digest to
-        // verify a bundled binary against, so no runtime may be selected at
-        // all. The loader has already reported why on stderr.
-        guard let pin = HerdrRuntimePinLoader.pinned else { return nil }
-        let hasLiveSocket = FileManager.default.fileExists(
-            atPath: NSHomeDirectory() + "/.config/herdr/herdr.sock"
-        )
-        let installedCandidates = standardInstalledCandidates(homeDirectory: NSHomeDirectory())
-            + HideRuntimeEnvironment.pathEntries(loginPath: HideRuntimeEnvironment.loginShellPath())
-                .map { URL(fileURLWithPath: $0).appendingPathComponent("herdr").path }
-
-        var oldInstalledVersion: String?
-        var firstInstalled: (path: String, version: String)?
-        for path in deduplicated(installedCandidates) where FileManager.default.isExecutableFile(atPath: path) {
-            guard let version = version(of: path) else { continue }
-            firstInstalled = firstInstalled ?? (path, version)
-            if compare(version, with: pin.version) != .orderedAscending {
-                let source = hasLiveSocket ? "live-socket" : "installed"
-                return HerdrRuntimeSelection(
-                    path: path,
-                    source: source,
-                    version: version,
-                    sha256: sha256(of: path),
-                    guidance: nil
-                )
-            }
-            oldInstalledVersion = version
-        }
-
-        if let bundlePath,
-           FileManager.default.isExecutableFile(atPath: bundlePath),
-           sha256(of: bundlePath) == pin.sha256 {
-            let guidance = oldInstalledVersion.map {
-                "Installed Herdr \($0) is below \(pin.version); hide is using its bundled runtime."
-            }
-            return HerdrRuntimeSelection(
-                path: bundlePath,
-                source: hasLiveSocket ? "live-socket" : "bundled",
-                version: pin.version,
-                sha256: pin.sha256,
-                guidance: guidance
+    /// Nil means no runtime may be started, and the reason has already been
+    /// written as a diagnostic; the caller shows the startup message.
+    static func resolve(bundlePath: String?, pin: HerdrRuntimePin?) -> HerdrRuntimeSelection? {
+        // Without the shipped pin there is no digest to verify a bundled
+        // binary against. The loader has already reported why on stderr.
+        guard let pin else { return nil }
+        guard let bundlePath, FileManager.default.isExecutableFile(atPath: bundlePath) else {
+            HideDiagnostic.emit(
+                component: "runtime",
+                kind: "bundle.missing",
+                message: "no executable Herdr at \(bundlePath ?? "<no herdr-runtime resource>")"
             )
+            HideLaunchTrace.mark("runtime_resolve.failed", detail: "bundle_missing")
+            return nil
         }
-
-        if let firstInstalled {
-            return HerdrRuntimeSelection(
-                path: firstInstalled.path,
-                source: "installed-below-minimum",
-                version: firstInstalled.version,
-                sha256: sha256(of: firstInstalled.path),
-                guidance: "The installed Herdr CLI is below \(pin.version), but the verified bundled runtime is unavailable."
+        let digest = sha256(of: bundlePath)
+        guard digest == pin.sha256 else {
+            HideDiagnostic.emit(
+                component: "runtime",
+                kind: "bundle.digest_mismatch",
+                message: "bundled Herdr at \(bundlePath) has digest \(digest ?? "<unreadable>"), the pin is \(pin.sha256)"
             )
+            HideLaunchTrace.mark("runtime_resolve.failed", detail: "bundle_digest_mismatch")
+            return nil
         }
-        return nil
-    }
-
-    static func standardInstalledCandidates(homeDirectory: String) -> [String] {
-        [
-            homeDirectory + "/.local/bin/herdr",
-            "/opt/homebrew/bin/herdr",
-            "/usr/local/bin/herdr",
-        ]
+        return HerdrRuntimeSelection(path: bundlePath, version: pin.version, sha256: pin.sha256)
     }
 
     static func startServerIfNeeded(
@@ -276,29 +259,6 @@ enum HerdrRuntimeResolver {
         } catch {
             return .failed(HideStartupDiagnostic.serverStartFailed(error.localizedDescription))
         }
-    }
-
-    private static func version(of path: String) -> String? {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = ["--version"]
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            guard waitForExit(process, operation: "version_probe") else { return nil }
-        } catch {
-            HideLaunchTrace.mark("version_probe.failed", detail: "launch_error")
-            return nil
-        }
-        guard process.terminationStatus == 0 else {
-            HideLaunchTrace.mark("version_probe.failed", detail: "exit_\(process.terminationStatus)")
-            return nil
-        }
-        let line = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return line.split(separator: " ").last.map(String.init)
     }
 
     private static func sha256(of path: String) -> String? {
@@ -338,21 +298,6 @@ enum HerdrRuntimeResolver {
         return true
     }
 
-    private static func deduplicated(_ paths: [String]) -> [String] {
-        var seen = Set<String>()
-        return paths.filter { seen.insert($0).inserted }
-    }
-
-    private static func compare(_ left: String, with right: String) -> ComparisonResult {
-        let leftParts = left.split(separator: ".").compactMap { Int($0) }
-        let rightParts = right.split(separator: ".").compactMap { Int($0) }
-        for index in 0 ..< max(leftParts.count, rightParts.count) {
-            let leftPart = index < leftParts.count ? leftParts[index] : 0
-            let rightPart = index < rightParts.count ? rightParts[index] : 0
-            if leftPart != rightPart { return leftPart < rightPart ? .orderedAscending : .orderedDescending }
-        }
-        return .orderedSame
-    }
 }
 
 enum HerdrServerStartResult {

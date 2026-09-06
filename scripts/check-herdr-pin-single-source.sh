@@ -21,7 +21,8 @@ sha256=$(jq -er '.sha256' "$manifest")
 
 derived_sources=(
   scripts/build-app.sh
-  herdr-core/src/version.rs
+  scripts/fetch-herdr-runtime.sh
+  macos/scripts/build_dev_app.sh
   macos/Sources/HerdrMacOS/RuntimeEnvironment.swift
 )
 
