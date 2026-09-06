@@ -456,6 +456,7 @@ pub struct TabSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
     pub id: String,
+    pub content: crate::pane_content::PaneContent,
     /// The three names a pane can be shown by, in the order the header prefers
     /// them. The core ships the ingredients rather than a chosen title so the
     /// local and remote projections cannot disagree about the ladder, and so

@@ -80,6 +80,13 @@ install -m 644 \
 # to travel with the app rather than being read out of the checkout.
 /usr/bin/ditto "$worktree_root/assets/pet-theme" "$app_root/Contents/Resources/pet-theme"
 
+# The agent-facing browser command travels with the app, not the checkout.
+mkdir -p "$app_root/Contents/Resources/browser-pane"
+for browser_resource in browser-pane.mjs environment.mjs herdr-plugin.toml; do
+    install -m 644 "$worktree_root/plugins/browser/$browser_resource" \
+        "$app_root/Contents/Resources/browser-pane/$browser_resource"
+done
+
 # Third-party resources and their notices ship as one unit. Copy the directory
 # so a newly added licensed resource cannot be bundled without its attribution.
 /usr/bin/ditto \

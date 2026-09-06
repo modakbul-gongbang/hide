@@ -648,6 +648,8 @@ enum PaneHeaderPresentation {
 /// keeps a remote pane from becoming a separate visual mode.
 struct HideTerminalPaneCard<Content: View>: View {
     let paneID: String
+    let kind: String
+    let closeHelp: String
     let title: String
     let status: String
     let statusMessage: String?
@@ -674,6 +676,8 @@ struct HideTerminalPaneCard<Content: View>: View {
 
     init(
         paneID: String,
+        kind: String = "terminal",
+        closeHelp: String = "Close this pane",
         title: String,
         status: String,
         statusMessage: String? = nil,
@@ -692,6 +696,8 @@ struct HideTerminalPaneCard<Content: View>: View {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.paneID = paneID
+        self.kind = kind
+        self.closeHelp = closeHelp
         self.title = title
         self.status = status
         self.statusMessage = statusMessage
@@ -723,7 +729,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+                .accessibilityLabel("Focus \(kind) pane \(title) (\(paneID))")
 
                 if isZoomed {
                     // A zoomed pane looks like a one-pane tab, so the state
@@ -786,7 +792,7 @@ struct HideTerminalPaneCard<Content: View>: View {
 
                 PaneHeaderButton(
                     systemImage: "xmark",
-                    help: "Close this pane",
+                    help: closeHelp,
                     accessibilityLabel: "Close pane \(paneID)",
                     action: onClose
                 )
@@ -851,7 +857,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                     lineWidth: HideTheme.Layout.hairlineWidth
                 )
         }
-        .accessibilityIdentifier("terminal-pane-\(paneID)")
+        .accessibilityIdentifier("\(kind)-pane-\(paneID)")
     }
 
     private var transportNotice: String? {

@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::model::{ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot};
+use crate::model::{
+    ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot,
+};
 
 /// How stale the list may be while the view is open. Short enough that an edit
 /// made in a terminal pane shows up by the time the operator looks over, long
@@ -438,9 +440,18 @@ mod tests {
 
     #[test]
     fn a_staged_delete_reads_as_deleted_even_with_a_worktree_column() {
-        assert_eq!(ChangedFileStatus::from_porcelain("AD"), ChangedFileStatus::Deleted);
-        assert_eq!(ChangedFileStatus::from_porcelain("MM"), ChangedFileStatus::Modified);
-        assert_eq!(ChangedFileStatus::from_porcelain("R "), ChangedFileStatus::Modified);
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("AD"),
+            ChangedFileStatus::Deleted
+        );
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("MM"),
+            ChangedFileStatus::Modified
+        );
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("R "),
+            ChangedFileStatus::Modified
+        );
     }
 
     #[test]

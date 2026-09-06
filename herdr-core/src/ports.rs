@@ -253,7 +253,10 @@ mod tests {
         let output = "p501\nn/srv/app\np777\nn/srv/other\n";
         let directories = parse_working_directories(output);
         assert_eq!(directories.get(&501).map(String::as_str), Some("/srv/app"));
-        assert_eq!(directories.get(&777).map(String::as_str), Some("/srv/other"));
+        assert_eq!(
+            directories.get(&777).map(String::as_str),
+            Some("/srv/other")
+        );
     }
 
     #[test]
@@ -285,16 +288,22 @@ mod tests {
     /// over invented output would agree with itself.
     #[test]
     fn a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("a loopback port is bindable");
-        let port = listener.local_addr().expect("the bound address is readable").port();
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port is bindable");
+        let port = listener
+            .local_addr()
+            .expect("the bound address is readable")
+            .port();
         let cwd = std::env::current_dir().expect("the test process has a working directory");
 
         let read = PortsReader::new()
             .read_if_due()
             .expect("the first read is always due");
 
-        assert_eq!(read.unavailable_reason, None, "lsof should be readable here");
+        assert_eq!(
+            read.unavailable_reason, None,
+            "lsof should be readable here"
+        );
         let found = read
             .entries
             .iter()

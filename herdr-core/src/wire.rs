@@ -269,6 +269,7 @@ macro_rules! record_conversions {
                     workspace_id: v.workspace_id,
                     tab_id: v.tab_id,
                     cwd: v.cwd,
+                    tokens: v.tokens.into_iter().map(|(k, v)| (k.into(), Value::String(v))).collect(),
                     label: v.label,
                     terminal_title: v.terminal_title,
                     terminal_title_stripped: v.terminal_title_stripped,

@@ -1727,25 +1727,7 @@ final class ShellModel: ObservableObject {
         } else {
             target = .local(tabID: tabID)
         }
-        let paneIDs = Set(tab.panes.map(\.id))
-        let affectedAgents = agents.filter { paneIDs.contains($0.paneID) }
-        let destructiveTargets = affectedAgents.isEmpty
-            ? [DestructiveTarget(
-                id: tabID,
-                label: tab.label ?? tabID,
-                statusLabel: "Idle",
-                requiresCloseConfirmation: false,
-                summary: "No working or attention state is reported for this tab."
-            )]
-            : affectedAgents.map {
-                DestructiveTarget(
-                    id: $0.paneID,
-                    label: $0.workspaceLabel,
-                    statusLabel: $0.statusLabel,
-                    requiresCloseConfirmation: $0.requiresCloseConfirmation,
-                    summary: $0.summary
-                )
-            }
+        let destructiveTargets = tab.panes.map { destructiveTarget(for: $0) }
         let notice = ConsequencePolicy.notice(kind: .tab, targets: destructiveTargets)
         consequenceResult = nil
         if notice.requiresConfirmation {
@@ -1813,20 +1795,26 @@ final class ShellModel: ObservableObject {
         core.forkPane(paneID)
     }
 
+    private func destructiveTarget(for pane: CorePaneSnapshot) -> DestructiveTarget {
+        let agent = agents.first { $0.paneID == pane.id }
+        let contentConsequence = pane.content.closeConsequence
+        return DestructiveTarget(
+            id: pane.id,
+            label: pane.herdrLabel ?? pane.id,
+            statusLabel: agent?.statusLabel ?? "Idle",
+            requiresCloseConfirmation: contentConsequence != nil || (agent?.requiresCloseConfirmation ?? false),
+            summary: contentConsequence ?? agent?.summary ?? "No working or attention state is reported for this pane.",
+            contentConsequence: contentConsequence
+        )
+    }
+
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
         let paneID = closeTarget.paneID
-        guard paneMetadata(for: paneID) != nil else {
-            consequenceResult = "Select a terminal pane before closing."
+        guard let pane = paneMetadata(for: paneID) else {
+            consequenceResult = "Select a pane before closing."
             return
         }
-        let agent = agents.first { $0.paneID == paneID }
-        let target = DestructiveTarget(
-            id: paneID,
-            label: paneID,
-            statusLabel: agent?.statusLabel ?? "Idle",
-            requiresCloseConfirmation: agent?.requiresCloseConfirmation ?? false,
-            summary: agent?.summary ?? "No working or attention state is reported for this pane."
-        )
+        let target = destructiveTarget(for: pane)
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
         consequenceResult = nil
         if notice.requiresConfirmation {

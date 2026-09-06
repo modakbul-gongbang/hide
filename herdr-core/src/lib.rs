@@ -13,6 +13,7 @@ mod herdr_api;
 pub mod herdr_contract;
 pub mod live;
 mod model;
+pub mod pane_content;
 mod persistence;
 pub mod pet;
 mod ports;

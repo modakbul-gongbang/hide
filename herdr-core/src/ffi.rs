@@ -199,8 +199,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         }
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let notifier = ChangeNotifier::new();
-        lock_recover(&runtime)
-            .install_worker_context(Arc::downgrade(&runtime), notifier.clone());
+        lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
         let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,
@@ -258,7 +257,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                         target.label.clone(),
                         connector,
                         Arc::downgrade(&runtime),
-notifier.clone(),
+                        notifier.clone(),
                     );
                     crate::session_sync::spawn(context, None)
                 })();
