@@ -13,11 +13,17 @@ cd "$(dirname "$0")/.."
 readers=(changes ports)
 
 # 1. The module that holds the mutex, and the file module it calls
-#    synchronously while holding it, execute no subprocess at all.
+#    synchronously while holding it, execute no subprocess at all. The test
+#    module at the end of each file is exempt: its fixtures build git
+#    repositories in a temporary directory with no runtime and no mutex.
 for module in runtime files; do
-    if grep -n 'Command::new' "herdr-core/src/${module}.rs" >/dev/null 2>&1; then
-        printf 'herdr-core/src/%s.rs runs a subprocess while the runtime mutex is held:\n' "$module" >&2
-        grep -n 'Command::new' "herdr-core/src/${module}.rs" >&2
+    source="herdr-core/src/${module}.rs"
+    boundary="$(grep -n '^#\[cfg(test)\]' "$source" | head -1 | cut -d: -f1)"
+    forks="$(awk -v boundary="${boundary:-0}" \
+        'boundary > 0 && NR >= boundary { exit } /Command::new/ { print FILENAME ":" NR ": " $0 }' \
+        "$source")"
+    if [[ -n "$forks" ]]; then
+        printf '%s runs a subprocess while the runtime mutex is held:\n%s\n' "$source" "$forks" >&2
         exit 1
     fi
 done

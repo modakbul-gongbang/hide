@@ -23,18 +23,6 @@ hide_version=${hide_version#v}
 archive_path="$dist_root/hide-v${hide_version}-macos-arm64.zip"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/hide-bundle.XXXXXX")
 temporary_bundle="$temporary_root/hide.app"
-downloaded_herdr="$temporary_root/herdr"
-
-# The pin is read, never restated. jq -er fails the build on a missing or null
-# field rather than bundling an unverified binary.
-herdr_manifest="$macos_root/Sources/HerdrMacOS/Resources/herdr-bundle.json"
-[[ -f "$herdr_manifest" ]] || {
-  print -u2 "pinned Herdr runtime manifest is missing: $herdr_manifest"
-  exit 1
-}
-herdr_version=$(jq -er '.version' "$herdr_manifest")
-herdr_url=$(jq -er '.source_url' "$herdr_manifest")
-herdr_sha256=$(jq -er '.sha256' "$herdr_manifest")
 
 cleanup() {
   rm -rf -- "$temporary_root"
@@ -83,26 +71,12 @@ for resource_bundle in "$macos_root"/.build/arm64-apple-macosx/release/*.bundle;
   fi
 done
 
-herdr_input="${HERDR_BINARY_PATH:-$HOME/.local/bin/herdr}"
-if [[ -x "$herdr_input" ]]; then
-  actual_input_version=$("$herdr_input" --version 2>/dev/null | /usr/bin/awk '{print $NF}' || true)
-  actual_input_sha=$(/usr/bin/shasum -a 256 "$herdr_input" | /usr/bin/awk '{print $1}')
-else
-  actual_input_version=""
-  actual_input_sha=""
-fi
-if [[ "$actual_input_version" == "$herdr_version" && "$actual_input_sha" == "$herdr_sha256" ]]; then
-  herdr_source="$herdr_input"
-else
-  /usr/bin/curl --fail --location --silent --show-error "$herdr_url" --output "$downloaded_herdr"
-  chmod 755 "$downloaded_herdr"
-  herdr_source="$downloaded_herdr"
-fi
-
+# The runtime the app ships is the pinned asset, verified against the manifest
+# by the one script every build shares; nothing on this machine's PATH is
+# consulted.
+herdr_source=$(zsh "$script_dir/fetch-herdr-runtime.sh")
 actual_version=$("$herdr_source" --version | /usr/bin/awk '{print $NF}')
 actual_sha=$(/usr/bin/shasum -a 256 "$herdr_source" | /usr/bin/awk '{print $1}')
-[[ "$actual_version" == "$herdr_version" ]] || { print -u2 "bundled herdr version mismatch: $actual_version"; exit 1; }
-[[ "$actual_sha" == "$herdr_sha256" ]] || { print -u2 "bundled herdr SHA-256 mismatch: $actual_sha"; exit 1; }
 install -m 755 "$herdr_source" "$temporary_bundle/Contents/Resources/herdr-runtime/herdr"
 
 # Ship every notice, not a named one: a mark added to the app without a

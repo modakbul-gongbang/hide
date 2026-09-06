@@ -9,7 +9,22 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show the Swift toolchain
+        run: swift --version
+      - name: Test the core
+        run: cargo test --locked --manifest-path herdr-core/Cargo.toml
+      - name: Build the core archive the shell links
+        run: cargo build --release --locked -p herdr-core
+      - name: Test the shell
+        run: swift test --package-path macos
+
   macos-arm64:
+    # A tag builds a release only from a tree both suites passed.
+    needs: test
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

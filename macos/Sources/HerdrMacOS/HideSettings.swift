@@ -342,31 +342,20 @@ private struct HideGeneralSettings: View {
             }
         }
 
-        HideSettingsGroup(title: "Herdr runtime") {
+        HideSettingsGroup(title: "Bundled Herdr runtime") {
             if let selection = model.core.runtimeSelection {
                 HideSettingsRow(label: "Version") {
                     HideSettingsValue(text: selection.version)
                 }
-                HideSettingsRow(label: "Source") {
-                    HideSettingsValue(text: selection.source)
-                }
                 HideSettingsRow(label: "Path") {
                     HideSettingsValue(text: selection.path)
                 }
-                HideSettingsRow(label: "SHA-256", showsDivider: selection.guidance != nil) {
-                    HideSettingsValue(text: selection.sha256 ?? "not recorded")
-                }
-                if let guidance = selection.guidance {
-                    HideSettingsNote(
-                        text: guidance,
-                        systemImage: "exclamationmark.triangle.fill",
-                        color: HideTheme.warning,
-                        showsDivider: false
-                    )
+                HideSettingsRow(label: "SHA-256", showsDivider: false) {
+                    HideSettingsValue(text: selection.sha256)
                 }
             } else {
                 HideSettingsNote(
-                    text: "No verified Herdr runtime is available for this launch.",
+                    text: HideStartupDiagnostic.runtimeUnavailable,
                     systemImage: "exclamationmark.triangle.fill",
                     color: HideTheme.warning,
                     showsDivider: false

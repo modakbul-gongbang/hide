@@ -50,13 +50,30 @@ import Testing
     #expect(environment["HERDR_CONFIG_PATH"] == "/private/tmp/hide-worktree/config")
 }
 
-@Test func anEmptyRoutingValueIsNotForwardedAsIfItWereConfigured() {
+@Test func everyChildIsPinnedToTheSocketTheCoreReads() {
+    // The server hide starts would otherwise bind wherever XDG_CONFIG_HOME
+    // sends it while the core watches the default under the home directory.
     let environment = HideRuntimeEnvironment.childEnvironment(
-        inherited: ["HOME": "/tmp/hide-routing", "USER": "tester", "HERDR_SOCKET_PATH": ""],
-        loginPath: "/usr/bin:/bin"
+        inherited: [
+            "HOME": "/tmp/hide-routing",
+            "USER": "tester",
+            "XDG_CONFIG_HOME": "/tmp/hide-xdg",
+        ],
+        loginPath: "/usr/bin:/bin",
+        homeDirectory: "/Users/example"
     )
 
-    #expect(environment["HERDR_SOCKET_PATH"] == nil)
+    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/example/.config/herdr/herdr.sock")
+}
+
+@Test func anEmptySocketOverrideFallsBackToTheDefaultTheCoreReads() {
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: ["HOME": "/tmp/hide-routing", "USER": "tester", "HERDR_SOCKET_PATH": ""],
+        loginPath: "/usr/bin:/bin",
+        homeDirectory: "/Users/example"
+    )
+
+    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/example/.config/herdr/herdr.sock")
 }
 
 @Test func perWorktreeInstancesKeepSeparateUIState() {
@@ -101,10 +118,8 @@ import Testing
     let result = HerdrRuntimeResolver.startServerIfNeeded(
         selection: HerdrRuntimeSelection(
             path: "/private/tmp/hide-runtime-does-not-exist",
-            source: "test",
-            version: "0.8.2",
-            sha256: nil,
-            guidance: nil
+            version: "0.0.0-test",
+            sha256: String(repeating: "0", count: 64)
         ),
         socketPath: "/private/tmp/hide-unlaunchable-runtime-verification.sock",
         environment: [:]
@@ -203,25 +218,47 @@ import Testing
 
 @Test func connectedHerdrStatusDoesNotLookLikeItIsStillWaiting() {
     #expect(HerdrStatusPresentation.localMessage(
+        startupDiagnostic: nil,
         bridgeError: nil,
         state: "connected",
         providerMessage: nil
     ) == "Connected to Herdr")
     #expect(HerdrStatusPresentation.localMessage(
+        startupDiagnostic: nil,
         bridgeError: nil,
         state: "not_connected",
         providerMessage: nil
     ) == "Waiting for Herdr")
     #expect(HerdrStatusPresentation.localMessage(
+        startupDiagnostic: nil,
         bridgeError: "Bridge failed",
         state: "connected",
         providerMessage: "Provider failed"
     ) == "Bridge failed")
     #expect(HerdrStatusPresentation.localMessage(
+        startupDiagnostic: nil,
         bridgeError: nil,
         state: "stale",
         providerMessage: "Provider failed"
     ) == "Provider failed")
+}
+
+/// A pane action that fails while Herdr is disconnected is a symptom; the
+/// status bar keeps naming the connection failure, which is what to fix.
+/// A launch that cannot proceed at all still comes first.
+@Test func aConnectionFailureOutranksTheLastActionErrorUntilHerdrConnects() {
+    #expect(HerdrStatusPresentation.localMessage(
+        startupDiagnostic: nil,
+        bridgeError: "pane.focus_failed: pane w1:p1 not found",
+        state: "protocol_mismatch",
+        providerMessage: "The running Herdr speaks protocol 20; this hide needs protocol 21."
+    ) == "The running Herdr speaks protocol 20; this hide needs protocol 21.")
+    #expect(HerdrStatusPresentation.localMessage(
+        startupDiagnostic: HideStartupDiagnostic.runtimeUnavailable,
+        bridgeError: "pane.focus_failed: pane w1:p1 not found",
+        state: "socket_missing",
+        providerMessage: "Herdr socket is missing"
+    ) == HideStartupDiagnostic.runtimeUnavailable)
 }
 
 @Test func coreRemoteSessionCarriesContextAndPaneCwd() throws {
@@ -479,4 +516,76 @@ import Testing
     #expect(receipt.phase == .unavailable)
     #expect(receipt.action == "unavailable")
     #expect(receipt.message.contains("PATH"))
+}
+
+/// The app runs only the Herdr it ships, verified against the pinned digest.
+/// A bundle whose binary is absent or altered yields no runtime rather than
+/// a runtime that happens to be on the machine.
+@Test func theResolverStartsOnlyABundledBinaryCarryingThePinnedDigest() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hide-resolver-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let binary = directory.appendingPathComponent("herdr")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binary)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+    // shasum -a 256 of the script above.
+    let digest = "1d2f2b1a4b1e0b6a0a4a3d3a0f9a5e9e3a7f1b5a0c2d8e6f4a1b3c5d7e9f0a1b"
+    let actual = try #require(
+        String(decoding: try Process.output("/usr/bin/shasum", ["-a", "256", binary.path]), as: UTF8.self)
+            .split(separator: " ").first
+    )
+
+    let matching = HerdrRuntimePin(version: "0.0.0-test", sha256: String(actual))
+    #expect(
+        HerdrRuntimeResolver.resolve(bundlePath: binary.path, pin: matching)
+            == HerdrRuntimeSelection(path: binary.path, version: "0.0.0-test", sha256: String(actual))
+    )
+
+    let other = HerdrRuntimePin(version: "0.0.0-test", sha256: digest)
+    #expect(HerdrRuntimeResolver.resolve(bundlePath: binary.path, pin: other) == nil)
+    #expect(HerdrRuntimeResolver.resolve(bundlePath: nil, pin: matching) == nil)
+    #expect(HerdrRuntimeResolver.resolve(bundlePath: directory.path + "/absent", pin: matching) == nil)
+    #expect(HerdrRuntimeResolver.resolve(bundlePath: binary.path, pin: nil) == nil)
+}
+
+/// The shell, the core and every child herdr read one socket path by one
+/// rule: an absolute HERDR_SOCKET_PATH wins, anything else is the default.
+@Test func theSocketPathFollowsTheCoreOverrideRule() {
+    #expect(
+        HideRuntimeEnvironment.herdrSocketPath(environment: [:], homeDirectory: "/Users/example")
+            == "/Users/example/.config/herdr/herdr.sock"
+    )
+    #expect(
+        HideRuntimeEnvironment.herdrSocketPath(
+            environment: ["HERDR_SOCKET_PATH": "/private/tmp/hide-e2e/herdr.sock"],
+            homeDirectory: "/Users/example"
+        ) == "/private/tmp/hide-e2e/herdr.sock"
+    )
+    #expect(
+        HideRuntimeEnvironment.herdrSocketPath(
+            environment: ["HERDR_SOCKET_PATH": "relative/herdr.sock"],
+            homeDirectory: "/Users/example"
+        ) == "/Users/example/.config/herdr/herdr.sock"
+    )
+    #expect(
+        HideRuntimeEnvironment.herdrSocketPath(
+            environment: ["HERDR_SOCKET_PATH": ""],
+            homeDirectory: "/Users/example"
+        ) == "/Users/example/.config/herdr/herdr.sock"
+    )
+}
+
+private extension Process {
+    static func output(_ executable: String, _ arguments: [String]) throws -> Data {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return data
+    }
 }

@@ -4,12 +4,19 @@ herdr
 Copyright 2025 herdr contributors.
 
 This application bundles the herdr binary from:
-https://github.com/herdrdev/herdr/releases/tag/v0.8.2
+https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033
+
+BEGIN HERDR PROVENANCE
+This is a modified Herdr preview from modakbul-gongbang/herdr,
+built from commit 13d8d0b99033 (tag preview-2026-09-06-13d8d0b99033).
+It supplies host scope, event sequences, and agent lineage not available in upstream stable.
+hide monitors upstream stable through herdr-update.yml and returns when contract and runtime checks pass.
+END HERDR PROVENANCE
 
 herdr is distributed under the Apache License, Version 2.0.
 The complete license text is available at:
 https://www.apache.org/licenses/LICENSE-2.0
 
 The bundled macOS arm64 binary is verified at build time:
-Version: 0.8.2
-SHA-256: a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574
+Version: 0.8.2-preview.2026-09-06-13d8d0b99033
+SHA-256: 55ea8b80c9f1a172539b9aa082773968b1a2e9a332a21a0a5a1ca24609fc9df1
