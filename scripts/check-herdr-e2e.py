@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--bundle', default=str(next((ROOT / 'macos/build/assembled').glob('*.app'), ROOT / 'macos/build/assembled/hide.app')))
 parser.add_argument('--output', default=str(Path(subprocess.check_output(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd=ROOT, text=True).strip()).parent / 'agents/runs/herdr-runtime-release'))
+parser.add_argument('--capture-human', action='store_true', help='Capture the selected pane for human review; not part of the machine oracle')
 args = parser.parse_args()
 bundle = Path(args.bundle).resolve()
 out = Path(args.output).resolve()
@@ -85,22 +86,23 @@ with tempfile.TemporaryDirectory(prefix='he-', dir='/tmp') as directory:
     try:
         process, _ = launch('primary')
         connected(process, 'primary')
-        # Only this run's PID can supply the human-review screenshot.
-        swift = 'import CoreGraphics\nlet pid = Int32(CommandLine.arguments[1])!\nfor w in CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? [] { if (w[kCGWindowOwnerPID as String] as? Int32) == pid, (w[kCGWindowLayer as String] as? Int) == 0 { print(w[kCGWindowNumber as String]!); break } }'
-        window = subprocess.check_output(['/usr/bin/swift', '-e', swift, str(process.pid)], text=True).strip()
-        assert window, 'no window for isolated app PID'
-        seen = subprocess.check_output(['/opt/homebrew/bin/peekaboo', 'see', '--pid', str(process.pid), '--window-id', window, '--json', '--path', str(out / 'before-select.png')], text=True)
-        (out / 'before-select.json').write_text(seen)
-        receipt = json.loads(seen)
-        assert receipt['target_receipt']['pid'] == process.pid
-        rows = [row for row in receipt['data']['ui_elements'] if row.get('identifier', '').startswith('hide-checkout-')]
-        assert len(rows) == 1, 'isolated checkout row is ambiguous'
-        subprocess.run(['/opt/homebrew/bin/peekaboo', 'click', '--pid', str(process.pid), '--window-id', window, '--snapshot', receipt['data']['snapshot_id'], '--on', rows[0]['id'], '--json'], check=True, stdout=subprocess.DEVNULL)
-        after = subprocess.check_output(['/opt/homebrew/bin/peekaboo', 'see', '--pid', str(process.pid), '--window-id', window, '--json', '--path', str(out / 'after-select.png')], text=True)
-        (out / 'after-select.json').write_text(after)
-
-
-        subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(out / 'connected.png')], check=True)
+        if args.capture_human:
+            # Only this run's PID can supply the human-review screenshot.
+            swift = 'import CoreGraphics\nlet pid = Int32(CommandLine.arguments[1])!\nfor w in CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? [] { if (w[kCGWindowOwnerPID as String] as? Int32) == pid, (w[kCGWindowLayer as String] as? Int) == 0 { print(w[kCGWindowNumber as String]!); break } }'
+            window = subprocess.check_output(['/usr/bin/swift', '-e', swift, str(process.pid)], text=True).strip()
+            assert window, 'no window for isolated app PID'
+            seen = subprocess.check_output(['/opt/homebrew/bin/peekaboo', 'see', '--pid', str(process.pid), '--window-id', window, '--json', '--path', str(out / 'before-select.png')], text=True)
+            (out / 'before-select.json').write_text(seen)
+            receipt = json.loads(seen)
+            assert receipt['target_receipt']['pid'] == process.pid
+            rows = [row for row in receipt['data']['ui_elements'] if row.get('identifier', '').startswith('hide-checkout-')]
+            assert len(rows) == 1, 'isolated checkout row is ambiguous'
+            subprocess.run(['/opt/homebrew/bin/peekaboo', 'click', '--pid', str(process.pid), '--window-id', window, '--snapshot', receipt['data']['snapshot_id'], '--on', rows[0]['id'], '--json'], check=True, stdout=subprocess.DEVNULL)
+            after = subprocess.check_output(['/opt/homebrew/bin/peekaboo', 'see', '--pid', str(process.pid), '--window-id', window, '--json', '--path', str(out / 'after-select.png')], text=True)
+            (out / 'after-select.json').write_text(after)
+    
+    
+            subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(out / 'connected.png')], check=True)
         stop_app(process)
         assert run(binary, 'server', 'stop').returncode == 0
         wait_for('primary.stopped', lambda: not socket.exists())
