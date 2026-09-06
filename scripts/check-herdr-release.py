@@ -43,8 +43,8 @@ def source(args):
     test = original[start:end]
     require(test.count('"agent_not_found"') == 1, 'approved test baseline changed')
     expected = original[:start] + test.replace('"agent_not_found"', '"not_agent_backed"') + original[end:]
-    published = run('git', 'show', f'{args.branch}:src/app/api.rs', cwd=checkout)
-    require(published == expected.strip(), 'source differs beyond the approved single expectation')
+    published = subprocess.check_output(['git', 'show', f'{args.branch}:src/app/api.rs'], cwd=checkout)
+    require(published == expected.encode(), 'source differs beyond the approved single expectation')
     print(json.dumps({'source': 'pass', 'commit': tip, 'exception': 'one approved test expectation'}))
 
 
