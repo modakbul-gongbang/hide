@@ -107,7 +107,7 @@ struct TerminalLinkResolverTests {
             == .file(file.standardizedFileURL.resolvingSymlinksInPath()))
     }
 
-    @Test func foldersAndUnreadableFilesStateTheirOwnReason() throws {
+    @Test func aFolderIsRoutedAsADirectoryAndAnUnreadableFileStatesItsReason() throws {
         let fixture = try LocalFileFixture()
         defer { fixture.remove() }
         let folder = fixture.root.appendingPathComponent("Assets", isDirectory: true)
@@ -120,9 +120,64 @@ struct TerminalLinkResolverTests {
         }
 
         #expect(route("Assets", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
-            == .unresolved("Assets is a folder. Terminal links open files."))
+            == .directory(folder.standardizedFileURL.resolvingSymlinksInPath()))
+        #expect(route("Assets/", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
+            == .directory(folder.standardizedFileURL.resolvingSymlinksInPath()))
         #expect(route("secret.txt", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
             == .unresolved("Hide found secret.txt, but it is not readable."))
+    }
+
+    /// A directory the explorer shows is revealed in it, opened down to its
+    /// row; anything the explorer cannot show goes to Finder. The returned
+    /// paths are spelled under the explorer root as given, because the outline
+    /// names its rows by appending to that root.
+    @Test func aDirectoryInsideTheExplorerRootIsRevealedThereAndOneOutsideGoesToFinder() {
+        let root = URL(fileURLWithPath: "/Users/me/projects/hide", isDirectory: true)
+        let nested = URL(fileURLWithPath: "/Users/me/projects/hide/agents/runs/spec", isDirectory: true)
+        #expect(
+            TerminalLinkResolver.directoryDestination(nested, explorerRoot: root)
+                == .explorer(
+                    expand: [
+                        "/Users/me/projects/hide/agents",
+                        "/Users/me/projects/hide/agents/runs",
+                        "/Users/me/projects/hide/agents/runs/spec",
+                    ],
+                    selectedPath: "/Users/me/projects/hide/agents/runs/spec"
+                )
+        )
+        #expect(
+            TerminalLinkResolver.directoryDestination(root, explorerRoot: root)
+                == .explorer(expand: [], selectedPath: nil)
+        )
+
+        let sibling = URL(fileURLWithPath: "/Users/me/projects/hide.worktrees/spec", isDirectory: true)
+        #expect(TerminalLinkResolver.directoryDestination(sibling, explorerRoot: root) == .finder)
+        #expect(TerminalLinkResolver.directoryDestination(nested, explorerRoot: nil) == .finder)
+    }
+
+    /// The resolver hands back a symlink-resolved directory while the explorer
+    /// root may be spelled through a symlink; containment is judged resolved
+    /// and the reveal is spelled the way the outline is.
+    @Test func aDirectoryUnderASymlinkedExplorerRootIsStillRevealedUnderThatRoot() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let real = fixture.root.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: real.appendingPathComponent("docs", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let alias = fixture.root.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+
+        let resolved = real.appendingPathComponent("docs", isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        #expect(
+            TerminalLinkResolver.directoryDestination(resolved, explorerRoot: alias)
+                == .explorer(
+                    expand: [alias.standardizedFileURL.path + "/docs"],
+                    selectedPath: alias.standardizedFileURL.path + "/docs"
+                )
+        )
     }
 
     @Test func anEmptyLinkIsRejectedRatherThanResolved() {

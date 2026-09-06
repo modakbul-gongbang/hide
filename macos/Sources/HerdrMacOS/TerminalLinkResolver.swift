@@ -4,16 +4,29 @@ import Foundation
 enum TerminalLinkRoute: Equatable {
     case web(URL)
     case file(URL)
+    case directory(URL)
     case unresolved(String)
 }
 
 /// What a path names on this filesystem. "Found but unusable" is kept apart
-/// from "not found" so a folder or an unreadable file says which it is instead
-/// of being reported as an unresolvable token.
+/// from "not found" so an unreadable file says which it is instead of being
+/// reported as an unresolvable token.
 enum TerminalFileResolution: Equatable {
     case file(URL)
+    case directory(URL)
     case unusable(String)
     case notFound
+}
+
+/// Where a clicked directory goes. A directory the explorer can show is
+/// revealed there; any other directory is handed to Finder, which is the
+/// only view of it Hide has.
+enum TerminalDirectoryDestination: Equatable {
+    /// `expand` lists the directory and every ancestor below the explorer
+    /// root, so the outline opens down to it; `selectedPath` is the
+    /// directory itself, or nil when it is the root, which has no row.
+    case explorer(expand: [String], selectedPath: String?)
+    case finder
 }
 
 /// Routes a clicked terminal link by what it resolves to, not by how it is
@@ -83,6 +96,8 @@ enum TerminalLinkResolver {
         ) {
         case .file(let url):
             return .file(url)
+        case .directory(let url):
+            return .directory(url)
         case .unusable(let message):
             return .unresolved(message)
         case .notFound:
@@ -125,9 +140,37 @@ enum TerminalLinkResolver {
     ) -> TerminalLinkRoute {
         switch resolution {
         case .file(let url): .file(url)
+        case .directory(let url): .directory(url)
         case .unusable(let message): .unresolved(message)
         case .notFound: .unresolved("Hide could not find \(path).")
         }
+    }
+
+    /// Decides where a directory opens from the explorer's root, which is
+    /// the tree the panel can reveal. Both sides are compared with symlinks
+    /// resolved, and the paths handed back are spelled under `explorerRoot`
+    /// as given, because the outline names its rows by appending to that
+    /// root and would not find a row under the resolved spelling.
+    static func directoryDestination(
+        _ directory: URL,
+        explorerRoot: URL?
+    ) -> TerminalDirectoryDestination {
+        guard let explorerRoot else { return .finder }
+        let root = explorerRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        let target = directory.standardizedFileURL.resolvingSymlinksInPath().path
+        let rootPath = explorerRoot.standardizedFileURL.path
+        if target == root {
+            return .explorer(expand: [], selectedPath: nil)
+        }
+        guard target.hasPrefix(root + "/") else { return .finder }
+        let relative = target.dropFirst(root.count + 1).split(separator: "/")
+        var expand: [String] = []
+        var current = rootPath
+        for component in relative {
+            current += "/" + component
+            expand.append(current)
+        }
+        return .explorer(expand: expand, selectedPath: current)
     }
 
     private static func explicitExternalURL(in value: String) -> URL? {
@@ -210,8 +253,7 @@ enum TerminalLinkResolver {
                 continue
             }
             if isDirectory.boolValue {
-                unusable = unusable ?? "\(candidate.lastPathComponent) is a folder. Terminal links open files."
-                continue
+                return .directory(candidate)
             }
             guard FileManager.default.isReadableFile(atPath: candidate.path) else {
                 unusable = unusable ?? "Hide found \(candidate.lastPathComponent), but it is not readable."
