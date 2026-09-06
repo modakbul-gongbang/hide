@@ -60,20 +60,20 @@ import Testing
             "XDG_CONFIG_HOME": "/tmp/hide-xdg",
         ],
         loginPath: "/usr/bin:/bin",
-        homeDirectory: "/Users/tester"
+        homeDirectory: "/Users/example"
     )
 
-    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/tester/.config/herdr/herdr.sock")
+    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/example/.config/herdr/herdr.sock")
 }
 
 @Test func anEmptySocketOverrideFallsBackToTheDefaultTheCoreReads() {
     let environment = HideRuntimeEnvironment.childEnvironment(
         inherited: ["HOME": "/tmp/hide-routing", "USER": "tester", "HERDR_SOCKET_PATH": ""],
         loginPath: "/usr/bin:/bin",
-        homeDirectory: "/Users/tester"
+        homeDirectory: "/Users/example"
     )
 
-    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/tester/.config/herdr/herdr.sock")
+    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/example/.config/herdr/herdr.sock")
 }
 
 @Test func perWorktreeInstancesKeepSeparateUIState() {
@@ -553,26 +553,26 @@ import Testing
 /// rule: an absolute HERDR_SOCKET_PATH wins, anything else is the default.
 @Test func theSocketPathFollowsTheCoreOverrideRule() {
     #expect(
-        HideRuntimeEnvironment.herdrSocketPath(environment: [:], homeDirectory: "/Users/t")
-            == "/Users/t/.config/herdr/herdr.sock"
+        HideRuntimeEnvironment.herdrSocketPath(environment: [:], homeDirectory: "/Users/example")
+            == "/Users/example/.config/herdr/herdr.sock"
     )
     #expect(
         HideRuntimeEnvironment.herdrSocketPath(
             environment: ["HERDR_SOCKET_PATH": "/private/tmp/hide-e2e/herdr.sock"],
-            homeDirectory: "/Users/t"
+            homeDirectory: "/Users/example"
         ) == "/private/tmp/hide-e2e/herdr.sock"
     )
     #expect(
         HideRuntimeEnvironment.herdrSocketPath(
             environment: ["HERDR_SOCKET_PATH": "relative/herdr.sock"],
-            homeDirectory: "/Users/t"
-        ) == "/Users/t/.config/herdr/herdr.sock"
+            homeDirectory: "/Users/example"
+        ) == "/Users/example/.config/herdr/herdr.sock"
     )
     #expect(
         HideRuntimeEnvironment.herdrSocketPath(
             environment: ["HERDR_SOCKET_PATH": ""],
-            homeDirectory: "/Users/t"
-        ) == "/Users/t/.config/herdr/herdr.sock"
+            homeDirectory: "/Users/example"
+        ) == "/Users/example/.config/herdr/herdr.sock"
     )
 }
 
