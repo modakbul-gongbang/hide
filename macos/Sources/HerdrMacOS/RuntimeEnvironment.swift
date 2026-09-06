@@ -184,6 +184,28 @@ enum HideRuntimeEnvironment {
         return environment
     }
 
+    /// Puts the login PATH on this process, so tools the core runs find the
+    /// same binaries the shell's own child processes do.
+    ///
+    /// A Finder launch inherits `/usr/bin:/bin:/usr/sbin:/sbin`. `git` and
+    /// `lsof` happen to live there; `gh` lives in `/opt/homebrew/bin` and does
+    /// not. Without this the core would report "gh is not installed" on every
+    /// machine that installed it with Homebrew, which is all of them - and the
+    /// message would be true of the process while being false of the machine.
+    ///
+    /// The shell already computes this environment for its child tools; this
+    /// applies the same PATH to the process itself rather than teaching the
+    /// core a second copy of where binaries live.
+    static func applyPathToProcess() {
+        let path = pathEntries(loginPath: loginShellPath()).joined(separator: ":")
+        guard !path.isEmpty else {
+            HideLaunchTrace.mark("process_path.failed", detail: "empty")
+            return
+        }
+        setenv("PATH", path, 1)
+        HideLaunchTrace.mark("process_path.ready", detail: "applied")
+    }
+
     static func resolveExecutable(named name: String) -> String? {
         pathEntries(loginPath: loginShellPath())
             .map { URL(fileURLWithPath: $0).appendingPathComponent(name).path }

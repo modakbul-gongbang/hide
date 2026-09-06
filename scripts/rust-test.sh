@@ -7,10 +7,22 @@
 # fails with an empty exit 1 that looks like a failing test rather than a
 # missing toolchain.
 #
-# Usage: rust-test.sh [<test-binary> [<filter>]]
+# Usage: rust-test.sh [--lib [<filter>] | <test-binary> [<filter>]]
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# Build output is not source (AGENTS.md, "Evidence Belongs Outside The
+# Repository"), and a verification runner that judges the working tree must not
+# have `cargo test` writing into it. An explicit CARGO_TARGET_DIR still wins,
+# so a caller that wants the in-tree `target/` says so.
+#
+# The default is keyed by the checkout, because cargo names a workspace
+# member's artifacts by its path relative to the workspace root: two worktrees
+# of this repository sharing one target dir read each other's build as fresh
+# and run the other checkout's test binary.
+checkout="$(basename "$(git rev-parse --show-toplevel)")"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/hide-cargo-test-$checkout}"
 
 # `cargo` on PATH is usually rustup's shim, and the shim reads its toolchain
 # from RUSTUP_HOME, defaulting to `$HOME/.rustup`. Under a runner HOME that
@@ -38,6 +50,13 @@ fi
 
 if [[ $# -eq 0 ]]; then
     exec cargo test --manifest-path herdr-core/Cargo.toml
+fi
+
+# The core's own unit tests live in the library rather than in a test binary,
+# so filtering them needs `--lib` rather than `--test <name>`.
+if [[ "$1" == "--lib" ]]; then
+    shift
+    exec cargo test --manifest-path herdr-core/Cargo.toml --lib "$@"
 fi
 
 if [[ $# -eq 1 ]]; then

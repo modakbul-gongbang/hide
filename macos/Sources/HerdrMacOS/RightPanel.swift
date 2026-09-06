@@ -26,6 +26,9 @@ struct RightPanel: View {
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
+            // The card belongs to the checkout, not to a section, so it sits
+            // above both rather than being a third thing to switch to.
+            CheckoutSummaryCard()
             switch model.rightPanelSection {
             case .explorer:
                 fileTree
@@ -148,6 +151,8 @@ struct RightPanel: View {
 /// committing stay in the terminal for this round.
 struct ChangesView: View {
     @EnvironmentObject private var model: ShellModel
+    @State private var uncommittedExpanded = true
+    @State private var committedExpanded = true
 
     private var changes: CoreChangesSnapshot { model.changes }
 
@@ -170,7 +175,7 @@ struct ChangesView: View {
                 systemImage: "folder",
                 message: "Choose New Workspace to see what changed."
             )
-        } else if changes.entries.isEmpty {
+        } else if changes.entries.isEmpty && changes.committed.isEmpty {
             ChangesNotice(
                 title: "No changes",
                 systemImage: "checkmark.circle",
@@ -185,23 +190,56 @@ struct ChangesView: View {
         }
     }
 
+    /// Two groups: what is not saved yet, and what this branch is.
+    ///
+    /// They answer different questions, which is why one flat list was the
+    /// wrong shape - a file edited but not committed and a file this branch
+    /// added are both "changed" and mean nothing alike. The committed group
+    /// is absent, not empty, when there is no base branch to compare against:
+    /// an empty group would claim the branch has no commits.
     private var changedFileList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
-                ForEach(changes.entries) { entry in
-                    ChangedFileRow(
-                        entry: entry,
-                        isSelected: entry.path == changes.selectedPath
-                    ) {
-                        model.selectChangedFile(
-                            entry.path == changes.selectedPath ? nil : entry.path
-                        )
+                if !changes.entries.isEmpty {
+                    ChangesGroupHeader(
+                        title: "UNCOMMITTED",
+                        count: changes.entries.count,
+                        isExpanded: $uncommittedExpanded
+                    )
+                    if uncommittedExpanded {
+                        ForEach(changes.entries, id: \.uncommittedRowID) { entry in
+                            row(entry, committed: false)
+                        }
+                    }
+                }
+                if let base = changes.baseBranch, !changes.committed.isEmpty {
+                    ChangesGroupHeader(
+                        title: "COMMITTED ON BRANCH",
+                        count: changes.committed.count,
+                        detail: base,
+                        isExpanded: $committedExpanded
+                    )
+                    if committedExpanded {
+                        // Identity carries the group: the same path is in both
+                        // groups whenever a committed file is edited again,
+                        // and two rows with one identity collapse into one.
+                        ForEach(changes.committed, id: \.committedRowID) { entry in
+                            row(entry, committed: true)
+                        }
                     }
                 }
             }
             .padding(.vertical, HideTheme.spacingXS)
         }
         .frame(minHeight: 80)
+    }
+
+    private func row(_ entry: CoreChangedFile, committed: Bool) -> some View {
+        let isSelected = entry.path == changes.selectedPath
+            && changes.selectedCommitted == committed
+        return ChangedFileRow(entry: entry, committed: committed, isSelected: isSelected) {
+            model.selectChangedFile(isSelected ? nil : entry.path, committed: committed)
+        }
     }
 
     @ViewBuilder
@@ -234,8 +272,48 @@ struct ChangesView: View {
     }
 }
 
+/// One group's header: its name, how many files are in it, and a disclosure.
+private struct ChangesGroupHeader: View {
+    let title: String
+    let count: Int
+    var detail: String?
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button { isExpanded.toggle() } label: {
+            HStack(spacing: HideTheme.spacingXS) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .hideFont(size: 8, weight: .semibold)
+                    .foregroundStyle(HideTheme.muted)
+                    .frame(width: 10)
+                Text(title)
+                    .hideFont(size: 9, weight: .semibold)
+                    .foregroundStyle(HideTheme.secondary)
+                Text("\(count)")
+                    .hideFont(size: 9, design: .monospaced)
+                    .foregroundStyle(HideTheme.muted)
+                if let detail {
+                    Text("→ \(detail)")
+                        .hideFont(size: 9, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, HideTheme.spacingMD)
+            .frame(height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("changes-group-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+        .accessibilityLabel("\(title), \(count) files")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+}
+
 private struct ChangedFileRow: View {
     let entry: CoreChangedFile
+    let committed: Bool
     let isSelected: Bool
     let activate: () -> Void
 
@@ -243,12 +321,27 @@ private struct ChangedFileRow: View {
         Button(action: activate) {
             HStack(spacing: HideTheme.spacingSM) {
                 SetiFileIconView(url: URL(fileURLWithPath: entry.path))
-                Text(entry.relativePath)
+                Text(entry.name)
                     .hideFont(size: 11)
                     .foregroundStyle(HideTheme.primary)
                     .lineLimit(1)
-                    .truncationMode(.head)
+                if !entry.directory.isEmpty {
+                    // The directory is context, not identity, so it is dimmer
+                    // and it is the half that gets truncated.
+                    Text(entry.directory)
+                        .hideFont(size: 10)
+                        .foregroundStyle(HideTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
                 Spacer(minLength: HideTheme.spacingXS)
+                if let added = entry.addedLines, let removed = entry.removedLines {
+                    HStack(spacing: HideTheme.spacingXS) {
+                        Text("+\(added)").foregroundStyle(HideTheme.diffAdded)
+                        Text("-\(removed)").foregroundStyle(HideTheme.diffRemoved)
+                    }
+                    .hideFont(size: 9, design: .monospaced)
+                }
                 Text(entry.status.badge)
                     .hideFont(size: 10, weight: .medium)
                     .foregroundStyle(statusColor)
@@ -264,7 +357,8 @@ private struct ChangedFileRow: View {
         }
         .buttonStyle(.plain)
         .help(entry.relativePath)
-        .accessibilityIdentifier("changed-file-\(entry.relativePath)")
+        .accessibilityIdentifier(committed ? "committed-file-\(entry.relativePath)" : "changed-file-\(entry.relativePath)")
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
@@ -274,6 +368,16 @@ private struct ChangedFileRow: View {
         case .deleted: HideTheme.diffRemoved
         case .modified: HideTheme.warning
         }
+    }
+
+    /// The letter and the two numbers said in words, because the row shows
+    /// them as a letter and two numbers.
+    private var accessibilityLabel: String {
+        var parts = [entry.relativePath, entry.status.rawValue]
+        if let added = entry.addedLines, let removed = entry.removedLines {
+            parts.append("\(added) lines added, \(removed) removed")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 

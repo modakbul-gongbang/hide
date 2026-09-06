@@ -257,7 +257,7 @@ struct ShellView: View {
         .alert(item: $model.worktreeToDelete) { checkout in
             Alert(
                 title: Text("Delete worktree \(checkout.label)?"),
-                message: Text("This runs git worktree remove for \(checkout.path). The checkout files will be deleted from disk. Dirty worktrees are refused, but running panes are not stopped automatically."),
+                message: Text(model.worktreeDeletionConsequence(checkout)),
                 primaryButton: .destructive(Text("Delete worktree"), action: model.confirmDeleteWorktree),
                 secondaryButton: .cancel()
             )
@@ -1253,14 +1253,37 @@ private struct CheckoutNavigatorRow: View {
                 } else if presentation.isPrimary {
                     SidebarBadge(label: "primary", color: HideTheme.secondary)
                 }
+                // The three things a row may say about a worktree, and no
+                // more: what its pull request is, that something is
+                // uncommitted, and how many agents are in it (R2, G1).
+                if let pullRequest = checkout.pullRequest {
+                    SidebarBadge(
+                        label: CheckoutCardPresentation.badgeLabel(
+                            pullRequest.badge,
+                            review: pullRequest.review
+                        ),
+                        color: CheckoutCardPresentation.badgeColor(
+                            pullRequest.badge,
+                            review: pullRequest.review
+                        )
+                    )
+                }
+                if checkout.dirty {
+                    Circle()
+                        .fill(HideTheme.warning)
+                        .frame(width: 5, height: 5)
+                        .help("\(checkout.changedFileCount) uncommitted changes")
+                }
                 Spacer(minLength: 0)
-                if let activityLabel = presentation.activityLabel {
-                    Text(activityLabel)
+                if presentation.agentCount > 0 {
+                    Text("\(presentation.agentCount)")
                         .hideFont(size: 9, design: .monospaced)
                         .foregroundStyle(HideTheme.muted)
-                        .lineLimit(1)
                 }
             }
+            // A worktree with no terminal, and one whose pull request is
+            // settled, are both things to look past rather than at.
+            .opacity(CheckoutCardPresentation.isDimmed(checkout) ? 0.55 : 1)
             .padding(.leading, 23)
             .padding(.trailing, 9)
             .frame(minHeight: 31)
@@ -1269,7 +1292,15 @@ private struct CheckoutNavigatorRow: View {
         .buttonStyle(.plain)
         .help(checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path)
         .accessibilityIdentifier("hide-checkout-\(checkout.id)")
-        .accessibilityLabel("\(workspace.repoName), \(checkout.label)")
+        // The row is deliberately almost wordless, so everything the colours,
+        // dots, and badges carry is said here in words (G1, design 7).
+        .accessibilityLabel(
+            CheckoutCardPresentation.rowAccessibilityLabel(
+                repoName: workspace.repoName,
+                checkout: checkout,
+                agentCount: presentation.agentCount
+            )
+        )
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
         .contextMenu {
             Button("Start agent here") { model.openNewAgent(checkoutID: checkout.id) }

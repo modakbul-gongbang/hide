@@ -217,6 +217,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
     assert_eq!(
         keys,
         [
+            "card",
             "connection",
             "editor",
             "find",

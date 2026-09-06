@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The capabilities that shell out - the changes view's Git reader, and the
-# port reader alongside it - run on the session-sync coordinator thread and
-# never under the runtime mutex or on a per-event path.
+# The capabilities that shell out - the changes view's Git reader, the port
+# reader, and the project panel's worktree, GitHub, and disk readers - run on
+# the session-sync coordinator thread and never under the runtime mutex or on a
+# per-event path.
 #
 # Both properties are structural, so they are asserted structurally: the
 # runtime module holds the mutex, so it must fork nothing; and the readers'
@@ -10,7 +11,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readers=(changes ports)
+readers=(changes ports worktrees github disk)
+
+# The three project-panel readers reach the network or walk a whole tree, so
+# they must also move the blocking part off the coordinator thread itself.
+# `gh pr list` takes seconds and `du` over a build tree takes longer; run
+# inline, either would be that much added latency on every Herdr pane event.
+worker_readers=(worktrees github disk)
 
 # 1. The module that holds the mutex, and the file module it calls
 #    synchronously while holding it, execute no subprocess at all. The test
@@ -53,11 +60,24 @@ for reader in "${readers[@]}"; do
     fi
 done
 
-# 4. The coordinator reads the request under the lock and releases it before
-#    the reader runs.
-if ! grep -q 'let Some(request) = read_changes_request' herdr-core/src/session_sync.rs; then
-    printf 'the coordinator no longer reads the changes request before running git\n' >&2
-    exit 1
-fi
+for reader in "${worker_readers[@]}"; do
+    module="herdr-core/src/${reader}.rs"
 
-printf 'capability readers run off the runtime mutex and off every per-event path\n'
+    # 4. The slow readers hand their subprocess to a worker thread rather than
+    #    running it on the thread that applies every Herdr event.
+    if ! grep -q 'BackgroundRead' "$module"; then
+        printf '%s no longer runs its subprocess on a worker thread\n' "$module" >&2
+        exit 1
+    fi
+done
+
+# 5. The coordinator reads each request under the lock and releases it before
+#    the reader runs.
+for request in read_changes_request read_worktrees_request read_github_request read_disk_request; do
+    if ! grep -q "let Some(request) = ${request}" herdr-core/src/session_sync.rs; then
+        printf 'the coordinator no longer reads %s before running its subprocess\n' "$request" >&2
+        exit 1
+    fi
+done
+
+printf 'capability readers run off the runtime mutex, off every per-event path, and off the coordinator thread\n'

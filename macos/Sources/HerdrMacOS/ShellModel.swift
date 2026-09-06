@@ -369,10 +369,6 @@ final class ShellModel: ObservableObject {
         raisedAgentSections.flatMap(\.agents)
     }
 
-    func agents(in checkout: CoreCheckoutSnapshot) -> [SidebarAgent] {
-        SidebarGrouping.agents(agents, in: checkout)
-    }
-
     var focusedWorkspace: CoreWorkspaceSnapshot? {
         if isRemoteContext {
             guard let navigation = remote.navigation else { return nil }
@@ -1028,12 +1024,34 @@ final class ShellModel: ObservableObject {
         interactionNotice = "Workspace removed from Hide. Its folder, repository, and worktrees were not changed."
     }
 
+    /// What the confirmation says will happen: the path, how much disk it
+    /// frees, and that the branch survives.
+    ///
+    /// Stating the consequence is the point (design 6): the previous wording
+    /// described the git command rather than the outcome, and said nothing
+    /// about the branch, which is the thing a person is most afraid of losing.
+    func worktreeDeletionConsequence(_ checkout: CoreCheckoutSnapshot) -> String {
+        var parts = ["Deletes the folder at \(checkout.path)"]
+        // The size is measured when this dialog opens, so it is only absent
+        // for the moment before that read lands.
+        if !card.diskMeasuring, let bytes = card.disk.totalBytes,
+           card.disk.path == checkout.path {
+            parts.append("freeing \(CheckoutCardPresentation.formattedBytes(bytes))")
+        }
+        return parts.joined(separator: ", ")
+            + ". The local branch \(checkout.branch ?? checkout.label) is not deleted, and running panes are not stopped."
+    }
+
+    /// Opens the delete confirmation, which states the size it is about to
+    /// delete - so the size is measured now rather than shown from whenever
+    /// the card last looked (R8, G6).
     func requestDeleteWorktree(_ checkout: CoreCheckoutSnapshot) {
         guard checkout.isWorktree else {
             interactionNotice = "Only linked worktree checkouts can be deleted from this menu."
             return
         }
         worktreeToDelete = checkout
+        core.measureCheckoutDisk()
     }
 
     func confirmDeleteWorktree() {
@@ -1046,7 +1064,12 @@ final class ShellModel: ObservableObject {
             }.value
             guard let self else { return }
             if result.succeeded {
-                interactionNotice = "Deleted linked worktree at \(path)."
+                // The row and its counts come from git, so the way to remove
+                // them is to read git again rather than to edit the catalog
+                // here. A removal that half-succeeded then shows what git
+                // actually reports (G7).
+                core.worktreeRemoved()
+                interactionNotice = "Deleted the worktree at \(path). Its local branch was not deleted."
             } else {
                 interactionNotice = result.message
             }
@@ -1314,8 +1337,50 @@ final class ShellModel: ObservableObject {
         core.snapshot?.changes ?? .empty
     }
 
-    func selectChangedFile(_ path: String?) {
-        core.selectChangedFile(path: path)
+    func selectChangedFile(_ path: String?, committed: Bool = false) {
+        core.selectChangedFile(path: path, committed: committed)
+    }
+
+    /// What the summary card shows beyond the checkout row's own facts.
+    var card: CoreCheckoutCard {
+        core.snapshot?.card ?? .empty
+    }
+
+    /// The agents in a checkout, tolerating no selection so the card can ask
+    /// without unwrapping first.
+    func agents(in checkout: CoreCheckoutSnapshot?) -> [SidebarAgent] {
+        guard let checkout else { return [] }
+        return SidebarGrouping.agents(agents, in: checkout)
+    }
+
+    /// The listening ports attributed to panes in the selected checkout,
+    /// de-duplicated: two panes in one directory are one server, not two.
+    var portsInFocusedCheckout: [UInt16] {
+        guard let checkout = focusedCheckout else { return [] }
+        var seen = Set<UInt16>()
+        return checkout.tabs
+            .flatMap(\.panes)
+            .flatMap(\.ports)
+            .filter { seen.insert($0).inserted }
+            .sorted()
+    }
+
+    /// The card's refresh button: read the pull request, the worktree counts,
+    /// and the size again, now.
+    func refreshCheckoutCard() {
+        core.refreshCheckoutCard()
+    }
+
+    /// Opens a pull request outside Hide, through the same routing a terminal
+    /// link uses.
+    func openPullRequest(_ pullRequest: CorePullRequest) {
+        guard let url = URL(string: pullRequest.url) else {
+            interactionNotice = "Pull request \(pullRequest.number) has no address that can be opened."
+            return
+        }
+        ExternalBrowser.open(url) { [weak self] message in
+            self?.interactionNotice = message
+        }
     }
 
     func toggleLeftSidebar() {

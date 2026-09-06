@@ -12,7 +12,7 @@ use std::process::Command;
 
 use crate::model::{
     CheckoutSnapshot, DeviceRegistration, DeviceSnapshot, RemoteTarget, TabSnapshot,
-    WorkspaceRegistration, WorkspaceSnapshot,
+    WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
 };
 
 pub const LOCAL_DEVICE_ID: &str = "local";
@@ -152,6 +152,7 @@ pub struct SessionSpace {
 pub fn build_catalog(
     registrations: &[WorkspaceRegistration],
     spaces: &[SessionSpace],
+    worktrees: &WorktreeCatalogSnapshot,
 ) -> Vec<WorkspaceSnapshot> {
     // A project is a repository: its main worktree is the identity and every
     // worktree with a pane in it is a checkout under it. A Herdr workspace
@@ -188,6 +189,10 @@ pub fn build_catalog(
             Some(index) => adopt_registration(&mut result[index], registration),
             None => result.push(inspect_registered(registration)),
         }
+    }
+
+    for project in &mut result {
+        apply_worktrees(project, worktrees);
     }
 
     result.sort_by(|left, right| {
@@ -251,11 +256,12 @@ fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &Workspac
 }
 
 /// Projects one Herdr workspace onto the repositories its panes sit in, one
-/// project per repository with a checkout per worktree that has a pane.
+/// project per repository with a checkout per directory a pane occupies.
 ///
-/// Enumerating `git worktree list` here is what made the sidebar verbose: it
-/// listed every branch the repository has ever had a worktree for, each with
-/// no tabs. A checkout earns a row by having a pane in it.
+/// This establishes the project rows and the checkouts Herdr can vouch for
+/// without git. Every other worktree of the repository is added by
+/// [`apply_worktrees`] from the worktree reader's answer, which is what makes
+/// a worktree with no terminal a row the operator can select and start one in.
 fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
     let mut projects: Vec<WorkspaceSnapshot> = Vec::new();
     for cwd in &space.cwds {
@@ -335,6 +341,78 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         }
     }
     projects
+}
+
+/// Adds every worktree git reports to the project, and carries each
+/// worktree's counts onto the row that represents it.
+///
+/// A worktree with no pane becomes a row here; one that already has a row from
+/// a pane keeps its identity and only gains the counts. The reader has not
+/// answered for a project until it appears in the catalog, and a project with
+/// no answer keeps exactly the rows it already had rather than losing them.
+fn apply_worktrees(project: &mut WorkspaceSnapshot, worktrees: &WorktreeCatalogSnapshot) {
+    let project_comparison = normalized_for_comparison(Path::new(&project.path));
+    let Some(listed) = worktrees.projects.iter().find(|listed| {
+        normalized_for_comparison(Path::new(&listed.root_path)) == project_comparison
+    }) else {
+        return;
+    };
+    if let Some(default_branch) = listed.default_branch.clone() {
+        project.default_branch = Some(default_branch);
+    }
+
+    for worktree in &listed.worktrees {
+        let comparison = normalized_for_comparison(Path::new(&worktree.path));
+        let existing = project
+            .checkouts
+            .iter()
+            .position(|known| normalized_for_comparison(Path::new(&known.path)) == comparison);
+        let index = match existing {
+            Some(index) => index,
+            None => {
+                let path = PathBuf::from(&worktree.path);
+                let label = worktree.branch.clone().unwrap_or_else(|| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("Checkout")
+                        .to_owned()
+                });
+                project.checkouts.push(checkout(
+                    &project.id,
+                    &path,
+                    &label,
+                    worktree.branch.clone(),
+                    !worktree.is_main,
+                    project.temporary,
+                ));
+                project.checkouts.len() - 1
+            }
+        };
+        let row = &mut project.checkouts[index];
+        row.is_worktree = !worktree.is_main;
+        row.exists = !worktree.missing;
+        row.dirty = worktree.dirty;
+        row.changed_file_count = worktree.changed_file_count;
+        row.base_branch = worktree.base_branch.clone();
+        row.ahead = worktree.ahead;
+        row.behind = worktree.behind;
+        row.added_lines = worktree.added_lines;
+        row.removed_lines = worktree.removed_lines;
+        row.unpushed = worktree.unpushed.clone();
+        if row.branch.is_none() {
+            row.branch = worktree.branch.clone();
+        }
+    }
+
+    // The main worktree leads, so the primary badge and the project path
+    // agree whichever order the rows were created in.
+    if let Some(index) = project.checkouts.iter().position(|checkout| {
+        normalized_for_comparison(Path::new(&checkout.path)) == project_comparison
+    }) && index != 0
+    {
+        let main = project.checkouts.remove(index);
+        project.checkouts.insert(0, main);
+    }
 }
 
 fn current_branch(root: &Path) -> Option<String> {
@@ -421,9 +499,9 @@ fn inspect(
     let normalized = normalized_path(path).unwrap_or_else(|_| path.to_path_buf());
     let git_root_path = git_root(&normalized);
     let is_git = git_root_path.is_some();
-    // One row for where this workspace actually is. Its other branches are
-    // not checkouts until Herdr has a pane in them, and a branch with no pane
-    // is reached through the branch picker rather than a permanent row.
+    // One row for where this registration points. The repository's other
+    // worktrees are added from the worktree reader's answer, so this stands
+    // alone only for a plain folder and for the ticks before the first read.
     let branch = git_root_path.as_deref().and_then(current_branch);
     let checkouts = match git_root_path.as_deref() {
         Some(root) => vec![checkout(
@@ -482,6 +560,9 @@ fn checkout(
         tabs: Vec::<TabSnapshot>::new(),
         active_tab_id: None,
         strip: Vec::new(),
+        // The git facts arrive from the worktree reader; the catalog only
+        // decides which rows exist.
+        ..CheckoutSnapshot::default()
     }
 }
 
@@ -543,7 +624,15 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeSnapshot};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// The catalog before the worktree reader has answered. Every case that
+    /// is not about worktree rows uses this, so those tests still assert what
+    /// the pane-derived catalog alone produces.
+    fn no_worktrees() -> WorktreeCatalogSnapshot {
+        WorktreeCatalogSnapshot::default()
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -630,6 +719,7 @@ mod tests {
                     checkout_path.to_string_lossy().into_owned(),
                 ],
             }],
+            &no_worktrees(),
         );
         assert_eq!(occupied.len(), 1);
         assert_eq!(occupied[0].checkouts.len(), 2);
@@ -670,7 +760,7 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         }];
 
-        let catalog = build_catalog(&[registration.clone()], &spaces);
+        let catalog = build_catalog(&[registration.clone()], &spaces, &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration.id);
@@ -695,8 +785,8 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let occupied = build_catalog(&[registration.clone()], &[space]);
-        let released = build_catalog(&[registration.clone()], &[]);
+        let occupied = build_catalog(&[registration.clone()], &[space], &no_worktrees());
+        let released = build_catalog(&[registration.clone()], &[], &no_worktrees());
 
         assert_eq!(occupied[0].id, released[0].id);
         assert_eq!(occupied[0].label, released[0].label);
@@ -725,8 +815,8 @@ mod tests {
             registration(second.to_str().unwrap(), "Second", LOCAL_DEVICE_ID).expect("second"),
         ];
 
-        let unregistered = build_catalog(&[], &[space.clone()]);
-        let catalog = build_catalog(&registrations, &[space]);
+        let unregistered = build_catalog(&[], &[space.clone()], &no_worktrees());
+        let catalog = build_catalog(&registrations, &[space], &no_worktrees());
 
         assert_eq!(unregistered.len(), 2);
         assert!(unregistered.iter().all(|project| project.label != "hide main"));
@@ -751,7 +841,7 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let catalog = build_catalog(&[], &[space]);
+        let catalog = build_catalog(&[], &[space], &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         let canonical = fs::canonicalize(&root).expect("canonical root");
@@ -770,7 +860,7 @@ mod tests {
             SessionSpace { id: "w2".to_owned(), label: "second".to_owned(), cwds: vec![cwd] },
         ];
 
-        let catalog = build_catalog(&[], &spaces);
+        let catalog = build_catalog(&[], &spaces, &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].checkouts.len(), 1);
@@ -781,14 +871,174 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    fn listed_worktree(path: &str, branch: &str, is_main: bool) -> WorktreeSnapshot {
+        WorktreeSnapshot {
+            path: path.to_owned(),
+            branch: Some(branch.to_owned()),
+            is_main,
+            ..WorktreeSnapshot::default()
+        }
+    }
+
+    /// The rule R1 replaces: a worktree is a row because git lists it, not
+    /// because Herdr has a pane in it. The worktree that has a pane keeps its
+    /// identity and gains the counts; the ones without become rows that can
+    /// be selected and started in.
+    #[test]
+    fn every_worktree_is_a_row_whether_or_not_a_pane_sits_in_it() {
+        let root = temp_dir("all-worktrees");
+        let idle = root.with_file_name(format!(
+            "{}-idle",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        let second = root.with_file_name(format!(
+            "{}-second",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        fs::create_dir_all(&idle).expect("idle worktree");
+        fs::create_dir_all(&second).expect("second worktree");
+        let registration =
+            registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
+        let worktrees = WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: root.to_string_lossy().into_owned(),
+                default_branch: Some("main".to_owned()),
+                worktrees: vec![
+                    WorktreeSnapshot {
+                        dirty: true,
+                        changed_file_count: 3,
+                        ahead: 2,
+                        behind: 1,
+                        added_lines: 42,
+                        removed_lines: 7,
+                        base_branch: Some("release".to_owned()),
+                        unpushed: Some(crate::model::UnpushedSnapshot {
+                            remote: "origin".to_owned(),
+                            count: 1,
+                        }),
+                        ..listed_worktree(root.to_str().unwrap(), "main", true)
+                    },
+                    listed_worktree(idle.to_str().unwrap(), "idle", false),
+                    listed_worktree(second.to_str().unwrap(), "second", false),
+                ],
+                unavailable_reason: None,
+            }],
+        };
+
+        let catalog = build_catalog(
+            &[registration],
+            &[SessionSpace {
+                id: "w1".to_owned(),
+                label: "Project".to_owned(),
+                cwds: vec![root.to_string_lossy().into_owned()],
+            }],
+            &worktrees,
+        );
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].default_branch.as_deref(), Some("main"));
+        let rows = &catalog[0].checkouts;
+        assert_eq!(rows.len(), 3, "one row per worktree, none duplicated");
+        // The worktree Herdr already had a row for keeps that one row and
+        // gains the counts, rather than becoming a second row beside it.
+        let occupied = &rows[0];
+        assert_eq!(
+            normalized_for_comparison(Path::new(&occupied.path)),
+            normalized_for_comparison(&root),
+            "the main worktree leads"
+        );
+        assert!(!occupied.is_worktree);
+        assert!(occupied.dirty);
+        assert_eq!(occupied.changed_file_count, 3);
+        assert_eq!((occupied.ahead, occupied.behind), (2, 1));
+        assert_eq!((occupied.added_lines, occupied.removed_lines), (42, 7));
+        assert_eq!(occupied.base_branch.as_deref(), Some("release"));
+        assert_eq!(
+            occupied.unpushed.as_ref().map(|unpushed| unpushed.count),
+            Some(1)
+        );
+
+        let idle_row = rows.iter().find(|row| row.label == "idle").expect("idle");
+        assert!(idle_row.is_worktree, "a linked worktree is marked as one");
+        assert!(idle_row.exists);
+        assert!(idle_row.tabs.is_empty(), "it has no pane, and that is the point");
+        assert!(rows.iter().any(|row| row.label == "second"));
+        // Every row is keyed under the project, so a persisted selection on a
+        // worktree with no pane still resolves.
+        assert!(rows.iter().all(|row| row.workspace_id == catalog[0].id));
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&idle);
+        let _ = fs::remove_dir_all(&second);
+    }
+
+    /// A worktree git lists but disk does not have keeps its row and reports
+    /// that the path is gone, so the operator can see what to clean up.
+    #[test]
+    fn a_missing_worktree_is_a_row_that_says_it_is_missing() {
+        let root = temp_dir("missing-worktree");
+        let registration =
+            registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
+        let worktrees = WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: root.to_string_lossy().into_owned(),
+                default_branch: Some("main".to_owned()),
+                worktrees: vec![
+                    listed_worktree(root.to_str().unwrap(), "main", true),
+                    WorktreeSnapshot {
+                        missing: true,
+                        ..listed_worktree("/definitely/not/here/hide-test", "gone", false)
+                    },
+                ],
+                unavailable_reason: None,
+            }],
+        };
+
+        let catalog = build_catalog(&[registration], &[], &worktrees);
+
+        let gone = catalog[0]
+            .checkouts
+            .iter()
+            .find(|row| row.label == "gone")
+            .expect("the missing worktree is still a row");
+        assert!(!gone.exists);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Before the reader answers, and for a project it has no answer for, the
+    /// rows the pane-derived catalog produced stay exactly as they were.
+    #[test]
+    fn a_project_with_no_worktree_answer_keeps_the_rows_it_had() {
+        let root = temp_dir("no-answer");
+        let registration =
+            registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
+
+        let before = build_catalog(&[registration.clone()], &[], &no_worktrees());
+        let unrelated = build_catalog(
+            &[registration],
+            &[],
+            &WorktreeCatalogSnapshot {
+                projects: vec![ProjectWorktreesSnapshot {
+                    root_path: "/some/other/repository".to_owned(),
+                    ..ProjectWorktreesSnapshot::default()
+                }],
+            },
+        );
+
+        assert_eq!(before, unrelated);
+        assert_eq!(before[0].checkouts.len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn a_registration_no_space_occupies_stays_listed() {
+
         let root = temp_dir("unopened");
         let registration = registration(root.to_str().unwrap(), "Unopened", LOCAL_DEVICE_ID)
             .expect("registration");
         let registration_id = registration.id.clone();
 
-        let catalog = build_catalog(&[registration], &[]);
+        let catalog = build_catalog(&[registration], &[], &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration_id);
