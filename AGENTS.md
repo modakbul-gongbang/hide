@@ -71,7 +71,9 @@ The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Reso
 Do not write new wire deserialization structs in `session_sync.rs` or import generated types into domain, runtime or sidebar code.
 The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
 Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
-`live.rs` and `remote.rs` still contain legacy parsing and are the next consumers to move through this boundary.
+`live.rs` and `remote.rs` also use this boundary for response decoding and generated request parameters.
+The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses and CLI-created agent envelope.
+Terminal input, scroll, resize and release messages and the parameterless snapshot request remain boundary-owned schema gaps, with tests that require migration when their parameter types appear.
 
 The app runs the Herdr it bundles: `HerdrRuntimeResolver` verifies the bundled binary against the manifest digest and starts it on the default socket when no server is running there; a server that is already running is joined as it is when its protocol matches, and refused with the two revisions and the `herdr server stop` remedy when it does not.
 There is no installed-CLI candidate list and no version floor; the pin is exact.
