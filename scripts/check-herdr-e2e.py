@@ -89,6 +89,17 @@ with tempfile.TemporaryDirectory(prefix='he-', dir='/tmp') as directory:
         swift = 'import CoreGraphics\nlet pid = Int32(CommandLine.arguments[1])!\nfor w in CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? [] { if (w[kCGWindowOwnerPID as String] as? Int32) == pid, (w[kCGWindowLayer as String] as? Int) == 0 { print(w[kCGWindowNumber as String]!); break } }'
         window = subprocess.check_output(['/usr/bin/swift', '-e', swift, str(process.pid)], text=True).strip()
         assert window, 'no window for isolated app PID'
+        seen = subprocess.check_output(['/opt/homebrew/bin/peekaboo', 'see', '--pid', str(process.pid), '--window-id', window, '--json', '--path', str(out / 'before-select.png')], text=True)
+        (out / 'before-select.json').write_text(seen)
+        receipt = json.loads(seen)
+        assert receipt['target_receipt']['pid'] == process.pid
+        rows = [row for row in receipt['data']['ui_elements'] if row.get('identifier', '').startswith('hide-checkout-')]
+        assert len(rows) == 1, 'isolated checkout row is ambiguous'
+        subprocess.run(['/opt/homebrew/bin/peekaboo', 'click', '--pid', str(process.pid), '--window-id', window, '--snapshot', receipt['data']['snapshot_id'], '--on', rows[0]['id'], '--json'], check=True, stdout=subprocess.DEVNULL)
+        after = subprocess.check_output(['/opt/homebrew/bin/peekaboo', 'see', '--pid', str(process.pid), '--window-id', window, '--json', '--path', str(out / 'after-select.png')], text=True)
+        (out / 'after-select.json').write_text(after)
+
+
         subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(out / 'connected.png')], check=True)
         stop_app(process)
         assert run(binary, 'server', 'stop').returncode == 0

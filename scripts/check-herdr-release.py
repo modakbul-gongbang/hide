@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import pwd
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -107,6 +108,23 @@ def discussion(args):
     print(text)
 
 
+def attribution(args):
+    pin = json.loads(MANIFEST.read_text())
+    release = public_api(f'repos/{pin["repo"]}/releases/tags/{pin["tag"]}')
+    texts = [run('git', 'log', '--format=%B', 'a90f61b..HEAD'),
+             run('git', 'branch', '--show-current'), release['body'], release['name']]
+    for branch in ['hide-runtime', 'upstream-proposal']:
+        texts.append(branch)
+        commits = public_api(f'repos/{pin["repo"]}/compare/1e107419...{branch}')
+        texts.extend(c['commit']['message'] for c in commits['commits'])
+    record = Path(run('git', 'rev-parse', '--path-format=absolute', '--git-common-dir')).parent
+    body = record / 'agents/runs/herdr-runtime-release/delivery/pr-body.md'
+    if body.exists(): texts.append(body.read_text())
+    pattern = r'(?i)(?:co-authored-by:.*(?:claude|codex|openai|anthropic)|generated (?:by|with) (?:claude|codex|chatgpt)|implemented by (?:claude|codex))'
+    require(not any(re.search(pattern, text) for text in texts), 'attribution found')
+    print(json.dumps({'attribution': 'pass', 'surfaces': len(texts), 'pr_draft_present': body.exists()}))
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 subs = parser.add_subparsers(dest='command', required=True)
 p = subs.add_parser('source'); p.add_argument('--checkout', default=str(Path(run('git', 'rev-parse', '--path-format=absolute', '--git-common-dir')).parent.parent / 'herdr')); p.add_argument('--repo', required=True); p.add_argument('--branch', default='hide-runtime'); p.set_defaults(fn=source)
@@ -115,4 +133,5 @@ p = subs.add_parser('bump'); p.set_defaults(fn=bump)
 p = subs.add_parser('workflow'); p.set_defaults(fn=workflow)
 p = subs.add_parser('proposal'); p.set_defaults(fn=proposal)
 p = subs.add_parser('discussion'); p.set_defaults(fn=discussion)
+p = subs.add_parser('attribution'); p.set_defaults(fn=attribution)
 args = parser.parse_args(); args.fn(args)
