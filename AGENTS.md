@@ -151,6 +151,12 @@ Quote a mutex-wait figure with the load and the drive it was taken under or it m
 - Announce changes once per burst, not once per change.
   `ChangeNotifier` latches on the false-to-true flip and `herdr_core_snapshot` clears the latch before it takes the lock.
   Clear-then-read costs at most one read for nothing; read-then-clear loses a change that lands during the read.
+- A per-frame path costs what changed, never what is on screen.
+  `drawTerminalContents` called `buildAttributedString` for every visible row on every draw, and only segments of eight UTF-16 units or fewer reached the CTLine cache, so one changed cell relaid out the whole viewport and re-interned its attribute dictionaries into a process-wide weak table.
+  On 2026-09-06, on the installed release bundle against a live session with two attached panes at load 3.5, a ten-second window with no interaction at all spent 15.3% of the sampled main thread under `_NSViewDrawRect`, which was 63% of everything the main thread did while idle; frame-receive-to-draw was p50 7.62 ms and p95 20.85 ms at 120 Hz against a recorded p95 of 6.26 ms.
+  Rows are now prepared once per change behind `preparedRow`, and `scripts/check-terminal-row-cache.sh` is what notices when the draw loop reaches text building without it.
+  Full-viewport invalidation itself is not the thing to fix: AppKit delivers full expose rects whatever you invalidate, which is why the per-row dirty check in that loop is `#if false`. Make the repaint cheap instead of trying to make it smaller.
+  A cost property fails no test when it is deleted, so every one of them needs a gate of its own; `reconciling_with_a_precomputed_catalog_runs_no_git` counts forks for the same reason.
 - Verify performance claims with `/usr/bin/sample <pid>` on the running app and `herdr server`, not by reading code.
   Before sampling, confirm exactly one app instance is running and know whether it is the dev build or an installed bundle (rule FACT-dev-runtime-instances).
   Ambient load (Screen Sharing, WindowServer, a stale second instance) routinely masquerades as app slowness; rule it out first.

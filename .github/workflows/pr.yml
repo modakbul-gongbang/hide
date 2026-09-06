@@ -69,6 +69,7 @@ jobs:
           bash scripts/check-harness-ignore-anchor.sh
           bash scripts/check-agent-asset-committed.sh
           bash scripts/check-capability-readers-off-lock.sh
+          bash scripts/check-terminal-row-cache.sh
           bash scripts/check-no-workstation-identity.sh
           zsh scripts/check-herdr-pin-single-source.sh
       - name: Fetch the pinned Herdr runtime
