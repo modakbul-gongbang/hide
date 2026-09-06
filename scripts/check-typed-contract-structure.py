@@ -19,4 +19,13 @@ for path in (ROOT / 'herdr-core/src').glob('*.rs'):
     if path.name in {'wire.rs', 'herdr_contract.rs'}:
         continue
     absent(r'herdr_contract::wire', path.read_text(), f'{path.name} bypasses the boundary')
-print('PASS: replica has no handwritten wire parser; generated types stay in the boundary')
+for name in ['live.rs', 'remote.rs']:
+    production = (ROOT / 'herdr-core/src' / name).read_text().split('#[cfg(test)]\nmod tests', 1)[0]
+    absent(r'\.pointer\(|Value::as_|\.get\("|\["[a-z_]+"\]', production, f'{name} navigates untyped JSON')
+    # JSON telemetry is not a Herdr request. Every retained macro must declare
+    # its component, so a new request body cannot hide among those diagnostics.
+    import re
+    for macro in re.finditer(r'(?:serde_json::)?json!\s*\(\s*\{', production):
+        if not re.match(r'\s*"component"\s*:', production[macro.end():]):
+            raise SystemExit(f'{name} builds a handwritten JSON request at offset {macro.start()}')
+print('PASS: live, remote and replica use one generated wire boundary')

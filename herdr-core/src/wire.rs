@@ -572,10 +572,514 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
     }
 }
 
+fn params(value: impl serde::Serialize) -> Result<Value, String> {
+    serde_json::to_value(value)
+        .map_err(|error| format!("Herdr parameters could not be encoded: {error}"))
+}
+
+// session.snapshot has no parameters in the pinned request schema.
+pub(crate) fn empty_params() -> Value {
+    Value::Object(Default::default())
+}
+
+pub(crate) fn workspace_create_params(cwd: &str, label: &str) -> Result<Value, String> {
+    params(req::WorkspaceCreateParams {
+        cwd: Some(cwd.into()),
+        label: Some(label.into()),
+        focus: true,
+        env: Default::default(),
+    })
+}
+pub(crate) fn workspace_target_params(id: &str) -> Result<Value, String> {
+    params(req::WorkspaceTarget {
+        workspace_id: id.into(),
+    })
+}
+pub(crate) fn tab_target_params(id: &str) -> Result<Value, String> {
+    params(req::TabTarget { tab_id: id.into() })
+}
+pub(crate) fn pane_target_params(id: &str) -> Result<Value, String> {
+    params(req::PaneTarget { pane_id: id.into() })
+}
+pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Result<Value, String> {
+    params(req::TabCreateParams {
+        workspace_id: Some(workspace.into()),
+        cwd: Some(cwd.into()),
+        label: Some(label.into()),
+        focus: true,
+        env: Default::default(),
+    })
+}
+pub(crate) fn tab_move_params(tab: &str, index: usize) -> Result<Value, String> {
+    params(req::TabMoveParams {
+        tab_id: tab.into(),
+        insert_index: index
+            .try_into()
+            .map_err(|_| "tab.move insert_index exceeds u32")?,
+    })
+}
+pub(crate) fn pane_split_params(
+    pane: &str,
+    direction: crate::live::PaneSplitDirection,
+    cwd: Option<&str>,
+) -> Result<Value, String> {
+    params(req::PaneSplitParams {
+        target_pane_id: Some(pane.into()),
+        direction: match direction {
+            crate::live::PaneSplitDirection::Right => req::SplitDirection::Right,
+            crate::live::PaneSplitDirection::Down => req::SplitDirection::Down,
+        },
+        cwd: cwd.filter(|v| !v.trim().is_empty()).map(Into::into),
+        focus: true,
+        env: Default::default(),
+        ratio: None,
+        right_click: req::PaneRightClickTarget::Herdr,
+        workspace_id: None,
+    })
+}
+pub(crate) fn pane_resize_params(
+    pane: &str,
+    direction: crate::live::PaneResizeDirection,
+    amount: f32,
+) -> Result<Value, String> {
+    params(req::PaneResizeParams {
+        pane_id: Some(pane.into()),
+        direction: match direction {
+            crate::live::PaneResizeDirection::Left => req::PaneDirection::Left,
+            crate::live::PaneResizeDirection::Right => req::PaneDirection::Right,
+            crate::live::PaneResizeDirection::Up => req::PaneDirection::Up,
+            crate::live::PaneResizeDirection::Down => req::PaneDirection::Down,
+        },
+        amount: Some(amount),
+    })
+}
+pub(crate) fn pane_layout_params(pane: &str) -> Result<Value, String> {
+    params(req::PaneLayoutParams {
+        pane_id: Some(pane.into()),
+    })
+}
+pub(crate) fn pane_zoom_params(pane: &str) -> Result<Value, String> {
+    params(req::PaneZoomParams {
+        pane_id: Some(pane.into()),
+        mode: req::PaneZoomMode::Toggle,
+    })
+}
+pub(crate) fn pane_read_params(pane: &str, source: &str, lines: u32) -> Result<Value, String> {
+    params(req::PaneReadParams {
+        pane_id: pane.into(),
+        source: source
+            .parse()
+            .map_err(|e| format!("invalid read source: {e}"))?,
+        lines: Some(lines),
+        format: req::ReadFormat::Text,
+        strip_ansi: true,
+    })
+}
+
+fn response(value: Value, missing: &str) -> Result<res::ResponseResult, String> {
+    serde_json::from_value(value).map_err(|_| missing.to_owned())
+}
+fn nonempty_id(id: String, missing: &str) -> Result<String, String> {
+    if id.trim().is_empty() {
+        Err(missing.into())
+    } else {
+        Ok(id)
+    }
+}
+pub(crate) fn created_workspace_pane(value: Value) -> Result<String, String> {
+    let missing = "workspace.create response is missing root_pane.pane_id";
+    match response(value, missing)? {
+        res::ResponseResult::WorkspaceCreated { root_pane, .. } => {
+            nonempty_id(root_pane.pane_id, missing)
+        }
+        _ => Err(missing.into()),
+    }
+}
+pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
+    let tab_missing = "tab.create response is missing tab.tab_id";
+    let pane_missing = "tab.create response is missing root_pane.pane_id";
+    // Preserve missing-field priority before the generated record rejects it.
+    for (pointer, message) in [
+        ("/tab/tab_id", tab_missing),
+        ("/root_pane/pane_id", pane_missing),
+    ] {
+        if !value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.trim().is_empty())
+        {
+            return Err(message.into());
+        }
+    }
+    match response(value, tab_missing)? {
+        res::ResponseResult::TabCreated { tab, root_pane } => Ok((tab.tab_id, root_pane.pane_id)),
+        _ => Err(tab_missing.into()),
+    }
+}
+pub(crate) fn moved_tabs(value: Value) -> Result<Vec<String>, String> {
+    let missing = "tab.move response is missing tabs";
+    let id_missing = "tab.move response has a tab without an id";
+    let tabs = value.get("tabs").and_then(Value::as_array).ok_or(missing)?;
+    if tabs.iter().any(|tab| {
+        !tab.get("tab_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.trim().is_empty())
+    }) {
+        return Err(id_missing.into());
+    }
+    match response(value, missing)? {
+        res::ResponseResult::TabList { tabs } => {
+            Ok(tabs.into_iter().map(|tab| tab.tab_id).collect())
+        }
+        _ => Err(missing.into()),
+    }
+}
+pub(crate) fn split_pane(value: Value) -> Result<String, String> {
+    let missing = "pane.split response is missing pane.pane_id";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => nonempty_id(pane.pane_id, missing),
+        _ => Err(missing.into()),
+    }
+}
+pub(crate) fn pane_layout(value: Value) -> Result<SessionLayoutPayload, String> {
+    if value.get("layout").is_none() {
+        return Err("pane.layout response is missing layout".into());
+    }
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("pane.layout response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::PaneLayout { layout } => Ok(layout.into()),
+        _ => Err("pane.layout response is missing layout".into()),
+    }
+}
+pub(crate) fn pane_text(value: Value) -> Result<crate::live::PaneText, String> {
+    if value.get("read").is_none() {
+        return Err("pane.read returned no read section".into());
+    }
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("pane.read response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::PaneRead { read } => Ok(crate::live::PaneText {
+            text: read.text,
+            truncated: read.truncated,
+        }),
+        _ => Err("pane.read returned no read section".into()),
+    }
+}
+pub(crate) fn live_session_response(
+    value: Value,
+) -> Result<crate::sidebar::SessionSnapshotPayload, SessionFetchError> {
+    let snapshot = value
+        .get("snapshot")
+        .ok_or_else(|| malformed("response is missing snapshot"))?;
+    crate::session_sync::project_snapshot(snapshot)
+}
+
+fn remote_protocol_error(operation: &str, reason: impl Into<String>) -> crate::remote::RemoteError {
+    crate::remote::RemoteError::new(
+        operation,
+        "herdr",
+        crate::remote::RemoteStage::Protocol,
+        reason,
+        false,
+        true,
+    )
+}
+
+pub(crate) fn remote_snapshot(
+    value: &Value,
+    operation: &str,
+) -> crate::remote::RemoteResult<crate::remote::RemoteSnapshotEnvelope> {
+    use crate::remote::{
+        REMOTE_PROTOCOL_REVISION, RemoteError, RemoteSnapshotEnvelope, RemoteStage,
+    };
+    let snapshot = value
+        .get("result")
+        .and_then(|v| v.get("snapshot"))
+        .or_else(|| value.get("snapshot"))
+        .ok_or_else(|| {
+            RemoteError::new(
+                operation,
+                "herdr",
+                RemoteStage::Herdr,
+                "response does not contain result.snapshot",
+                true,
+                false,
+            )
+        })?;
+    let protocol = snapshot
+        .get("protocol")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| remote_protocol_error(operation, "snapshot.protocol is missing"))?;
+    let protocol = u32::try_from(protocol)
+        .map_err(|_| remote_protocol_error(operation, "snapshot.protocol exceeds u32"))?;
+    if protocol != REMOTE_PROTOCOL_REVISION {
+        return Err(remote_protocol_error(
+            operation,
+            format!("protocol mismatch expected={REMOTE_PROTOCOL_REVISION} received={protocol}"),
+        ));
+    }
+    let host = snapshot.get("host").ok_or_else(|| {
+        RemoteError::new(
+            operation,
+            "herdr",
+            RemoteStage::Herdr,
+            "snapshot.host is missing",
+            false,
+            true,
+        )
+    })?;
+    for key in ["host_id", "session_id"] {
+        if !host
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|v| !v.is_empty())
+        {
+            return Err(remote_protocol_error(
+                operation,
+                format!("missing non-empty field {key}"),
+            ));
+        }
+    }
+    if snapshot
+        .get("event_sequence")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        return Err(remote_protocol_error(
+            operation,
+            "snapshot.event_sequence is missing",
+        ));
+    }
+    let snapshot: res::SessionSnapshot = serde_json::from_value(snapshot.clone())
+        .map_err(|error| remote_protocol_error(operation, error.to_string()))?;
+    let workspace_ids = remote_ids(
+        snapshot.workspaces.into_iter().map(|v| v.workspace_id),
+        "workspaces",
+        "workspace_id",
+        operation,
+    )?;
+    let pane_ids = remote_ids(
+        snapshot.panes.into_iter().map(|v| v.pane_id),
+        "panes",
+        "pane_id",
+        operation,
+    )?;
+    let agent_ids = remote_ids(
+        snapshot
+            .agents
+            .into_iter()
+            .filter_map(|v| v.agent_instance_id),
+        "agents",
+        "agent_instance_id",
+        operation,
+    )?;
+    Ok(RemoteSnapshotEnvelope {
+        host: crate::domain::HostScope {
+            host_id: snapshot.host.host_id,
+            session_id: snapshot.host.session_id,
+        },
+        protocol,
+        event_sequence: snapshot.event_sequence,
+        workspace_ids,
+        pane_ids,
+        agent_ids,
+    })
+}
+fn remote_ids(
+    ids: impl Iterator<Item = String>,
+    array: &str,
+    key: &str,
+    operation: &str,
+) -> crate::remote::RemoteResult<Vec<String>> {
+    let mut ids = ids.collect::<Vec<_>>();
+    if ids.iter().any(String::is_empty) {
+        let reason = if key == "agent_instance_id" {
+            format!("{array}.{key} must be a non-empty string or null")
+        } else {
+            format!("missing non-empty field {key}")
+        };
+        return Err(remote_protocol_error(operation, reason));
+    }
+    ids.sort();
+    if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(remote_protocol_error(
+            operation,
+            format!("{array} contains duplicate {key}"),
+        ));
+    }
+    Ok(ids)
+}
+pub(crate) fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
+    let mut line = serde_json::to_string(&json!({
+        "type": "terminal.input",
+        "bytes": crate::live::encode_base64(bytes),
+    }))
+    .map_err(|error| format!("terminal input could not be encoded: {error}"))?;
+    line.push('\n');
+    Ok(line)
+}
+
+pub(crate) fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, String> {
+    if !matches!(direction, "up" | "down") {
+        return Err(format!(
+            "terminal scroll direction is not up or down: {direction}"
+        ));
+    }
+    if lines == 0 {
+        return Err("terminal scroll needs at least one line".to_owned());
+    }
+    let mut line = serde_json::to_string(&json!({
+        "type": "terminal.scroll",
+        "direction": direction,
+        "lines": lines,
+        "source": "wheel",
+    }))
+    .map_err(|error| format!("terminal scroll could not be encoded: {error}"))?;
+    line.push('\n');
+    Ok(line)
+}
+
+pub(crate) fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
+    if rows == 0 || cols == 0 {
+        return Err("terminal dimensions must be positive".to_owned());
+    }
+    let mut line = serde_json::to_string(&json!({
+        "type": "terminal.resize",
+        "cols": cols,
+        "rows": rows,
+        "cell_width_px": 0,
+        "cell_height_px": 0,
+    }))
+    .map_err(|error| format!("terminal resize could not be encoded: {error}"))?;
+    line.push('\n');
+    Ok(line)
+}
+
+pub(crate) fn created_agent_pane(bytes: &[u8]) -> Result<String, String> {
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("herdr agent new returned unreadable output: {error}"))?;
+    let response: res::SuccessResponse = serde_json::from_value(value)
+        .map_err(|_| "herdr agent new reported no created pane".to_owned())?;
+    match response.result {
+        res::ResponseResult::AgentCreated { agent, .. } => {
+            nonempty_id(agent.pane_id, "herdr agent new reported no created pane")
+        }
+        _ => Err("herdr agent new reported no created pane".into()),
+    }
+}
+
+pub(crate) fn terminal_release_line() -> String {
+    "{\"type\":\"terminal.release\"}\n".to_owned()
+}
+
+#[cfg(test)]
+pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
+    let value = json!({"id": id, "result": result});
+    let _: res::SuccessResponse = serde_json::from_value(value.clone())
+        .expect("fixture must match the pinned generated response");
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::herdr_contract::HERDR_API_SCHEMA_JSON;
+
+    #[test]
+    fn captured_agent_new_decodes_only_the_observed_created_variant() {
+        let bytes = include_bytes!("../tests/fixtures/agent-created.json");
+        let response: res::SuccessResponse = serde_json::from_slice(bytes).unwrap();
+        assert!(matches!(
+            response.result,
+            res::ResponseResult::AgentCreated { .. }
+        ));
+        assert_eq!(created_agent_pane(bytes).unwrap(), "w1:p4");
+        assert_eq!(
+            created_agent_pane(br#"{"id":"fixture","result":{"type":"ok"}}"#).unwrap_err(),
+            "herdr agent new reported no created pane"
+        );
+        assert!(
+            created_agent_pane(b"not json")
+                .unwrap_err()
+                .starts_with("herdr agent new returned unreadable output: ")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the owned pinned-server probe output"]
+    fn isolated_live_remote_responses_decode_through_generated_types() {
+        let directory = std::env::var("HERDR_TEST_TYPED_RESPONSES")
+            .expect("check script supplies the owned probe directory");
+        let load = |name: &str| -> Value {
+            let bytes = std::fs::read(std::path::Path::new(&directory).join(name)).unwrap();
+            let _: res::SuccessResponse = serde_json::from_slice(&bytes).unwrap();
+            serde_json::from_slice::<Value>(&bytes).unwrap()["result"].clone()
+        };
+        assert_eq!(
+            created_workspace_pane(load("workspace.create.json")).unwrap(),
+            "w1:p1"
+        );
+        assert_eq!(
+            created_tab(load("tab.create.json")).unwrap(),
+            ("w1:t2".into(), "w1:p2".into())
+        );
+        assert_eq!(
+            moved_tabs(load("tab.move.json")).unwrap(),
+            ["w1:t2", "w1:t1"]
+        );
+        assert_eq!(split_pane(load("pane.split.json")).unwrap(), "w1:p3");
+        let layout = pane_layout(load("pane.layout.json")).unwrap();
+        assert_eq!(layout.panes.len(), 2);
+        pane_text(load("pane.read.json")).unwrap();
+        let snapshot = load("session.snapshot.json");
+        live_session_response(snapshot.clone()).unwrap();
+        let remote = remote_snapshot(&snapshot, "probe").unwrap();
+        assert_eq!(remote.pane_ids, ["w1:p1", "w1:p2", "w1:p3"]);
+        let bytes = std::fs::read(std::path::Path::new(&directory).join("agent-new.json")).unwrap();
+        assert_eq!(created_agent_pane(&bytes).unwrap(), "w1:p4");
+    }
+
+    #[test]
+    fn malformed_remote_snapshots_keep_protocol_priority_and_diagnostic_flags() {
+        let value = json!({"snapshot": {"protocol": HERDR_PROTOCOL_REVISION + 1}});
+        let error = remote_snapshot(&value, "fixture").unwrap_err();
+        assert_eq!(error.stage(), crate::remote::RemoteStage::Protocol);
+        assert!(!error.diagnostic().retryable);
+        assert!(error.diagnostic().action_required);
+        assert_eq!(
+            error.diagnostic().reason,
+            format!(
+                "protocol mismatch expected={HERDR_PROTOCOL_REVISION} received={}",
+                HERDR_PROTOCOL_REVISION + 1
+            )
+        );
+        let mut snapshot = empty_snapshot();
+        snapshot.as_object_mut().unwrap().remove("version");
+        let error = remote_snapshot(&json!({"snapshot":snapshot}), "fixture").unwrap_err();
+        assert_eq!(error.stage(), crate::remote::RemoteStage::Protocol);
+        assert!(!error.diagnostic().retryable);
+        assert!(error.diagnostic().action_required);
+        assert_eq!(error.diagnostic().reason, "missing field `version`");
+    }
+
+    #[test]
+    fn delete_manual_parameterless_and_terminal_requests_when_schema_declares_them() {
+        let schema: Value = serde_json::from_str(HERDR_API_SCHEMA_JSON).unwrap();
+        let definitions = schema["schemas"]["request"]["$defs"].as_object().unwrap();
+        for name in [
+            "SessionSnapshotParams",
+            "TerminalInputParams",
+            "TerminalScrollParams",
+            "TerminalResizeParams",
+            "TerminalReleaseParams",
+        ] {
+            assert!(
+                !definitions.contains_key(name),
+                "{name} is now generated; delete its manual request builder"
+            );
+        }
+    }
 
     fn empty_snapshot() -> Value {
         json!({"protocol": HERDR_PROTOCOL_REVISION, "version": "fixture", "host": {"host_id": "fixture-host", "session_id": "fixture"},

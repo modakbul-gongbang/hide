@@ -1,0 +1,42 @@
+{
+  "id": "cli:agent:new:typed-probe",
+  "result": {
+    "agent": {
+      "agent": "codex",
+      "agent_instance_id": "fixture-agent",
+      "agent_status": "unknown",
+      "cwd": "/tmp/typed-fixture",
+      "focused": false,
+      "foreground_cwd": "/tmp/typed-fixture",
+      "interactive_ready": true,
+      "name": "fixture-child",
+      "pane_id": "w1:p4",
+      "revision": 0,
+      "spawned_from_pane_id": "w1:p1",
+      "state_change_seq": 0,
+      "tab_id": "w1:t1",
+      "terminal_id": "fixture-terminal",
+      "workspace_id": "w1"
+    },
+    "argv": [
+      "codex"
+    ],
+    "lineage": {
+      "agent_instance_id": "fixture-agent",
+      "host": {
+        "host_id": "fixture-host",
+        "session_id": "fixture-session"
+      },
+      "idempotency_key": "typed-probe",
+      "kind": "codex",
+      "name": "fixture-child",
+      "pane_id": "w1:p4",
+      "spawned_from_pane_id": "w1:p1",
+      "state": "active",
+      "tab_id": "w1:t1",
+      "workspace_id": "w1"
+    },
+    "replayed": false,
+    "type": "agent_created"
+  }
+}
