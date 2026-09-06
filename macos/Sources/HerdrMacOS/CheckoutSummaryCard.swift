@@ -23,7 +23,7 @@ struct CheckoutSummaryCard: View {
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.spacingSM)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HideTheme.elevated.opacity(0.5))
+            .background(HideTheme.elevated.opacity(HideTheme.Opacity.dimmed))
             .overlay(alignment: .bottom) {
                 Rectangle().fill(HideTheme.divider).frame(height: HideTheme.Layout.hairlineWidth)
             }
@@ -41,7 +41,7 @@ struct CheckoutSummaryCard: View {
         let isGit = workspace?.isGit ?? false
         HStack(spacing: HideTheme.spacingSM) {
             Text(isGit ? (checkout.branch ?? checkout.label) : checkout.label)
-                .hideFont(size: 12, weight: .semibold)
+                .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                 .foregroundStyle(HideTheme.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -53,19 +53,19 @@ struct CheckoutSummaryCard: View {
                     )
             }
         }
-        .help(checkout.path)
+        .hideTooltip(checkout.path)
 
         if isGit, let base = checkout.baseBranch {
             HStack(spacing: HideTheme.spacingSM) {
                 Text("→ \(base)")
-                    .hideFont(size: 10, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.secondary)
                     .lineLimit(1)
                 Spacer(minLength: HideTheme.spacingXS)
                 Text("↑\(checkout.ahead) ↓\(checkout.behind)")
-                    .hideFont(size: 10, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.secondary)
-                    .help("\(checkout.ahead) commits ahead of \(base), \(checkout.behind) behind")
+                    .hideTooltip("\(checkout.ahead) commits ahead of \(base), \(checkout.behind) behind")
                     .accessibilityLabel(
                         "\(checkout.ahead) commits ahead of \(base), \(checkout.behind) behind"
                     )
@@ -80,7 +80,7 @@ struct CheckoutSummaryCard: View {
             Text("-\(removed)")
                 .foregroundStyle(HideTheme.diffRemoved)
         }
-        .hideFont(size: 10, design: .monospaced)
+        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
     }
 
     // MARK: - Rows
@@ -101,7 +101,7 @@ struct CheckoutSummaryCard: View {
                 // The one sentence the card is allowed: gh is missing, logged
                 // out, or the lookup failed and this is why.
                 Text(notice)
-                    .hideFont(size: 10)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .foregroundStyle(HideTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("checkout-card-github-notice")
@@ -118,10 +118,10 @@ struct CheckoutSummaryCard: View {
         if let unpushed = checkout.unpushed {
             CardRow(icon: "arrow.up.circle", identifier: "checkout-card-unpushed") {
                 Text("↑\(unpushed.count) \(unpushed.remote)")
-                    .hideFont(size: 10, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(unpushed.count > 0 ? HideTheme.warning : HideTheme.secondary)
             }
-            .help("\(unpushed.count) commits not pushed to \(unpushed.remote)")
+            .hideTooltip("\(unpushed.count) commits not pushed to \(unpushed.remote)")
             .accessibilityLabel("\(unpushed.count) commits not pushed to \(unpushed.remote)")
         }
     }
@@ -132,12 +132,12 @@ struct CheckoutSummaryCard: View {
             Button { model.selectRightPanelSection(.changes) } label: {
                 CardRow(icon: "doc.badge.ellipsis", identifier: "checkout-card-changes") {
                     Text("\(checkout.changedFileCount)")
-                        .hideFont(size: 10, design: .monospaced)
+                        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                         .foregroundStyle(HideTheme.warning)
                 }
             }
             .buttonStyle(.plain)
-            .help("\(checkout.changedFileCount) files changed and not committed")
+            .hideTooltip("\(checkout.changedFileCount) files changed and not committed")
             .accessibilityLabel("\(checkout.changedFileCount) uncommitted files. Opens the changes view")
         }
     }
@@ -156,9 +156,9 @@ struct CheckoutSummaryCard: View {
             Button { model.openPullRequest(pullRequest) } label: {
                 CardRow(icon: "arrow.triangle.pull", identifier: "checkout-card-pull-request") {
                     Text("#\(pullRequest.number)")
-                        .hideFont(size: 10, design: .monospaced)
+                        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                         .foregroundStyle(HideTheme.secondary)
-                    CardBadge(
+                    HideBadge(
                         label: CheckoutCardPresentation.badgeLabel(
                             pullRequest.badge,
                             review: pullRequest.review
@@ -171,19 +171,19 @@ struct CheckoutSummaryCard: View {
                     )
                     if let merged = pullRequest.mergedAtUnixMS {
                         Text(CheckoutCardPresentation.relativeAge(fromUnixMS: merged))
-                            .hideFont(size: 9)
+                            .hideFont(size: HideTheme.Typography.micro)
                             .foregroundStyle(HideTheme.muted)
                     }
                     if let stale = CheckoutCardPresentation.staleNotice(card.github) {
                         Text(stale)
-                            .hideFont(size: 9)
+                            .hideFont(size: HideTheme.Typography.micro)
                             .foregroundStyle(HideTheme.muted)
                             .accessibilityIdentifier("checkout-card-stale")
                     }
                 }
             }
             .buttonStyle(.plain)
-            .help(pullRequest.url)
+            .hideTooltip(pullRequest.url)
             .accessibilityLabel(
                 "Pull request \(pullRequest.number), \(CheckoutCardPresentation.badgeLabel(pullRequest.badge, review: pullRequest.review)). Opens it in the browser"
             )
@@ -199,7 +199,7 @@ struct CheckoutSummaryCard: View {
                     .fill(agentColor(agents))
                     .frame(width: 6, height: 6)
                 Text("\(agents.count)")
-                    .hideFont(size: 10, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.secondary)
             }
             .accessibilityLabel(agents.count == 1 ? "1 agent running here" : "\(agents.count) agents running here")
@@ -223,7 +223,7 @@ struct CheckoutSummaryCard: View {
                 ForEach(ports, id: \.self) { port in
                     Button { model.openPanePort(port) } label: {
                         Text(":\(String(port))")
-                            .hideFont(size: 9, weight: .semibold)
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                             .foregroundStyle(HideTheme.accent)
                             .padding(.horizontal, HideTheme.spacingXS)
                             .frame(height: HideTheme.Layout.panelCollapseControlSize)
@@ -234,7 +234,7 @@ struct CheckoutSummaryCard: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Open http://localhost:\(String(port))")
+                    .hideTooltip("Open http://localhost:\(String(port))")
                     .accessibilityLabel("Open port \(String(port))")
                 }
             }
@@ -248,20 +248,20 @@ struct CheckoutSummaryCard: View {
         CardRow(icon: "internaldrive", identifier: "checkout-card-disk") {
             if card.diskMeasuring {
                 Text("measuring…")
-                    .hideFont(size: 10)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .foregroundStyle(HideTheme.muted)
                     .accessibilityIdentifier("checkout-card-disk-measuring")
             } else if let reason = card.disk.unavailableReason {
                 Text(reason)
-                    .hideFont(size: 10)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .foregroundStyle(HideTheme.warning)
             } else if let total = card.disk.totalBytes {
                 Text(CheckoutCardPresentation.formattedBytes(total))
-                    .hideFont(size: 10, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.secondary)
                 if let name = card.disk.largestChildName, let bytes = card.disk.largestChildBytes {
                     Text("\(name) \(CheckoutCardPresentation.formattedBytes(bytes))")
-                        .hideFont(size: 9)
+                        .hideFont(size: HideTheme.Typography.micro)
                         .foregroundStyle(HideTheme.muted)
                         .lineLimit(1)
                 }
@@ -269,12 +269,12 @@ struct CheckoutSummaryCard: View {
             Spacer(minLength: HideTheme.spacingXS)
             Button(action: model.refreshCheckoutCard) {
                 Image(systemName: "arrow.clockwise")
-                    .hideFont(size: 9, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Read the pull request, the counts, and the size again")
+            .hideTooltip("Read the pull request, the counts, and the size again")
             .accessibilityLabel("Refresh this checkout")
             .accessibilityIdentifier("checkout-card-refresh")
         }
@@ -287,7 +287,7 @@ struct CheckoutSummaryCard: View {
             VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                 Button { model.requestDeleteWorktree(checkout) } label: {
                     Text(gate.buttonLabel)
-                        .hideFont(size: 10, weight: .medium)
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                         .foregroundStyle(
                             gate.blockedReason == nil ? HideTheme.danger : HideTheme.muted
                         )
@@ -308,7 +308,7 @@ struct CheckoutSummaryCard: View {
                 .accessibilityIdentifier("checkout-card-remove")
                 if let reason = gate.blockedReason {
                     Text(reason)
-                        .hideFont(size: 9)
+                        .hideFont(size: HideTheme.Typography.micro)
                         .foregroundStyle(HideTheme.muted)
                         .accessibilityIdentifier("checkout-card-remove-blocked")
                 }
@@ -329,7 +329,7 @@ private struct CardRow<Content: View>: View {
     var body: some View {
         HStack(spacing: HideTheme.spacingSM) {
             Image(systemName: icon)
-                .hideFont(size: 9)
+                .hideFont(size: HideTheme.Typography.micro)
                 .foregroundStyle(HideTheme.muted)
                 .frame(width: 12)
             content
@@ -342,24 +342,5 @@ private struct CardRow<Content: View>: View {
         // not reach the others at all.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(identifier)
-    }
-}
-
-private struct CardBadge: View {
-    let label: String
-    let color: Color
-    let dimmed: Bool
-
-    var body: some View {
-        Text(label)
-            .hideFont(size: 8, weight: .medium)
-            .foregroundStyle(dimmed ? color.opacity(0.5) : color)
-            .padding(.horizontal, 5)
-            .frame(height: 16)
-            .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-            .overlay {
-                RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                    .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-            }
     }
 }

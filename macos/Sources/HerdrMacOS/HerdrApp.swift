@@ -85,16 +85,8 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         mainWindow = window
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
-            // The keycap hints track Control and Command wherever they are
-            // pressed, so this observes the flag change and lets the event
-            // continue to the switcher-commit branches below.
-            if event.type == .flagsChanged {
-                MainActor.assumeIsolated {
-                    self.model.setShortcutModifiersHeld(
-                        control: event.modifierFlags.contains(.control),
-                        command: event.modifierFlags.contains(.command)
-                    )
-                }
+            MainActor.assumeIsolated {
+                _ = HideHintEventObserver.observe(event) { self.model.setShortcutModifiersHeld($0) }
             }
             if PaneKeyEventPolicy.isSidebarViewToggle(event) {
                 MainActor.assumeIsolated {
@@ -232,6 +224,21 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             model.remote.refreshMini()
         }
         #if DEBUG
+        if CommandLine.arguments.contains("--verification-ui-fixture"),
+           let scene = LaunchArguments.value("--verification-scene", in: CommandLine.arguments) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch scene {
+                case "search": self.model.showSearch = true
+                case "settings": self.model.showSettings = true
+                case "new-chat": self.model.showComposer = true
+                case "file-search": self.model.showFileSearch = true
+                case "add-device": self.presentVerificationAddDeviceSheet()
+                default:
+                    self.model.interactionNotice = "Unknown verification scene: \(scene)"
+                }
+            }
+        }
         if let rawKind = LaunchArguments.value("--verification-consequence", in: CommandLine.arguments),
            let kind = DestructiveTargetKind(rawValue: rawKind) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -261,7 +268,16 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                     detail: "command_w_menu_item_missing"
                 )
             }
+            #if DEBUG
+            if CommandLine.arguments.contains("--verification-ui-fixture"),
+               CommandLine.arguments.contains("--verification-background") {
+                mainWindow.orderBack(nil)
+            } else {
+                MainWindowPresentation.present(mainWindow)
+            }
+            #else
             MainWindowPresentation.present(mainWindow)
+            #endif
             HideLaunchTrace.mark(
                 "main_window.pre_runtime",
                 detail: "visible_\(mainWindow.isVisible)_windows_\(NSApplication.shared.windows.count)"
@@ -270,13 +286,29 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    #if DEBUG
+    private func presentVerificationAddDeviceSheet() {
+        guard let mainWindow else {
+            model.interactionNotice = "Cannot present verification scene: main window is missing"
+            return
+        }
+        let sheet = NSWindow(contentViewController: NSHostingController(rootView: AddDeviceSheet(model: model)))
+        sheet.styleMask = [.titled, .fullSizeContentView]
+        sheet.titleVisibility = .hidden
+        sheet.titlebarAppearsTransparent = true
+        sheet.backgroundColor = .clear
+        sheet.isOpaque = false
+        mainWindow.beginSheet(sheet)
+    }
+    #endif
+
     func applicationDidResignActive(_ notification: Notification) {
         model.cancelAgentSwitcher()
         model.cancelTabSwitcher()
         // Command-Tab releases Command while another app is frontmost, so the
         // flagsChanged release never reaches this monitor and the keycap hints
         // would stay on screen.
-        model.setShortcutModifiersHeld(control: false, command: false)
+        model.clearShortcutHints()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

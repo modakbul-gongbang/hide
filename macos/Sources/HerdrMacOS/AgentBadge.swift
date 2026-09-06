@@ -50,23 +50,24 @@ enum AgentMark {
 /// 7). An agent kind with no bundled mark falls back to its initial instead of
 /// drawing an empty square.
 struct AgentBadge: View {
+    @Environment(\.hidePetAppearance) private var petAppearance
     let agentKind: String
     let stateColor: Color
     var size: CGFloat = 19
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: size * 0.26)
-                .fill(stateColor.opacity(0.13))
+            RoundedRectangle(cornerRadius: size * HideTheme.AgentMark.cornerRatio)
+                .fill(stateColor.opacity(petAppearance ? HideTheme.PetDashboard.badgeOpacity : HideTheme.Opacity.selectedFill))
             if let mark = AgentMark.image(for: agentKind) {
                 Image(nsImage: mark)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .padding(size * 0.16)
+                    .padding(size * HideTheme.AgentMark.insetRatio)
             } else {
                 Text(agentKind.prefix(1).uppercased())
-                    .hideFont(size: size * 0.53, weight: .bold, design: .rounded)
+                    .hideFont(size: size * HideTheme.AgentMark.fontRatio, weight: .bold, design: .rounded)
                     .foregroundStyle(stateColor)
             }
         }

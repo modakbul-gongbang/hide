@@ -10,7 +10,8 @@ enum AgentStatusStyle {
         demand: String,
         activity: String,
         emphasized: Bool,
-        accent: Color
+        accent: Color,
+        secondary: Color = HideTheme.secondary
     ) -> Color {
         let base: Color = switch demand {
         case "error": HideTheme.danger
@@ -18,8 +19,8 @@ enum AgentStatusStyle {
         default:
             switch activity {
             case "working": accent
-            case "stopped": emphasized ? HideTheme.success : HideTheme.secondary
-            default: HideTheme.secondary
+            case "stopped": emphasized ? HideTheme.success : secondary
+            default: secondary
             }
         }
         guard !emphasized, demand != "none" else { return base }
@@ -47,6 +48,25 @@ enum AgentRowDensity {
     var leadingPadding: CGFloat { self == .prominent ? 14 : 23 }
     var trailingPadding: CGFloat { self == .prominent ? 14 : 9 }
     var verticalPadding: CGFloat { self == .prominent ? 7 : 5 }
+}
+
+/// A row's resolved visual policy. Surface wrappers choose it once so the
+/// shared row only renders values and never needs to know which surface owns
+/// it.
+struct AgentRowStyle {
+    let titleColor: Color
+    let secondary: Color
+    let muted: Color
+    let contentSpacing: CGFloat
+
+    static func shell(density: AgentRowDensity) -> AgentRowStyle {
+        AgentRowStyle(
+            titleColor: density.titleColor,
+            secondary: HideTheme.secondary,
+            muted: HideTheme.muted,
+            contentSpacing: HideTheme.spacingXS
+        )
+    }
 }
 
 /// Everything an agent row draws.
@@ -129,7 +149,8 @@ extension AgentRowPresentation {
                 demand: row.demand,
                 activity: row.activity,
                 emphasized: row.emphasized,
-                accent: accent
+                accent: accent,
+                secondary: HideTheme.PetDashboard.secondary
             )
             : HideTheme.warning
         title = row.summary
@@ -148,7 +169,7 @@ private struct AgentStatusMark: View {
 
     var body: some View {
         Text(symbol)
-            .hideFont(size: 11, weight: .bold, design: .monospaced)
+            .hideFont(size: HideTheme.Typography.body, weight: .bold, design: .monospaced)
             .foregroundStyle(color)
             .frame(width: HideTheme.agentMarkWidth, alignment: .center)
             .accessibilityHidden(true)
@@ -159,9 +180,11 @@ private struct AgentStatusMark: View {
 /// the project tree, and the pet dashboard all draw this.
 struct AgentRow: View {
     let presentation: AgentRowPresentation
+    let style: AgentRowStyle
     var density: AgentRowDensity = .prominent
     var isFocused: Bool = false
     var shortcutNumber: Int?
+    var shortcutVisible = true
     let action: () -> Void
 
     /// Work the agent started that is still running. It is background noise
@@ -192,45 +215,45 @@ struct AgentRow: View {
                     size: density.badgeSize
                 )
                 VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: style.contentSpacing) {
                         Text(presentation.title)
-                            .hideFont(size: 11, weight: density.titleWeight)
-                            .foregroundStyle(density.titleColor)
+                            .hideFont(size: HideTheme.Typography.body, weight: density.titleWeight)
+                            .foregroundStyle(style.titleColor)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         if let shortcutNumber {
-                            SidebarBadge(label: "⌃\(shortcutNumber)", color: HideTheme.secondary)
-                                .transition(.opacity)
+                            HideKeycap(command: .agent(shortcutNumber))
+                                .opacity(shortcutVisible ? 1 : 0)
                         }
                         Text(presentation.elapsed)
-                            .hideFont(size: 9, design: .monospaced)
-                            .foregroundStyle(HideTheme.muted)
+                            .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                            .foregroundStyle(style.muted)
                     }
                     if let detail = presentation.detail {
                         Text(detail)
-                            .hideFont(size: 10)
-                            .foregroundStyle(HideTheme.secondary)
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(style.secondary)
                             .lineLimit(2)
                     }
-                    HStack(spacing: 5) {
+                    HStack(spacing: style.contentSpacing) {
                         Text(presentation.statusLabel)
-                            .hideFont(size: 9, weight: .medium)
+                            .hideFont(size: HideTheme.Typography.micro, weight: .medium)
                             .foregroundStyle(presentation.statusColor)
                         if let qualifier = presentation.qualifier {
                             Text(qualifier)
-                                .hideFont(size: 9)
-                                .foregroundStyle(HideTheme.muted)
+                                .hideFont(size: HideTheme.Typography.micro)
+                                .foregroundStyle(style.muted)
                                 .lineLimit(1)
                         }
                         if let ambientLabel {
                             Text(ambientLabel)
-                                .hideFont(size: 9)
-                                .foregroundStyle(HideTheme.muted)
+                                .hideFont(size: HideTheme.Typography.micro)
+                                .foregroundStyle(style.muted)
                                 .lineLimit(1)
                         }
                         if let failedLabel {
                             Text(failedLabel)
-                                .hideFont(size: 9, weight: .medium)
+                                .hideFont(size: HideTheme.Typography.micro, weight: .medium)
                                 .foregroundStyle(HideTheme.danger)
                                 .lineLimit(1)
                         }

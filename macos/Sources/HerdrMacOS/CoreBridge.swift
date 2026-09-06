@@ -1856,6 +1856,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var launchedHerdrServer: Process?
     private let statePath: String
     private let fixtureMode: Bool
+    #if DEBUG
+    private let verificationSnapshotPath: String?
+    private let verificationSnapshotOutput: String?
+    // Assigned once during initialization; Dispatch source cancellation is thread-safe.
+    nonisolated(unsafe) private var verificationSnapshotWatcher: (any DispatchSourceFileSystemObject)?
+    #endif
     /// Why this launch cannot proceed, when it cannot. Nil once the runtime
     /// resolved and the server started, whatever the connection does after.
     @Published private(set) var startupDiagnostic: String?
@@ -1905,6 +1911,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         // The verification fixture runs without any live herdr connection;
         // every other launch talks to the local herdr socket.
         let resolvedFixtureMode = arguments.contains("--verification-ui-fixture")
+        #if DEBUG
+        verificationSnapshotPath = resolvedFixtureMode
+            ? LaunchArguments.value("--verification-snapshot", in: arguments) : nil
+        verificationSnapshotOutput = LaunchArguments.value("--verification-snapshot-output", in: arguments)
+        #endif
         statePath = resolvedStatePath
         fixtureMode = resolvedFixtureMode
         runtimeSelection = nil
@@ -1921,6 +1932,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             }
             #if DEBUG
             seedVerificationFixture()
+            if let verificationSnapshotPath {
+                let descriptor = open(verificationSnapshotPath, O_EVTONLY)
+                precondition(descriptor >= 0, "Cannot observe the verification snapshot")
+                let watcher = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: .write, queue: .main)
+                watcher.setEventHandler { [weak self] in self?.refreshSnapshot() }
+                watcher.setCancelHandler { close(descriptor) }
+                verificationSnapshotWatcher = watcher
+                watcher.resume()
+            }
             #endif
             HideLaunchTrace.mark(
                 "core_bridge.init.ready",
@@ -2089,6 +2109,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
+        #if DEBUG
+        verificationSnapshotWatcher?.cancel()
+        #endif
         if let core {
             herdr_core_on_change(core, nil, nil)
             herdr_core_destroy(core)
@@ -2821,14 +2844,28 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     private func refreshSnapshot() {
         guard let core else { return }
-        let owned = herdr_core_snapshot(core, haveRevision, lastTerminalSequence)
+        var requestedRevision = haveRevision
+        #if DEBUG
+        // Recording requests the existing full wire format. Replaying is only
+        // available through the isolated UI fixture, never the live client.
+        if verificationSnapshotOutput != nil { requestedRevision = 0 }
+        #endif
+        let owned = herdr_core_snapshot(core, requestedRevision, lastTerminalSequence)
         defer { herdr_core_free_bytes(owned) }
         guard let pointer = owned.ptr, owned.len > 0 else {
             bridgeError = "herdr_core_snapshot returned empty bytes"
             return
         }
         do {
-            let data = Data(bytes: pointer, count: owned.len)
+            var data = Data(bytes: pointer, count: owned.len)
+            #if DEBUG
+            if let verificationSnapshotPath {
+                data = try Data(contentsOf: URL(fileURLWithPath: verificationSnapshotPath))
+            }
+            if let verificationSnapshotOutput {
+                try data.write(to: URL(fileURLWithPath: verificationSnapshotOutput), options: .atomic)
+            }
+            #endif
             let decoded = try JSONDecoder().decode(CoreSnapshotDelta.self, from: data)
             if decoded.revision != lastLoggedSnapshotRevision {
                 lastLoggedSnapshotRevision = decoded.revision

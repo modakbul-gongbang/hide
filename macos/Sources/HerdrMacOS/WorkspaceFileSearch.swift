@@ -127,11 +127,11 @@ struct WorkspaceFileSearchSheet: View {
                 Image(systemName: "doc.text.magnifyingglass").foregroundStyle(HideTheme.accent)
                 TextField("Open file in selected checkout", text: $query)
                     .textFieldStyle(.plain)
-                    .hideFont(size: 16)
+                    .hideFont(size: HideTheme.Typography.headline)
                     .onSubmit { open(matches.first) }
                 if loading { ProgressView().controlSize(.small) }
                 Text("ESC")
-                    .hideFont(size: 10, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
             }
             .padding(HideTheme.spacingLG)
@@ -151,7 +151,7 @@ struct WorkspaceFileSearchSheet: View {
                                 HStack(spacing: HideTheme.spacingSM) {
                                     SetiFileIconView(url: (root ?? URL(fileURLWithPath: "/")).appendingPathComponent(match.relativePath), size: 13)
                                     Text(match.relativePath)
-                                        .hideFont(size: 12, design: .monospaced)
+                                        .hideFont(size: HideTheme.Typography.subhead, design: .monospaced)
                                         .foregroundStyle(HideTheme.primary)
                                         .lineLimit(1)
                                         .truncationMode(.middle)

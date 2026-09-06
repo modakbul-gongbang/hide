@@ -78,12 +78,7 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
     /// once here so a rebind cannot leave a stale chord printed in a tooltip,
     /// which is how a retired chord outlived the binding it described.
     var displayString: String {
-        let symbols: [Modifier: String] = [
-            .control: "⌃",
-            .option: "⌥",
-            .shift: "⇧",
-            .command: "⌘",
-        ]
+        let symbols = HideTheme.modifierSymbols
         // macOS prints modifiers in a fixed order regardless of how they were
         // declared: control, option, shift, command.
         let order: [Modifier] = [.control, .option, .shift, .command]

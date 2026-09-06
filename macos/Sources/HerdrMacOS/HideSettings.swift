@@ -68,20 +68,20 @@ struct HideSettingsView: View {
         HStack(alignment: .top, spacing: HideTheme.spacingMD) {
             VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                 Text("Settings")
-                    .hideFont(size: 15, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                     .foregroundStyle(HideTheme.primary)
                 Text(tab.subtitle)
-                    .hideFont(size: 11)
+                    .hideFont(size: HideTheme.Typography.body)
                     .foregroundStyle(HideTheme.secondary)
             }
             Spacer(minLength: 0)
             if showsCloseButton {
                 Button { dismiss() } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
+                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                 }
                 .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                .help("Close Settings")
+                .hideTooltip("Close Settings")
                 .accessibilityLabel("Close Settings")
                 .accessibilityIdentifier("hide-settings-close")
             }
@@ -147,9 +147,9 @@ private struct HideSettingsTabBar: View {
                 Button { selection = tab } label: {
                     HStack(spacing: HideTheme.spacingXS) {
                         Image(systemName: tab.systemImage)
-                            .font(.system(size: 10, weight: .medium))
+                            .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                         Text(tab.title)
-                            .hideFont(size: 11, weight: isSelected ? .semibold : .medium)
+                            .hideFont(size: HideTheme.Typography.body, weight: isSelected ? .semibold : .medium)
                     }
                     .foregroundStyle(isSelected ? HideTheme.primary : HideTheme.secondary)
                     .padding(.horizontal, HideTheme.spacingMD)
@@ -189,7 +189,7 @@ struct HideSettingsGroup<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
             Text(title)
-                .hideFont(size: 11, weight: .semibold)
+                .hideFont(size: HideTheme.Typography.body, weight: .semibold)
                 .foregroundStyle(HideTheme.secondary)
             VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                 content
@@ -202,7 +202,7 @@ struct HideSettingsGroup<Content: View>: View {
             }
             if let note {
                 Text(note)
-                    .hideFont(size: 11)
+                    .hideFont(size: HideTheme.Typography.body)
                     .foregroundStyle(HideTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -222,7 +222,7 @@ struct HideSettingsRow<Content: View>: View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(alignment: .firstTextBaseline, spacing: HideTheme.spacingMD) {
                 Text(label)
-                    .hideFont(size: 12)
+                    .hideFont(size: HideTheme.Typography.subhead)
                     .foregroundStyle(HideTheme.primary)
                 Spacer(minLength: HideTheme.spacingSM)
                 content
@@ -245,7 +245,7 @@ struct HideSettingsValue: View {
 
     var body: some View {
         Text(text)
-            .hideFont(size: 11, design: isMonospaced ? .monospaced : .default)
+            .hideFont(size: HideTheme.Typography.body, design: isMonospaced ? .monospaced : .default)
             .foregroundStyle(HideTheme.secondary)
             .multilineTextAlignment(.trailing)
             .lineLimit(2)
@@ -264,11 +264,11 @@ struct HideSettingsNote: View {
             HStack(alignment: .top, spacing: HideTheme.spacingSM) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 10, weight: .medium))
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                         .foregroundStyle(color)
                 }
                 Text(text)
-                    .hideFont(size: 11)
+                    .hideFont(size: HideTheme.Typography.body)
                     .foregroundStyle(color)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -295,7 +295,7 @@ struct HideSettingsField: View {
     var body: some View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.plain)
-            .hideFont(size: 11, design: .monospaced)
+            .hideFont(size: HideTheme.Typography.body, design: .monospaced)
             .foregroundStyle(HideTheme.primary)
             .labelsHidden()
             .onSubmit(onSubmit)
@@ -469,10 +469,10 @@ private struct HideCLIStatus: View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 Image(systemName: isUsable ? "checkmark.circle.fill" : "exclamationmark.circle")
-                    .font(.system(size: 11, weight: .medium))
+                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
                     .foregroundStyle(isUsable ? HideTheme.success : HideTheme.warning)
                 Text(name)
-                    .hideFont(size: 12, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                     .foregroundStyle(HideTheme.primary)
                 Spacer(minLength: HideTheme.spacingSM)
                 HideSettingsValue(text: AgentCLIAvailability.executable(for: name) ?? "not found on login PATH")
@@ -551,7 +551,7 @@ private struct HidePetSettings: View {
                             ? "checkmark.circle.fill"
                             : "exclamationmark.triangle.fill"
                     )
-                    .font(.system(size: 10, weight: .medium))
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                     .foregroundStyle((pet?.isConnected ?? false) ? HideTheme.success : HideTheme.warning)
                     HideSettingsValue(
                         text: pet?.connectionMessage ?? (pet?.connection ?? "unknown"),
@@ -631,7 +631,7 @@ private struct HideDeviceSettings: View {
                 HideSettingsRow(label: model.remote.phase.rawValue.capitalized) {
                     HStack(spacing: HideTheme.spacingSM) {
                         Image(systemName: remoteStatusSymbol)
-                            .font(.system(size: 10, weight: .medium))
+                            .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                             .foregroundStyle(remoteStatusColor)
                         HideSettingsValue(text: model.remote.checkedAt)
                     }
@@ -700,10 +700,10 @@ private struct HideDeviceRow: View {
                     .frame(width: 6, height: 6)
                 VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                     Text(device.label)
-                        .hideFont(size: 12, weight: .semibold)
+                        .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
                     Text(device.sshAlias ?? "local, no SSH alias")
-                        .hideFont(size: 10, design: .monospaced)
+                        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                         .foregroundStyle(HideTheme.secondary)
                 }
                 Spacer(minLength: HideTheme.spacingSM)
@@ -753,10 +753,10 @@ private struct HideShortcutSettings: View {
 
         HideSettingsGroup(title: "Direct selection") {
             HideSettingsRow(label: "Select tab 1-9") {
-                HideSettingsKeycaps(labels: ["⌘1", "…", "⌘9"])
+                HideKeycapGroup(commands: [.tab(1), .label("…"), .tab(9)])
             }
             HideSettingsRow(label: "Select agent 1-9", showsDivider: false) {
-                HideSettingsKeycaps(labels: ["⌃1", "…", "⌃9"])
+                HideKeycapGroup(commands: [.agent(1), .label("…"), .agent(9)])
             }
         }
     }
@@ -779,10 +779,10 @@ private struct HidePaneShortcutRow: View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingMD) {
                 Text(command.title)
-                    .hideFont(size: 12)
+                    .hideFont(size: HideTheme.Typography.subhead)
                     .foregroundStyle(HideTheme.primary)
                 Spacer(minLength: HideTheme.spacingSM)
-                HideSettingsKeycaps(labels: [model.shortcut(for: command).displayString])
+                HideKeycapGroup(commands: [.pane(command)])
                 HideSettingsField(
                     placeholder: "command+d",
                     text: $draft,
@@ -799,10 +799,10 @@ private struct HidePaneShortcutRow: View {
             if let error = model.shortcutErrors[command] {
                 HStack(spacing: HideTheme.spacingSM) {
                     Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 10, weight: .medium))
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                         .foregroundStyle(HideTheme.danger)
                     Text(error)
-                        .hideFont(size: 11)
+                        .hideFont(size: HideTheme.Typography.body)
                         .foregroundStyle(HideTheme.danger)
                     Spacer(minLength: 0)
                 }
@@ -821,43 +821,20 @@ private struct HidePaneShortcutRow: View {
     }
 }
 
-/// The keycap the sidebar and the tab strip already draw, reused so a chord
-/// looks the same everywhere it is shown.
-struct HideSettingsKeycaps: View {
-    let labels: [String]
-
-    var body: some View {
-        HStack(spacing: HideTheme.spacingXS) {
-            ForEach(labels, id: \.self) { label in
-                Text(label)
-                    .hideFont(size: 10, weight: .medium, design: .monospaced)
-                    .foregroundStyle(HideTheme.secondary)
-                    .padding(.horizontal, HideTheme.spacingXS + 1)
-                    .frame(height: 18)
-                    .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                            .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-                    }
-            }
-        }
-    }
-}
-
 /// Removing a device is the one destructive action in Settings, so it is the
 /// one button allowed to carry the danger color.
 struct HideDestructiveButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .hideFont(size: 11, weight: .semibold)
+            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
             .foregroundStyle(HideTheme.danger)
             .padding(.horizontal, HideTheme.spacingSM)
-            .padding(.vertical, 7)
+            .padding(.vertical, HideTheme.spacingSM)
             .background(
-                HideTheme.danger.opacity(0.12),
+                HideTheme.danger.opacity(HideTheme.Opacity.selectedFill),
                 in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
             )
-            .opacity(configuration.isPressed ? 0.72 : 1)
+            .opacity(configuration.isPressed ? HideTheme.Opacity.secondary : 1)
     }
 }
 
@@ -899,7 +876,7 @@ struct AddDeviceSheet: View {
                 .buttonStyle(HideToolbarButtonStyle(isProminent: true))
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canAdd)
-                .opacity(canAdd ? 1 : 0.5)
+                .opacity(canAdd ? 1 : HideTheme.Opacity.dimmed)
             }
             .padding(.horizontal, HideTheme.spacingXL)
             .padding(.bottom, HideTheme.spacingXL)

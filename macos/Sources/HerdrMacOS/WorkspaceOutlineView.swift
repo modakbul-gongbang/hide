@@ -128,15 +128,15 @@ private final class WorkspaceOutlineRowView: NSTableRowView {
 
     override func drawBackground(in dirtyRect: NSRect) {
         if isSelected {
-            NSColor.white.withAlphaComponent(0.10).setFill()
+            HideTheme.Native.primary.withAlphaComponent(HideTheme.Opacity.subtleFill).setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4).fill()
         } else if isHovered {
-            NSColor.white.withAlphaComponent(0.05).setFill()
+            HideTheme.Native.primary.withAlphaComponent(HideTheme.Opacity.subtleFill).setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4).fill()
         }
 
         guard level > 0 else { return }
-        NSColor.white.withAlphaComponent(0.07).setStroke()
+        HideTheme.Native.primary.withAlphaComponent(HideTheme.Opacity.subtleFill).setStroke()
         for depth in 0..<level {
             let x = CGFloat(14 + depth * 8) + 0.5
             let guide = NSBezierPath()
@@ -484,7 +484,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private func configure(cell: NSTableCellView, node: WorkspaceOutlineNode) {
             let label = cell.textField
             label?.stringValue = node.name
-            label?.font = NSFont.systemFont(ofSize: 11 * fontScale, weight: .regular)
+            label?.font = HideTheme.nativeFont(size: HideTheme.Typography.body * fontScale)
             label?.textColor = node.isPlaceholder ? NSColor(HideTheme.muted) : NSColor(HideTheme.primary)
             cell.setAccessibilityIdentifier("workspace-item-\(node.url.path)")
             cell.setAccessibilityLabel(node.name)

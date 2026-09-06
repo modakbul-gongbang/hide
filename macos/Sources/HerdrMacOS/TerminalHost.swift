@@ -58,8 +58,8 @@ struct TerminalHost: NSViewRepresentable {
             coordinator?.flushSettledSize()
         }
         terminal.terminalDelegate = context.coordinator
-        terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
-        terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
+        terminal.nativeForegroundColor = HideTheme.Native.primary
+        terminal.nativeBackgroundColor = HideTheme.Native.background
         terminal.linkReporting = .implicit
         terminal.linkHighlightMode = .hover
         // The bidi pass was 30% of the draw for a pane streaming an agent's

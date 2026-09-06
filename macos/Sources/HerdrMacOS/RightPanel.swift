@@ -9,7 +9,7 @@ struct RightPanel: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: HideTheme.spacingNone) {
             PanelHeader(
                 title: model.rightPanelSection.title,
                 systemImage: model.rightPanelSection.systemImage,
@@ -20,7 +20,7 @@ struct RightPanel: View {
                 ),
                 collapseAction: model.toggleRightPanel,
                 collapseAccessibilityLabel: "Hide Right Panel",
-                collapseShortcut: ShellMenuCommand.toggleRightPanel.displayShortcut,
+                collapseCommand: .menu(.toggleRightPanel),
                 collapseAccessibilityIdentifier: "hide-toggle-right-panel"
             )
             Rectangle()
@@ -93,12 +93,12 @@ struct RightPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(ShellMetrics.panelPadding)
         } else if model.remote.fileState == "loading" {
-            VStack(spacing: 8) {
+            VStack(spacing: HideTheme.spacingSM) {
                 ProgressView()
                     .controlSize(.small)
                     .tint(HideTheme.secondary)
                 Text("Loading remote files")
-                    .hideFont(size: 10)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .foregroundStyle(HideTheme.muted)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,36 +113,36 @@ struct RightPanel: View {
             .padding(ShellMetrics.panelPadding)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                     ForEach(model.remote.files) { node in
-                        HStack(spacing: 6) {
+                        HStack(spacing: HideTheme.spacingSM) {
                             if node.isDirectory {
                                 Image(systemName: "folder")
-                                    .font(.system(size: 11))
+                                    .hideFont(size: HideTheme.Typography.body)
                                     .foregroundStyle(HideTheme.secondary)
                                     .frame(width: 16, height: 16)
                             } else {
                                 SetiFileIconView(url: URL(fileURLWithPath: node.path))
                             }
                             Text(node.name)
-                                .hideFont(size: 11)
+                                .hideFont(size: HideTheme.Typography.body)
                                 .foregroundStyle(HideTheme.primary)
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                         }
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, HideTheme.spacingMD)
                         .frame(height: 22)
                         .contentShape(Rectangle())
                         .accessibilityIdentifier("remote-workspace-item-\(node.path)")
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, HideTheme.spacingSM)
             }
             .overlay(alignment: .topTrailing) {
                 Text("Remote, read-only")
-                    .hideFont(size: 9, weight: .medium)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .medium)
                     .foregroundStyle(HideTheme.muted)
-                    .padding(8)
+                    .padding(HideTheme.spacingSM)
             }
         }
     }
@@ -201,7 +201,7 @@ struct ChangesView: View {
     /// an empty group would claim the branch has no commits.
     private var changedFileList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 1) {
+            LazyVStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                 if !changes.entries.isEmpty {
                     ChangesGroupHeader(
                         title: "UNCOMMITTED",
@@ -258,7 +258,7 @@ struct ChangesView: View {
                         .controlSize(.small)
                         .tint(HideTheme.secondary)
                     Text("Reading the diff")
-                        .hideFont(size: 10)
+                        .hideFont(size: HideTheme.Typography.caption)
                         .foregroundStyle(HideTheme.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -266,7 +266,7 @@ struct ChangesView: View {
             }
         } else {
             Text("Select a file to see its diff.")
-                .hideFont(size: 11)
+                .hideFont(size: HideTheme.Typography.body)
                 .foregroundStyle(HideTheme.muted)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("changes-diff-empty")
@@ -285,18 +285,18 @@ private struct ChangesGroupHeader: View {
         Button { isExpanded.toggle() } label: {
             HStack(spacing: HideTheme.spacingXS) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .hideFont(size: 8, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                     .foregroundStyle(HideTheme.muted)
                     .frame(width: 10)
                 Text(title)
-                    .hideFont(size: 9, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
                 Text("\(count)")
-                    .hideFont(size: 9, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
                 if let detail {
                     Text("→ \(detail)")
-                        .hideFont(size: 9, design: .monospaced)
+                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                         .foregroundStyle(HideTheme.muted)
                         .lineLimit(1)
                 }
@@ -324,14 +324,14 @@ private struct ChangedFileRow: View {
             HStack(spacing: HideTheme.spacingSM) {
                 SetiFileIconView(url: URL(fileURLWithPath: entry.path))
                 Text(entry.name)
-                    .hideFont(size: 11)
+                    .hideFont(size: HideTheme.Typography.body)
                     .foregroundStyle(HideTheme.primary)
                     .lineLimit(1)
                 if !entry.directory.isEmpty {
                     // The directory is context, not identity, so it is dimmer
                     // and it is the half that gets truncated.
                     Text(entry.directory)
-                        .hideFont(size: 10)
+                        .hideFont(size: HideTheme.Typography.caption)
                         .foregroundStyle(HideTheme.muted)
                         .lineLimit(1)
                         .truncationMode(.head)
@@ -342,10 +342,10 @@ private struct ChangedFileRow: View {
                         Text("+\(added)").foregroundStyle(HideTheme.diffAdded)
                         Text("-\(removed)").foregroundStyle(HideTheme.diffRemoved)
                     }
-                    .hideFont(size: 9, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                 }
                 Text(entry.status.badge)
-                    .hideFont(size: 10, weight: .medium)
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                     .foregroundStyle(statusColor)
             }
             .padding(.horizontal, HideTheme.spacingMD)
@@ -358,7 +358,7 @@ private struct ChangedFileRow: View {
             )
         }
         .buttonStyle(.plain)
-        .help(entry.relativePath)
+        .hideTooltip(entry.relativePath)
         .accessibilityIdentifier(committed ? "committed-file-\(entry.relativePath)" : "changed-file-\(entry.relativePath)")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -391,10 +391,10 @@ private struct DiffText: View {
 
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                 if let reason = diff.notice {
                     Text(reason)
-                        .hideFont(size: 10)
+                        .hideFont(size: HideTheme.Typography.caption)
                         .foregroundStyle(HideTheme.warning)
                         .padding(.horizontal, HideTheme.spacingMD)
                         .padding(.vertical, HideTheme.spacingXS)
