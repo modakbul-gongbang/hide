@@ -119,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix='he-', dir='/tmp') as directory:
         wait_for('foreign.stopped', lambda: not socket.exists())
         process, _ = launch('recovery')
         connected(process, 'recovery')
-        (out / 'e2e-result.json').write_text(json.dumps(results, indent=2))
+        (out / 'e2e-latest-result.json').write_text(json.dumps(results, indent=2))
     finally:
         for process in reversed(processes): stop_app(process)
         if socket.exists():
