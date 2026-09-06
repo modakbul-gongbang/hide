@@ -20,7 +20,14 @@ manifest=$project_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
 }
 
 version=$(jq -er '.version' "$manifest")
-source_url=$(jq -er '.source_url' "$manifest")
+repo=$(jq -er '.repo | strings | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' "$manifest")
+tag=$(jq -er '.tag | strings | select(test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))' "$manifest")
+source_url="https://github.com/${repo}/releases/download/${tag}/herdr-macos-aarch64"
+recorded_url=$(jq -er '.source_url' "$manifest")
+[[ "$source_url" == "$recorded_url" ]] || {
+  print -u2 -- "error: manifest source_url disagrees with repo and tag"
+  exit 1
+}
 sha256=$(jq -er '.sha256' "$manifest")
 
 cache_root=${HIDE_HERDR_CACHE:-${XDG_CACHE_HOME:-$HOME/Library/Caches}/hide/herdr-runtime}

@@ -86,7 +86,7 @@ jobs:
         if: steps.existing.outputs.proceed == 'true'
         run: |
           set -euo pipefail
-          zsh scripts/bump-herdr.sh "${{ steps.upstream.outputs.latest_tag }}" \
+          zsh scripts/bump-herdr.sh --repo herdrdev/herdr "${{ steps.upstream.outputs.latest_tag }}" \
             --keep-binary "$RUNNER_TEMP/herdr"
 
       - name: Check the API schema against the candidate CLI
