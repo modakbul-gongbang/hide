@@ -12,8 +12,8 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--bundle', required=True)
-parser.add_argument('--output', required=True)
+parser.add_argument('--bundle', default=str(next((ROOT / 'macos/build/assembled').glob('*.app'), ROOT / 'macos/build/assembled/hide.app'))))
+parser.add_argument('--output', default=str(Path(subprocess.check_output(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd=ROOT, text=True).strip()).parent / 'agents/runs/herdr-runtime-release'))
 args = parser.parse_args()
 bundle = Path(args.bundle).resolve()
 out = Path(args.output).resolve()

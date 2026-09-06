@@ -92,10 +92,27 @@ def workflow(args):
     print(json.dumps({'workflow': 'pass'}))
 
 
+def proposal(args):
+    pin = json.loads(MANIFEST.read_text())
+    remote = public_api(f'repos/{pin["repo"]}/branches/upstream-proposal')
+    require(remote['commit']['sha'] == '13d8d0b99033e6855ce66bc0f96654615c8a17a6', 'proposal tip differs from tested fallback')
+    print(json.dumps({'proposal': 'pass', 'commit': remote['commit']['sha'], 'rebase': 'aborted after conflicts; tested pre-rebase source retained'}))
+
+
+def discussion(args):
+    record = Path(run('git', 'rev-parse', '--path-format=absolute', '--git-common-dir')).parent
+    draft = record / 'agents/runs/herdr-runtime-release/upstream-discussion.md'
+    text = draft.read_text()
+    require(len(text.split()) >= 100 and 'https://github.com/modakbul-gongbang/herdr/tree/upstream-proposal' in text, 'discussion draft incomplete')
+    print(text)
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 subs = parser.add_subparsers(dest='command', required=True)
 p = subs.add_parser('source'); p.add_argument('--checkout', default=str(Path(run('git', 'rev-parse', '--path-format=absolute', '--git-common-dir')).parent.parent / 'herdr')); p.add_argument('--repo', required=True); p.add_argument('--branch', default='hide-runtime'); p.set_defaults(fn=source)
 p = subs.add_parser('asset'); p.add_argument('--reference-binary', default=str(Path(pwd.getpwuid(os.getuid()).pw_dir) / '.local/bin/herdr')); p.set_defaults(fn=asset)
 p = subs.add_parser('bump'); p.set_defaults(fn=bump)
 p = subs.add_parser('workflow'); p.set_defaults(fn=workflow)
+p = subs.add_parser('proposal'); p.set_defaults(fn=proposal)
+p = subs.add_parser('discussion'); p.set_defaults(fn=discussion)
 args = parser.parse_args(); args.fn(args)
