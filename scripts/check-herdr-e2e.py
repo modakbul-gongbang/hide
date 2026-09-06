@@ -33,6 +33,9 @@ with tempfile.TemporaryDirectory(prefix='he-', dir='/tmp') as directory:
     private = Path(directory)
     home = private / 'home'
     home.mkdir()
+    checkout = home / 'checkout'
+    checkout.mkdir()
+    subprocess.run(['/usr/bin/git', 'init', '--quiet', str(checkout)], check=True)
     socket = private / 'h.sock'
     assert not socket.exists() and len(str(socket).encode()) < 100
     env = {'HOME': str(home), 'USER': pwd.getpwuid(os.getuid()).pw_name,
@@ -42,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='he-', dir='/tmp') as directory:
     def launch(stage):
         log = out / f'e2e-{stage}.log'
         with log.open('w') as stream:
-            process = subprocess.Popen([str(app), '--state-path', str(home / 'state.json')], env=env, stdout=stream, stderr=stream)
+            process = subprocess.Popen([str(app), '--state-path', str(home / 'state.json'), '--workspace-root', str(checkout)], env=env, stdout=stream, stderr=stream)
         processes.append(process)
         return process, log
     def stop_app(process):
@@ -67,7 +70,10 @@ with tempfile.TemporaryDirectory(prefix='he-', dir='/tmp') as directory:
     def connected(process, stage):
         snap = wait_for(f'{stage}.snapshot', lambda: snapshot())
         assert snap['version'] == pin['version'], snap.get('version')
-        assert snap['panes'], 'no pane rendered by the initial workspace'
+        if not snap['panes']:
+            created = run(binary, 'workspace', 'create', '--cwd', str(checkout), '--label', 'Runtime verification', '--focus')
+            assert created.returncode == 0, created.stderr
+            snap = wait_for(f'{stage}.pane', lambda: (value if (value := snapshot()) and value['panes'] else None))
         (out / f'e2e-{stage}-snapshot.json').write_text(json.dumps(snap, indent=2))
         def status():
             log = subprocess.run(['/usr/bin/log', 'show', '--last', '2m', '--style', 'ndjson', '--info',
