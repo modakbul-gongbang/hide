@@ -25,6 +25,7 @@ struct CoreSnapshot {
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let changes: CoreChangesSnapshot
+    let card: CoreCheckoutCard
     let find: CorePaneFindSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
@@ -45,6 +46,7 @@ struct CoreSnapshot {
             terminal: terminal,
             editor: editor ?? self.editor,
             changes: changes ?? self.changes,
+            card: card,
             find: find,
             uiState: uiState,
             status: status,
@@ -105,6 +107,7 @@ extension CoreSnapshot {
 
 struct CoreRestSnapshot: Decodable {
     let navigator: CoreNavigatorSnapshot
+    let card: CoreCheckoutCard
     let zoomed: String?
     let paneLayouts: [CorePaneLayoutSnapshot]
     let terminal: CoreTerminalSnapshot
@@ -114,12 +117,25 @@ struct CoreRestSnapshot: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case navigator
+        case card
         case zoomed
         case paneLayouts = "pane_layouts"
         case terminal
         case uiState = "ui_state"
         case status
         case pet
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        navigator = try container.decode(CoreNavigatorSnapshot.self, forKey: .navigator)
+        card = try container.decodeIfPresent(CoreCheckoutCard.self, forKey: .card) ?? .empty
+        zoomed = try container.decodeIfPresent(String.self, forKey: .zoomed)
+        paneLayouts = try container.decode([CorePaneLayoutSnapshot].self, forKey: .paneLayouts)
+        terminal = try container.decode(CoreTerminalSnapshot.self, forKey: .terminal)
+        uiState = try container.decode(CoreUIStateSnapshot.self, forKey: .uiState)
+        status = try container.decode(CoreStatusSnapshot.self, forKey: .status)
+        pet = try container.decode(CorePetSnapshot.self, forKey: .pet)
     }
 }
 
@@ -456,6 +472,18 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let isWorktree: Bool
     let exists: Bool
     let temporary: Bool
+    /// Whether Herdr has a pane here. A worktree is a row because git lists
+    /// it, so this is what tells the ones with no terminal apart.
+    let hasPanes: Bool
+    let dirty: Bool
+    let changedFileCount: Int
+    let baseBranch: String?
+    let ahead: Int
+    let behind: Int
+    let addedLines: Int
+    let removedLines: Int
+    let unpushed: CoreUnpushed?
+    let pullRequest: CorePullRequest?
     let tabs: [CoreTabSnapshot]
     /// The one ordered tab strip the core owns for this checkout. The shell
     /// draws it in this order and never composes an order of its own.
@@ -478,6 +506,16 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case isWorktree = "is_worktree"
         case exists
         case temporary
+        case hasPanes = "has_panes"
+        case dirty
+        case changedFileCount = "changed_file_count"
+        case baseBranch = "base_branch"
+        case ahead
+        case behind
+        case addedLines = "added_lines"
+        case removedLines = "removed_lines"
+        case unpushed
+        case pullRequest = "pull_request"
         case tabs
         case strip
         case activeTabID = "active_tab_id"
@@ -493,6 +531,16 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         isWorktree: Bool,
         exists: Bool,
         temporary: Bool,
+        hasPanes: Bool = false,
+        dirty: Bool = false,
+        changedFileCount: Int = 0,
+        baseBranch: String? = nil,
+        ahead: Int = 0,
+        behind: Int = 0,
+        addedLines: Int = 0,
+        removedLines: Int = 0,
+        unpushed: CoreUnpushed? = nil,
+        pullRequest: CorePullRequest? = nil,
         tabs: [CoreTabSnapshot],
         strip: [CoreStripTabSnapshot] = [],
         activeTabID: String? = nil,
@@ -506,10 +554,46 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         self.isWorktree = isWorktree
         self.exists = exists
         self.temporary = temporary
+        self.hasPanes = hasPanes
+        self.dirty = dirty
+        self.changedFileCount = changedFileCount
+        self.baseBranch = baseBranch
+        self.ahead = ahead
+        self.behind = behind
+        self.addedLines = addedLines
+        self.removedLines = removedLines
+        self.unpushed = unpushed
+        self.pullRequest = pullRequest
         self.tabs = tabs
         self.strip = strip
         self.activeTabID = activeTabID
         self.nextTabLabel = nextTabLabel
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        workspaceID = try container.decode(String.self, forKey: .workspaceID)
+        label = try container.decode(String.self, forKey: .label)
+        path = try container.decode(String.self, forKey: .path)
+        branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        isWorktree = try container.decodeIfPresent(Bool.self, forKey: .isWorktree) ?? false
+        exists = try container.decodeIfPresent(Bool.self, forKey: .exists) ?? true
+        temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+        hasPanes = try container.decodeIfPresent(Bool.self, forKey: .hasPanes) ?? false
+        dirty = try container.decodeIfPresent(Bool.self, forKey: .dirty) ?? false
+        changedFileCount = try container.decodeIfPresent(Int.self, forKey: .changedFileCount) ?? 0
+        baseBranch = try container.decodeIfPresent(String.self, forKey: .baseBranch)
+        ahead = try container.decodeIfPresent(Int.self, forKey: .ahead) ?? 0
+        behind = try container.decodeIfPresent(Int.self, forKey: .behind) ?? 0
+        addedLines = try container.decodeIfPresent(Int.self, forKey: .addedLines) ?? 0
+        removedLines = try container.decodeIfPresent(Int.self, forKey: .removedLines) ?? 0
+        unpushed = try container.decodeIfPresent(CoreUnpushed.self, forKey: .unpushed)
+        pullRequest = try container.decodeIfPresent(CorePullRequest.self, forKey: .pullRequest)
+        tabs = try container.decodeIfPresent([CoreTabSnapshot].self, forKey: .tabs) ?? []
+        strip = try container.decode([CoreStripTabSnapshot].self, forKey: .strip)
+        activeTabID = try container.decodeIfPresent(String.self, forKey: .activeTabID)
+        nextTabLabel = try container.decode(String.self, forKey: .nextTabLabel)
     }
 }
 
@@ -539,6 +623,164 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
         self.kind = kind
         self.sourceID = sourceID
         self.label = label
+    }
+}
+
+/// How far a branch is from the remote it tracks. Absent when it tracks none,
+/// because "nothing to push" and "nowhere to push to" are different facts.
+struct CoreUnpushed: Decodable, Equatable {
+    let remote: String
+    let count: Int
+}
+
+/// The five values a branch's pull request reduces to. The core owns the
+/// mapping from `gh`'s state, review decision, and draft flag; nothing here
+/// re-derives it.
+enum CorePullRequestBadge: String, Decodable, Equatable {
+    case merged
+    case closed
+    case review
+    case open
+
+    /// The two states a worktree may be removed from.
+    var isSettled: Bool { self == .merged || self == .closed }
+}
+
+enum CoreReviewDecision: String, Decodable, Equatable {
+    case reviewRequired = "review_required"
+    case changesRequested = "changes_requested"
+    case approved
+}
+
+struct CorePullRequest: Decodable, Equatable {
+    let number: Int
+    let headBranch: String
+    let baseBranch: String
+    let url: String
+    let badge: CorePullRequestBadge
+    /// Present only for a `review` badge, and only to pick its colour.
+    let review: CoreReviewDecision?
+    let isDraft: Bool
+    let mergedAtUnixMS: Double?
+    let updatedAtUnixMS: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case number
+        case headBranch = "head_branch"
+        case baseBranch = "base_branch"
+        case url
+        case badge
+        case review
+        case isDraft = "is_draft"
+        case mergedAtUnixMS = "merged_at_unix_ms"
+        case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+}
+
+/// How a repository's `gh` lookup is doing, independent of what it found.
+struct CoreGithubStatus: Decodable, Equatable {
+    let available: Bool
+    let loading: Bool
+    let stale: Bool
+    let lastSuccessAtUnixMS: Double?
+    /// The card's one allowed sentence: gh missing, logged out, or the exact
+    /// failure.
+    let unavailableReason: String?
+
+    static let empty = CoreGithubStatus(
+        available: false,
+        loading: false,
+        stale: false,
+        lastSuccessAtUnixMS: nil,
+        unavailableReason: nil
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case loading
+        case stale
+        case lastSuccessAtUnixMS = "last_success_at_unix_ms"
+        case unavailableReason = "unavailable_reason"
+    }
+}
+
+struct CoreDiskUsage: Decodable, Equatable {
+    let path: String?
+    let totalBytes: Double?
+    let largestChildName: String?
+    let largestChildBytes: Double?
+    let unavailableReason: String?
+
+    static let empty = CoreDiskUsage(
+        path: nil,
+        totalBytes: nil,
+        largestChildName: nil,
+        largestChildBytes: nil,
+        unavailableReason: nil
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case totalBytes = "total_bytes"
+        case largestChildName = "largest_child_name"
+        case largestChildBytes = "largest_child_bytes"
+        case unavailableReason = "unavailable_reason"
+    }
+}
+
+/// What the summary card needs that a checkout row does not already carry.
+struct CoreCheckoutCard: Decodable, Equatable {
+    let checkoutID: String?
+    let github: CoreGithubStatus
+    let disk: CoreDiskUsage
+    let diskMeasuring: Bool
+    let removeOffered: Bool
+    /// Why the offered button is disabled. `nil` with `removeOffered` means it
+    /// is enabled.
+    let removeBlockedReason: String?
+
+    static let empty = CoreCheckoutCard(
+        checkoutID: nil,
+        github: .empty,
+        disk: .empty,
+        diskMeasuring: false,
+        removeOffered: false,
+        removeBlockedReason: nil
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case checkoutID = "checkout_id"
+        case github
+        case disk
+        case diskMeasuring = "disk_measuring"
+        case removeOffered = "remove_offered"
+        case removeBlockedReason = "remove_blocked_reason"
+    }
+
+    init(
+        checkoutID: String?,
+        github: CoreGithubStatus,
+        disk: CoreDiskUsage,
+        diskMeasuring: Bool,
+        removeOffered: Bool,
+        removeBlockedReason: String?
+    ) {
+        self.checkoutID = checkoutID
+        self.github = github
+        self.disk = disk
+        self.diskMeasuring = diskMeasuring
+        self.removeOffered = removeOffered
+        self.removeBlockedReason = removeBlockedReason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        checkoutID = try container.decodeIfPresent(String.self, forKey: .checkoutID)
+        github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
+        disk = try container.decodeIfPresent(CoreDiskUsage.self, forKey: .disk) ?? .empty
+        diskMeasuring = try container.decodeIfPresent(Bool.self, forKey: .diskMeasuring) ?? false
+        removeOffered = try container.decodeIfPresent(Bool.self, forKey: .removeOffered) ?? false
+        removeBlockedReason = try container.decodeIfPresent(String.self, forKey: .removeBlockedReason)
     }
 }
 
@@ -1069,8 +1311,17 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
 /// One checkout's Git working-tree state as the core read it.
 struct CoreChangesSnapshot: Decodable {
     let rootPath: String?
+    /// The working tree's own changes.
     let entries: [CoreChangedFile]
+    /// What commits on this branch changed since `baseBranch`.
+    let committed: [CoreChangedFile]
+    /// What the committed group is measured against. `nil` means there is no
+    /// comparison to make, so that group is not shown at all.
+    let baseBranch: String?
     let selectedPath: String?
+    /// Which group the selection is in. The same path can appear in both and
+    /// its two diffs differ, so the group is part of the selection.
+    let selectedCommitted: Bool
     let diff: CoreChangedFileDiff?
     /// Why there is nothing to list. An empty list with no reason means the
     /// checkout genuinely has no changes.
@@ -1079,7 +1330,10 @@ struct CoreChangesSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case rootPath = "root_path"
         case entries
+        case committed
+        case baseBranch = "base_branch"
         case selectedPath = "selected_path"
+        case selectedCommitted = "selected_committed"
         case diff
         case unavailableReason = "unavailable_reason"
     }
@@ -1087,23 +1341,95 @@ struct CoreChangesSnapshot: Decodable {
     static let empty = CoreChangesSnapshot(
         rootPath: nil,
         entries: [],
+        committed: [],
+        baseBranch: nil,
         selectedPath: nil,
+        selectedCommitted: false,
         diff: nil,
         unavailableReason: nil
     )
+
+    init(
+        rootPath: String?,
+        entries: [CoreChangedFile],
+        committed: [CoreChangedFile] = [],
+        baseBranch: String? = nil,
+        selectedPath: String?,
+        selectedCommitted: Bool = false,
+        diff: CoreChangedFileDiff?,
+        unavailableReason: String?
+    ) {
+        self.rootPath = rootPath
+        self.entries = entries
+        self.committed = committed
+        self.baseBranch = baseBranch
+        self.selectedPath = selectedPath
+        self.selectedCommitted = selectedCommitted
+        self.diff = diff
+        self.unavailableReason = unavailableReason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rootPath = try container.decodeIfPresent(String.self, forKey: .rootPath)
+        entries = try container.decodeIfPresent([CoreChangedFile].self, forKey: .entries) ?? []
+        committed = try container.decodeIfPresent([CoreChangedFile].self, forKey: .committed) ?? []
+        baseBranch = try container.decodeIfPresent(String.self, forKey: .baseBranch)
+        selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
+        selectedCommitted = try container.decodeIfPresent(Bool.self, forKey: .selectedCommitted) ?? false
+        diff = try container.decodeIfPresent(CoreChangedFileDiff.self, forKey: .diff)
+        unavailableReason = try container.decodeIfPresent(String.self, forKey: .unavailableReason)
+    }
 }
 
 struct CoreChangedFile: Decodable, Identifiable, Equatable {
     let path: String
     let relativePath: String
     let status: CoreChangedFileStatus
+    /// Absent for a file git cannot count - an untracked one has no index side
+    /// and a binary one has no lines - so the row shows no numbers rather than
+    /// a zero that would read as "changed nothing".
+    let addedLines: Int?
+    let removedLines: Int?
 
     var id: String { path }
+
+    /// Row identity per group. A file edited again after being committed is in
+    /// both groups under one path, and the list must show it twice.
+    var uncommittedRowID: String { "uncommitted:" + path }
+    var committedRowID: String { "committed:" + path }
+
+    /// The directory the row shows in the dimmer half, empty at the root.
+    var directory: String {
+        let components = relativePath.split(separator: "/").dropLast()
+        return components.joined(separator: "/")
+    }
+
+    /// The file name the row shows in the brighter half.
+    var name: String {
+        String(relativePath.split(separator: "/").last ?? "")
+    }
 
     enum CodingKeys: String, CodingKey {
         case path
         case relativePath = "relative_path"
         case status
+        case addedLines = "added_lines"
+        case removedLines = "removed_lines"
+    }
+
+    init(
+        path: String,
+        relativePath: String,
+        status: CoreChangedFileStatus,
+        addedLines: Int? = nil,
+        removedLines: Int? = nil
+    ) {
+        self.path = path
+        self.relativePath = relativePath
+        self.status = status
+        self.addedLines = addedLines
+        self.removedLines = removedLines
     }
 }
 
@@ -2150,8 +2476,32 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     /// Selects the changed file whose diff the changes view shows, or clears
     /// the selection when `path` is nil.
-    func selectChangedFile(path: String?) {
-        dispatch(kind: "changes_select", payload: ["path": path.map { $0 as Any } ?? NSNull()])
+    func selectChangedFile(path: String?, committed: Bool = false) {
+        dispatch(
+            kind: "changes_select",
+            payload: [
+                "path": path.map { $0 as Any } ?? NSNull(),
+                "committed": committed,
+            ]
+        )
+    }
+
+    /// The card's refresh button: the pull-request lookup, the worktree
+    /// counts, and the size are all read again.
+    func refreshCheckoutCard() {
+        dispatch(kind: "card_refresh", payload: [:])
+    }
+
+    /// Measures the selected checkout again, for the confirmation that states
+    /// the size it is about to delete.
+    func measureCheckoutDisk() {
+        dispatch(kind: "card_measure_disk", payload: [:])
+    }
+
+    /// Tells the core a worktree folder is gone, so the worktree list is read
+    /// again and the row disappears with it.
+    func worktreeRemoved() {
+        dispatch(kind: "worktree_removed", payload: [:])
     }
 
     func dispatch(kind: String, payload: [String: Any]) {
@@ -2263,6 +2613,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     terminal: rest.terminal,
                     editor: editor,
                     changes: decoded.changes ?? snapshot?.changes ?? .empty,
+                    card: rest.card,
                     find: decoded.find,
                     uiState: rest.uiState,
                     status: rest.status,

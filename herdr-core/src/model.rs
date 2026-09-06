@@ -41,6 +41,7 @@ pub struct Snapshot {
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
     pub changes: ChangesSnapshot,
+    pub card: CheckoutCardSnapshot,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -272,7 +273,7 @@ pub struct WorkspaceSnapshot {
     pub checkouts: Vec<CheckoutSnapshot>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
     pub id: String,
     pub workspace_id: String,
@@ -282,6 +283,21 @@ pub struct CheckoutSnapshot {
     pub is_worktree: bool,
     pub exists: bool,
     pub temporary: bool,
+    /// Whether Herdr has a pane here. A worktree earns a row from git rather
+    /// than from a pane, so the row needs this to draw the ones with no
+    /// terminal dimmed and offer to start one.
+    pub has_panes: bool,
+    pub dirty: bool,
+    pub changed_file_count: u32,
+    pub base_branch: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub added_lines: u32,
+    pub removed_lines: u32,
+    pub unpushed: Option<UnpushedSnapshot>,
+    /// This branch's pull request, absent when it has none or when `gh` could
+    /// not say. `GithubStatusSnapshot` on the card is what tells those apart.
+    pub pull_request: Option<PullRequestSnapshot>,
     pub tabs: Vec<TabSnapshot>,
     /// The tab Herdr reports as active in this checkout, or `None` when the
     /// workspace's active tab lives in a sibling checkout. A checkout never
@@ -834,8 +850,21 @@ pub struct ChangesSnapshot {
     /// a different root than it asked about would be lying about whose
     /// changes it is showing, so the root travels with them.
     pub root_path: Option<String>,
+    /// The working tree's own changes: what `git status` reports.
     pub entries: Vec<ChangedFileSnapshot>,
+    /// What commits on this branch changed since [`Self::base_branch`].
+    /// Separate from `entries` because they answer different questions - what
+    /// is not saved yet, and what this branch is - and the view shows them as
+    /// two groups for that reason.
+    pub committed: Vec<ChangedFileSnapshot>,
+    /// What the committed group is measured against. Absent for a plain
+    /// folder and for a repository whose base could not be resolved, in which
+    /// case the committed group is not shown at all.
+    pub base_branch: Option<String>,
     pub selected_path: Option<String>,
+    /// Which group the selection is in. A path can appear in both groups and
+    /// its two diffs are different, so the group is part of the selection.
+    pub selected_committed: bool,
     pub diff: Option<ChangedFileDiffSnapshot>,
     /// Why there is nothing to list. Present whenever the reader could not
     /// produce entries, so an empty list is never mistaken for "no changes".
@@ -892,6 +921,11 @@ pub struct ChangedFileSnapshot {
     /// Relative to the checkout root, which is what the row shows.
     pub relative_path: String,
     pub status: ChangedFileStatus,
+    /// Lines added and removed in this file. Absent for a file git cannot
+    /// count - an untracked file has no index side and a binary file has no
+    /// lines - so the row shows no numbers rather than a misleading zero.
+    pub added_lines: Option<u32>,
+    pub removed_lines: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -901,6 +935,206 @@ pub struct ChangedFileDiffSnapshot {
     /// Set when the diff was cut short, naming the limit that cut it. A
     /// silently truncated diff would read as a complete one.
     pub notice: Option<String>,
+}
+
+/// What a branch's pull request is, reduced to the five values the row badge
+/// and the card show. The mapping from `gh`'s `state`/`reviewDecision`/
+/// `isDraft` triple lives in [`crate::github`]; nothing downstream re-derives
+/// it, so the badge cannot drift between the row and the card.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestBadge {
+    Merged,
+    Closed,
+    /// Open, not a draft, and a review decision has been recorded. The three
+    /// decisions are one badge with three colours rather than three badges.
+    Review,
+    /// Open with no review decision, or open as a draft.
+    Open,
+}
+
+impl PullRequestBadge {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Merged => "merged",
+            Self::Closed => "closed",
+            Self::Review => "review",
+            Self::Open => "open",
+        }
+    }
+
+    /// The two states a worktree may be removed from. Everything else means
+    /// work is still live on the branch, so the card offers no button at all.
+    pub fn is_settled(self) -> bool {
+        matches!(self, Self::Merged | Self::Closed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDecision {
+    ReviewRequired,
+    ChangesRequested,
+    Approved,
+}
+
+/// One branch's pull request, already tie-broken against every other pull
+/// request on that branch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PullRequestSnapshot {
+    pub number: u32,
+    pub head_branch: String,
+    pub base_branch: String,
+    pub url: String,
+    pub badge: PullRequestBadge,
+    /// Present only for a `review` badge, and only to pick its colour.
+    pub review: Option<ReviewDecision>,
+    pub is_draft: bool,
+    pub merged_at_unix_ms: Option<u64>,
+    pub updated_at_unix_ms: Option<u64>,
+}
+
+/// How a repository's `gh` lookup is doing, independent of what it found.
+///
+/// "No pull request on this branch" and "the lookup failed" are different
+/// answers and the card must not show one as the other, so availability,
+/// staleness, and the reason travel beside the results rather than being
+/// inferred from an empty list.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct GithubStatusSnapshot {
+    /// `gh` is installed and logged in.
+    pub available: bool,
+    /// No lookup has completed yet for this repository.
+    pub loading: bool,
+    /// The last lookup failed, so the values shown are the previous ones.
+    pub stale: bool,
+    pub last_success_at_unix_ms: Option<u64>,
+    /// The card's one allowed sentence: gh missing, logged out, or the exact
+    /// failure. Absent when the lookup is healthy.
+    pub unavailable_reason: Option<String>,
+}
+
+/// One repository's pull requests as `gh` reported them.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct GithubProjectSnapshot {
+    /// The repository's main worktree, which is what identifies a project.
+    pub root_path: String,
+    pub status: GithubStatusSnapshot,
+    /// The repository default branch, used as the comparison base for a
+    /// branch that has no pull request.
+    pub default_branch: Option<String>,
+    /// One entry per branch that has a pull request.
+    pub pull_requests: Vec<PullRequestSnapshot>,
+}
+
+/// Every repository's pull-request state, keyed by main worktree path.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct GithubSnapshot {
+    pub projects: Vec<GithubProjectSnapshot>,
+}
+
+impl GithubSnapshot {
+    pub fn project(&self, root_path: &str) -> Option<&GithubProjectSnapshot> {
+        self.projects
+            .iter()
+            .find(|project| project.root_path == root_path)
+    }
+}
+
+/// How far a branch is from the remote it tracks. Absent entirely when the
+/// branch has no upstream, because "nothing to push" and "nowhere to push to"
+/// are different facts and the card shows only the first.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct UnpushedSnapshot {
+    pub remote: String,
+    pub count: u32,
+}
+
+/// One worktree of one repository, as `git worktree list` reports it plus the
+/// counts the row badge and the card show.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorktreeSnapshot {
+    pub path: String,
+    pub branch: Option<String>,
+    /// Git lists the worktree but its path is not on disk.
+    pub missing: bool,
+    pub is_main: bool,
+    pub dirty: bool,
+    pub changed_file_count: u32,
+    /// What the ahead/behind and line counts are measured against: the pull
+    /// request's base when there is one, the repository default branch
+    /// otherwise, and absent when neither could be resolved.
+    pub base_branch: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    /// Lines added and removed by commits on this branch since the base.
+    /// Working-tree changes are deliberately excluded; the Changes view's
+    /// uncommitted group is where those are counted.
+    pub added_lines: u32,
+    pub removed_lines: u32,
+    pub unpushed: Option<UnpushedSnapshot>,
+}
+
+/// One repository's worktrees.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectWorktreesSnapshot {
+    pub root_path: String,
+    pub default_branch: Option<String>,
+    pub worktrees: Vec<WorktreeSnapshot>,
+    /// Why this repository has no worktree list. An empty list with no reason
+    /// means the repository genuinely has none.
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorktreeCatalogSnapshot {
+    pub projects: Vec<ProjectWorktreesSnapshot>,
+}
+
+impl WorktreeCatalogSnapshot {
+    pub fn project(&self, root_path: &str) -> Option<&ProjectWorktreesSnapshot> {
+        self.projects
+            .iter()
+            .find(|project| project.root_path == root_path)
+    }
+}
+
+/// How much disk one checkout occupies, and which of its top-level folders is
+/// the biggest share of it.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct DiskUsageSnapshot {
+    /// The checkout this measurement describes. A card whose selection has
+    /// moved on compares this against its own path and shows `measuring`
+    /// rather than the previous checkout's size.
+    pub path: Option<String>,
+    pub total_bytes: Option<u64>,
+    pub largest_child_name: Option<String>,
+    pub largest_child_bytes: Option<u64>,
+    pub unavailable_reason: Option<String>,
+}
+
+/// The right panel's summary card for the selected checkout.
+///
+/// The per-checkout git facts are not repeated here: they live on
+/// [`CheckoutSnapshot`], which the card reads through the focused checkout.
+/// What this carries is everything the card needs that a checkout row does
+/// not: the repository's `gh` health, the one measured checkout's disk usage,
+/// and whether the worktree may be removed.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct CheckoutCardSnapshot {
+    /// Absent when nothing is selected, or when the selection is a remote
+    /// checkout - remote worktree management is out of scope, so no card.
+    pub checkout_id: Option<String>,
+    pub github: GithubStatusSnapshot,
+    pub disk: DiskUsageSnapshot,
+    /// True while the selected checkout's size is still being measured.
+    pub disk_measuring: bool,
+    /// The card offers a Remove worktree button only for a settled pull
+    /// request on a linked worktree.
+    pub remove_offered: bool,
+    /// Why the offered button is disabled. `None` with `remove_offered` means
+    /// it is enabled.
+    pub remove_blocked_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1111,6 +1345,7 @@ impl Snapshot {
                 document: None,
             },
             changes: ChangesSnapshot::default(),
+            card: CheckoutCardSnapshot::default(),
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -1184,6 +1419,7 @@ impl PetSnapshot {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RestSections {
     pub navigator: NavigatorSnapshot,
+    pub card: CheckoutCardSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -1204,6 +1440,7 @@ impl RestSections {
     pub fn capture(snapshot: &Snapshot) -> Self {
         Self {
             navigator: snapshot.navigator.clone(),
+            card: snapshot.card.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -1225,6 +1462,7 @@ impl RestSections {
     /// case costs a comparison instead of a clone.
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
         self.navigator == snapshot.navigator
+            && self.card == snapshot.card
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -1310,6 +1548,7 @@ impl<'a> SnapshotDeltaWire<'a> {
 #[derive(Serialize)]
 pub struct RestWire<'a> {
     pub navigator: &'a NavigatorSnapshot,
+    pub card: &'a CheckoutCardSnapshot,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -1327,6 +1566,7 @@ impl<'a> RestWire<'a> {
     fn borrow(rest: &'a RestSections) -> Self {
         Self {
             navigator: &rest.navigator,
+            card: &rest.card,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

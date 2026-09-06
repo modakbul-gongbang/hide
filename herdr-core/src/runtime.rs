@@ -23,6 +23,7 @@ use crate::model::{
     TerminalPaneSnapshot,
     UiStateSnapshot, WorkspaceSnapshot,
 };
+use crate::model::CheckoutSnapshot;
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
@@ -789,6 +790,10 @@ struct UiStateUpdatePayload {
 /// deselects, which is what closing the diff means.
 #[derive(Debug, Deserialize)]
 struct ChangesSelectPayload {
+    /// Whether the row is in the committed group, which decides what its diff
+    /// is taken against.
+    #[serde(default)]
+    committed: bool,
     #[serde(default)]
     path: Option<String>,
 }
@@ -910,6 +915,13 @@ enum ValidatedEvent {
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
     ChangesSelect(ChangesSelectPayload),
+    /// The card's refresh button, opening the delete confirmation, and a
+    /// completed worktree removal. All three say "read again now" about a
+    /// different set of readers, and none needs a target: the card is always
+    /// the selected checkout, and a removal changes the whole worktree list.
+    CardRefresh,
+    CardMeasureDisk,
+    WorktreeRemoved,
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -1065,6 +1077,28 @@ pub struct Runtime {
     /// session-sync coordinator. Held here rather than in the snapshot because
     /// what the shell renders is the per-pane attribution, not the raw list.
     listening_ports: crate::model::ListeningPortsSnapshot,
+    /// Every open repository's worktrees, refreshed on its own window by the
+    /// session-sync coordinator. Held here rather than in the snapshot because
+    /// what the shell renders is the checkout rows these produce, not the raw
+    /// list, and because the catalog is rebuilt from them on every publish.
+    worktree_catalog: crate::model::WorktreeCatalogSnapshot,
+    /// Every open repository's pull requests, from the operator's own `gh`.
+    github: crate::model::GithubSnapshot,
+    /// The one measured checkout's disk usage.
+    disk_usage: crate::model::DiskUsageSnapshot,
+    /// Bumped whenever a pull-request answer must be discarded and taken
+    /// again: the card's refresh button, and an agent leaving `working` in one
+    /// of the project's checkouts. Both are the same instruction, so both move
+    /// the same counter and two of them in a row cost one read (G7).
+    /// One counter per local git project, keyed by its navigator path; a
+    /// project's counter moves when its own refresh is asked for.
+    github_generations: HashMap<String, u64>,
+    /// Bumped when the same checkout must be measured again: re-selecting it,
+    /// and opening the delete confirmation.
+    disk_generation: u64,
+    /// Bumped when the worktree list itself is known to have changed, which a
+    /// removal is the only in-app cause of.
+    worktree_generation: u64,
     delta: DeltaState,
 }
 
@@ -1131,7 +1165,11 @@ impl Runtime {
         );
         snapshot.navigator.focused_checkout_id = snapshot.ui_state.focused_checkout_id.clone();
         snapshot.navigator.workspaces =
-            workspace::build_catalog(&snapshot.ui_state.workspace_registrations, &[]);
+            workspace::build_catalog(
+                &snapshot.ui_state.workspace_registrations,
+                &[],
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            );
         let diagnostic = match disposition {
             persistence::LoadDisposition::Loaded => None,
             persistence::LoadDisposition::Missing => Some((
@@ -1201,6 +1239,12 @@ impl Runtime {
             forks_in_flight: HashSet::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
+            worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),
+            github: crate::model::GithubSnapshot::default(),
+            disk_usage: crate::model::DiskUsageSnapshot::default(),
+            github_generations: HashMap::new(),
+            disk_generation: 0,
+            worktree_generation: 0,
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -2091,6 +2135,7 @@ impl Runtime {
             _ => workspace::build_catalog(
                 &self.snapshot.ui_state.workspace_registrations,
                 &self.last_session_spaces,
+                &self.worktree_catalog,
             ),
         };
         Self::apply_workspace_expansion(
@@ -2253,6 +2298,14 @@ impl Runtime {
                 .push(session_tab.label.clone());
         }
 
+        // A worktree earns its row from git, not from a pane, so which rows
+        // have a terminal is only known once the tabs are attached.
+        for workspace in &mut workspaces {
+            for checkout in &mut workspace.checkouts {
+                checkout.has_panes = checkout.tabs.iter().any(|tab| !tab.panes.is_empty());
+            }
+        }
+
         for workspace in &mut workspaces {
             for checkout in &mut workspace.checkouts {
                 checkout.next_tab_label = crate::model::next_tab_label(
@@ -2313,6 +2366,7 @@ impl Runtime {
         self.reconcile_visible_tabs(&mut workspaces, &herdr_tabs);
 
         let previous = self.snapshot.navigator.clone();
+        let previous_card = self.snapshot.card.clone();
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
@@ -2342,7 +2396,7 @@ impl Runtime {
         }
         self.resync_navigator_focus();
         self.rebuild_tab_strips();
-        previous != self.snapshot.navigator
+        previous != self.snapshot.navigator || previous_card != self.snapshot.card
     }
 
     /// Puts one strip entry at a new place in its checkout's strip.
@@ -2643,6 +2697,12 @@ impl Runtime {
             .map(|(workspace_id, _)| workspace_id.clone());
         self.snapshot.navigator.root_path = focused.map(|(_, path)| path);
         self.sync_active_tab_projection();
+        // Every catalog rebuild and every focus change lands here, so this is
+        // the one place the pull-request badges and the summary card have to
+        // be re-derived from. Doing it at each call site is how the row and
+        // the card would come to disagree.
+        self.apply_pull_requests();
+        self.refresh_card();
     }
 
     /// Decides which tab each checkout shows, given what Herdr says is active
@@ -3656,7 +3716,314 @@ impl Runtime {
         Some(crate::changes::ChangesRequest {
             root_path: PathBuf::from(root_path),
             selected_path: self.snapshot.changes.selected_path.clone(),
+            selected_committed: self.snapshot.changes.selected_committed,
+            // The base comes from the checkout row, so the committed group and
+            // the card's `↑A ↓B` are measured against the same branch.
+            base_branch: self
+                .focused_local_checkout()
+                .and_then(|(_, checkout)| checkout.base_branch.clone()),
         })
+    }
+
+    /// Which repositories to list worktrees for, and what base branch each
+    /// branch is measured against.
+    ///
+    /// The bases come from the pull-request answer, so the first worktree read
+    /// compares against the repository default and a later one compares
+    /// against each pull request's own base. That is a changed request, which
+    /// is always due, so the correction arrives without a second trigger.
+    pub fn worktrees_request(&self) -> crate::worktrees::WorktreeRequest {
+        let projects = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+            .map(|workspace| crate::worktrees::WorktreeProjectRequest {
+                root_path: PathBuf::from(&workspace.path),
+                bases: self
+                    .github
+                    .project(&workspace.path)
+                    .map(|project| {
+                        project
+                            .pull_requests
+                            .iter()
+                            .map(|pull_request| {
+                                (
+                                    pull_request.head_branch.clone(),
+                                    pull_request.base_branch.clone(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect();
+        crate::worktrees::WorktreeRequest {
+            projects,
+            generation: self.worktree_generation,
+        }
+    }
+
+    pub fn ingest_worktrees(&mut self, catalog: crate::model::WorktreeCatalogSnapshot) -> bool {
+        if self.worktree_catalog == catalog {
+            return false;
+        }
+        self.worktree_catalog = catalog;
+        true
+    }
+
+    /// The worktree catalog the coordinator should build the next projection
+    /// from. Held by the runtime so a rebuild triggered from anywhere uses the
+    /// same worktrees the last read produced.
+    pub fn worktree_catalog(&self) -> crate::model::WorktreeCatalogSnapshot {
+        self.worktree_catalog.clone()
+    }
+
+    /// Which repositories to look pull requests up for. Remote projects are
+    /// out of scope, and a plain folder has no repository to ask about.
+    pub fn github_request(&self) -> crate::github::GithubRequest {
+        crate::github::GithubRequest {
+            projects: self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+                .map(|workspace| crate::github::GithubProjectRequest {
+                    root: PathBuf::from(&workspace.path),
+                    generation: self
+                        .github_generations
+                        .get(&workspace.path)
+                        .copied()
+                        .unwrap_or(0),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn ingest_github(&mut self, github: crate::model::GithubSnapshot) -> bool {
+        // A failed lookup must not erase the answer it failed to replace: the
+        // card shows the previous pull requests with `as of` beside them, so a
+        // stale project keeps its results and only its status changes.
+        let mut merged = github;
+        for project in &mut merged.projects {
+            if project.status.stale
+                && let Some(previous) = self.github.project(&project.root_path)
+                && !previous.pull_requests.is_empty()
+            {
+                project.pull_requests = previous.pull_requests.clone();
+                project.status.last_success_at_unix_ms = previous.status.last_success_at_unix_ms;
+                if project.default_branch.is_none() {
+                    project.default_branch = previous.default_branch.clone();
+                }
+            }
+        }
+        if self.github == merged {
+            return false;
+        }
+        self.github = merged;
+        self.apply_pull_requests();
+        self.refresh_card();
+        true
+    }
+
+    /// Records that one project's pull requests must be read again.
+    ///
+    /// Repeated calls before the read happens are one refresh, not several:
+    /// the counter is the request, and an unchanged request is not re-read.
+    pub fn refresh_pull_requests(&mut self, project_path: &str) {
+        let generation = self
+            .github_generations
+            .entry(project_path.to_owned())
+            .or_insert(0);
+        *generation = generation.wrapping_add(1);
+    }
+
+    /// The agent-transition trigger: an agent left `working` in each of these
+    /// directories, so the project each one sits in is read again. A
+    /// directory outside every tracked checkout is someone else's project and
+    /// moves nothing; that is what keeps a busy machine from re-reading `gh`
+    /// for every agent on it.
+    pub fn refresh_pull_requests_in(&mut self, directories: &[String]) {
+        let projects: Vec<String> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+            .filter(|workspace| {
+                directories.iter().any(|directory| {
+                    let directory = Path::new(directory);
+                    directory.starts_with(&workspace.path)
+                        || workspace
+                            .checkouts
+                            .iter()
+                            .any(|checkout| directory.starts_with(&checkout.path))
+                })
+            })
+            .map(|workspace| workspace.path.clone())
+            .collect();
+        for project in projects {
+            self.refresh_pull_requests(&project);
+        }
+    }
+
+    pub fn refresh_worktrees(&mut self) {
+        self.worktree_generation = self.worktree_generation.wrapping_add(1);
+    }
+
+    /// The one checkout whose size to measure: the selected local one.
+    pub fn disk_request(&self) -> crate::disk::DiskRequest {
+        crate::disk::DiskRequest {
+            path: self
+                .focused_local_checkout()
+                .map(|(_, checkout)| PathBuf::from(&checkout.path)),
+            generation: self.disk_generation,
+        }
+    }
+
+    pub fn ingest_disk_usage(&mut self, disk: crate::model::DiskUsageSnapshot) -> bool {
+        if self.disk_usage == disk {
+            return false;
+        }
+        self.disk_usage = disk;
+        self.refresh_card();
+        true
+    }
+
+    pub fn remeasure_disk(&mut self) {
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.refresh_card();
+    }
+
+    /// The selected checkout, when it is one this machine owns. A remote
+    /// checkout has no card: remote worktree management is out of scope, so
+    /// nothing here describes one.
+    fn focused_local_checkout(&self) -> Option<(&WorkspaceSnapshot, &CheckoutSnapshot)> {
+        let focused_checkout_id = self.snapshot.navigator.focused_checkout_id.as_deref()?;
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == focused_checkout_id)
+                    .map(|checkout| (workspace, checkout))
+            })
+    }
+
+    /// Puts each branch's pull request on the checkout row that shows it.
+    ///
+    /// The row badge and the card read the same value from the same place, so
+    /// the two cannot disagree about what a branch's pull request is.
+    fn apply_pull_requests(&mut self) -> bool {
+        let mut changed = false;
+        let github = self.github.clone();
+        for workspace in self.snapshot.navigator.workspaces.iter_mut() {
+            let project = github.project(&workspace.path);
+            for checkout in workspace.checkouts.iter_mut() {
+                let pull_request = checkout.branch.as_deref().and_then(|branch| {
+                    project?
+                        .pull_requests
+                        .iter()
+                        .find(|pull_request| pull_request.head_branch == branch)
+                        .cloned()
+                });
+                if checkout.pull_request != pull_request {
+                    checkout.pull_request = pull_request;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
+    /// Rebuilds the summary card from what the readers have answered.
+    ///
+    /// Everything per-checkout already lives on the checkout row; what is
+    /// assembled here is the repository's `gh` health, the one disk
+    /// measurement, and whether this worktree may be removed.
+    pub fn refresh_card(&mut self) -> bool {
+        let card = self.projected_card();
+        if self.snapshot.card == card {
+            return false;
+        }
+        self.snapshot.card = card;
+        true
+    }
+
+    fn projected_card(&self) -> crate::model::CheckoutCardSnapshot {
+        let Some((workspace, checkout)) = self.focused_local_checkout() else {
+            return crate::model::CheckoutCardSnapshot::default();
+        };
+        let github = if workspace.is_git {
+            self.github
+                .project(&workspace.path)
+                .map(|project| project.status.clone())
+                // No entry yet means the first lookup has not finished. That
+                // is a spinner, not an absence of pull requests.
+                .unwrap_or(crate::model::GithubStatusSnapshot {
+                    loading: true,
+                    ..crate::model::GithubStatusSnapshot::default()
+                })
+        } else {
+            crate::model::GithubStatusSnapshot::default()
+        };
+        let disk_measuring = self.disk_usage.path.as_deref() != Some(checkout.path.as_str());
+        let remove_offered = checkout.is_worktree
+            && checkout
+                .pull_request
+                .as_ref()
+                .is_some_and(|pull_request| pull_request.badge.is_settled());
+        crate::model::CheckoutCardSnapshot {
+            checkout_id: Some(checkout.id.clone()),
+            github,
+            disk: self.disk_usage.clone(),
+            disk_measuring,
+            remove_offered,
+            remove_blocked_reason: remove_offered
+                .then(|| self.remove_blocked_reason(checkout))
+                .flatten(),
+        }
+    }
+
+    /// Why the Remove worktree button is disabled, as the one line the card
+    /// shows beside it. `None` means it is enabled.
+    ///
+    /// Both reasons are work that deleting the folder would destroy, which is
+    /// why they disable rather than warn.
+    fn remove_blocked_reason(&self, checkout: &CheckoutSnapshot) -> Option<String> {
+        let agents = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .filter(|agent| {
+                checkout
+                    .tabs
+                    .iter()
+                    .flat_map(|tab| tab.panes.iter())
+                    .any(|pane| pane.id == agent.pane_id)
+            })
+            .count();
+        if agents > 0 {
+            return Some(if agents == 1 {
+                "1 agent is running here".to_owned()
+            } else {
+                format!("{agents} agents are running here")
+            });
+        }
+        if checkout.dirty {
+            return Some(match checkout.changed_file_count {
+                1 => "1 uncommitted change".to_owned(),
+                count => format!("{count} uncommitted changes"),
+            });
+        }
+        None
     }
 
     /// Accepts a projection only while it still describes the checkout the
@@ -5206,6 +5573,7 @@ impl Runtime {
         let mut workspaces = workspace::build_catalog(
             &self.snapshot.ui_state.workspace_registrations,
             &self.last_session_spaces,
+            &self.worktree_catalog,
         );
         Self::apply_workspace_expansion(
             &mut workspaces,
@@ -5378,6 +5746,10 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
+        // Selecting a checkout measures it, and selecting the one already
+        // selected measures it again - that is the card's cheapest refresh
+        // for a number that moves whenever a build runs (R8).
+        self.remeasure_disk();
         self.reset_terminal_projection(next_pane_id.clone());
         self.sync_active_tab_projection();
         self.align_visible_tab_with_selected_pane();
@@ -6840,6 +7212,33 @@ impl Runtime {
                 }
                 changed
             }
+            ValidatedEvent::CardRefresh => {
+                // The card's one refresh button re-reads both the remote
+                // answer and the local counts, because the operator pressing
+                // it means "this is out of date", not "gh is out of date".
+                if let Some((workspace, _)) = self.focused_local_checkout() {
+                    let project = workspace.path.clone();
+                    self.refresh_pull_requests(&project);
+                }
+                self.refresh_worktrees();
+                self.remeasure_disk();
+                true
+            }
+            ValidatedEvent::CardMeasureDisk => {
+                // The delete confirmation states the size it is about to
+                // delete, so it is measured when the dialog opens rather than
+                // shown from whenever the card last looked.
+                self.remeasure_disk();
+                true
+            }
+            ValidatedEvent::WorktreeRemoved => {
+                // The folder is gone, so the row and its counts must be too.
+                // Re-reading is what removes it: nothing here edits the
+                // catalog directly, so a removal that half-succeeded shows the
+                // state git actually reports (G7).
+                self.refresh_worktrees();
+                true
+            }
             ValidatedEvent::EditorTextScale(payload) => {
                 let current = self.snapshot.ui_state.editor_text_scale;
                 let Some(next) = self.stepped_text_scale(current, &payload.direction) else {
@@ -6853,10 +7252,13 @@ impl Runtime {
                 true
             }
             ValidatedEvent::ChangesSelect(payload) => {
-                if self.snapshot.changes.selected_path == payload.path {
+                if self.snapshot.changes.selected_path == payload.path
+                    && self.snapshot.changes.selected_committed == payload.committed
+                {
                     return false;
                 }
                 self.snapshot.changes.selected_path = payload.path;
+                self.snapshot.changes.selected_committed = payload.committed;
                 // The previous file's diff is dropped now rather than left
                 // showing under the newly selected file's name until the
                 // reader catches up.
@@ -7479,6 +7881,9 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
+        "card_refresh" => Ok(ValidatedEvent::CardRefresh),
+        "card_measure_disk" => Ok(ValidatedEvent::CardMeasureDisk),
+        "worktree_removed" => Ok(ValidatedEvent::WorktreeRemoved),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(ValidatedEvent::PetToggleVisible),
@@ -7566,6 +7971,258 @@ fn unix_milliseconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The catalog before the worktree reader has answered.
+    fn no_worktrees() -> crate::model::WorktreeCatalogSnapshot {
+        crate::model::WorktreeCatalogSnapshot::default()
+    }
+
+    /// A settled worktree with nothing in the way, ready for the Remove
+    /// button's rules to be applied to it.
+    fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
+        CheckoutSnapshot {
+            id: "checkout-feature".to_owned(),
+            workspace_id: "workspace-1".to_owned(),
+            label: "feature".to_owned(),
+            path: "/tmp/hide/feature".to_owned(),
+            branch: Some("feature".to_owned()),
+            is_worktree: true,
+            exists: true,
+            pull_request: Some(crate::model::PullRequestSnapshot {
+                number: 7,
+                head_branch: "feature".to_owned(),
+                base_branch: "main".to_owned(),
+                url: "https://example.invalid/pull/7".to_owned(),
+                badge,
+                review: None,
+                is_draft: false,
+                merged_at_unix_ms: None,
+                updated_at_unix_ms: None,
+            }),
+            ..CheckoutSnapshot::default()
+        }
+    }
+
+    fn card_for(runtime: &mut Runtime, checkout: CheckoutSnapshot) -> crate::model::CheckoutCardSnapshot {
+        let checkout_id = checkout.id.clone();
+        runtime.snapshot.navigator.workspaces =
+            vec![workspace("workspace-1", "hide", "/tmp/hide", vec![checkout])];
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id);
+        runtime.refresh_card();
+        runtime.snapshot.card.clone()
+    }
+
+    /// An agent finishing moves only the counter of the project it worked
+    /// in: the request for every other project is unchanged, so the reader
+    /// does not re-read them. This is the whole difference between "one `gh`
+    /// call when a run ends" and "every project re-read whenever any agent on
+    /// the machine pauses".
+    #[test]
+    fn an_agent_stopping_asks_to_re_read_only_the_project_it_worked_in() {
+        let mut runtime = runtime();
+        let mut hide = workspace(
+            "workspace-1",
+            "hide",
+            "/tmp/hide",
+            vec![settled_worktree(crate::model::PullRequestBadge::Open)],
+        );
+        hide.is_git = true;
+        let mut other = workspace("workspace-2", "other", "/tmp/other", Vec::new());
+        other.is_git = true;
+        runtime.snapshot.navigator.workspaces = vec![hide, other];
+        let generations = |runtime: &Runtime| -> Vec<(String, u64)> {
+            runtime
+                .github_request()
+                .projects
+                .into_iter()
+                .map(|project| (project.root.to_string_lossy().into_owned(), project.generation))
+                .collect()
+        };
+        assert_eq!(
+            generations(&runtime),
+            vec![("/tmp/hide".to_owned(), 0), ("/tmp/other".to_owned(), 0)]
+        );
+
+        // Inside a linked worktree of the first project.
+        runtime.refresh_pull_requests_in(&["/tmp/hide/feature/src".to_owned()]);
+        assert_eq!(
+            generations(&runtime),
+            vec![("/tmp/hide".to_owned(), 1), ("/tmp/other".to_owned(), 0)]
+        );
+
+        // Somewhere no tracked project contains, and a sibling whose name
+        // merely shares a prefix.
+        runtime.refresh_pull_requests_in(&["/tmp/elsewhere".to_owned(), "/tmp/hidex".to_owned()]);
+        assert_eq!(
+            generations(&runtime),
+            vec![("/tmp/hide".to_owned(), 1), ("/tmp/other".to_owned(), 0)]
+        );
+    }
+
+    /// The Remove button appears only where the work is over. Every other
+    /// state is a worktree someone is still using, so the card offers nothing
+    /// to press rather than a button that would refuse.
+    #[test]
+    fn the_remove_button_is_offered_only_for_a_settled_pull_request() {
+        use crate::model::PullRequestBadge;
+        let mut runtime = runtime();
+
+        for badge in [PullRequestBadge::Merged, PullRequestBadge::Closed] {
+            let card = card_for(&mut runtime, settled_worktree(badge));
+            assert!(card.remove_offered, "{badge:?} offers removal");
+            assert_eq!(card.remove_blocked_reason, None, "{badge:?} is not blocked");
+        }
+        for badge in [PullRequestBadge::Open, PullRequestBadge::Review] {
+            let card = card_for(&mut runtime, settled_worktree(badge));
+            assert!(!card.remove_offered, "{badge:?} offers no removal");
+        }
+
+        // No pull request at all is not a settled one.
+        let mut without = settled_worktree(PullRequestBadge::Merged);
+        without.pull_request = None;
+        assert!(!card_for(&mut runtime, without).remove_offered);
+
+        // The repository's own main worktree is not a linked worktree, so it
+        // is never removable however its branch's pull request ended.
+        let mut main = settled_worktree(PullRequestBadge::Merged);
+        main.is_worktree = false;
+        assert!(!card_for(&mut runtime, main).remove_offered);
+    }
+
+    /// Both blocking reasons are work that deleting the folder would destroy,
+    /// so each disables the button and says which one it is.
+    #[test]
+    fn uncommitted_work_and_a_running_agent_each_block_removal_with_their_reason() {
+        use crate::model::PullRequestBadge;
+        let mut runtime = runtime();
+
+        let mut dirty = settled_worktree(PullRequestBadge::Merged);
+        dirty.dirty = true;
+        dirty.changed_file_count = 3;
+        let card = card_for(&mut runtime, dirty);
+        assert!(card.remove_offered);
+        assert_eq!(
+            card.remove_blocked_reason.as_deref(),
+            Some("3 uncommitted changes")
+        );
+
+        let mut occupied = settled_worktree(PullRequestBadge::Merged);
+        occupied.tabs = vec![tab(
+            "workspace-1",
+            "checkout-feature",
+            Some(pane("p1", "/tmp/hide/feature")),
+        )];
+        runtime.snapshot.navigator.agents = vec![SidebarAgentSnapshot {
+            id: "agent-1".to_owned(),
+            pane_id: "p1".to_owned(),
+            workspace_label: "hide".to_owned(),
+            checkout_label: Some("feature".to_owned()),
+            agent_kind: "claude".to_owned(),
+            demand: "none".to_owned(),
+            activity: "working".to_owned(),
+            unread: false,
+            blocked: false,
+            group: "working".to_owned(),
+            symbol: "*".to_owned(),
+            emphasized: false,
+            status_label: "Working".to_owned(),
+            requires_close_confirmation: true,
+            summary: String::new(),
+            elapsed: String::new(),
+            last_activity: "0000000000001".to_owned(),
+            state_change_seq: None,
+            ambient: None,
+            session_id: None,
+            spawned_from_pane_id: None,
+        }];
+        let card = card_for(&mut runtime, occupied);
+        assert_eq!(
+            card.remove_blocked_reason.as_deref(),
+            Some("1 agent is running here")
+        );
+    }
+
+    /// The size shown must be this checkout's. Until the measurement for the
+    /// selected path arrives, the card says it is measuring rather than
+    /// showing the previous checkout's number.
+    #[test]
+    fn the_card_says_it_is_measuring_until_this_checkouts_size_arrives() {
+        use crate::model::PullRequestBadge;
+        let mut runtime = runtime();
+        let card = card_for(&mut runtime, settled_worktree(PullRequestBadge::Merged));
+        assert!(card.disk_measuring, "nothing has been measured yet");
+
+        runtime.disk_usage = crate::model::DiskUsageSnapshot {
+            path: Some("/tmp/hide/somewhere-else".to_owned()),
+            total_bytes: Some(4096),
+            ..crate::model::DiskUsageSnapshot::default()
+        };
+        let card = card_for(&mut runtime, settled_worktree(PullRequestBadge::Merged));
+        assert!(card.disk_measuring, "another checkout's size is not this one's");
+
+        runtime.disk_usage = crate::model::DiskUsageSnapshot {
+            path: Some("/tmp/hide/feature".to_owned()),
+            total_bytes: Some(4096),
+            ..crate::model::DiskUsageSnapshot::default()
+        };
+        let card = card_for(&mut runtime, settled_worktree(PullRequestBadge::Merged));
+        assert!(!card.disk_measuring);
+        assert_eq!(card.disk.total_bytes, Some(4096));
+    }
+
+    /// A failed lookup must not erase the pull requests it failed to replace:
+    /// the card shows the previous ones with how old they are, which is a
+    /// different thing from showing none.
+    #[test]
+    fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
+        use crate::model::{
+            GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
+            PullRequestSnapshot,
+        };
+        let mut runtime = runtime();
+        let pull_request = PullRequestSnapshot {
+            number: 7,
+            head_branch: "feature".to_owned(),
+            base_branch: "main".to_owned(),
+            url: "https://example.invalid/pull/7".to_owned(),
+            badge: PullRequestBadge::Open,
+            review: None,
+            is_draft: false,
+            merged_at_unix_ms: None,
+            updated_at_unix_ms: None,
+        };
+        runtime.ingest_github(GithubSnapshot {
+            projects: vec![GithubProjectSnapshot {
+                root_path: "/tmp/hide".to_owned(),
+                status: GithubStatusSnapshot {
+                    available: true,
+                    last_success_at_unix_ms: Some(1_000),
+                    ..GithubStatusSnapshot::default()
+                },
+                default_branch: Some("main".to_owned()),
+                pull_requests: vec![pull_request.clone()],
+            }],
+        });
+
+        runtime.ingest_github(GithubSnapshot {
+            projects: vec![GithubProjectSnapshot {
+                root_path: "/tmp/hide".to_owned(),
+                status: GithubStatusSnapshot {
+                    available: true,
+                    stale: true,
+                    unavailable_reason: Some("gh pr list: network unreachable".to_owned()),
+                    ..GithubStatusSnapshot::default()
+                },
+                ..GithubProjectSnapshot::default()
+            }],
+        });
+
+        let project = runtime.github.project("/tmp/hide").expect("the project survives");
+        assert_eq!(project.pull_requests, vec![pull_request]);
+        assert!(project.status.stale);
+        assert_eq!(project.status.last_success_at_unix_ms, Some(1_000));
+        assert_eq!(project.default_branch.as_deref(), Some("main"));
+    }
     use crate::model::{MAX_PANE_TEXT_SCALE, MIN_PANE_TEXT_SCALE};
     use crate::live::SessionFetchError;
     use crate::model::{
@@ -8585,12 +9242,14 @@ mod tests {
             is_worktree: false,
             exists: true,
             temporary: false,
+            has_panes: pane.is_some(),
             tabs: pane
                 .clone()
                 .map(|pane| vec![tab(workspace_id, checkout_id, Some(pane))])
                 .unwrap_or_default(),
             active_tab_id: pane.map(|_| format!("{checkout_id}:tab")),
             strip: Vec::new(),
+            ..CheckoutSnapshot::default()
         }
     }
 
@@ -11796,7 +12455,8 @@ mod tests {
         }];
         let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
         let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-        runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
+        runtime.snapshot.navigator.workspaces =
+            workspace::build_catalog(&[], &spaces, &no_worktrees());
         runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
@@ -11820,7 +12480,11 @@ mod tests {
         .expect("second directory pane payload");
         let catalog = session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
-            workspaces: workspace::build_catalog(&[], &spaces),
+            workspaces: workspace::build_catalog(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -11866,7 +12530,8 @@ mod tests {
         // pane, not the Herdr workspace id, decides which layout is projected.
         let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
         let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-        runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces);
+        runtime.snapshot.navigator.workspaces =
+            workspace::build_catalog(&[], &spaces, &no_worktrees());
         runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
         runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
@@ -11909,7 +12574,11 @@ mod tests {
         .expect("two workspace layout payload");
         let catalog = session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
-            workspaces: workspace::build_catalog(&[], &spaces),
+            workspaces: workspace::build_catalog(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         };
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
 
@@ -11992,7 +12661,7 @@ mod tests {
             device_id: "local".to_owned(),
         }];
 
-        let catalog = workspace::build_catalog(&registrations, &spaces);
+        let catalog = workspace::build_catalog(&registrations, &spaces, &no_worktrees());
 
         // The registration is the row's identity; the Herdr workspace is
         // attached to it rather than replacing it.
@@ -12035,7 +12704,11 @@ mod tests {
         .expect("occupied payload");
         let catalog = session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
-            workspaces: workspace::build_catalog(&[], &spaces),
+            workspaces: workspace::build_catalog(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         };
         runtime.restore_hint_pending = false;
         assert!(runtime.ingest_session_with_catalog(Ok(occupied), Some(catalog)));

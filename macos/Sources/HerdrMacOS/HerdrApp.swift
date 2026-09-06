@@ -25,6 +25,18 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     override init() {
         let startedAt = Date()
         HideLaunchTrace.mark("delegate.init.begin")
+        // A write to a pipe whose reader has gone kills the process with
+        // SIGPIPE unless the process says otherwise, and this process is
+        // Swift's, so Rust's own ignore never applied to it. The core writes
+        // to a herdr control session for every attached pane, and closing a
+        // pane closes that session under it: the app exited with signal 13
+        // on every pane close (2026-09-03, dev build, `exit=141`). Ignoring
+        // the signal turns the write into the EPIPE error the core already
+        // handles and logs.
+        signal(SIGPIPE, SIG_IGN)
+        // Before the core exists, so the tools it runs - `gh` above all - are
+        // looked up on the operator's PATH rather than on Finder's.
+        HideRuntimeEnvironment.applyPathToProcess()
         model = ShellModel()
         super.init()
         HideLaunchTrace.mark(

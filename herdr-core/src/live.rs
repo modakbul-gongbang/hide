@@ -127,6 +127,19 @@ pub fn spawn_workspace_creation(
         .spawn(move || {
             let started = Instant::now();
             let request_path = path.clone();
+            // The catalog this worker builds replaces the navigator's, so it
+            // must carry the worktree rows the reader has already found.
+            // Building it from an empty catalog would drop every worktree
+            // without a pane until the next read.
+            let worktrees = context
+                .runtime
+                .upgrade()
+                .and_then(|runtime| {
+                    let catalog = runtime.lock().ok().map(|guard| guard.worktree_catalog());
+                    drop(runtime);
+                    catalog
+                })
+                .unwrap_or_default();
             let result = workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID)
                 .and_then(|registration| {
                     let root = Path::new(&registration.path);
@@ -154,7 +167,7 @@ pub fn spawn_workspace_creation(
                             )
                         })?;
                     let before_spaces = Runtime::session_spaces(&before);
-                    let before_catalog = workspace::build_catalog(&registrations, &before_spaces);
+                    let before_catalog = workspace::build_catalog(&registrations, &before_spaces, &worktrees);
                     let needs_herdr_workspace = before_catalog
                         .iter()
                         .any(|workspace| workspace.id == registration.id);
@@ -180,7 +193,7 @@ pub fn spawn_workspace_creation(
                         before
                     };
                     let spaces = Runtime::session_spaces(&session);
-                    let workspaces = workspace::build_catalog(&registrations, &spaces);
+                    let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
                     Ok(WorkspaceCreationOutcome {
                         registration,
                         base_registrations,

@@ -125,6 +125,11 @@ impl SessionSyncContext {
 struct CatalogCache {
     registrations: Vec<WorkspaceRegistration>,
     spaces: Vec<workspace::SessionSpace>,
+    /// The worktrees the cached catalog was built from. Without this a new
+    /// worktree, a merge, or a commit would never reach the sidebar: the
+    /// registrations and spaces would compare equal and the stale rows would
+    /// be republished unchanged.
+    worktrees: crate::model::WorktreeCatalogSnapshot,
     workspaces: Vec<WorkspaceSnapshot>,
     built_at: Instant,
 }
@@ -219,6 +224,15 @@ fn run_coordinator(
     let mut changes_reader = context.is_local().then(crate::changes::ChangesReader::new);
     // A listening port is this machine's, so only the local coordinator looks.
     let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
+    // The three project-panel readers describe this machine's repositories:
+    // its worktrees, its `gh` login's view of their pull requests, and one
+    // checkout's size on this disk. All three run their subprocess on a worker
+    // thread, so a slow `gh` or `du` costs no coordinator latency.
+    let mut worktree_reader = context
+        .is_local()
+        .then(crate::worktrees::WorktreeReader::new);
+    let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
+    let mut disk_reader = context.is_local().then(crate::disk::DiskReader::new);
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -281,7 +295,13 @@ fn run_coordinator(
                     let publish =
                         agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
                     if publish {
-                        current.replace_agents(agents);
+                        let stopped_in = current.replace_agents(agents);
+                        if !stopped_in.is_empty()
+                            && !request_pull_request_refresh(&context, &stopped_in)
+                        {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
                         if current.ready_to_publish()
                             && !publish_replica(&context, current, &mut catalog_cache)
                         {
@@ -331,6 +351,59 @@ fn run_coordinator(
             // in.
             if let Some(ports) = reader.read_if_due()
                 && !publish_ports(&context, ports)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = worktree_reader.as_mut() {
+            let Some(request) = read_worktrees_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(catalog) = reader.read_if_due(request) {
+                // New worktree facts change which rows exist and what they
+                // say, so the catalog is rebuilt rather than only stored.
+                match publish_worktrees(&context, catalog) {
+                    None => {
+                        stop_subscription(&mut subscription);
+                        return;
+                    }
+                    Some(true) => {
+                        if let Some(current) = replica.as_ref()
+                            && current.ready_to_publish()
+                            && !publish_replica(&context, current, &mut catalog_cache)
+                        {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
+                    }
+                    Some(false) => {}
+                }
+            }
+        }
+
+        if let Some(reader) = github_reader.as_mut() {
+            let Some(request) = read_github_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(github) = reader.read_if_due(request)
+                && !publish_github(&context, github)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = disk_reader.as_mut() {
+            let Some(request) = read_disk_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(disk) = reader.read_if_due(request)
+                && !publish_disk_usage(&context, disk)
             {
                 stop_subscription(&mut subscription);
                 return;
@@ -667,8 +740,11 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let registrations = match runtime.lock() {
-        Ok(guard) => guard.snapshot().ui_state.workspace_registrations.clone(),
+    let (registrations, worktrees) = match runtime.lock() {
+        Ok(guard) => (
+            guard.snapshot().ui_state.workspace_registrations.clone(),
+            guard.worktree_catalog(),
+        ),
         Err(_) => return false,
     };
     drop(runtime);
@@ -677,13 +753,15 @@ fn publish_replica(
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         cache.registrations == registrations
             && cache.spaces == spaces
+            && cache.worktrees == worktrees
             && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
-        let workspaces = workspace::build_catalog(&registrations, &spaces);
+        let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
         *catalog_cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
+            worktrees,
             workspaces,
             built_at: Instant::now(),
         });
@@ -765,6 +843,92 @@ fn publish_changes(context: &SessionSyncContext, changes: crate::model::ChangesS
     };
     let changed = match runtime.lock() {
         Ok(mut guard) => guard.ingest_changes(changes),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+/// Reads what the worktree reader needs, holding the runtime mutex only for
+/// the read itself. `None` means the runtime is gone.
+fn read_worktrees_request(
+    context: &SessionSyncContext,
+) -> Option<crate::worktrees::WorktreeRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.worktrees_request();
+    drop(runtime);
+    Some(request)
+}
+
+/// Records that the pull requests must be read again now.
+///
+/// Several agents finishing at once are one refresh, because the runtime's
+/// counter is the request and an unchanged request is not re-read (G7).
+fn request_pull_request_refresh(context: &SessionSyncContext, directories: &[String]) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let recorded = match runtime.lock() {
+        Ok(mut guard) => {
+            guard.refresh_pull_requests_in(directories);
+            true
+        }
+        Err(_) => false,
+    };
+    drop(runtime);
+    recorded
+}
+
+fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::GithubRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.github_request();
+    drop(runtime);
+    Some(request)
+}
+
+fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.disk_request();
+    drop(runtime);
+    Some(request)
+}
+
+/// Stores a worktree catalog. `None` means the runtime is gone; `Some(true)`
+/// means the rows changed and the navigator catalog must be rebuilt.
+fn publish_worktrees(
+    context: &SessionSyncContext,
+    catalog: crate::model::WorktreeCatalogSnapshot,
+) -> Option<bool> {
+    let runtime = context.runtime.upgrade()?;
+    let changed = runtime.lock().ok()?.ingest_worktrees(catalog);
+    drop(runtime);
+    Some(changed)
+}
+
+fn publish_github(context: &SessionSyncContext, github: crate::model::GithubSnapshot) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_github(github),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_disk_usage(context: &SessionSyncContext, disk: crate::model::DiskUsageSnapshot) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_disk_usage(disk),
         Err(_) => return false,
     };
     drop(runtime);
@@ -1267,10 +1431,14 @@ impl SessionReplica {
                             .is_some_and(|worktree| worktree.is_linked_worktree),
                         exists: !path.is_empty(),
                         temporary: false,
+                        // A remote checkout carries no worktree, pull-request,
+                        // or disk facts: those readers describe this machine.
+                        has_panes: !tabs.is_empty(),
                         tabs,
                         active_tab_id,
                         strip,
                         next_tab_label,
+                        ..CheckoutSnapshot::default()
                     }],
                 }
             })
@@ -1336,8 +1504,33 @@ impl SessionReplica {
             && self.pending_active_tab_focuses.is_empty()
     }
 
-    fn replace_agents(&mut self, agents: Vec<ProjectedAgent>) {
+    /// Replaces the agent list and reports where agents stopped working.
+    ///
+    /// An agent leaving `working` is the moment its checkout's pull request is
+    /// most likely to have just changed - it is what a run that ends in a push
+    /// looks like from here - so it is the one event that re-reads `gh`
+    /// without waiting out the five-minute window. Detecting it here rather
+    /// than in the runtime keeps the comparison on the thread that already
+    /// holds both the old and the new list.
+    ///
+    /// Returns the working directory of each agent that stopped, taken from
+    /// the list it was working in: a pane that has since closed is gone from
+    /// the new list and its old record is the one that still says where.
+    fn replace_agents(&mut self, agents: Vec<ProjectedAgent>) -> Vec<String> {
+        let stopped_in: Vec<String> = self
+            .state
+            .agents
+            .iter()
+            .filter(|agent| agent.agent_status.as_deref() == Some("working"))
+            .filter(|agent| {
+                !agents.iter().any(|next| {
+                    next.pane_id == agent.pane_id && next.agent_status.as_deref() == Some("working")
+                })
+            })
+            .filter_map(|agent| agent.cwd.clone())
+            .collect();
         self.state.agents = agents;
+        stopped_in
     }
 
     fn apply(&mut self, event: ReplicaEnvelope) -> Result<ApplyOutcome, SessionFetchError> {
@@ -3206,6 +3399,7 @@ mod tests {
         CatalogCache {
             registrations: Vec::new(),
             spaces: Vec::new(),
+            worktrees: crate::model::WorktreeCatalogSnapshot::default(),
             workspaces: Vec::new(),
             built_at: Instant::now(),
         }
