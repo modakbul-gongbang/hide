@@ -1225,9 +1225,7 @@ impl Drop for RusshApiConnection {
             "Herdr socket connection complete",
             "en",
         )) {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "remote_herdr_api",
                     "kind": "disconnect.failed",
                     "target": self.client.host.host_id,
@@ -2502,9 +2500,7 @@ impl RemoteTerminalConnection {
             "remote terminal session complete",
             "en",
         )) {
-            eprintln!(
-                "{}",
-                json!({
+            crate::diagnostic!(json!({
                     "component": "remote_terminal_session",
                     "kind": "disconnect.failed",
                     "target": self.target_id,
@@ -4005,9 +4001,7 @@ mod tests {
         scroll_requested.store(true, Ordering::Release);
         writer
             .write_all(
-                crate::live::terminal_scroll_line("up", 1_000)
-                    .unwrap()
-                    .as_bytes(),
+                b"{\"type\":\"terminal.scroll\",\"direction\":\"up\",\"lines\":1000,\"source\":\"wheel\"}\n",
             )
             .expect("scroll repaint request writes");
         writer.flush().expect("scroll repaint requests flush");

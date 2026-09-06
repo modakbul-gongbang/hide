@@ -5,6 +5,11 @@ import Testing
 
 @Suite("Pane shortcut settings")
 struct PaneShortcutSettingsTests {
+    @Test func wheelModifiersUseTheHostProtocolBits() {
+        #expect(PaneScrollPolicy.modifiers([.shift, .control, .option, .command]) == 15)
+        #expect(PaneScrollPolicy.modifiers([.capsLock, .numericPad]) == 0)
+    }
+
     @Test func missingStateUsesTheFourDocumentedDefaults() {
         let resolution = PaneShortcutPolicy.resolve(stored: [:])
 
@@ -418,8 +423,8 @@ struct PaneShortcutSettingsTests {
         let ordinary = scrollEvent(deltaY: 3, modifiers: [.capsLock])
         let option = scrollEvent(deltaY: 3, modifiers: [.option, .capsLock])
 
-        #expect(PaneScrollPolicy.routesToLocalScroll(ordinary))
-        #expect(!PaneScrollPolicy.routesToLocalScroll(option))
+        #expect(PaneScrollPolicy.routesToHerdrScroll(ordinary))
+        #expect(!PaneScrollPolicy.routesToHerdrScroll(option))
     }
 
     @MainActor

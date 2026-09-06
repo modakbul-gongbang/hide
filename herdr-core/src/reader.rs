@@ -119,9 +119,7 @@ where
                 Ok(_) => self.inflight = Some((request, receiver)),
                 // A thread the OS refused is a real failure, not an empty
                 // answer: it is stated once here and the next wake retries.
-                Err(error) => eprintln!(
-                    "{}",
-                    serde_json::json!({
+                Err(error) => crate::diagnostic!(serde_json::json!({
                         "component": "reader",
                         "kind": "worker.spawn_failed",
                         "message": error.to_string(),

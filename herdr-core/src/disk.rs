@@ -86,9 +86,7 @@ fn measure(path: &Path) -> DiskUsageSnapshot {
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     let measured = parse_du(&text, path);
     if !output.status.success() || measured.total_bytes.is_none() {
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "disk",
                 "kind": "measure.failed",
                 "path": path_text,

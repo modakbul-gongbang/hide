@@ -921,7 +921,15 @@ pub(crate) fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
     Ok(line)
 }
 
-pub(crate) fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, String> {
+/// A wheel carries the pointer's cell and modifiers because Herdr uses them
+/// when the application tracks the mouse. Coordinates are zero-based.
+pub(crate) fn terminal_scroll_line(
+    direction: &str,
+    lines: u16,
+    column: Option<u16>,
+    row: Option<u16>,
+    modifiers: u8,
+) -> Result<String, String> {
     if !matches!(direction, "up" | "down") {
         return Err(format!(
             "terminal scroll direction is not up or down: {direction}"
@@ -935,6 +943,9 @@ pub(crate) fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String
         "direction": direction,
         "lines": lines,
         "source": "wheel",
+        "column": column,
+        "row": row,
+        "modifiers": modifiers,
     }))
     .map_err(|error| format!("terminal scroll could not be encoded: {error}"))?;
     line.push('\n');

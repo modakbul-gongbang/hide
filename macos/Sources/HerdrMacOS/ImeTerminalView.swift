@@ -130,6 +130,7 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
+    var onOrdinaryClick: ((Int, Int, Int) -> Void)?
 
     /// SwiftTerm cannot see this shell's design system, so it hands the bar
     /// over and the shell paints it. Only the parts the vendor exposes are
@@ -237,6 +238,11 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
 
     override func mouseUp(with event: NSEvent) {
         routeMouseUp(event)
+    }
+
+    func replayOrdinaryClick(_ event: NSEvent) {
+        let cell = mouseCell(with: event)
+        onOrdinaryClick?(cell.column, cell.row, PaneScrollPolicy.modifiers(event.modifierFlags))
     }
 
     func forwardMouseDown(_ event: NSEvent, selectingLocally: Bool) {

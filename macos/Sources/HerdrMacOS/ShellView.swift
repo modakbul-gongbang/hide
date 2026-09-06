@@ -281,6 +281,7 @@ struct HideTerminalGrid<Content: View>: View {
                 ForEach(items, id: \.paneID) { item in
                     let frame = item.visualFrame
                     content(item)
+                        .environment(\.hideTerminalPaneVisible, item.isVisible)
                         .padding(HideTheme.spacingXS)
                         .frame(
                             width: geometry.size.width * CGFloat(frame.width),
@@ -829,7 +830,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: status == "observing" ? "lock.fill" : "exclamationmark.triangle.fill")
                     Text(transportNotice)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: HideTheme.spacingSM)
                     Button("Reconnect", action: onReconnect)
                         .buttonStyle(.borderless)
@@ -864,6 +865,14 @@ struct HideTerminalPaneCard<Content: View>: View {
         switch status {
         case "observing":
             statusMessage ?? "Another client owns terminal control."
+        case "waiting_size":
+            statusMessage ?? "Waiting for the pane view to report its size."
+        case "released":
+            statusMessage ?? "Terminal connection released. Reconnecting when shown."
+        case "starting":
+            statusMessage ?? "Starting terminal connection."
+        case "controlling":
+            statusMessage
         case "unavailable", "ended", "closed":
             statusMessage ?? "Terminal transport is unavailable."
         default:

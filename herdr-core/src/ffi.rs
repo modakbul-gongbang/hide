@@ -107,6 +107,7 @@ impl ChangeNotifier {
 
 #[repr(C)]
 pub struct HerdrCore {
+    _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     _remote_session_sync: Vec<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
@@ -197,6 +198,15 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         {
             options.herdr_socket_path = Some(path.clone());
         }
+        #[cfg(not(test))]
+        if let Err(error) =
+            crate::diagnostics::install(std::path::Path::new(&options.app_state_path))
+        {
+            std::eprintln!(
+                "{}",
+                serde_json::json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
+            );
+        }
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
@@ -264,9 +274,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 match result {
                     Ok(handle) => remote_session_sync.push(handle),
                     Err(message) => {
-                        eprintln!(
-                            "{}",
-                            serde_json::json!({
+                        crate::diagnostic!(serde_json::json!({
                                 "component": "remote_session_sync",
                                 "kind": "coordinator.spawn_failed",
                                 "target": target.id,
@@ -284,7 +292,22 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 }
             }
         }
+        let maintenance = match crate::terminal_recovery::Maintenance::spawn(
+            Arc::downgrade(&runtime),
+            notifier.clone(),
+        ) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                lock_recover(&runtime).set_error(
+                    "terminal.recovery_unavailable",
+                    error.to_string(),
+                    true,
+                );
+                None
+            }
+        };
         Box::into_raw(Box::new(HerdrCore {
+            _terminal_maintenance: maintenance,
             _session_sync: session_sync,
             _remote_session_sync: remote_session_sync,
             runtime,

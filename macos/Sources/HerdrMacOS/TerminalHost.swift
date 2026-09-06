@@ -13,6 +13,7 @@ struct TerminalHost: NSViewRepresentable {
     /// hidden then, which is what makes AppKit skip its display pass; the
     /// frame, and so the PTY size, is untouched.
     @Environment(\.hideCanvasVisible) private var canvasVisible
+    @Environment(\.hideTerminalPaneVisible) private var paneVisible
 
     /// Pushes the core's search result into this pane's find bar.
     ///
@@ -51,6 +52,11 @@ struct TerminalHost: NSViewRepresentable {
             )
         )
         terminal.hidePaneID = paneID
+        terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
+        terminal.terminalDisplayTick = { [weak coordinator = context.coordinator] period in
+            TerminalLatency.displayPeriod(period, paneID: paneID)
+            coordinator?.flushSettledSize()
+        }
         terminal.terminalDelegate = context.coordinator
         terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
         terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.045, green: 0.055, blue: 0.075, alpha: 1)
@@ -64,6 +70,9 @@ struct TerminalHost: NSViewRepresentable {
         terminal.searchHighlightColor = HideTheme.Native.searchMatchHighlight
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
         terminal.onPointerFocus = onFocus
+        terminal.onOrdinaryClick = { [weak coordinator = context.coordinator] column, row, modifiers in
+            coordinator?.bridge.clickTerminal(paneID: paneID, column: column, row: row, modifiers: modifiers)
+        }
         terminal.onPaneFind = { [weak bridge] term, options, step in
             bridge?.findInPane(
                 paneID: paneID,
@@ -77,9 +86,22 @@ struct TerminalHost: NSViewRepresentable {
         context.coordinator.terminal = terminal
         context.coordinator.registrationID = bridge.registerTerminal(
             paneID: paneID,
-            receive: { [weak terminal] bytes in
+            receive: { [weak terminal] delivery in
                 precondition(Thread.isMainThread)
-                terminal?.feed(byteArray: bytes[...])
+                guard let terminal else { return }
+                if let sent = delivery.inputSent {
+                    TerminalLatency.inputSent(sent, paneID: paneID)
+                    return
+                }
+                let bytes = delivery.bytes
+                if let frame = delivery.frame,
+                   frame.width != terminal.getTerminal().cols || frame.height != terminal.getTerminal().rows {
+                    return
+                }
+                if !terminal.isHiddenOrHasHiddenAncestor, bytes != [0x1b, 0x63] {
+                    TerminalLatency.begin(.receiveToDraw, paneID: paneID)
+                }
+                terminal.feed(byteArray: bytes[...])
                 // The caret advances on the next layout pass after a feed;
                 // keep an active composition overlay anchored to it.
                 DispatchQueue.main.async { [weak terminal] in
@@ -104,14 +126,16 @@ struct TerminalHost: NSViewRepresentable {
         context.coordinator.onOpenLink = onOpenLink
         (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
         applyPaneFind(to: terminal)
-        if terminal.isHidden == canvasVisible {
+        let showing = canvasVisible && paneVisible
+        if terminal.isHidden == showing {
             // Applied on the next run-loop turn: hiding an NSView inside
             // SwiftUI's update pass re-enters the layout that is running and
             // trips the attribute graph's cycle detector.
-            let visible = canvasVisible
+            let visible = showing
             DispatchQueue.main.async { [weak terminal] in
                 guard let terminal, terminal.isHidden == visible else { return }
                 terminal.isHidden = !visible
+                if !visible { TerminalLatency.hidden(paneID: paneID) }
                 // Bytes fed while hidden were parsed but not drawn, so the
                 // first frame after coming forward is drawn from the buffer.
                 if visible {
@@ -136,21 +160,22 @@ struct TerminalHost: NSViewRepresentable {
                 registrationID: registrationID
             )
         }
+        terminal.terminalDisplayTick = nil
+        TerminalLatency.release(paneID: coordinator.paneID)
+        terminal.terminalContentsDidDraw = nil
         terminal.terminalDelegate = nil
         (terminal as? ImeTerminalView)?.onPointerFocus = nil
+        (terminal as? ImeTerminalView)?.onOrdinaryClick = nil
     }
 
-    final class Coordinator: NSObject, TerminalViewDelegate {
+    @MainActor final class Coordinator: NSObject, @preconcurrency TerminalViewDelegate {
         var bridge: CoreBridge
         let paneID: String
         var onOpenLink: @MainActor @Sendable (String) -> Void
         var registrationID: UUID?
         weak var terminal: TerminalView?
-        /// Whether this view has already asked for the frame it was built
-        /// without. One view asks once: later size reports are the operator
-        /// resizing a pane that is already drawing.
-        private var askedForRepaint = false
-
+        private var settledSize = SettledTerminalSize()
+        private var reportedFirstSize = false
         init(
             bridge: CoreBridge,
             paneID: String,
@@ -165,38 +190,24 @@ struct TerminalHost: NSViewRepresentable {
             // SwiftTerm delivers delegate sends synchronously from key
             // handling on the main thread; the isolation assumption fails
             // loudly if that ever changes.
-            let deliverable = MainActor.assumeIsolated {
-                (source as? ImeTerminalView)?.shouldDeliverToPane(data) ?? true
-            }
-            guard deliverable else { return }
-            let bytes = Array(data)
-            let paneID = self.paneID
-            Task { @MainActor [weak bridge] in
-                bridge?.sendTerminalInput(bytes, paneID: paneID)
+            MainActor.assumeIsolated {
+                guard (source as? ImeTerminalView)?.shouldDeliverToPane(data) ?? true else { return }
+                bridge.sendTerminalInput(Array(data), paneID: paneID)
             }
         }
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-            guard newCols > 0, newRows > 0 else { return }
-            let paneID = self.paneID
-            // The first report is this view's geometry settling, and it is
-            // also the moment the pane is known to be sized. If the pane was
-            // already running at this size the core swallows the resize, and
-            // this new grid would stay empty until the pane happened to write
-            // something, so the repaint is asked for right behind it. A pane
-            // that is not attached yet ignores it and draws its attach frame.
-            let repaint = !askedForRepaint
-            askedForRepaint = true
-            Task { @MainActor [weak bridge] in
-                bridge?.resizeTerminal(
-                    paneID: paneID,
-                    cols: newCols,
-                    rows: newRows
-                )
-                if repaint {
-                    bridge?.repaintTerminal(paneID: paneID)
-                }
+            MainActor.assumeIsolated {
+                settledSize.report(cols: newCols, rows: newRows)
+                // This updates the frame guard only. It never resizes the PTY.
+                bridge.reportTerminalViewport(paneID: paneID, cols: newCols, rows: newRows, newView: !reportedFirstSize)
+                reportedFirstSize = true
             }
+        }
+
+        @MainActor func flushSettledSize() {
+            guard let grid = settledSize.displayTick() else { return }
+            bridge.resizeTerminal(paneID: paneID, cols: grid.cols, rows: grid.rows)
         }
 
         func setTerminalTitle(source: TerminalView, title: String) {}
@@ -214,5 +225,15 @@ struct TerminalHost: NSViewRepresentable {
                 handler(link)
             }
         }
+    }
+}
+
+private struct TerminalPaneVisibilityKey: EnvironmentKey {
+    static let defaultValue = true
+}
+extension EnvironmentValues {
+    var hideTerminalPaneVisible: Bool {
+        get { self[TerminalPaneVisibilityKey.self] }
+        set { self[TerminalPaneVisibilityKey.self] = newValue }
     }
 }

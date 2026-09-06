@@ -9,27 +9,27 @@ import Testing
 @Suite("Held terminal bytes")
 struct PendingTerminalBufferTests {
     @Test func aPaneWithNoViewHoldsAtMostTheChunksTheCoreItselfKeeps() {
-        var buffer = PendingTerminalBuffer()
+        var buffer = PendingTerminalBuffer<[UInt8]>()
         var dropped = 0
         for index in 0..<600 {
             dropped += buffer.append([UInt8(index % 251)], for: "w1:p1")
         }
 
-        #expect(buffer.count(for: "w1:p1") == PendingTerminalBuffer.chunkLimit)
-        #expect(dropped == 600 - PendingTerminalBuffer.chunkLimit)
+        #expect(buffer.count(for: "w1:p1") == PendingTerminalBuffer<[UInt8]>.chunkLimit)
+        #expect(dropped == 600 - PendingTerminalBuffer<[UInt8]>.chunkLimit)
     }
 
     /// The oldest chunks are the ones that go, so what is drawn when a view
     /// finally registers is the most recent output rather than the first.
     @Test func theOldestChunksAreTheOnesDropped() {
-        var buffer = PendingTerminalBuffer()
-        for index in 0..<(PendingTerminalBuffer.chunkLimit + 3) {
+        var buffer = PendingTerminalBuffer<[UInt8]>()
+        for index in 0..<(PendingTerminalBuffer<[UInt8]>.chunkLimit + 3) {
             buffer.append([UInt8(index % 251)], for: "w1:p1")
         }
 
         let held = buffer.take("w1:p1")
         #expect(held?.first == [3])
-        #expect(held?.last == [UInt8((PendingTerminalBuffer.chunkLimit + 2) % 251)])
+        #expect(held?.last == [UInt8((PendingTerminalBuffer<[UInt8]>.chunkLimit + 2) % 251)])
         #expect(buffer.count(for: "w1:p1") == 0)
     }
 
@@ -37,7 +37,7 @@ struct PendingTerminalBufferTests {
     /// from Herdr's own full frame, so the held bytes are dropped rather than
     /// carried.
     @Test func aPaneThatIsNoLongerDrawableLosesWhatWasHeldForIt() {
-        var buffer = PendingTerminalBuffer()
+        var buffer = PendingTerminalBuffer<[UInt8]>()
         buffer.append([1], for: "w1:p1")
         buffer.append([2], for: "w1:p2")
         buffer.append([3], for: "w1:p3")
@@ -53,7 +53,7 @@ struct PendingTerminalBufferTests {
     }
 
     @Test func takingFromAPaneThatHeldNothingReturnsNothing() {
-        var buffer = PendingTerminalBuffer()
+        var buffer = PendingTerminalBuffer<[UInt8]>()
         #expect(buffer.take("w1:p9") == nil)
         #expect(buffer.retain(paneIDs: []).isEmpty)
     }

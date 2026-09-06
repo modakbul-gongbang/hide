@@ -149,9 +149,7 @@ impl Drop for SessionSyncHandle {
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
         {
-            eprintln!(
-                "{}",
-                json!({
+            crate::diagnostic!(json!({
                     "component": "session_sync",
                     "kind": "coordinator.join_failed",
                 })
@@ -178,9 +176,7 @@ impl ActiveSubscription {
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
         {
-            eprintln!(
-                "{}",
-                json!({
+            crate::diagnostic!(json!({
                     "component": "session_sync",
                     "kind": "subscription_reader.join_failed",
                     "generation": self.generation,
@@ -455,9 +451,7 @@ fn run_coordinator(
                     Ok(SubscriptionLine::Error { code, message }) => {
                         let event_gap = code == "event_gap" || code == "event_journal_unavailable";
                         let cursor = replica.as_ref().map(|current| current.cursor);
-                        eprintln!(
-                            "{}",
-                            json!({
+                        crate::diagnostic!(json!({
                                 "component": "session_sync",
                                 "kind": "subscription.error",
                                 "target": context.log_target(),
@@ -713,9 +707,7 @@ fn publish_replica(
             Err(error) => (Err(error), Vec::new()),
         };
         for exclusion in excluded {
-            eprintln!(
-                "{}",
-                json!({
+            crate::diagnostic!(json!({
                     "component": "remote_session",
                     "kind": "agent.excluded",
                     "target": target_id,
@@ -1031,9 +1023,7 @@ fn log_sync_failure(
     replica: Option<&SessionReplica>,
     error: &SessionFetchError,
 ) {
-    eprintln!(
-        "{}",
-        json!({
+    crate::diagnostic!(json!({
             "component": "session_sync",
             "kind": kind,
             "target": context.log_target(),
@@ -2946,10 +2936,7 @@ mod tests {
         }]);
         let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
-        assert_eq!(
-            replica.project().agents[0].id.as_deref(),
-            Some("observer")
-        );
+        assert_eq!(replica.project().agents[0].id.as_deref(), Some("observer"));
     }
 
     #[test]

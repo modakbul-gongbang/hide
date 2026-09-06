@@ -235,13 +235,16 @@ pub struct SidebarAgentSnapshot {
     pub last_activity: String,
     /// Herdr's own state change sequence, one of the three inputs to a pane's
     /// read record.
+    #[serde(skip_serializing)]
     pub state_change_seq: Option<u64>,
     pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
     /// because neither agent's fork command takes one.
+    #[serde(skip_serializing)]
     pub session_id: Option<String>,
     /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
@@ -622,6 +625,30 @@ pub struct TerminalChunk {
     pub pane_id: String,
     pub sequence: u64,
     pub bytes_base64: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<TerminalFrame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_sent: Option<TerminalInputSent>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+pub struct TerminalInputTrace {
+    pub id: u64,
+    pub started_ns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalInputSent {
+    pub id: u64,
+    pub milliseconds: f64,
+    pub outcome: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalFrame {
+    pub width: u16,
+    pub height: u16,
+    pub full: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -633,6 +660,7 @@ pub struct TerminalPaneSnapshot {
     pub transport_message: Option<String>,
     pub transport_generation: u64,
     pub transport_attempt: u64,
+    pub transport_last_attempt_at_unix_ms: Option<u64>,
     pub transport_exit_category: Option<String>,
     pub transport_retry_decision: String,
 }
@@ -752,7 +780,8 @@ pub struct UiStateSnapshot {
     /// record is what keeps them separate. It rides the existing store rather
     /// than a second file (engineering rule 7), and a store written before it
     /// existed loads with an empty record, which reads as everything unread.
-    #[serde(default)]
+    // The store owns persistence; the shell only reads the derived unread axis.
+    #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
 }
 

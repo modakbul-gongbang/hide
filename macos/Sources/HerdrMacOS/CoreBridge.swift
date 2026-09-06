@@ -1128,12 +1128,34 @@ struct CoreTerminalChunk: Decodable {
     let paneID: String
     let sequence: UInt64
     let bytesBase64: String
+    let frame: CoreTerminalFrame?
+    let inputSent: CoreTerminalInputSent?
 
     enum CodingKeys: String, CodingKey {
+        case frame
+        case inputSent = "input_sent"
         case paneID = "pane_id"
         case sequence
         case bytesBase64 = "bytes_base64"
     }
+}
+
+struct CoreTerminalFrame: Decodable {
+    let width: Int
+    let height: Int
+    let full: Bool
+}
+
+struct CoreTerminalInputSent: Decodable {
+    let id: UInt64
+    let milliseconds: Double
+    let outcome: String
+}
+
+struct TerminalDelivery {
+    let bytes: [UInt8]
+    let frame: CoreTerminalFrame?
+    let inputSent: CoreTerminalInputSent?
 }
 
 struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
@@ -1144,6 +1166,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
     let transportState: String
     let transportMessage: String?
     let transportGeneration: UInt64
+    let transportLastAttemptAtUnixMS: UInt64?
     let transportAttempt: UInt64
     let transportExitCategory: String?
     let transportRetryDecision: String
@@ -1155,6 +1178,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
         case transportState = "transport_state"
         case transportMessage = "transport_message"
         case transportGeneration = "transport_generation"
+        case transportLastAttemptAtUnixMS = "transport_last_attempt_at_unix_ms"
         case transportAttempt = "transport_attempt"
         case transportExitCategory = "transport_exit_category"
         case transportRetryDecision = "transport_retry_decision"
@@ -1169,6 +1193,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
         transportMessage = try container.decodeIfPresent(String.self, forKey: .transportMessage)
         transportGeneration = try container.decodeIfPresent(UInt64.self, forKey: .transportGeneration) ?? 0
         transportAttempt = try container.decodeIfPresent(UInt64.self, forKey: .transportAttempt) ?? 0
+        transportLastAttemptAtUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .transportLastAttemptAtUnixMS)
         transportExitCategory = try container.decodeIfPresent(String.self, forKey: .transportExitCategory)
         transportRetryDecision = try container.decodeIfPresent(
             String.self,
@@ -1758,7 +1783,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var lastLoggedSnapshotRevision: UInt64?
     private var lastTerminalSequence: UInt64 = 0
     private var haveRevision: UInt64 = 0
-    private var pendingTerminalBytes = PendingTerminalBuffer()
+    private var pendingTerminalBytes = PendingTerminalBuffer<TerminalDelivery>()
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
     private var pendingFileSave: Task<Void, Never>?
@@ -1775,7 +1800,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     private struct TerminalRegistration {
         let id: UUID
-        let receive: ([UInt8]) -> Void
+        let receive: (TerminalDelivery) -> Void
         let focus: () -> Void
     }
 
@@ -1993,10 +2018,19 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         // Input goes to the pane the terminal is attached to; the loopback
         // pane only exists for the verification fixture.
         let target = paneID ?? snapshot?.terminal.paneID ?? "local-loopback"
-        dispatch(kind: "key", payload: [
-            "pane_id": target,
-            "bytes_base64": Data(bytes).base64EncodedString(),
+        var payload: [String: Any] = ["pane_id": target, "bytes_base64": Data(bytes).base64EncodedString()]
+        if let trace = TerminalLatency.takeInput(paneID: target) { payload["input_trace"] = trace }
+        dispatch(kind: "key", payload: payload)
+    }
+
+    func clickTerminal(paneID: String, column: Int, row: Int, modifiers: Int) {
+        dispatch(kind: "terminal_click", payload: [
+            "pane_id": paneID, "column": column, "row": row, "modifiers": modifiers,
         ])
+    }
+
+    func reportTerminalViewport(paneID: String, cols: Int, rows: Int, newView: Bool) {
+        dispatch(kind: "terminal_viewport", payload: ["pane_id": paneID, "cols": cols, "rows": rows, "new_view": newView])
     }
 
     func resizeTerminal(paneID: String, cols: Int, rows: Int) {
@@ -2007,23 +2041,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    /// Asks for the frame a freshly built view has nothing to draw without.
-    ///
-    /// A pane keeps its session while its canvas is rebuilt, so the view that
-    /// comes back is empty and Herdr, having already sent the attach frame to
-    /// the view before it, sends nothing more until the pane produces output.
-    /// The core turns this into the one same-size resize it does not swallow.
-    func repaintTerminal(paneID: String) {
-        dispatch(kind: "terminal_repaint", payload: ["pane_id": paneID])
-    }
-
     /// Herdr owns the pane's history, so the wheel is forwarded to it rather
     /// than moving a local buffer that the rendered stream never fills.
-    func scrollTerminal(paneID: String, direction: String, lines: Int) {
+    func scrollTerminal(paneID: String, direction: String, lines: Int, column: Int, row: Int, modifiers: Int) {
         dispatch(kind: "terminal_scroll", payload: [
             "pane_id": paneID,
             "direction": direction,
             "lines": lines,
+            "column": column, "row": row, "modifiers": modifiers,
         ])
     }
 
@@ -2126,6 +2151,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func focusTab(workspaceID: String, checkoutID: String, tabID: String) {
+        if let paneID = snapshot?.paneLayouts.first(where: { $0.tabID == tabID })?.focusedPaneID {
+            TerminalLatency.end(.tabToDraw, paneID: paneID, outcome: "superseded")
+            TerminalLatency.begin(.tabToDraw, paneID: paneID)
+        }
         dispatch(kind: "focus_tab", payload: [
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
@@ -2263,7 +2292,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     @discardableResult
     func registerTerminal(
         paneID: String,
-        receive: @escaping ([UInt8]) -> Void,
+        receive: @escaping (TerminalDelivery) -> Void,
         focus: @escaping () -> Void
     ) -> UUID {
         let registrationID = UUID()
@@ -2748,7 +2777,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     bridgeError = "terminal.invalid_base64: sequence \(chunk.sequence)"
                     continue
                 }
-                let dropped = pendingTerminalBytes.append([UInt8](data), for: chunk.paneID)
+                let dropped = pendingTerminalBytes.append(TerminalDelivery(bytes: [UInt8](data), frame: chunk.frame, inputSent: chunk.inputSent), for: chunk.paneID)
                 if dropped > 0 {
                     HideLaunchTrace.mark(
                         "terminal.buffer.dropped",
@@ -2857,11 +2886,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         guard let registration = terminalRegistrations[paneID],
               let pending = pendingTerminalBytes.take(paneID)
         else { return }
-        for bytes in pending {
-            registration.receive(bytes)
+        for delivery in pending {
+            let bytes = delivery.bytes
+            registration.receive(delivery)
             // The launch is over when a terminal first has a frame to draw.
-            // The core writes `ESC c` itself to clear the grid the instant it
-            // asks Herdr for a session (`start_terminal_session`), so that
+            // The core writes `ESC c` immediately before a matching full
+            // frame to reset the parser, so that
             // chunk marks the request, not the frame. Bytes held for a pane
             // with no view yet are not the moment either, which is why this
             // is here and not where the snapshot is decoded.
@@ -2977,10 +3007,4 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             .path
     }
 
-    /// Compatibility entry point for existing callers. Runtime selection
-    /// uses the live-socket/install/bundle chain; child tools use the
-    /// login-shell PATH separately.
-    static func resolveHerdrBinaryPath() -> String? {
-        HerdrRuntimeResolver.resolve()?.path
-    }
 }
