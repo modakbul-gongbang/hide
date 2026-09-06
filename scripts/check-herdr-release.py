@@ -34,18 +34,26 @@ def source(args):
     require(repo['fork'], 'release repository is not a fork')
     remote = public_api(f'repos/{args.repo}/branches/{args.branch}')
     require(remote['commit']['sha'] == tip, 'published branch differs from local release tip')
-    # Exclude one file from the generic diff, then compare its complete bytes
-    # after applying exactly the one approved test expectation to the original.
-    run('git', 'diff', '--exit-code', args.branch, '--', '.', ':!src/app/api.rs', cwd=checkout)
-    original = (checkout / 'src/app/api.rs').read_text()
+    baseline = '4ef0414d32426c98dada52272708d1de2efa4a94'
+    run('git', 'diff', '--exit-code', baseline, '--', '.', cwd=checkout)
+    commits = run('git', 'rev-list', '--reverse', f'{baseline}..{args.branch}', cwd=checkout).splitlines()
+    require(len(commits) == 2, 'expected the approved expectation and fixture commits')
+    tests = ['agent_explain_rejects_hook_only_full_lifecycle_authority',
+             'live_handoff_keeps_unmanaged_agent_name_bound_to_saved_session']
+    files = ['src/app/api.rs', 'tests/live_handoff.rs']
+    for commit, test, path in zip(commits, tests, files):
+        require(test in run('git', 'show', '-s', '--format=%B', commit, cwd=checkout), 'fix commit must name its test')
+        require(run('git', 'diff-tree', '--no-commit-id', '--name-only', '-r', commit, cwd=checkout) == path, 'fix changed unapproved files')
+    # Production source stays byte-identical except for the approved test-module assertion.
+    run('git', 'diff', '--exit-code', baseline, args.branch, '--', '.', ':!tests/live_handoff.rs', ':!src/app/api.rs', cwd=checkout)
+    original = subprocess.check_output(['git', 'show', f'{baseline}:src/app/api.rs'], cwd=checkout).decode()
     start = original.index('async fn agent_explain_rejects_hook_only_full_lifecycle_authority()')
     end = original.index('\n    #[tokio::test]', start)
     test = original[start:end]
-    require(test.count('"agent_not_found"') == 1, 'approved test baseline changed')
     expected = original[:start] + test.replace('"agent_not_found"', '"not_agent_backed"') + original[end:]
-    published = subprocess.check_output(['git', 'show', f'{args.branch}:src/app/api.rs'], cwd=checkout)
-    require(published == expected.encode(), 'source differs beyond the approved single expectation')
-    print(json.dumps({'source': 'pass', 'commit': tip, 'exception': 'one approved test expectation'}))
+    require(subprocess.check_output(['git', 'show', f'{args.branch}:src/app/api.rs'], cwd=checkout) == expected.encode(), 'unexpected production-source change')
+    print(json.dumps({'source': 'pass', 'commit': tip, 'baseline': baseline, 'fixes': commits}))
+
 
 
 def asset(args):
