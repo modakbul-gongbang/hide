@@ -570,19 +570,17 @@ private struct NewChatRow: View {
 
     var body: some View {
         Button(action: { model.openComposer() }) {
-            HStack(spacing: HideTheme.spacingSM + 1) {
+            HStack(spacing: HideTheme.spacingSM) {
                 Image(systemName: "plus.bubble")
-                    .hideFont(size: 11, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.body, weight: .semibold)
                     .foregroundStyle(accent)
                 Text("New chat")
-                    .hideFont(size: 11, weight: .medium)
+                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
                     .foregroundStyle(HideTheme.primary)
-                Spacer(minLength: 4)
-                Text("⌘N")
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
+                Spacer(minLength: HideTheme.spacingXS)
+                HideKeycap(command: .menu(.newChat), emphasized: model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.command])
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, HideTheme.spacingMD)
             .frame(maxWidth: .infinity, minHeight: 32)
             .contentShape(Rectangle())
         }
@@ -604,21 +602,21 @@ private struct ScratchSection: View {
 
     var body: some View {
         Button(action: model.toggleScratchExpanded) {
-            HStack(spacing: 7) {
+            HStack(spacing: HideTheme.spacingSM) {
                 Image(systemName: scratch.expanded ? "chevron.down" : "chevron.right")
-                    .hideFont(size: 8, weight: .bold)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
                     .foregroundStyle(HideTheme.muted)
                 Text(scratch.label.uppercased())
-                    .hideFont(size: 11, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.body, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
                 Text("\(scratch.tabs.count)")
-                    .hideFont(size: 9, weight: .medium, design: .monospaced)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .medium, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 13)
-            .padding(.bottom, 6)
+            .padding(.horizontal, HideTheme.spacingMD)
+            .padding(.top, HideTheme.spacingMD)
+            .padding(.bottom, HideTheme.spacingSM)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -630,7 +628,7 @@ private struct ScratchSection: View {
                 EmptySidebarRow(
                     systemImage: "tray",
                     title: "Nothing in Scratch",
-                    detail: "⌘N starts a chat that belongs to no project."
+                    detail: "\(HideCommand.menu(.newChat).displayString(bindings: model.paneShortcuts)) starts a chat that belongs to no project."
                 )
             } else {
                 ForEach(model.scratchTabsBelowRaisedSections) { tab in
@@ -667,15 +665,15 @@ private struct ScratchRow: View {
             Button(action: { model.focusScratchTab(tab) }) {
                 HStack(spacing: HideTheme.spacingSM) {
                     Image(systemName: "terminal")
-                        .hideFont(size: 10, weight: .semibold)
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                         .foregroundStyle(HideTheme.muted)
                     Text(tab.displayName)
-                        .hideFont(size: 11)
+                        .hideFont(size: HideTheme.Typography.body)
                         .foregroundStyle(HideTheme.primary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 22)
+                .padding(.horizontal, HideTheme.spacingMD + HideTheme.spacingSM)
                 .frame(maxWidth: .infinity, minHeight: 28)
                 .contentShape(Rectangle())
             }
@@ -2088,7 +2086,7 @@ private struct ChatComposerSheet: View {
                     "Bypass flag on",
                     systemImage: "exclamationmark.triangle.fill"
                 )
-                .hideFont(size: 10, weight: .medium)
+                .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                 .foregroundStyle(HideTheme.warning)
                 .accessibilityIdentifier("hide-composer-bypass-warning")
             }
@@ -2100,7 +2098,7 @@ private struct ChatComposerSheet: View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
             TextEditor(text: $message)
                 .focused($messageFocused)
-                .hideFont(size: 13)
+                .hideFont(size: HideTheme.Typography.title)
                 .foregroundStyle(HideTheme.primary)
                 .scrollContentBackground(.hidden)
                 .padding(HideTheme.spacingSM)
@@ -2115,10 +2113,10 @@ private struct ChatComposerSheet: View {
                 .overlay(alignment: .topLeading) {
                     if message.isEmpty {
                         Text("Ask anything")
-                            .hideFont(size: 13)
+                            .hideFont(size: HideTheme.Typography.title)
                             .foregroundStyle(HideTheme.muted)
-                            .padding(.horizontal, HideTheme.spacingSM + 5)
-                            .padding(.vertical, HideTheme.spacingSM + 8)
+                            .padding(.horizontal, HideTheme.spacingMD)
+                            .padding(.vertical, HideTheme.spacingLG)
                             .allowsHitTesting(false)
                     }
                 }
@@ -2131,12 +2129,12 @@ private struct ChatComposerSheet: View {
                         "\(provider.rawValue) is not on the login-shell PATH.",
                         systemImage: "exclamationmark.triangle"
                     )
-                    .hideFont(size: 10)
+                    .hideFont(size: HideTheme.Typography.caption)
                     .foregroundStyle(HideTheme.warning)
                     Link("Install \(provider.rawValue)", destination: provider == .claude
                         ? URL(string: "https://docs.anthropic.com/en/docs/claude-code/overview")!
                         : URL(string: "https://developers.openai.com/codex/")!)
-                        .hideFont(size: 10)
+                        .hideFont(size: HideTheme.Typography.caption)
                 }
                 .accessibilityIdentifier("hide-composer-agent-missing")
             }
@@ -2152,13 +2150,12 @@ private struct ChatComposerSheet: View {
                         ProgressView()
                             .controlSize(.small)
                         Text("Starting")
-                            .hideFont(size: 11, weight: .semibold)
+                            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
                     } else {
                         Text("Send")
-                            .hideFont(size: 11, weight: .semibold)
-                        Text("⌘↩")
-                            .hideFont(size: 9, design: .monospaced)
-                            .opacity(0.7)
+                            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
+                        HideKeycap(command: .label(PaneShortcut(key: "↩", modifiers: [.command]).displayString), emphasized: false)
+                            .opacity(HideTheme.Opacity.secondary)
                     }
                 }
                 .foregroundStyle(canSend ? HideTheme.background : HideTheme.muted)
@@ -2200,23 +2197,23 @@ private struct ComposerChipLabel: View {
     var markKind: String?
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXS + 1) {
+        HStack(spacing: HideTheme.spacingXS) {
             if let markKind, let mark = AgentMark.image(for: markKind, side: Self.markSide) {
                 Image(nsImage: mark)
                     .interpolation(.high)
             } else {
                 Image(systemName: icon)
-                    .hideFont(size: 9, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
             }
             Text(title)
-                .hideFont(size: 11, weight: .medium)
+                .hideFont(size: HideTheme.Typography.body, weight: .medium)
                 .lineLimit(1)
             Image(systemName: "chevron.down")
-                .hideFont(size: 7, weight: .semibold)
+                .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                 .foregroundStyle(HideTheme.muted)
         }
         .foregroundStyle(HideTheme.secondary)
-        .padding(.horizontal, HideTheme.spacingSM + 2)
+        .padding(.horizontal, HideTheme.spacingMD)
         .frame(height: 26)
         .background(HideTheme.elevated, in: Capsule())
         .overlay {
