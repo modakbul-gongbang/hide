@@ -18,7 +18,8 @@ case "${1:-}" in
     zsh scripts/check-runtime-gates.sh
     ;;
   e2e)
-    bash macos/scripts/build_dev_app.sh
+    mkdir -p agents/runs/herdr-typed-contract/e2e
+    bash macos/scripts/build_dev_app.sh 2>&1 | tee agents/runs/herdr-typed-contract/e2e/build.log
     python3 scripts/check-herdr-e2e.py --output agents/runs/herdr-typed-contract/e2e
     ;;
   *) echo 'usage: check-typed-contract.sh generated|behavior|structure|suites|e2e' >&2; exit 2 ;;
