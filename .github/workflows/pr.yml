@@ -22,7 +22,7 @@ jobs:
     name: rust core
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -33,7 +33,7 @@ jobs:
     name: swift shell
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The tests build with the Xcode toolchain the runner ships. The
       # open-source 6.0.3 toolchain the release uses crashes in IRGen on a
       # debug build of MainWindowChrome.swift, which -O never reaches.
@@ -63,7 +63,7 @@ jobs:
     name: repository invariants
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Structural checks
         run: |
           bash scripts/check-harness-ignore-anchor.sh
