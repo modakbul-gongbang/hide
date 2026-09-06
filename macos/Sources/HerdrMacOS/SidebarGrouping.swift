@@ -68,6 +68,21 @@ enum SidebarGrouping {
         sections(agents).filter { raisedGroups.contains($0.group) }
     }
 
+    /// The visible preorder is shared by rendering and direct-select numbering.
+    /// Parentage and collapse are already decided by the core.
+    static func tree(_ agents: [SidebarAgent], checkoutID: String, excluding raisedIDs: Set<String>) -> [SidebarAgent] {
+        let byPane = Dictionary(uniqueKeysWithValues: agents.map { ($0.paneID, $0) })
+        var pending = Array(agents.filter { $0.lineageDepth == 0 && $0.lineageRootCheckoutID == checkoutID }.reversed())
+        var visible: [SidebarAgent] = []
+        while let row = pending.popLast() {
+            if !raisedIDs.contains(row.id) { visible.append(row) }
+            if !row.lineageCollapsed {
+                pending.append(contentsOf: row.lineageChildPaneIDs.reversed().compactMap { byPane[$0] })
+            }
+        }
+        return visible
+    }
+
     /// The agents running in a checkout, found through the panes that checkout
     /// owns. Herdr reports the pane an agent runs in and the checkout already
     /// carries its panes, so no second grouping key is needed.

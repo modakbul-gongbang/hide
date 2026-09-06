@@ -5,7 +5,7 @@ import SwiftUI
 /// inside a view body.
 ///
 /// The rules this file holds are the ones the PRD writes down - which badge a
-/// pull request gets, when the Remove button appears, what counts as stale -
+/// pull request gets and what counts as stale -
 /// so they can be checked against fixed input instead of against a screenshot.
 enum CheckoutCardPresentation {
     /// The badge's colour. Merged and closed share one because both mean the

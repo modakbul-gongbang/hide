@@ -280,17 +280,16 @@ struct CheckoutSummaryCard: View {
         }
     }
 
-    /// Offered only once the pull request is merged or closed, and disabled
-    /// with its reason while there is work here that deleting would destroy.
+    /// All deletion surfaces read the same core gate.
     @ViewBuilder
     private func removeRow(_ checkout: CoreCheckoutSnapshot) -> some View {
-        if card.removeOffered {
+        if let gate = card.deletionGate {
             VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                 Button { model.requestDeleteWorktree(checkout) } label: {
-                    Text("Remove worktree")
+                    Text(gate.buttonLabel)
                         .hideFont(size: 10, weight: .medium)
                         .foregroundStyle(
-                            card.removeBlockedReason == nil ? HideTheme.danger : HideTheme.muted
+                            gate.blockedReason == nil ? HideTheme.danger : HideTheme.muted
                         )
                         .padding(.horizontal, HideTheme.spacingSM)
                         .frame(height: 22)
@@ -305,9 +304,9 @@ struct CheckoutSummaryCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(card.removeBlockedReason != nil)
+                .disabled(gate.blockedReason != nil)
                 .accessibilityIdentifier("checkout-card-remove")
-                if let reason = card.removeBlockedReason {
+                if let reason = gate.blockedReason {
                     Text(reason)
                         .hideFont(size: 9)
                         .foregroundStyle(HideTheme.muted)

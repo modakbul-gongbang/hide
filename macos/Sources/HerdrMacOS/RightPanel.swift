@@ -26,12 +26,14 @@ struct RightPanel: View {
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
-            // The card belongs to the checkout, not to a section, so it sits
-            // above both rather than being a third thing to switch to.
+            // The summary remains shared by all sections.
             CheckoutSummaryCard()
             switch model.rightPanelSection {
             case .explorer:
                 fileTree
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .git:
+                GitWorktreesView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .changes:
                 ChangesView()

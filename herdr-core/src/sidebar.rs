@@ -326,6 +326,132 @@ pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
     AgentProjection { agents, excluded }
 }
 
+/// Adds a tree view without reordering, duplicating, or changing the axes of
+/// the canonical agent list. Child ordering belongs to this view alone.
+/// Missing and cyclic parent references are visible orphan roots, so malformed
+/// external lineage cannot hide an agent or recurse forever.
+pub fn apply_lineage(
+    agents: &mut [SidebarAgentSnapshot],
+    workspaces: &[crate::model::WorkspaceSnapshot],
+    collapsed: &[String],
+) {
+    let by_pane = agents
+        .iter()
+        .enumerate()
+        .map(|(index, agent)| (agent.pane_id.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let checkouts = workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .flat_map(|checkout| {
+            checkout
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.panes)
+                .map(move |pane| {
+                    (
+                        pane.id.as_str(),
+                        (checkout.id.clone(), checkout.label.clone()),
+                    )
+                })
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut parents = agents
+        .iter()
+        .map(|agent| {
+            agent
+                .spawned_from_pane_id
+                .as_ref()
+                .and_then(|pane| by_pane.get(pane))
+                .copied()
+        })
+        .collect::<Vec<_>>();
+    // Walk parent chains iteratively: depth is data, never a recursion limit.
+    let original_parents = parents.clone();
+    for index in 0..agents.len() {
+        let mut visited = std::collections::BTreeSet::new();
+        let mut cursor = Some(index);
+        while let Some(node) = cursor {
+            if !visited.insert(node) {
+                // Break only cycle members; descendants retain valid nesting.
+                let mut cycle = node;
+                loop {
+                    parents[cycle] = None;
+                    cycle = original_parents[cycle].expect("cycle has a parent");
+                    if cycle == node {
+                        break;
+                    }
+                }
+                break;
+            }
+            cursor = original_parents[node];
+        }
+    }
+    let mut children = vec![Vec::new(); agents.len()];
+    for (index, parent) in parents.iter().enumerate() {
+        if let Some(parent) = parent {
+            children[*parent].push(index);
+        }
+    }
+    for list in &mut children {
+        list.sort_by(|left, right| {
+            agents[*right]
+                .last_activity
+                .cmp(&agents[*left].last_activity)
+        });
+    }
+    for index in 0..agents.len() {
+        let mut root = index;
+        let mut depth = 0;
+        while let Some(parent) = parents[root] {
+            root = parent;
+            depth += 1;
+        }
+        let hint = agents[index].spawned_from_pane_id.as_ref().map(|pane| {
+            let name = by_pane
+                .get(pane)
+                .map(|parent| agents[*parent].id.as_str())
+                .unwrap_or(pane.as_str());
+            format!("↳ from {name}")
+        });
+        let orphan = agents[index].spawned_from_pane_id.is_some() && parents[index].is_none();
+        let own_checkout = checkouts.get(agents[index].pane_id.as_str());
+        let parent_checkout =
+            parents[index].and_then(|parent| checkouts.get(agents[parent].pane_id.as_str()));
+        let badge = own_checkout
+            .filter(|own| parent_checkout.is_some_and(|parent| own.0 != parent.0))
+            .map(|(_, label)| label.clone());
+        let root_checkout = checkouts
+            .get(agents[root].pane_id.as_str())
+            .map(|(id, _)| id.clone());
+        let child_ids = children[index]
+            .iter()
+            .map(|child| agents[*child].pane_id.clone())
+            .collect();
+        let agent = &mut agents[index];
+        agent.lineage_depth = depth;
+        agent.lineage_child_pane_ids = child_ids;
+        agent.lineage_root_checkout_id = root_checkout;
+        agent.lineage_worktree_badge = badge;
+        agent.lineage_orphan = orphan;
+        agent.lineage_hint = orphan.then(|| hint.clone()).flatten();
+        agent.raised_hint = hint;
+        agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
+    }
+}
+
+/// Collapse state belongs to pane existence, not whether it currently has
+/// children. A fresh scoped agent list may evict it; a stale list may not.
+pub fn prune_lineage_collapse(
+    collapsed: &mut Vec<String>,
+    agents: &[SidebarAgentSnapshot],
+    scope: ReadRecordScope<'_>,
+) -> bool {
+    let before = collapsed.len();
+    collapsed.retain(|pane| !scope.owns(pane) || agents.iter().any(|agent| &agent.pane_id == pane));
+    before != collapsed.len()
+}
+
 /// The one ordering every agent surface reads: the two sidebar views, the pet
 /// dashboard, and the agent switcher's candidate list.
 ///
@@ -459,6 +585,14 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
+        lineage_depth: 0,
+        lineage_child_pane_ids: Vec::new(),
+        lineage_root_checkout_id: None,
+        lineage_worktree_badge: None,
+        lineage_orphan: false,
+        lineage_hint: None,
+        raised_hint: None,
+        lineage_collapsed: false,
     })
 }
 

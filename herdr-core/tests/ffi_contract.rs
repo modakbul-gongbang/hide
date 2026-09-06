@@ -222,6 +222,9 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "editor",
             "find",
             "focused",
+            "git_worktrees",
+            "git_worktrees_loading",
+            "git_worktrees_remote",
             "ime",
             "input_generation",
             "navigator",
@@ -233,6 +236,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "tab",
             "terminal",
             "ui_state",
+            "worktree_removal",
             "zoomed",
         ]
     );

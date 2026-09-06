@@ -296,6 +296,14 @@ mod tests {
             ambient: None,
             session_id: None,
             spawned_from_pane_id: None,
+            lineage_depth: 0,
+            lineage_child_pane_ids: Vec::new(),
+            lineage_root_checkout_id: None,
+            lineage_worktree_badge: None,
+            lineage_orphan: false,
+            lineage_hint: None,
+            raised_hint: None,
+            lineage_collapsed: false,
         }
     }
 

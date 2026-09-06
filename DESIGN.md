@@ -667,3 +667,12 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 - **Dark mode is the only mode** — no light variant exists in the captured surfaces.
 - **Form validation states** beyond the focused-input border treatment are not present in the captured surfaces.
 - **Authenticated chrome** (account dashboard, billing settings, team management) not in the captured pages.
+
+## Native Git and lineage tokens
+
+`HideTheme.lineageIndent` is 12pt for the first two descendant levels, and `lineageDeepIndent` is 6pt per level from depth three onward.
+`lineageChevronWidth` reserves 16pt for the parent disclosure control.
+`gitRowFontSize` is 11pt and `gitDetailFontSize` is 10pt, with the existing spacing and neutral surface tokens used for worktree rows.
+`worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
+`gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
+`HideTheme.GitIcon` names refresh (`arrow.clockwise`), merged (`checkmark.circle`), unmerged (`circle`), dirty (`circle.fill`), clean (`checkmark`), merged PR (`arrow.triangle.merge`), closed PR (`xmark.circle`), unavailable (`exclamationmark.circle`), and absent PR (`minus.circle`).

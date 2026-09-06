@@ -1,0 +1,251 @@
+use super::*;
+
+struct Repository(PathBuf);
+impl Repository {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "hide-worktree-policy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-b", "main"]).unwrap();
+        git(&root, &["config", "user.name", "Fixture"]).unwrap();
+        git(&root, &["config", "user.email", "fixture@example.invalid"]).unwrap();
+        git(&root, &["commit", "--allow-empty", "-m", "initial"]).unwrap();
+        Self(root)
+    }
+    fn linked(&self, name: &str) -> PathBuf {
+        let path = self.0.join(name);
+        git(
+            &self.0,
+            &["worktree", "add", "-b", name, path.to_str().unwrap()],
+        )
+        .unwrap();
+        path
+    }
+    fn read(&self, base: Option<&str>) -> ProjectWorktreesSnapshot {
+        read_project(
+            &self.0,
+            self.0.to_string_lossy().into_owned(),
+            &BTreeMap::new(),
+            base,
+        )
+    }
+}
+impl Drop for Repository {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+#[test]
+fn ancestry_does_not_mistake_a_squash_merge_for_a_merged_tip() {
+    let repo = Repository::new();
+    let merged = repo.linked("merged");
+    git(&merged, &["commit", "--allow-empty", "-m", "merged work"]).unwrap();
+    git(&repo.0, &["merge", "--ff-only", "merged"]).unwrap();
+    let squash = repo.linked("squash");
+    std::fs::write(squash.join("change"), "content").unwrap();
+    git(&squash, &["add", "change"]).unwrap();
+    git(&squash, &["commit", "-m", "squash work"]).unwrap();
+    git(&repo.0, &["merge", "--squash", "squash"]).unwrap();
+    git(&repo.0, &["commit", "-m", "squashed"]).unwrap();
+    let result = repo.read(None);
+    let row = |branch: &str| {
+        result
+            .worktrees
+            .iter()
+            .find(|w| w.branch.as_deref() == Some(branch))
+            .unwrap()
+    };
+    assert_eq!(row("merged").merged, Some(true));
+    assert_eq!(row("squash").merged, Some(false));
+    assert!(row("squash").ahead > 0);
+    assert!(!row("squash").deletion_gate.can_delete_branch);
+    assert!(row("merged").last_commit_unix_seconds.is_some());
+    assert!(row("merged").measured_at_unix_ms.is_some());
+}
+
+#[test]
+fn configured_missing_upstream_is_distinct_from_no_upstream_and_pushed() {
+    let repo = Repository::new();
+    let feature = repo.linked("feature");
+    assert_eq!(repo.read(None).worktrees[1].upstream_state, "no_upstream");
+    git(
+        &repo.0,
+        &["remote", "add", "origin", "https://example.invalid/repo"],
+    )
+    .unwrap();
+    git(
+        &repo.0,
+        &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+    )
+    .unwrap();
+    git(&feature, &["branch", "--set-upstream-to=origin/feature"]).unwrap();
+    assert_eq!(repo.read(None).worktrees[1].upstream_state, "pushed");
+    git(&feature, &["commit", "--allow-empty", "-m", "ahead"]).unwrap();
+    let result = repo.read(None);
+    assert_eq!(result.worktrees[1].upstream_state, "unpushed");
+    assert_eq!(result.worktrees[1].unpushed.as_ref().unwrap().count, 1);
+    git(
+        &repo.0,
+        &["update-ref", "-d", "refs/remotes/origin/feature"],
+    )
+    .unwrap();
+    let result = repo.read(None);
+    assert_eq!(result.worktrees[1].upstream_state, "gone");
+    assert!(
+        result.worktrees[1]
+            .deletion_gate
+            .warnings
+            .contains(&"not pushed".to_owned())
+    );
+}
+
+#[test]
+fn base_override_moves_protection_and_absent_override_reports_fallback() {
+    let repo = Repository::new();
+    repo.linked("feature");
+    let result = repo.read(Some("feature"));
+    assert_eq!(result.base_branch.as_deref(), Some("feature"));
+    assert_eq!(result.base_source, "specified");
+    assert!(result.worktrees[1].deletion_gate.blocked_reason.is_some());
+    let result = repo.read(None);
+    assert!(result.worktrees[1].deletion_gate.blocked_reason.is_none());
+    let result = repo.read(Some("deleted"));
+    assert_eq!(result.base_branch.as_deref(), Some("main"));
+    assert!(
+        result
+            .base_branch_fallback
+            .as_deref()
+            .unwrap()
+            .contains("deleted")
+    );
+}
+
+#[test]
+fn missing_detached_nested_and_dirty_rows_preserve_their_actual_state() {
+    let repo = Repository::new();
+    let parent = repo.linked("parent");
+    let child = parent.join("child");
+    git(
+        &repo.0,
+        &["worktree", "add", "--detach", child.to_str().unwrap()],
+    )
+    .unwrap();
+    let gone = repo.linked("gone");
+    std::fs::remove_dir_all(gone).unwrap();
+    std::fs::write(parent.join("dirty"), "work").unwrap();
+    let result = repo.read(None);
+    let parent = result
+        .worktrees
+        .iter()
+        .find(|w| w.branch.as_deref() == Some("parent"))
+        .unwrap();
+    assert!(parent.nested && parent.dirty);
+    assert!(parent.deletion_gate.blocked_reason.is_some());
+    let detached = result
+        .worktrees
+        .iter()
+        .find(|w| w.branch.is_none())
+        .unwrap();
+    assert_eq!(detached.head_sha.as_ref().unwrap().len(), 40);
+    let missing = result
+        .worktrees
+        .iter()
+        .find(|w| w.branch.as_deref() == Some("gone"))
+        .unwrap();
+    assert!(missing.missing);
+    assert!(!missing.deletion_gate.can_delete_branch);
+}
+
+#[test]
+fn deletion_gate_blocks_before_warning_and_reports_pane_consequence() {
+    let row = WorktreeSnapshot {
+        branch: Some("feature".into()),
+        merged: Some(false),
+        ahead: 2,
+        upstream_state: "gone".into(),
+        ..WorktreeSnapshot::default()
+    };
+    let gate = deletion_gate(&row, false, false, 2, 1);
+    assert_eq!(gate.button_label, "Close 2 panes and delete");
+    assert_eq!(
+        gate.warnings,
+        ["ahead 2 unmerged", "not pushed", "1 running agents"]
+    );
+    assert!(gate.blocked_reason.is_none());
+    assert!(
+        deletion_gate(&row, false, true, 0, 0)
+            .blocked_reason
+            .is_some()
+    );
+    assert!(
+        deletion_gate(&row, true, false, 0, 0)
+            .blocked_reason
+            .is_some()
+    );
+    for blocked in [
+        WorktreeSnapshot {
+            dirty: true,
+            ..row.clone()
+        },
+        WorktreeSnapshot {
+            nested: true,
+            ..row.clone()
+        },
+        WorktreeSnapshot {
+            is_main: true,
+            ..row.clone()
+        },
+    ] {
+        assert!(
+            deletion_gate(&blocked, false, false, 2, 1)
+                .blocked_reason
+                .is_some()
+        );
+    }
+}
+
+#[test]
+fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
+    let repo = Repository::new();
+    std::fs::write(repo.0.join("tracked"), "original").unwrap();
+    git(&repo.0, &["add", "tracked"]).unwrap();
+    git(&repo.0, &["commit", "-m", "tracked"]).unwrap();
+    let mut reader = WorktreeReader::new();
+    let mut request = WorktreeRequest {
+        projects: vec![WorktreeProjectRequest {
+            root_path: repo.0.clone(),
+            bases: BTreeMap::new(),
+            base_override: None,
+        }],
+        generation: 0,
+    };
+    let wait = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(result) = reader.read_if_due(request.clone()) {
+                break result;
+            }
+            assert!(started.elapsed() < Duration::from_secs(15));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    wait(&mut reader, &request);
+    // First discovery installs the cached tracked-file stat set.
+    wait(&mut reader, &request);
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(20) {
+        assert!(reader.read_if_due(request.clone()).is_none());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    std::fs::write(repo.0.join("tracked"), "changed contents").unwrap();
+    assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
+    request.generation += 1;
+    assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
+}

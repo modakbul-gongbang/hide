@@ -32,6 +32,10 @@ use crate::sidebar::{
 };
 use crate::workspace;
 
+#[path = "worktree_control.rs"]
+mod worktree_control;
+pub use worktree_control::{spawn_worktree_close, spawn_worktree_open};
+
 /// Everything a terminal session spawn needs from the live configuration.
 #[derive(Clone)]
 pub struct LiveContext {
@@ -167,7 +171,8 @@ pub fn spawn_workspace_creation(
                             )
                         })?;
                     let before_spaces = Runtime::session_spaces(&before);
-                    let before_catalog = workspace::build_catalog(&registrations, &before_spaces, &worktrees);
+                    let before_catalog =
+                        workspace::build_catalog(&registrations, &before_spaces, &worktrees);
                     let needs_herdr_workspace = before_catalog
                         .iter()
                         .any(|workspace| workspace.id == registration.id);
@@ -2063,7 +2068,10 @@ mod tests {
                 .collect(),
         );
 
-        assert!(written.is_empty(), "an unmoved viewport was written: {written:?}");
+        assert!(
+            written.is_empty(),
+            "an unmoved viewport was written: {written:?}"
+        );
     }
 
     /// The summed movement is the same distance the unsummed sequence would
@@ -2091,9 +2099,7 @@ mod tests {
     fn a_command_that_is_not_a_wheel_row_ends_the_window_and_is_still_written() {
         let written = drain_writer(vec![
             wheel(4),
-            TerminalWriterCommand::Line(
-                terminal_input_line(b"ls\n").expect("input line"),
-            ),
+            TerminalWriterCommand::Line(terminal_input_line(b"ls\n").expect("input line")),
             wheel(-6),
         ]);
 
@@ -2101,7 +2107,10 @@ mod tests {
             .iter()
             .map(|line| line["type"].as_str().unwrap_or_default().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(types, ["terminal.scroll", "terminal.input", "terminal.scroll"]);
+        assert_eq!(
+            types,
+            ["terminal.scroll", "terminal.input", "terminal.scroll"]
+        );
         assert_eq!(written[0]["lines"], 4);
         assert_eq!(written[2]["direction"], "down");
         assert_eq!(written[2]["lines"], 6);
