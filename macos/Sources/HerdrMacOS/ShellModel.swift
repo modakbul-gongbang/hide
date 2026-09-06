@@ -639,7 +639,11 @@ final class ShellModel: ObservableObject {
     }
 
     func paneTransportMessage(for paneID: String) -> String? {
-        core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID })?.transportMessage
+        guard let pane = core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID }),
+              let message = pane.transportMessage else { return nil }
+        guard let timestamp = pane.transportLastAttemptAtUnixMS else { return message }
+        let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        return "\(message) Last attempt: \(date.formatted(date: .omitted, time: .standard))."
     }
 
     var petDashboard: PetDashboardProjection {

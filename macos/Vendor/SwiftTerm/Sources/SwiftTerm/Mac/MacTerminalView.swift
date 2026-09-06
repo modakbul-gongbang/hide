@@ -219,13 +219,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var textBlinkApplicationActive = true
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
-    /// Output received shortly after local input is likely echo or prompt redraw;
-    /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
-    var lastUserInputUptimeNs: UInt64 = 0
-    /// Guards lastUserInputUptimeNs, which is written on the main thread and
-    /// read from the (possibly background) feed thread.
-    let userInputLock = NSLock()
-    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
+    private var displayClock: TerminalDisplayClock?
+    private var frameGate = TerminalFrameGate()
+    public var terminalDisplayTick: ((Double) -> Void)?
+
+    func displayFrame(period: Double) {
+        frameGate.tick()
+        guard !isHiddenOrHasHiddenAncestor, window != nil else { return }
+        terminalDisplayTick?(period)
+        guard pendingDisplay, !terminal.synchronizedOutputActive else { return }
+        updateDisplay()
+        // Paint this layer-backed terminal in the display-link turn that
+        // accepted its frame. The opacity-ignoring variant stays inside this
+        // view subtree; plain displayIfNeeded can walk to an opaque ancestor
+        // and repaint sibling panes twice in the same tick.
+        needsDisplay = true
+        displayIfNeededIgnoringOpacity()
+    }
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
@@ -789,6 +799,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        displayClock?.invalidate()
+        displayClock = window == nil ? nil : TerminalDisplayClock(view: self)
+        pendingDisplay = true
         startWindowMouseMovedFallback()
         updateTextBlinkLifecycle()
 #if canImport(MetalKit)
@@ -823,6 +836,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
     deinit {
+        displayClock?.invalidate()
         stopWindowMouseMovedFallback()
 #if canImport(MetalKit)
         for observer in metalWindowRecoveryObservers {
@@ -1279,7 +1293,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         NSGraphicsContext.current?.cgContext
     }
     
+    /// Called only after the software renderer has painted terminal contents.
+    public var terminalContentsDidDraw: (() -> Void)?
+
     override public func draw (_ dirtyRect: NSRect) {
+        guard frameGate.draw(visible: !isHiddenOrHasHiddenAncestor && window != nil) else {
+            pendingDisplay = true
+            return
+        }
 #if canImport(MetalKit)
         if metalView != nil {
             return
@@ -1289,6 +1310,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
+        terminalContentsDidDraw?()
     }
     
     public override func cursorUpdate(with event: NSEvent)
@@ -2920,6 +2942,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return terminal.encodeButton(button: event.buttonNumber, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
+    /// Zero-based viewport cell for clients that route input through their host.
+    public func mouseCell(with event: NSEvent) -> (column: Int, row: Int) {
+        let hit = calculateMouseHit(with: event).grid
+        return (hit.col, hit.row)
+    }
+
     func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
     {
         let point = convert(event.locationInWindow, from: nil)

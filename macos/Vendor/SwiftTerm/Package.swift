@@ -6,7 +6,9 @@ let package = Package(
     name: "SwiftTerm",
     platforms: [
         .iOS(.v14),
-        .macOS(.v11),
+        // Raised from upstream's macOS 11 for the view display link that
+        // paces terminal drawing (TerminalDisplayClock).
+        .macOS(.v14),
         .tvOS(.v13),
         .visionOS(.v1),
     ],

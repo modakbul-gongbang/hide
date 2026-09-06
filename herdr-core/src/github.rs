@@ -128,9 +128,7 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
     if !due.is_empty() {
         // One line per pass naming each project read and why, with the
         // generation that asked for it.
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "github",
                 "kind": "pull_requests.read",
                 "projects": due
@@ -202,9 +200,7 @@ fn read_root(
     };
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
-    eprintln!(
-        "{}",
-        serde_json::json!({
+    crate::diagnostic!(serde_json::json!({
             "component": "github",
             "kind": if project.status.unavailable_reason.is_some() {
                 "pull_requests.failed"

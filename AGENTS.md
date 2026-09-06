@@ -132,12 +132,22 @@ Quote a mutex-wait figure with the load and the drive it was taken under or it m
   When adding a snapshot field, decide its channel: rarely-changing sections belong in the revisioned `rest`, per-event scalars ride top-level, high-volume streams need their own cursor.
   A field on the revisioned `rest` section that no reader reads still costs a full-state re-send on every tick that writes it.
   Two `last_checked_at_unix_ms` fields nobody decoded restamped `rest` on every session heartbeat, which re-sent the whole navigator, ui state, status and pet about once a second; deleting them took an idle twenty-second window from 38 snapshot reads to one.
-- Coalesce a wheel burst into one write per frame.
-  A flick of the wheel is dozens of row events, and each one was its own `terminal.scroll` plus a same-size `terminal.resize` in one write: 65 writes a second became 65 server-side repaints a second.
-  The per-pane terminal writer thread now sums the signed row deltas that arrive inside one frame (`SCROLL_COALESCE_WINDOW`, 16 ms) and writes once; a sum of zero writes nothing, so a trackpad reversal inside one frame costs no repaint at all.
-  The window is spent on a blocking read the thread already makes, so it is not a timer and adds no thread.
-  The same-size `terminal.resize` that used to ride every scroll is gone. It was there to force a repaint, and a live 0.8.2 server measured on 2026-09-05 publishes one on its own: three scrolls sent alone on a control session produced three distinct frames, and appending the resize produced no extra frame. Confirm that again before assuming it on a later Herdr, and delete the resize rather than the coalescing if it ever has to come back.
-  A wheel on a pane whose view has not reported a size writes nothing and says so once. The 24x80 fallback that used to stand in for the missing size resized the PTY to a grid it was not running at, on every wheel row.
+- Send the first wheel immediately and coalesce only while a response is pending.
+  The old fixed 16 ms window delayed even one wheel before the server round trip.
+  `PendingScroll` now writes the first movement immediately and sums later signed rows until a frame arrives; a cancelling sum writes nothing.
+  The stream has no request acknowledgement, so the next frame releases the accumulated movement.
+  A 100 ms response timeout prevents a boundary or an ignored wheel from holding the next movement forever; it never delays the first wheel or keyboard input.
+  Herdr 0.8.2 routes `terminal.scroll` between application mouse input and host history, so include the actual zero-based pointer cell and modifiers.
+  Rendered frames do not carry the application's mouse-tracking mode.
+  Ordinary clicks use the explicitly accepted matching-pane `agent_kind == claude` policy, record the detection basis, and send an SGR press/release without Enter; other or undetected panes retain local selection.
+  Do not recreate local scrollback from viewport frames: rows can disappear between server renders, and application mouse state is unavailable in this contract.
+  A scroll response already publishes a frame, so do not append a same-size resize to force a repaint.
+  A wheel without a reported view size writes nothing and emits its diagnostic once; never invent fallback geometry.
+- Settle geometry and pace rendering with the view's display link.
+  Two stable display ticks publish the final grid; transient reports only update the frame guard.
+  Attach sends the current settled size, and only matching full frames replace a held canvas after a geometry or control transition.
+  Parse incoming data immediately, draw each visible pane at most once per display tick, and leave hidden panes undrawn.
+  Keyboard bytes go directly from the main-actor delegate to the core writer; do not add an asynchronous main-actor hop.
 - Announce changes once per burst, not once per change.
   `ChangeNotifier` latches on the false-to-true flip and `herdr_core_snapshot` clears the latch before it takes the lock.
   Clear-then-read costs at most one read for nothing; read-then-clear loses a change that lands during the read.
@@ -147,6 +157,35 @@ Quote a mutex-wait figure with the load and the drive it was taken under or it m
   Above roughly load 14 this machine stops symbolicating a `sample` window longer than about five seconds and returns every frame as `???`, which a summing script reads as zero time rather than as no answer.
   Take the observation as several short windows and check how many failed to symbolicate before believing any ratio.
   A latency claim about the operator's own input cannot come from a synthetic keystroke: the `osascript` call alone costs about 123 ms before the app is involved, so read the interval between the shell's own trace marks instead.
+
+Run native verification against an isolated Herdr server when the operator's instance is running.
+A shared server also shares focus, so a separate app state file and fixture-only intent do not stop Hide from following the operator into a protected workspace.
+Use the documented `HERDR_SESSION` and `HERDR_SOCKET_PATH` routing, a separate `HERDR_CONFIG_PATH`, and private `XDG_CONFIG_HOME` and `XDG_STATE_HOME` roots.
+In Herdr 0.8.2, session data is under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; `HERDR_CONFIG_PATH` alone changes only the config file.
+The client socket is derived from the API socket by inserting `-client` before `.sock`, so use a short absolute socket path that fits the platform limit.
+Pass the same environment to the server, dev bundle, CLI and reference TUI, and clear inherited pane, workspace and tab identifiers.
+Before creating fixtures, prove that the private server has zero workspaces and that the operator server gained no connection; keep the socket and process evidence in the run directory.
+After verification, stop only that private server and remove only its recorded state directory and sockets.
+The machine still carries the operator's load; record shared agent count separately from private fixture count.
+References: [named sessions](https://herdr.dev/docs/persistence-remote/#named-sessions), [CLI environment](https://herdr.dev/docs/cli-reference/#environment-variables), and the pinned [path implementation](https://github.com/herdrdev/herdr/blob/v0.8.2/src/config/io.rs).
+
+On 2026-09-06, the isolated 120 Hz verification retained ten attached panes with one private and 22 to 23 shared agents.
+The final plain-shell painted-wheel result was p50 30.83 ms and p95 38.06 ms, 1.98 ms above the same-pane Herdr TUI p95; Claude was p50 43.54 ms and p95 53.75 ms, 9.55 ms below its TUI p95.
+Key-to-transport-flush p95 was 0.62 ms and frame-receive-to-draw p95 was 6.26 ms.
+Across 11 one-minute RSS samples, the baseline p50 was 148000 KiB, two fresh changed-build p50 values were 133904 and 127680 KiB, and a later final-source warm-window p50 was 135360 KiB; keep the raw ranges, endpoints, load and pane count with any comparison because macOS memory pressure moved individual endpoints across the baseline.
+
+Capture terminal intervals from the exact app PID with `/usr/bin/log stream --process <pid> --level debug --style ndjson --predicate 'subsystem == "me.grab.hide" AND category == "TerminalLatency"'`, redirecting to the run's evidence directory.
+Run `python3 scripts/summarize-terminal-latency.py <trace> --started-after <unix-seconds>` to report nearest-rank p50, p95, maximum and sample count for key-to-send, receive-to-draw, wheel-to-draw and tab-to-first-draw.
+The debug mirror contains the same end values as the signposts and works without Instruments.
+Key-to-send ends at the actual transport flush; receive-to-draw starts at delivery to the registered view and ends after software drawing.
+Hidden, released, consumed, capacity-limited and pre-window intervals are reported separately, never as zero latency.
+The display link records its measured refresh rate, with zero treated as unknown.
+The wheel signpost ends at the next draw, which can be unrelated output; use a content-region change and the same window-server display timestamp method in both clients for a causal wheel comparison.
+Record each PID and bundle, selected pane, terminal grid, attached-child count, shared agent count, refresh rate, load and foreground interruptions.
+For RSS, record eleven one-minute samples across ten minutes and retain the process lists; memory pressure and occlusion can change RSS without an allocation improvement.
+Build an archived baseline with an isolated target directory.
+Sharing a release output directory can leave a fresh package fingerprint beside another checkout's `libherdr_core.a`; verify the linked archive hash and expected runtime diagnostics before treating a bundle as current.
+Core diagnostics are also mirrored as identical JSON lines in the state directory's `Logs/core.jsonl`, with one previous 1 MiB file, bounded queued writes and I/O outside the runtime lock.
 
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)

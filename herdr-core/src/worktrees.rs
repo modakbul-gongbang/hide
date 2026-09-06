@@ -314,9 +314,7 @@ fn read_project(
     let listed = match git(root, &["worktree", "list", "--porcelain"]) {
         Ok(output) => output,
         Err(reason) => {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "worktrees",
                     "kind": "worktree_list.failed",
                     "project": root_path,

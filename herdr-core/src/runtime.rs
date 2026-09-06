@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -191,6 +191,7 @@ struct EventEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct KeyPayload {
+    input_trace: Option<crate::model::TerminalInputTrace>,
     pane_id: String,
     bytes_base64: String,
 }
@@ -962,6 +963,20 @@ struct TerminalScrollPayload {
     pane_id: String,
     direction: String,
     lines: u16,
+    #[serde(default)]
+    column: Option<u16>,
+    #[serde(default)]
+    row: Option<u16>,
+    #[serde(default)]
+    modifiers: u8,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalClickPayload {
+    pane_id: String,
+    column: u16,
+    row: u16,
+    modifiers: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -969,12 +984,8 @@ struct TerminalResizePayload {
     pane_id: String,
     cols: u16,
     rows: u16,
-}
-
-/// A view asking for the frame it has nothing to draw without.
-#[derive(Debug, Deserialize)]
-struct TerminalRepaintPayload {
-    pane_id: String,
+    #[serde(default)]
+    new_view: bool,
 }
 
 enum ValidatedEvent {
@@ -1015,8 +1026,9 @@ enum ValidatedEvent {
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
+    TerminalViewport(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
-    TerminalRepaint(TerminalRepaintPayload),
+    TerminalClick(TerminalClickPayload),
     PaneFind(PaneFindPayload),
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
@@ -1097,13 +1109,17 @@ pub struct Runtime {
     terminal_sessions: HashMap<String, TerminalSession>,
     terminal_session_generations: HashMap<String, u64>,
     terminal_session_lifecycles: HashMap<String, TerminalSessionLifecycle>,
+    terminal_recovery: HashMap<String, crate::terminal_recovery::Recovery>,
     next_terminal_session_generation: u64,
     next_remote_file_generation: u64,
     terminal_sizes: HashMap<String, (u16, u16)>,
+    terminal_view_sizes: HashMap<String, (u16, u16)>,
+    terminal_frames_need_full: HashSet<String>,
     /// Panes whose attach is held until a view reports their size. Herdr
     /// sizes the PTY from the attach, so starting one at a guess costs a
     /// full frame at the wrong size and a second one after the resize.
     panes_awaiting_size: HashSet<String>,
+    panes_scrolled_before_size: HashSet<String>,
     /// The tabs that have been on screen, most recent first. An attach lives
     /// for as long as its tab is in this window; every other pane's session is
     /// released. Herdr renders a pane for every attached client, so an attach
@@ -1120,7 +1136,6 @@ pub struct Runtime {
     /// diagnostic answers for the whole wait; a wheel burst against a pane
     /// with no size would otherwise fill the bounded diagnostics list with the
     /// same sentence and push out everything else that happened.
-    panes_scrolled_before_size: HashSet<String>,
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
@@ -1324,9 +1339,7 @@ impl Runtime {
             )),
         };
         if let Some((kind, message)) = diagnostic {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "ui_state",
                     "kind": kind,
                     "message": message,
@@ -1352,13 +1365,16 @@ impl Runtime {
             terminal_sessions: HashMap::new(),
             terminal_session_generations: HashMap::new(),
             terminal_session_lifecycles: HashMap::new(),
+            terminal_recovery: HashMap::new(),
             next_terminal_session_generation: 0,
             next_remote_file_generation: 0,
+            terminal_view_sizes: HashMap::new(),
+            terminal_frames_need_full: HashSet::new(),
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
+            panes_scrolled_before_size: HashSet::new(),
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
-            panes_scrolled_before_size: HashSet::new(),
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -1873,9 +1889,7 @@ impl Runtime {
                     message.clone(),
                     generation,
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "remote_files",
                         "kind": "remote.files_failed",
                         "target": target_id,
@@ -3100,9 +3114,7 @@ impl Runtime {
             self.operator_focused_pane_id = None;
         }
         for (checkout_id, hide_tab, herdr_tab) in followed {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "view_state",
                     "kind": "tab.focus.followed",
                     "checkout_id": checkout_id,
@@ -3174,9 +3186,7 @@ impl Runtime {
         self.visible_tab_ids
             .insert(checkout_id.clone(), tab_id.clone());
         self.sync_active_tab_projection();
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "view_state",
                 "kind": "tab.visible_aligned",
                 "checkout_id": checkout_id,
@@ -3211,9 +3221,7 @@ impl Runtime {
         }
         let changed = !expired.is_empty();
         for (what, target_id) in expired {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "view_state",
                     "kind": "view_focus.timed_out",
                     "what": what,
@@ -3420,23 +3428,14 @@ impl Runtime {
             .map(|pane| pane.pane_id.clone())
             .collect::<HashSet<_>>();
         let mut changed = &projected_pane_ids != live_pane_ids;
-        let before_map_entries = self.terminal_sessions.len()
-            + self.terminal_session_generations.len()
-            + self.terminal_session_lifecycles.len()
-            + self.terminal_sizes.len();
-        self.terminal_sessions
-            .retain(|pane_id, _| !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id));
-        self.terminal_session_generations
-            .retain(|pane_id, _| !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id));
-        self.terminal_session_lifecycles
-            .retain(|pane_id, _| !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id));
-        self.terminal_sizes
-            .retain(|pane_id, _| !belongs_to_target(pane_id) || live_pane_ids.contains(pane_id));
-        let after_map_entries = self.terminal_sessions.len()
-            + self.terminal_session_generations.len()
-            + self.terminal_session_lifecycles.len()
-            + self.terminal_sizes.len();
-        changed |= before_map_entries != after_map_entries;
+        // A pane the remote no longer lists loses everything; a pane it lists
+        // but does not run a session for keeps its sizes and loses the session.
+        changed |= self.retain_terminal_pane_state(|pane_id| {
+            !belongs_to_target(pane_id) || live_pane_ids.contains(pane_id)
+        });
+        changed |= self.retain_terminal_session_state(|pane_id| {
+            !belongs_to_target(pane_id) || active_pane_ids.contains(pane_id)
+        });
 
         self.snapshot.terminal.panes.retain(|pane| {
             !belongs_to_target(&pane.pane_id) || live_pane_ids.contains(&pane.pane_id)
@@ -3458,6 +3457,7 @@ impl Runtime {
                 transport_message: None,
                 transport_generation: 0,
                 transport_attempt: 0,
+                transport_last_attempt_at_unix_ms: None,
                 transport_exit_category: None,
                 transport_retry_decision: idle_lifecycle.retry_decision.to_owned(),
             };
@@ -3481,6 +3481,51 @@ impl Runtime {
             self.request_terminal_control(&pane_id);
         }
         changed
+    }
+
+    /// Removes every piece of terminal state for panes that no longer exist.
+    /// Keeping this list in one place prevents a newly added pane-keyed cache
+    /// from surviving retirement and being inherited if Herdr reuses an id.
+    fn retain_terminal_pane_state(&mut self, keep: impl Fn(&str) -> bool) -> bool {
+        let before = self.terminal_state_len();
+        self.retain_terminal_session_state(&keep);
+        self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
+        self.terminal_view_sizes.retain(|pane_id, _| keep(pane_id));
+        self.panes_closing.retain(|pane_id| keep(pane_id));
+        before != self.terminal_state_len()
+    }
+
+    /// Removes the state of a pane's terminal session while the pane itself,
+    /// and so its sizes, stays known.
+    fn retain_terminal_session_state(&mut self, keep: impl Fn(&str) -> bool) -> bool {
+        let before = self.terminal_state_len();
+        self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
+        self.terminal_session_generations
+            .retain(|pane_id, _| keep(pane_id));
+        self.terminal_session_lifecycles
+            .retain(|pane_id, _| keep(pane_id));
+        self.terminal_recovery.retain(|pane_id, _| keep(pane_id));
+        self.terminal_frames_need_full
+            .retain(|pane_id| keep(pane_id));
+        self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
+        self.panes_scrolled_before_size
+            .retain(|pane_id| keep(pane_id));
+        before != self.terminal_state_len()
+    }
+
+    /// Every pane-keyed terminal map, counted together so a retain pass can
+    /// report whether it removed anything.
+    fn terminal_state_len(&self) -> usize {
+        self.terminal_sessions.len()
+            + self.terminal_session_generations.len()
+            + self.terminal_session_lifecycles.len()
+            + self.terminal_recovery.len()
+            + self.terminal_sizes.len()
+            + self.terminal_view_sizes.len()
+            + self.terminal_frames_need_full.len()
+            + self.panes_awaiting_size.len()
+            + self.panes_scrolled_before_size.len()
+            + self.panes_closing.len()
     }
 
     fn reconcile_remote_terminal_selection(&mut self) -> bool {
@@ -3615,16 +3660,7 @@ impl Runtime {
         if let Some(live_pane_ids) = live_pane_ids.as_ref() {
             let keep =
                 |pane_id: &str| pane_id.starts_with("remote:") || live_pane_ids.contains(pane_id);
-            self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
-            self.terminal_session_generations
-                .retain(|pane_id, _| keep(pane_id));
-            self.terminal_session_lifecycles
-                .retain(|pane_id, _| keep(pane_id));
-            self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
-            self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
-            self.panes_scrolled_before_size
-                .retain(|pane_id| keep(pane_id));
-            self.panes_closing.retain(|pane_id| keep(pane_id));
+            self.retain_terminal_pane_state(keep);
         }
         let mut excluded = Vec::new();
         let mut rejected_layouts: Vec<(String, String)> = Vec::new();
@@ -3884,9 +3920,7 @@ impl Runtime {
         // exclusion is stated rather than silently folded into the count.
         for exclusion in &excluded {
             let pane_id = exclusion.pane_id.as_deref().unwrap_or("<missing pane id>");
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "session",
                     "kind": "agent.excluded",
                     "pane_id": pane_id,
@@ -3930,9 +3964,7 @@ impl Runtime {
             }
         }
         for (tab_id, reason) in &rejected_layouts {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "session",
                     "kind": "layout.excluded",
                     "tab_id": tab_id,
@@ -4894,9 +4926,7 @@ impl Runtime {
     /// disk write.
     fn record_read_record_changes(&mut self, changes: &[crate::sidebar::ReadRecordChange]) {
         for change in changes {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "session",
                     "kind": "pane.read_record",
                     "pane_id": change.pane_id,
@@ -5208,9 +5238,7 @@ impl Runtime {
         }
         *self.pending_view_focus_mut(slot) = None;
         let what = slot.what();
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "view_state",
                 "kind": slot.refused_kind(),
                 slot.id_key(): target_id,
@@ -5257,9 +5285,7 @@ impl Runtime {
     /// carries nothing about what is in them.
     fn report_followed_pane_focus(&mut self, previous: Option<&str>, arriving: &str) {
         let from = previous.unwrap_or("<none>").to_owned();
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "view_state",
                 "kind": "pane.focus.followed",
                 "from_pane_id": from,
@@ -5334,6 +5360,10 @@ impl Runtime {
             transport_message: lifecycle.message,
             transport_generation: lifecycle.generation,
             transport_attempt: lifecycle.attempt,
+            transport_last_attempt_at_unix_ms: self
+                .terminal_recovery
+                .get(pane_id)
+                .and_then(|r| r.last_attempt_at_unix_ms),
             transport_exit_category: lifecycle.exit_category,
             transport_retry_decision: lifecycle.retry_decision.to_owned(),
         }
@@ -5354,6 +5384,10 @@ impl Runtime {
             pane.transport_message = lifecycle.message;
             pane.transport_generation = lifecycle.generation;
             pane.transport_attempt = lifecycle.attempt;
+            pane.transport_last_attempt_at_unix_ms = self
+                .terminal_recovery
+                .get(pane_id)
+                .and_then(|r| r.last_attempt_at_unix_ms);
             pane.transport_exit_category = lifecycle.exit_category;
             pane.transport_retry_decision = lifecycle.retry_decision.to_owned();
         }
@@ -5451,7 +5485,10 @@ impl Runtime {
             let lines = i32::from(lines) * if direction == "up" { 1 } else { -1 };
             if let Some(session) = self.terminal_sessions.get_mut(pane_id)
                 && session.mode == TerminalSessionMode::Control
-                && let Err(message) = session.scroll(live::ScrollRequest { lines })
+                && let Err(message) = session.scroll(live::ScrollRequest {
+                    lines,
+                    ..Default::default()
+                })
             {
                 self.set_error("terminal.scroll_failed", message, true);
                 return true;
@@ -5500,9 +5537,7 @@ impl Runtime {
                     "pane.fork.created",
                     format!("Forked pane {parent_pane_id} into {forked_pane_id} in {elapsed_ms}ms"),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "pane_fork",
                         "kind": "pane.fork.created",
                         "pane_id": parent_pane_id,
@@ -5518,9 +5553,7 @@ impl Runtime {
                     format!("Pane {parent_pane_id} could not be forked: {message}"),
                     true,
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "pane_fork",
                         "kind": "pane.fork_failed",
                         "pane_id": parent_pane_id,
@@ -5563,9 +5596,7 @@ impl Runtime {
                     "pane.projection.ready",
                     format!("Pane {pane_id} projected in {elapsed_ms} ms"),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "pane_projection",
                         "kind": "pane.projection_ready",
                         "pane_id": pane_id,
@@ -5605,9 +5636,7 @@ impl Runtime {
                         direction.as_str()
                     ),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "pane_control",
                         "kind": "pane.split_ready",
                         "pane_id": pane_id,
@@ -5645,9 +5674,7 @@ impl Runtime {
                         "Pane {pane_id} zoom acknowledged in {elapsed_ms} ms; awaiting authoritative event"
                     ),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "pane_control",
                         "kind": "pane.zoom_ready",
                         "pane_id": pane_id,
@@ -5663,9 +5690,7 @@ impl Runtime {
                         "Pane {pane_id} close acknowledged in {elapsed_ms} ms; awaiting authoritative event"
                     ),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "pane_control",
                         "kind": "pane.close_ready",
                         "pane_id": pane_id,
@@ -5751,9 +5776,7 @@ impl Runtime {
                         "{action_kind} for {target_id} acknowledged in {elapsed_ms} ms{receipt}; awaiting authoritative event"
                     ),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "remote_control",
                         "kind": "remote.control.ready",
                         "target": target_id,
@@ -5780,9 +5803,7 @@ impl Runtime {
                     format!("{action_kind} for {target_id} failed: {message}"),
                     true,
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "remote_control",
                         "kind": "remote.control.failed",
                         "target": target_id,
@@ -5860,9 +5881,7 @@ impl Runtime {
                         "{action_kind} acknowledged in {elapsed_ms} ms; awaiting authoritative Herdr event"
                     ),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "tab_control",
                         "kind": "tab.control.ready",
                         "action": action_kind,
@@ -5884,9 +5903,7 @@ impl Runtime {
                     format!("{action_kind} failed: {message}"),
                     true,
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "tab_control",
                         "kind": "tab.control.failed",
                         "action": action_kind,
@@ -5949,9 +5966,7 @@ impl Runtime {
                             "Herdr placed tab {tab_id} as asked in {elapsed_ms} ms; awaiting the ordered event"
                         ),
                     );
-                    eprintln!(
-                        "{}",
-                        serde_json::json!({
+                    crate::diagnostic!(serde_json::json!({
                             "component": "tab_control",
                             "kind": "tab.move.ready",
                             "checkout_id": checkout_id,
@@ -5962,9 +5977,7 @@ impl Runtime {
                     );
                     return true;
                 }
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "tab_control",
                         "kind": "tab.move.diverged",
                         "checkout_id": checkout_id,
@@ -5982,9 +5995,7 @@ impl Runtime {
                 true
             }
             Err(message) => {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "tab_control",
                         "kind": "tab.move.failed",
                         "checkout_id": checkout_id,
@@ -6006,25 +6017,77 @@ impl Runtime {
 
     /// Appends only the decoded frame bytes when the delivering official
     /// terminal session is still the current generation and mode.
+    /// None retires the reader; Some(false) keeps reading a held frame without
+    /// publishing it. Skipping a foreign grid must not terminate observation.
     pub fn ingest_terminal_session_frame(
         &mut self,
         pane_id: &str,
         generation: u64,
         mode: TerminalSessionMode,
         bytes: &[u8],
-    ) -> bool {
-        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
-            return false;
-        }
-        if self
-            .terminal_sessions
-            .get(pane_id)
-            .is_none_or(|session| session.mode != mode)
+        frame: crate::model::TerminalFrame,
+    ) -> Option<bool> {
+        if self.terminal_session_generations.get(pane_id) != Some(&generation)
+            || self
+                .terminal_sessions
+                .get(pane_id)
+                .is_none_or(|session| session.mode != mode)
         {
-            return false;
+            return None;
+        }
+        let expected = self
+            .terminal_view_sizes
+            .get(pane_id)
+            .or_else(|| self.terminal_sizes.get(pane_id))
+            .copied();
+        if expected != Some((frame.height, frame.width)) {
+            self.terminal_frames_need_full.insert(pane_id.to_owned());
+            // Logged per held frame to the file and stderr sink only. A push
+            // into the snapshot's diagnostics would restamp the revisioned
+            // rest section on every frame of a mismatch burst.
+            crate::diagnostic!(serde_json::json!({
+                    "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
+                    "pane_id": pane_id, "frame": [frame.width, frame.height],
+                    "expected": expected.map(|(height, width)| [width, height]),
+                })
+            );
+            return Some(false);
+        }
+        if self.terminal_frames_need_full.contains(pane_id) && !frame.full {
+            return Some(false);
+        }
+        // Preserve the last valid view during a retry. Reset the parser only
+        // as part of the replacement full frame, so no empty canvas is exposed.
+        let reset_bytes = self
+            .terminal_frames_need_full
+            .remove(pane_id)
+            .then(|| [b"\x1bc".as_slice(), bytes].concat());
+        let bytes = reset_bytes.as_deref().unwrap_or(bytes);
+        if mode == TerminalSessionMode::Control {
+            if let Some(recovery) = self.terminal_recovery.remove(pane_id) {
+                crate::diagnostic!(serde_json::json!({
+                        "kind": "terminal.control_frame_ready", "pane_id": pane_id,
+                        "generation": generation, "occurred_at": unix_milliseconds(),
+                        "retries": recovery.retries,
+                        "last_attempt_at_unix_ms": recovery.last_attempt_at_unix_ms,
+                        "rows": frame.height, "cols": frame.width,
+                    })
+                );
+            }
+            if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
+                lifecycle.message = None;
+                lifecycle.retry_decision = "none";
+            }
+            self.sync_transport_projection(pane_id);
         }
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
-        true
+        self.snapshot
+            .terminal
+            .chunks
+            .last_mut()
+            .expect("just appended frame")
+            .frame = Some(frame);
+        Some(true)
     }
 
     /// Handles a `terminal.closed` envelope or stdout EOF. An owner conflict
@@ -6068,9 +6131,7 @@ impl Runtime {
             .unwrap_or_else(|| format!("Pane {pane_id} terminal {} session ended", mode.as_str()));
 
         if mode == TerminalSessionMode::Control && category == "owner_conflict" {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "terminal_session",
                     "kind": "terminal.control_owner_conflict",
                     "pane_id": pane_id,
@@ -6079,17 +6140,20 @@ impl Runtime {
                     "mode": mode.as_str(),
                     "duration_ms": 0,
                     "exit_category": category,
-                    "retry_decision": "observe_once",
+                    "retry_decision": self.terminal_retry_decision(pane_id, "observe_once"),
                 })
             );
+            self.schedule_terminal_recovery(
+                pane_id,
+                "Another client owns terminal control; viewing read-only".to_owned(),
+            );
+            let retry_message = self.terminal_recovery.get(pane_id).map(|r| r.message());
             self.start_terminal_session(
                 pane_id,
                 TerminalSessionMode::Observe,
                 attempt,
                 "observe_once",
-                Some(format!(
-                    "Another client owns terminal control. Viewing {pane_id} read-only; use Reconnect to try control again."
-                )),
+                retry_message,
             );
             return true;
         }
@@ -6115,9 +6179,7 @@ impl Runtime {
                 },
             );
             self.sync_transport_projection(pane_id);
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "terminal_session",
                     "kind": "terminal.session_closed_with_pane",
                     "pane_id": pane_id,
@@ -6144,12 +6206,11 @@ impl Runtime {
                 retry_decision: "manual",
             },
         );
+        self.schedule_terminal_recovery(pane_id, message.clone());
         self.sync_transport_projection(pane_id);
         let notice = format!("\r\n[{message}]\r\n");
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "terminal_session",
                 "kind": "terminal.session_ended",
                 "pane_id": pane_id,
@@ -6158,7 +6219,7 @@ impl Runtime {
                 "mode": mode.as_str(),
                 "duration_ms": 0,
                 "exit_category": category,
-                "retry_decision": "manual",
+                "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
             })
         );
         true
@@ -6174,15 +6235,21 @@ impl Runtime {
             return false;
         }
         self.set_error("terminal.write_failed", message.clone(), true);
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        if !pane_id.starts_with("remote:") {
+            self.terminal_sessions.remove(pane_id);
+            if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
+                lifecycle.state = "unavailable";
+            }
+            self.schedule_terminal_recovery(pane_id, message.clone());
+            self.sync_transport_projection(pane_id);
+        }
+        crate::diagnostic!(serde_json::json!({
                 "component": "terminal_session",
                 "kind": "terminal.control_write_failed",
                 "pane_id": pane_id,
                 "generation": generation,
                 "message": message,
-                "retry_decision": "manual",
+                "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
             })
         );
         true
@@ -6212,11 +6279,16 @@ impl Runtime {
     }
 
     fn push_diagnostic(&mut self, kind: impl Into<String>, message: impl Into<String>) {
-        self.snapshot.status.diagnostics.push(DiagnosticSnapshot {
+        let diagnostic = DiagnosticSnapshot {
             kind: kind.into(),
             message: message.into(),
             occurred_at: unix_milliseconds(),
-        });
+        };
+        crate::diagnostic!(serde_json::json!({
+                "kind": diagnostic.kind, "message": diagnostic.message, "occurred_at": diagnostic.occurred_at
+            })
+        );
+        self.snapshot.status.diagnostics.push(diagnostic);
         // The list rides the revisioned rest section, so it is bounded: a
         // fault that repeats every few seconds otherwise grows what every
         // rest re-send carries for the life of the process.
@@ -6544,8 +6616,10 @@ impl Runtime {
             .map(str::to_owned)
             .collect::<HashSet<_>>();
         let releasing = self
-            .terminal_sessions
-            .keys()
+            .terminal_session_lifecycles
+            .iter()
+            .filter(|(_, lifecycle)| lifecycle.state != "released")
+            .map(|(pane_id, _)| pane_id)
             .filter(|pane_id| !pane_id.starts_with("remote:"))
             .filter(|pane_id| placed.contains(*pane_id) && !attached.contains(*pane_id))
             .cloned()
@@ -6556,6 +6630,7 @@ impl Runtime {
         for pane_id in releasing {
             let _released_session = self.terminal_sessions.remove(&pane_id);
             self.panes_awaiting_size.remove(&pane_id);
+            self.terminal_recovery.remove(&pane_id);
             let attempt = self
                 .terminal_session_lifecycles
                 .get(&pane_id)
@@ -6584,9 +6659,7 @@ impl Runtime {
                 "terminal.session_released",
                 format!("Released the terminal session for pane {pane_id}"),
             );
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "terminal_session",
                     "kind": "terminal.session_released",
                     "pane_id": pane_id,
@@ -6938,9 +7011,7 @@ impl Runtime {
                 outcome.registration.path
             ),
         );
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "workspace",
                 "kind": "workspace.registered",
                 "path": outcome.registration.path,
@@ -7007,7 +7078,11 @@ impl Runtime {
                         remote_pane_source_id(target_id, &payload.pane_id).is_some()
                     })
                 {
-                    self.write_terminal_control(&payload.pane_id, &payload.bytes_base64);
+                    self.write_terminal_control(
+                        &payload.pane_id,
+                        &payload.bytes_base64,
+                        payload.input_trace,
+                    );
                 } else {
                     // Fixture mode has no PTY behind the pane; the loopback
                     // echo is the whole byte bridge.
@@ -7082,6 +7157,7 @@ impl Runtime {
                 true
             }
             ValidatedEvent::ReconnectPane(payload) => {
+                self.terminal_recovery.remove(&payload.pane_id);
                 let pane_id = payload.pane_id;
                 let pane_exists = self
                     .snapshot
@@ -8110,103 +8186,58 @@ impl Runtime {
                 }
                 true
             }
-            ValidatedEvent::TerminalResize(payload) => {
-                if payload.rows == 0 || payload.cols == 0 {
+            ValidatedEvent::TerminalClick(payload) => {
+                // D8 explicitly chooses Herdr's detected agent as the policy
+                // boundary until its frame protocol carries mouse mode.
+                // Do not infer it from titles, output, or a session id.
+                let agent = self
+                    .snapshot
+                    .navigator
+                    .agents
+                    .iter()
+                    .find(|agent| agent.pane_id == payload.pane_id);
+                let report = agent.is_some_and(|agent| agent.agent_kind == "claude");
+                crate::diagnostic!(serde_json::json!({
+                        "component": "terminal", "kind": "terminal.click_routed",
+                        "pane_id": payload.pane_id,
+                        "basis": if agent.is_some() { "herdr.agent.list" } else { "not_detected" },
+                        "agent_kind": agent.map(|agent| agent.agent_kind.as_str()),
+                        "route": if report { "sgr_mouse" } else { "local_selection" },
+                        "column": payload.column, "row": payload.row,
+                    })
+                );
+                if report {
+                    // SGR uses one-based cells, uppercase M for press and
+                    // lowercase m for release. No newline or Enter is sent.
+                    let column = u32::from(payload.column) + 1;
+                    let row = u32::from(payload.row) + 1;
+                    // The shell sends crossterm's bitset, the one Herdr's
+                    // terminal.scroll takes. SGR has bits for shift, alt and
+                    // control only, so command (bit 8) is dropped here on
+                    // purpose: a TUI has no way to receive it.
+                    let flags = (payload.modifiers & 1) * 4
+                        | (payload.modifiers & 2) * 8
+                        | (payload.modifiers & 4) * 2;
+                    let bytes =
+                        format!("\x1b[<{flags};{column};{row}M\x1b[<{flags};{column};{row}m");
+                    self.write_terminal_control(
+                        &payload.pane_id,
+                        &live::encode_base64(bytes.as_bytes()),
+                        None,
+                    );
+                    return self.snapshot.status.last_error.is_some();
+                }
+                false
+            }
+            ValidatedEvent::TerminalScroll(payload) => {
+                if !matches!(payload.direction.as_str(), "up" | "down") || payload.lines == 0 {
                     self.set_error(
-                        "terminal.invalid_resize",
-                        "Terminal dimensions must be positive",
+                        "terminal.invalid_scroll",
+                        "Scroll needs a direction and positive line count",
                         false,
                     );
                     return true;
                 }
-                let size = (payload.rows, payload.cols);
-                let previous = self.terminal_sizes.insert(payload.pane_id.clone(), size);
-                self.panes_scrolled_before_size.remove(&payload.pane_id);
-                // A view reporting the size the pane is already running at is
-                // the common case right after an attach. Sending it on would
-                // make Herdr answer with a second full frame for a size that
-                // never changed.
-                if previous == Some(size) {
-                    return false;
-                }
-                // A pane's first size is what the next launch attaches with,
-                // so it is written now. Later sizes ride the next UI-state
-                // save rather than putting a file write in the middle of a
-                // window drag.
-                if previous.is_none() {
-                    self.persist_ui_state();
-                }
-                if self.terminal_sessions.contains_key(&payload.pane_id) {
-                    if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
-                        && session.mode == TerminalSessionMode::Control
-                        && let Err(message) = session.resize(payload.rows, payload.cols)
-                    {
-                        self.set_error("terminal.resize_failed", message, true);
-                        return true;
-                    }
-                    return false;
-                }
-                // The pane's attach was held back because no view had reported
-                // a size yet. This is that size, so it can start now, at the
-                // size it will keep.
-                if self.panes_awaiting_size.remove(&payload.pane_id) {
-                    self.request_terminal_control(&payload.pane_id);
-                    return true;
-                }
-                false
-            }
-            ValidatedEvent::TerminalRepaint(payload) => {
-                // A view built for a pane whose session is already running has
-                // no frame of its own: Herdr sent the attach frame to the view
-                // that came before it, and it sends nothing more until the
-                // pane produces output, so the new grid stays empty until the
-                // operator touches it. A resize at the size the pane already
-                // has is the repaint Herdr offers, and it answers with a full
-                // frame. The ordinary same-size resize is still swallowed:
-                // this is the one place that asks for the frame on purpose.
-                // The two ways out of here are both the ordinary first
-                // visit, not a failure: a pane with no reported size and a
-                // pane with no session yet are about to be attached, and the
-                // attach draws its own full frame. Only a view that arrived
-                // after the frame did has nothing coming.
-                let Some((rows, cols)) = self.terminal_sizes.get(&payload.pane_id).copied() else {
-                    return false;
-                };
-                let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id) else {
-                    return false;
-                };
-                // An observing session has no write channel; its pane is
-                // read-only and asking would only raise a client conflict.
-                if session.mode != TerminalSessionMode::Control {
-                    return false;
-                }
-                if let Err(message) = session.resize(rows, cols) {
-                    self.set_error("terminal.repaint_failed", message, true);
-                    return true;
-                }
-                self.push_diagnostic(
-                    "terminal.repaint_requested",
-                    format!(
-                        "Asked Herdr to repaint pane {} at {rows}x{cols}",
-                        payload.pane_id
-                    ),
-                );
-                // A pane that draws nothing is diagnosed from outside the
-                // process, and the question is always whether the frame was
-                // asked for at all. One line per view built answers it.
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
-                        "component": "terminal_session",
-                        "kind": "terminal.repaint_requested",
-                        "pane_id": payload.pane_id,
-                        "rows": rows,
-                        "cols": cols,
-                    })
-                );
-                true
-            }
-            ValidatedEvent::TerminalScroll(payload) => {
                 // Herdr owns the pane's history, so the wheel is a request it
                 // answers with a fresh frame rather than a local buffer move.
                 // A pane another client controls is read-only, not broken, so
@@ -8218,10 +8249,77 @@ impl Runtime {
                     i32::from(payload.lines) * if payload.direction == "up" { 1 } else { -1 };
                 if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
                     && session.mode == TerminalSessionMode::Control
-                    && let Err(message) = session.scroll(live::ScrollRequest { lines })
+                    && let Err(message) = session.scroll(live::ScrollRequest {
+                        lines,
+                        column: payload.column,
+                        row: payload.row,
+                        modifiers: payload.modifiers,
+                    })
                 {
                     self.set_error("terminal.scroll_failed", message, true);
                     return true;
+                }
+                false
+            }
+            ValidatedEvent::TerminalViewport(payload) => {
+                let size = (payload.rows, payload.cols);
+                let changed = self
+                    .terminal_view_sizes
+                    .insert(payload.pane_id.clone(), size)
+                    != Some(size);
+                if changed || payload.new_view {
+                    self.terminal_frames_need_full.insert(payload.pane_id);
+                }
+                false
+            }
+            ValidatedEvent::TerminalResize(payload) => {
+                if payload.rows == 0 || payload.cols == 0 {
+                    self.set_error(
+                        "terminal.invalid_resize",
+                        "Terminal dimensions must be positive",
+                        false,
+                    );
+                    return true;
+                }
+                let size = (payload.rows, payload.cols);
+                self.panes_scrolled_before_size.remove(&payload.pane_id);
+                let previous = self.terminal_sizes.insert(payload.pane_id.clone(), size);
+                // A view reporting the size the pane is already running at is
+                // the common case right after an attach. Sending it on would
+                // make Herdr answer with a second full frame for a size that
+                // never changed.
+                // A pane's first size is what the next launch attaches with,
+                // so it is written now. Later sizes ride the next UI-state
+                // save rather than putting a file write in the middle of a
+                // window drag.
+                if previous.is_none() {
+                    self.persist_ui_state();
+                }
+                if self.panes_awaiting_size.remove(&payload.pane_id) {
+                    self.terminal_recovery.remove(&payload.pane_id);
+                    self.terminal_session_lifecycles
+                        .entry(payload.pane_id.clone())
+                        .or_default()
+                        .state = "idle";
+                    self.request_terminal_control(&payload.pane_id);
+                    return true;
+                }
+                if previous == Some(size)
+                    && !self.terminal_frames_need_full.contains(&payload.pane_id)
+                {
+                    return false;
+                }
+                crate::diagnostic!(serde_json::json!({"kind":"terminal.resize_settled", "pane_id":payload.pane_id, "rows":payload.rows, "cols":payload.cols})
+                );
+                if self.terminal_sessions.contains_key(&payload.pane_id) {
+                    if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
+                        && session.mode == TerminalSessionMode::Control
+                        && let Err(message) = session.resize(payload.rows, payload.cols)
+                    {
+                        self.set_error("terminal.resize_failed", message, true);
+                        return true;
+                    }
+                    return false;
                 }
                 false
             }
@@ -8482,6 +8580,113 @@ impl Runtime {
         }
     }
 
+    fn terminal_retry_decision(&self, pane_id: &str, fallback: &'static str) -> &'static str {
+        self.terminal_recovery
+            .get(pane_id)
+            .map_or(fallback, |r| r.decision())
+    }
+
+    fn schedule_terminal_recovery(&mut self, pane_id: &str, reason: String) {
+        // Remote reconnect policy is owned by its existing transport.
+        if pane_id.starts_with("remote:") {
+            return;
+        }
+        let recovery = self
+            .terminal_recovery
+            .entry(pane_id.to_owned())
+            .or_insert_with(|| {
+                crate::terminal_recovery::Recovery::new(Instant::now(), reason.clone())
+            });
+        recovery.reason = reason;
+        if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
+            lifecycle.message = Some(recovery.message());
+            lifecycle.retry_decision = recovery.decision();
+        }
+    }
+
+    pub(crate) fn maintain_terminals(&mut self, now: Instant) -> bool {
+        let visible = self
+            .focused_visible_tab_id()
+            .and_then(|tab_id| {
+                self.snapshot
+                    .pane_layouts
+                    .iter()
+                    .find(|layout| layout.tab_id == tab_id)
+                    .map(|layout| {
+                        layout
+                            .pane_ids()
+                            .into_iter()
+                            .map(str::to_owned)
+                            .collect::<HashSet<_>>()
+                    })
+            })
+            .unwrap_or_default();
+        let mut changed = false;
+        for pane_id in &visible {
+            if self
+                .terminal_session_lifecycles
+                .get(pane_id)
+                .is_some_and(|lifecycle| lifecycle.state == "released")
+            {
+                self.request_terminal_control(pane_id);
+                changed = true;
+            }
+        }
+        let due = self
+            .terminal_recovery
+            .iter()
+            .filter(|(pane_id, recovery)| {
+                visible.contains(*pane_id) && recovery.due.is_some_and(|due| now >= due)
+            })
+            .map(|(pane_id, _)| pane_id.clone())
+            .collect::<Vec<_>>();
+        for pane_id in due {
+            if self.pane_is_going_away(&pane_id) {
+                self.terminal_recovery.remove(&pane_id);
+                continue;
+            }
+            let retry = self
+                .terminal_recovery
+                .get_mut(&pane_id)
+                .expect("collected recovery")
+                .advance(now);
+            let message = self.terminal_recovery[&pane_id].message();
+            if retry && self.terminal_sizes.contains_key(&pane_id) {
+                let attempt = self
+                    .terminal_session_lifecycles
+                    .get(&pane_id)
+                    .map_or(1, |l| l.attempt + 1);
+                self.start_terminal_session(
+                    &pane_id,
+                    TerminalSessionMode::Control,
+                    attempt,
+                    "automatic_bounded",
+                    Some(message.clone()),
+                );
+            } else if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(&pane_id) {
+                lifecycle.message = Some(message.clone());
+                lifecycle.retry_decision = if retry { "automatic_bounded" } else { "manual" };
+                if !retry && lifecycle.state != "observing" {
+                    lifecycle.state = "unavailable";
+                    self.terminal_sessions.remove(&pane_id);
+                    // A late spawn cannot revive an exhausted attempt.
+                    self.terminal_session_generations.remove(&pane_id);
+                }
+                self.sync_transport_projection(&pane_id);
+            }
+            self.push_diagnostic(
+                if retry {
+                    "terminal.retrying"
+                } else {
+                    "terminal.retries_exhausted"
+                },
+                format!("Pane {pane_id}: {message}"),
+            );
+            changed = true;
+        }
+        changed
+    }
+
     /// Starts one control attempt. Repeated sync updates are no-ops while any
     /// official control or observer session is starting or active.
     fn request_terminal_control(&mut self, pane_id: &str) {
@@ -8503,6 +8708,7 @@ impl Runtime {
             self.terminal_session_lifecycles.remove(pane_id);
             self.terminal_sizes.remove(pane_id);
             self.panes_awaiting_size.remove(pane_id);
+            self.terminal_recovery.remove(pane_id);
             return;
         }
         let current = self
@@ -8530,6 +8736,14 @@ impl Runtime {
                     ),
                 );
             }
+            self.terminal_session_lifecycles
+                .entry(pane_id.to_owned())
+                .or_default()
+                .state = "waiting_size";
+            self.schedule_terminal_recovery(
+                pane_id,
+                "Waiting for the pane view to report its size".to_owned(),
+            );
             self.sync_transport_projection(pane_id);
             return;
         }
@@ -8547,6 +8761,26 @@ impl Runtime {
         );
     }
 
+    fn terminal_session_context(&self, pane_id: &str) -> Option<TerminalSessionContext> {
+        if pane_id.starts_with("remote:") {
+            self.remote_terminals
+                .iter()
+                .find_map(|(target_id, context)| {
+                    remote_pane_source_id(target_id, pane_id).map(|source_pane_id| {
+                        TerminalSessionContext::Remote {
+                            context: context.clone(),
+                            source_pane_id: source_pane_id.to_owned(),
+                        }
+                    })
+                })
+        } else {
+            self.live
+                .as_ref()
+                .cloned()
+                .map(TerminalSessionContext::Local)
+        }
+    }
+
     fn start_terminal_session(
         &mut self,
         pane_id: &str,
@@ -8555,6 +8789,7 @@ impl Runtime {
         retry_decision: &'static str,
         message: Option<String>,
     ) {
+        self.terminal_frames_need_full.insert(pane_id.to_owned());
         self.next_terminal_session_generation =
             self.next_terminal_session_generation.saturating_add(1);
         let generation = self.next_terminal_session_generation;
@@ -8573,10 +8808,20 @@ impl Runtime {
                 retry_decision,
             },
         );
+        if mode == TerminalSessionMode::Control {
+            self.schedule_terminal_recovery(
+                pane_id,
+                "Waiting for the first terminal frame".to_owned(),
+            );
+            if let Some(recovery) = self.terminal_recovery.get_mut(pane_id) {
+                recovery.last_attempt_at_unix_ms = Some(unix_milliseconds());
+            }
+        }
+        let decision = self.terminal_retry_decision(pane_id, retry_decision);
+        if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
+            lifecycle.retry_decision = decision;
+        }
         self.sync_transport_projection(pane_id);
-        // Reset only this pane's SwiftTerm grid. The first official frame is
-        // a full ANSI frame, while other panes retain their own state.
-        self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(b"\x1bc"));
         self.push_diagnostic(
             "terminal.session_requested",
             format!(
@@ -8595,32 +8840,11 @@ impl Runtime {
                     TerminalSessionMode::Control => "controlling",
                     TerminalSessionMode::Observe => "observing",
                 };
-                lifecycle.retry_decision = if mode == TerminalSessionMode::Observe {
-                    "manual"
-                } else {
-                    "none"
-                };
             }
             self.sync_transport_projection(pane_id);
             return;
         }
-        let context = if pane_id.starts_with("remote:") {
-            self.remote_terminals
-                .iter()
-                .find_map(|(target_id, context)| {
-                    remote_pane_source_id(target_id, pane_id).map(|source_pane_id| {
-                        TerminalSessionContext::Remote {
-                            context: context.clone(),
-                            source_pane_id: source_pane_id.to_owned(),
-                        }
-                    })
-                })
-        } else {
-            self.live
-                .as_ref()
-                .cloned()
-                .map(TerminalSessionContext::Local)
-        };
+        let context = self.terminal_session_context(pane_id);
         let Some(context) = context else {
             let message = if pane_id.starts_with("remote:") {
                 format!("Pane {pane_id} has no configured remote terminal transport")
@@ -8703,10 +8927,9 @@ impl Runtime {
                 retry_decision: "manual",
             },
         );
+        self.schedule_terminal_recovery(pane_id, format!("Terminal start refused: {message}"));
         self.sync_transport_projection(pane_id);
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "terminal_session",
                 "kind": "terminal.session_unavailable",
                 "pane_id": pane_id,
@@ -8715,7 +8938,7 @@ impl Runtime {
                 "mode": mode.as_str(),
                 "duration_ms": elapsed_ms,
                 "exit_category": category,
-                "retry_decision": "manual",
+                "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
             })
         );
     }
@@ -8748,6 +8971,12 @@ impl Runtime {
         }
         match result {
             Ok(session) => {
+                if mode == TerminalSessionMode::Control
+                    && let Some((rows, cols)) = self.terminal_sizes.get(pane_id).copied()
+                    && let Err(message) = session.resize(rows, cols)
+                {
+                    self.set_error("terminal.resize_after_attach_failed", message, true);
+                }
                 self.terminal_sessions.insert(pane_id.to_owned(), session);
                 let reader_result = self
                     .terminal_sessions
@@ -8793,11 +9022,14 @@ impl Runtime {
                         attempt,
                         mode: Some(mode),
                         exit_category: None,
-                        retry_decision: if mode == TerminalSessionMode::Observe {
-                            "manual"
-                        } else {
-                            "none"
-                        },
+                        retry_decision: self.terminal_retry_decision(
+                            pane_id,
+                            if mode == TerminalSessionMode::Observe {
+                                "manual"
+                            } else {
+                                "none"
+                            },
+                        ),
                     },
                 );
                 self.sync_transport_projection(pane_id);
@@ -8808,9 +9040,7 @@ impl Runtime {
                         mode.as_str()
                     ),
                 );
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
+                crate::diagnostic!(serde_json::json!({
                         "component": "terminal_session",
                         "kind": "terminal.session_ready",
                         "pane_id": pane_id,
@@ -8819,7 +9049,8 @@ impl Runtime {
                         "mode": mode.as_str(),
                         "duration_ms": elapsed_ms,
                         "exit_category": null,
-                        "retry_decision": if mode == TerminalSessionMode::Observe { "manual" } else { "none" },
+                        "retry_decision": self.terminal_retry_decision(pane_id, if mode == TerminalSessionMode::Observe { "manual" } else { "none" }),
+                        "last_attempt_at_unix_ms": self.terminal_recovery.get(pane_id).and_then(|r| r.last_attempt_at_unix_ms),
                     })
                 );
                 true
@@ -8854,7 +9085,12 @@ impl Runtime {
 
     /// Routes key bytes only to an official controller. The actual pipe write
     /// runs on the session writer thread, outside the runtime mutex.
-    fn write_terminal_control(&mut self, pane_id: &str, bytes_base64: &str) {
+    fn write_terminal_control(
+        &mut self,
+        pane_id: &str,
+        bytes_base64: &str,
+        trace: Option<crate::model::TerminalInputTrace>,
+    ) {
         let bytes = match live::decode_base64(bytes_base64) {
             Ok(bytes) => bytes,
             Err(message) => {
@@ -8864,7 +9100,7 @@ impl Runtime {
         };
         match self.terminal_sessions.get(pane_id) {
             Some(session) if session.mode == TerminalSessionMode::Control => {
-                if let Err(message) = session.write_bytes(&bytes) {
+                if let Err(message) = session.write_bytes(&bytes, trace) {
                     self.set_error("terminal.write_failed", message, true);
                 }
             }
@@ -8887,12 +9123,33 @@ impl Runtime {
         }
     }
 
+    pub(crate) fn ingest_terminal_input_sent(
+        &mut self,
+        pane_id: &str,
+        generation: u64,
+        sent: crate::model::TerminalInputSent,
+    ) -> bool {
+        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
+            return false;
+        }
+        self.append_terminal_chunk(pane_id.to_owned(), String::new());
+        self.snapshot
+            .terminal
+            .chunks
+            .last_mut()
+            .expect("just appended input trace")
+            .input_sent = Some(sent);
+        true
+    }
+
     fn append_terminal_chunk(&mut self, pane_id: String, bytes_base64: String) {
         self.snapshot.terminal.sequence = self.snapshot.terminal.sequence.saturating_add(1);
         self.snapshot.terminal.chunks.push(TerminalChunk {
             pane_id,
             sequence: self.snapshot.terminal.sequence,
             bytes_base64,
+            frame: None,
+            input_sent: None,
         });
         const RETAINED_TERMINAL_CHUNKS: usize = 512;
         if self.snapshot.terminal.chunks.len() > RETAINED_TERMINAL_CHUNKS {
@@ -9045,8 +9302,9 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
+        "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
-        "terminal_repaint" => decode!(TerminalRepaintPayload, TerminalRepaint),
+        "terminal_click" => decode!(TerminalClickPayload, TerminalClick),
         "pane_find" => decode!(PaneFindPayload, PaneFind),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
@@ -9605,6 +9863,155 @@ mod tests {
     static NEXT_RUNTIME_STATE_ID: AtomicU64 = AtomicU64::new(0);
 
     #[test]
+    fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
+        let mut runtime = runtime();
+        let pane = "w-grid:p1";
+        runtime.terminal_sessions.insert(
+            pane.to_owned(),
+            TerminalSession::test_stub(pane, 1, TerminalSessionMode::Observe),
+        );
+        runtime
+            .terminal_session_generations
+            .insert(pane.to_owned(), 1);
+        runtime
+            .terminal_view_sizes
+            .insert(pane.to_owned(), (45, 115));
+        let before = runtime.snapshot.terminal.sequence;
+        for width in [84, 2] {
+            assert_eq!(
+                runtime.ingest_terminal_session_frame(
+                    pane,
+                    1,
+                    TerminalSessionMode::Observe,
+                    b"foreign",
+                    crate::model::TerminalFrame {
+                        width,
+                        height: 9,
+                        full: true
+                    }
+                ),
+                Some(false)
+            );
+        }
+        assert_eq!(runtime.snapshot.terminal.sequence, before);
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                pane,
+                1,
+                TerminalSessionMode::Observe,
+                b"partial",
+                crate::model::TerminalFrame {
+                    width: 115,
+                    height: 45,
+                    full: false
+                }
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                pane,
+                1,
+                TerminalSessionMode::Observe,
+                b"matching",
+                crate::model::TerminalFrame {
+                    width: 115,
+                    height: 45,
+                    full: true
+                }
+            ),
+            Some(true)
+        );
+        assert_eq!(runtime.snapshot.terminal.sequence, before + 1);
+        assert_eq!(
+            runtime
+                .snapshot
+                .terminal
+                .chunks
+                .last()
+                .unwrap()
+                .frame
+                .as_ref()
+                .unwrap()
+                .width,
+            115
+        );
+    }
+
+    #[test]
+    fn retry_preserves_the_canvas_until_a_matching_replacement_frame() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        let pane = "w-retry:p1";
+        runtime.terminal_sizes.insert(pane.into(), (24, 80));
+        runtime.append_terminal_chunk(pane.into(), live::encode_base64(b"last valid screen"));
+        let before = runtime.snapshot.terminal.sequence;
+        runtime.start_terminal_session(
+            pane,
+            TerminalSessionMode::Control,
+            2,
+            "automatic_bounded",
+            None,
+        );
+        assert_eq!(
+            runtime.snapshot.terminal.sequence, before,
+            "retry must not blank the canvas"
+        );
+        let recovery = &runtime.terminal_recovery[pane];
+        assert!(recovery.last_attempt_at_unix_ms.is_some());
+        assert_eq!(
+            runtime.terminal_session_lifecycles[pane].retry_decision,
+            "automatic_bounded"
+        );
+        let generation = runtime.terminal_session_generations[pane];
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                pane,
+                generation,
+                TerminalSessionMode::Control,
+                b"wrong grid",
+                crate::model::TerminalFrame {
+                    width: 2,
+                    height: 9,
+                    full: true
+                }
+            ),
+            Some(false)
+        );
+        assert_eq!(runtime.snapshot.terminal.sequence, before);
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                pane,
+                generation,
+                TerminalSessionMode::Control,
+                b"replacement",
+                crate::model::TerminalFrame {
+                    width: 80,
+                    height: 24,
+                    full: true
+                }
+            ),
+            Some(true)
+        );
+        assert_eq!(runtime.snapshot.terminal.sequence, before + 1);
+        assert_eq!(
+            live::decode_base64(
+                &runtime
+                    .snapshot
+                    .terminal
+                    .chunks
+                    .last()
+                    .unwrap()
+                    .bytes_base64
+            )
+            .unwrap(),
+            b"\x1bcreplacement"
+        );
+        assert!(!runtime.terminal_recovery.contains_key(pane));
+        assert!(runtime.terminal_session_lifecycles[pane].message.is_none());
+    }
+
+    #[test]
     fn repeated_sync_updates_do_not_start_a_second_terminal_session() {
         assert!(terminal_control_request_allowed("idle", false));
         for state in [
@@ -10130,12 +10537,19 @@ mod tests {
             .find(|pane| pane.pane_id == "w1:p1")
             .expect("the pane whose attach failed is still projected");
         assert_eq!(failed.transport_state, "unavailable");
-        assert_eq!(failed.transport_message.as_deref(), Some(reason));
+        assert!(failed.transport_message.as_ref().unwrap().contains(reason));
+        assert!(
+            failed
+                .transport_message
+                .as_ref()
+                .unwrap()
+                .contains("Retrying in 5 seconds")
+        );
         assert_eq!(
             failed.transport_exit_category.as_deref(),
             Some("spawn_failed")
         );
-        assert_eq!(failed.transport_retry_decision, "manual");
+        assert_eq!(failed.transport_retry_decision, "automatic_bounded");
 
         let untouched = runtime
             .snapshot
@@ -10170,6 +10584,15 @@ mod tests {
 
     #[test]
     fn runtime_owner_conflict_observes_ignores_stale_delivery_and_reconnects_once() {
+        for reason in [
+            "terminal attach failed: terminal 42 already has an attached client; retry with --takeover",
+            "terminal attach taken over",
+        ] {
+            assert_owner_conflict_observes_and_reconnects(reason);
+        }
+    }
+
+    fn assert_owner_conflict_observes_and_reconnects(owner_conflict: &str) {
         let mut runtime = runtime();
         runtime.suppress_terminal_session_workers = true;
         runtime.snapshot.navigator.workspaces = vec![workspace(
@@ -10211,7 +10634,6 @@ mod tests {
             TerminalSession::test_stub("w1:p1", 40, TerminalSessionMode::Control),
         );
 
-        let owner_conflict = "terminal attach failed: terminal 42 already has an attached client; retry with --takeover";
         assert!(runtime.ingest_terminal_session_closed(
             "w1:p1",
             40,
@@ -10237,18 +10659,34 @@ mod tests {
         );
 
         let chunk_count = runtime.snapshot.terminal.chunks.len();
-        assert!(!runtime.ingest_terminal_session_frame(
-            "w1:p1",
-            40,
-            TerminalSessionMode::Control,
-            b"stale-generation",
-        ));
-        assert!(!runtime.ingest_terminal_session_frame(
-            "w1:p1",
-            41,
-            TerminalSessionMode::Control,
-            b"stale-mode",
-        ));
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                "w1:p1",
+                40,
+                TerminalSessionMode::Control,
+                b"stale-generation",
+                crate::model::TerminalFrame {
+                    width: 80,
+                    height: 24,
+                    full: true
+                },
+            ),
+            None
+        );
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                "w1:p1",
+                41,
+                TerminalSessionMode::Control,
+                b"stale-mode",
+                crate::model::TerminalFrame {
+                    width: 80,
+                    height: 24,
+                    full: true
+                },
+            ),
+            None
+        );
         assert!(!runtime.ingest_terminal_session_closed(
             "w1:p1",
             40,
@@ -10355,6 +10793,52 @@ mod tests {
         assert_eq!(error.kind, "workspace.git_init_failed");
         assert!(error.message.contains("registered"));
         assert!(error.message.contains("git init failed explicitly"));
+    }
+
+    /// D8: only the pane's detected kind permits an ordinary click report.
+    /// A title, a different pane's agent, and missing detection permit no bytes.
+    #[test]
+    fn ordinary_click_uses_detected_pane_agent_and_never_sends_enter() {
+        let mut runtime = runtime();
+        let pane_id = "w-click:p1";
+        runtime.terminal_sessions.insert(
+            pane_id.to_owned(),
+            live::TerminalSession::test_stub(pane_id, 1, TerminalSessionMode::Control),
+        );
+        let click = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "terminal_click",
+            "payload": {"pane_id": pane_id, "column": 7, "row": 3, "modifiers": 3}
+        }))
+        .unwrap();
+        for (detected_pane, kind, expected) in [
+            ("w-click:p2", "claude", false),
+            (pane_id, "codex", false),
+            (pane_id, "unknown", false),
+            (pane_id, "claude", true),
+        ] {
+            let payload = serde_json::from_value(serde_json::json!({
+                "agents": [{"pane_id": detected_pane, "agent": kind, "state_change_seq": 1}]
+            }))
+            .unwrap();
+            runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
+            runtime.dispatch_json(&click);
+            let lines = runtime.terminal_sessions[pane_id].test_written_lines();
+            assert_eq!(lines.len(), usize::from(expected), "{detected_pane} {kind}");
+            if expected {
+                let line: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+                assert_eq!(line["type"], "terminal.input");
+                let bytes = live::decode_base64(line["bytes"].as_str().unwrap()).unwrap();
+                assert_eq!(bytes, b"\x1b[<20;8;4M\x1b[<20;8;4m");
+                assert!(!bytes.contains(&b'\r') && !bytes.contains(&b'\n'));
+            }
+        }
+        runtime.snapshot.navigator.agents.clear();
+        runtime.dispatch_json(&click);
+        assert!(
+            runtime.terminal_sessions[pane_id]
+                .test_written_lines()
+                .is_empty()
+        );
     }
 
     fn runtime() -> Runtime {
@@ -11390,10 +11874,7 @@ mod tests {
 
         runtime.request_terminal_control("w-size:p1");
         assert!(
-            runtime
-                .terminal_session_lifecycles
-                .get("w-size:p1")
-                .is_none(),
+            runtime.terminal_sessions.get("w-size:p1").is_none(),
             "no session may be started for a pane with no reported size"
         );
         assert!(
@@ -11407,6 +11888,17 @@ mod tests {
             runtime.snapshot.status.diagnostics
         );
         assert!(runtime.panes_awaiting_size.contains("w-size:p1"));
+        assert_eq!(
+            runtime.terminal_session_lifecycles["w-size:p1"].state,
+            "waiting_size"
+        );
+        assert!(
+            runtime.terminal_session_lifecycles["w-size:p1"]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Waiting")
+        );
     }
 
     /// The panes the terminal projection is holding open, in snapshot order.
@@ -11506,6 +11998,9 @@ mod tests {
         )));
         assert_eq!(runtime.snapshot().tab.id.as_deref(), Some("w-order:t1"));
         let before = runtime.snapshot().terminal.sequence;
+        runtime
+            .terminal_sizes
+            .insert("w-order:t2:p".to_owned(), (40, 120));
 
         assert!(
             runtime.ingest_terminal_session_frame(
@@ -11513,7 +12008,12 @@ mod tests {
                 7,
                 TerminalSessionMode::Control,
                 b"hidden tab still talking",
-            ),
+                crate::model::TerminalFrame {
+                    width: 120,
+                    height: 40,
+                    full: true
+                },
+            ) == Some(true),
             "the session behind a hidden tab is still delivering"
         );
 
@@ -15897,10 +16397,6 @@ mod tests {
         let _ = first;
     }
 
-    /// AC6, R6. A wheel on a pane whose view has not reported a size sends
-    /// nothing at all. The fallback that guessed 24x80 resized the PTY to a
-    /// grid it was not running at, and it did so on every wheel row. The wait
-    /// is said once, not once per row.
     #[test]
     fn a_wheel_on_a_pane_with_no_reported_size_writes_nothing_and_says_so_once() {
         let mut runtime = runtime();
@@ -15939,6 +16435,37 @@ mod tests {
         assert!(!runtime.panes_scrolled_before_size.contains("w1:p1"));
     }
 
+    #[test]
+    fn retiring_a_pane_clears_every_pane_keyed_terminal_state() {
+        let mut runtime = runtime();
+        let pane = "w-retired:p1";
+        runtime.terminal_session_generations.insert(pane.into(), 7);
+        runtime
+            .terminal_session_lifecycles
+            .insert(pane.into(), TerminalSessionLifecycle::default());
+        runtime.terminal_recovery.insert(
+            pane.into(),
+            crate::terminal_recovery::Recovery::new(Instant::now(), "retry".into()),
+        );
+        runtime.terminal_sizes.insert(pane.into(), (80, 24));
+        runtime.terminal_view_sizes.insert(pane.into(), (120, 40));
+        runtime.terminal_frames_need_full.insert(pane.into());
+        runtime.panes_awaiting_size.insert(pane.into());
+        runtime.panes_scrolled_before_size.insert(pane.into());
+        runtime.panes_closing.insert(pane.into());
+
+        assert!(runtime.retain_terminal_pane_state(|known| known != pane));
+        assert!(!runtime.terminal_session_generations.contains_key(pane));
+        assert!(!runtime.terminal_session_lifecycles.contains_key(pane));
+        assert!(!runtime.terminal_recovery.contains_key(pane));
+        assert!(!runtime.terminal_sizes.contains_key(pane));
+        assert!(!runtime.terminal_view_sizes.contains_key(pane));
+        assert!(!runtime.terminal_frames_need_full.contains(pane));
+        assert!(!runtime.panes_awaiting_size.contains(pane));
+        assert!(!runtime.panes_scrolled_before_size.contains(pane));
+        assert!(!runtime.panes_closing.contains(pane));
+    }
+
     /// R6, R7. A pane keeps its session while its canvas is rebuilt - a zoom,
     /// a tab visit, a return to a checkout - and the view that comes back has
     /// an empty grid. Herdr sent the attach frame to the view that came
@@ -15964,23 +16491,11 @@ mod tests {
             "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
         }))
         .expect("resize event");
-        let repaint = serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION,
-            "kind": "terminal_repaint",
-            "payload": {"pane_id": pane_id}
-        }))
-        .expect("repaint event");
-
-        // A repaint asked for before anything is attached is the first visit,
-        // whose attach draws its own frame. It writes nothing and is not an
-        // error.
-        assert!(!runtime.dispatch_json(&repaint));
-        assert!(runtime.snapshot().status.last_error.is_none());
-
         // The first view reporting its size is what starts the attach.
         runtime.dispatch_json(&resize);
         assert!(runtime.terminal_sessions.contains_key(pane_id));
         let _attach_writes = runtime.terminal_sessions[pane_id].test_written_lines();
+        runtime.terminal_frames_need_full.remove(pane_id);
 
         // The same size reported again is still swallowed: that is the report
         // every settled view makes, and answering it would double the frames.
@@ -15992,9 +16507,15 @@ mod tests {
             "a size that did not change was forwarded to Herdr"
         );
 
-        // The rebuilt view says it has nothing to draw, and that one does
-        // reach Herdr.
-        assert!(runtime.dispatch_json(&repaint));
+        // A new view reports its first geometry, then its settled geometry.
+        runtime.dispatch_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "terminal_viewport",
+                "payload": {"pane_id": pane_id, "rows": 30, "cols": 100, "new_view": true}
+            }))
+            .unwrap(),
+        );
+        runtime.dispatch_json(&resize);
         let written = runtime.terminal_sessions[pane_id].test_written_lines();
         assert_eq!(
             written.len(),
