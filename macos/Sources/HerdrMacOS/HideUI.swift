@@ -2155,7 +2155,7 @@ private struct ChatComposerSheet: View {
                 ComposerChipLabel(
                     icon: "sparkles",
                     title: provider.rawValue.capitalized,
-                    mark: AgentMark.image(for: provider.rawValue)
+                    markKind: provider.rawValue
                 )
             }
             .menuStyle(.borderlessButton)
@@ -2268,18 +2268,21 @@ private struct ChatComposerSheet: View {
 /// One composer chip. The three read as one control strip, so they are drawn
 /// once here rather than three times with drifting padding.
 private struct ComposerChipLabel: View {
+    /// How big the agent mark is drawn. It is applied to the image rather than
+    /// to a frame around it, because this label is a `Menu`'s and AppKit sizes
+    /// it from the NSImage.
+    private static let markSide: CGFloat = 12
+
     let icon: String
     let title: String
-    var mark: NSImage?
+    /// The agent kind whose mark replaces `icon`, on the chip that names one.
+    var markKind: String?
 
     var body: some View {
         HStack(spacing: HideTheme.spacingXS + 1) {
-            if let mark {
+            if let markKind, let mark = AgentMark.image(for: markKind, side: Self.markSide) {
                 Image(nsImage: mark)
-                    .resizable()
                     .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 12, height: 12)
             } else {
                 Image(systemName: icon)
                     .hideFont(size: 9, weight: .semibold)
@@ -2298,37 +2301,6 @@ private struct ComposerChipLabel: View {
         .overlay {
             Capsule().stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
         }
-    }
-}
-
-private struct AgentChoiceTile: View {
-    @Environment(\.hideAccent) private var accent
-    let kind: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                if let mark = AgentMark.image(for: kind) {
-                    Image(nsImage: mark)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
-                }
-                Text(kind.capitalized)
-                    .hideFont(size: 11, weight: .semibold)
-                Text(AgentCLIAvailability.isUsable(kind) ? "installed" : "not found")
-                    .hideFont(size: 9, design: .monospaced)
-                    .foregroundStyle(AgentCLIAvailability.isUsable(kind) ? HideTheme.success : HideTheme.warning)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .foregroundStyle(selected ? HideTheme.background : HideTheme.primary)
-            .background(selected ? accent : HideTheme.elevated, in: RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
     }
 }
 

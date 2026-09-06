@@ -507,27 +507,7 @@ enum HerdrChatLauncher {
             )
         }
 
-        let plan = ChatLaunchPlan.steps(
-            destination: destination,
-            provider: provider,
-            message: message,
-            bypassWarnings: bypassWarnings,
-            // The pane does not exist yet, so the plan is rebuilt with the
-            // real id once the first step answers. Building it twice keeps
-            // the order in one place rather than splitting it between a
-            // planner and a runner.
-            paneID: ""
-        )
-        guard let createTab = plan.first, createTab.step == .createTab else {
-            return ChatLaunchResult(
-                succeeded: false,
-                failedStep: .createTab,
-                message: "Hide could not plan the chat launch.",
-                paneID: nil
-            )
-        }
-
-        let created = run(createTab.arguments)
+        let created = run(ChatLaunchPlan.createTab(destination: destination, provider: provider))
         guard created.status == 0,
               let paneID = rootPaneID(from: created.output),
               !paneID.isEmpty
@@ -546,14 +526,12 @@ enum HerdrChatLauncher {
         }
         trace(step: .createTab, paneID: paneID, succeeded: true)
 
-        let remaining = ChatLaunchPlan.steps(
-            destination: destination,
+        let remaining = ChatLaunchPlan.stepsAfterTab(
             provider: provider,
             message: message,
             bypassWarnings: bypassWarnings,
             paneID: paneID
         )
-        .dropFirst()
 
         for entry in remaining {
             let result = run(entry.arguments)
@@ -603,8 +581,9 @@ enum HerdrChatLauncher {
     }
 
     private static func detail(from result: HerdrCommandResult) -> String {
-        String(decoding: result.error, as: UTF8.self)
+        let text = String(decoding: result.error, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        return HerdrErrorEnvelope.message(in: text) ?? text
     }
 
     /// Both `tab.create` and `workspace.create` answer with the root pane the

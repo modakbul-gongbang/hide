@@ -85,6 +85,29 @@ struct ChatComposerTests {
         #expect(ChatTitle.fromMessage("  \n ") == nil)
     }
 
+    // MARK: Failure text
+
+    /// R3: the notice carries the step and the reason. The reason Herdr gives
+    /// arrives as a JSON envelope, and the live run put the whole envelope in
+    /// front of the operator; the sentence inside it is the reason.
+    @Test func theCliErrorEnvelopeIsReadDownToItsSentence() {
+        let envelope = #"{"error":{"code":"agent_pane_busy","message":"agent target pane w2:p7 is not an available shell"},"id":"cli:agent:start"}"#
+        #expect(
+            HerdrErrorEnvelope.message(in: envelope)
+                == "agent target pane w2:p7 is not an available shell"
+        )
+    }
+
+    /// Anything that is not one of those envelopes is the CLI talking in
+    /// prose, and passing it through unchanged is what keeps a reason the
+    /// shape it was written in.
+    @Test func textThatIsNotAnEnvelopeIsLeftAlone() {
+        #expect(HerdrErrorEnvelope.message(in: "herdr: command not found") == nil)
+        #expect(HerdrErrorEnvelope.message(in: #"{"error":"#) == nil)
+        #expect(HerdrErrorEnvelope.message(in: #"{"error":{"code":"x"}}"#) == nil)
+        #expect(HerdrErrorEnvelope.message(in: "") == nil)
+    }
+
     // MARK: Step order
 
     /// AC3: the tab is made, then the agent starts, then the first message is

@@ -138,6 +138,25 @@ enum ChatSubmissionRouting {
     }
 }
 
+/// The one sentence inside Herdr's CLI error envelope.
+///
+/// The CLI writes a JSON envelope to stderr, and passing it through whole put
+/// `{"error":{"code":"agent_pane_busy","message":"agent target pane w2:p7 is
+/// not an available shell"},"id":"cli:agent:start"}` in front of the operator
+/// where the sentence inside it was the entire content. Anything that is not
+/// one of these envelopes is the CLI talking in prose, and is left alone.
+enum HerdrErrorEnvelope {
+    static func message(in text: String) -> String? {
+        guard let data = text.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = root["error"] as? [String: Any],
+              let message = error["message"] as? String,
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return message
+    }
+}
+
 /// The Herdr arguments for the message step.
 enum AgentPromptArguments {
     /// The pane id is the target. It is unique per launch, while the agent
@@ -167,22 +186,23 @@ enum PaneTitleTokenArguments {
 /// Herdr server, which is what makes "the message is sent only after the agent
 /// is ready" a test rather than a reading of the launcher.
 enum ChatLaunchPlan {
-    static func steps(
-        destination: ChatDestination,
+    /// The one step that runs before there is a pane to name.
+    static func createTab(destination: ChatDestination, provider: AgentProvider) -> [String] {
+        AgentRootPaneArguments.build(
+            workspaceID: destination.workspaceID,
+            cwd: destination.path,
+            agent: provider.rawValue
+        )
+    }
+
+    /// Everything after the tab has answered with its pane.
+    static func stepsAfterTab(
         provider: AgentProvider,
         message: String,
         bypassWarnings: Bool,
         paneID: String
     ) -> [(step: ChatLaunchStep, arguments: [String])] {
         var steps: [(step: ChatLaunchStep, arguments: [String])] = [
-            (
-                .createTab,
-                AgentRootPaneArguments.build(
-                    workspaceID: destination.workspaceID,
-                    cwd: destination.path,
-                    agent: provider.rawValue
-                )
-            ),
             (
                 .startAgent,
                 AgentLaunchArguments.build(
@@ -202,5 +222,23 @@ enum ChatLaunchPlan {
             )
         }
         return steps
+    }
+
+    /// The whole plan, in order, composed from the two halves the launcher
+    /// runs. This is the statement of the order the tests read.
+    static func steps(
+        destination: ChatDestination,
+        provider: AgentProvider,
+        message: String,
+        bypassWarnings: Bool,
+        paneID: String
+    ) -> [(step: ChatLaunchStep, arguments: [String])] {
+        [(.createTab, createTab(destination: destination, provider: provider))]
+            + stepsAfterTab(
+                provider: provider,
+                message: message,
+                bypassWarnings: bypassWarnings,
+                paneID: paneID
+            )
     }
 }

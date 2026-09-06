@@ -97,9 +97,14 @@ enum CloseShortcutPolicy {
         hasActiveFileTab: Bool,
         hasActiveHerdrTab: Bool,
         hasFocusedPane: Bool = false,
+        hasFocusedScratchPane: Bool = false,
         tabCount: Int
     ) -> CloseShortcutAction {
         if hasActiveFileTab { return .closeFile }
+        // Scratch belongs to no checkout, so it answers no to every question
+        // below: the workspace gate would send ⌘W to "nothing to close" while
+        // the operator is looking at the pane it would have closed.
+        if hasFocusedScratchPane { return .closePane }
         if !hasWorkspace { return .nothingToClose }
         if hasActiveHerdrTab && hasFocusedPane { return .closePane }
         if hasActiveHerdrTab { return .closeHerdr }
@@ -628,6 +633,15 @@ final class ShellModel: ObservableObject {
                 .flatMap(\.tabs)
                 .flatMap(\.panes)
                 .first(where: { $0.id == paneID })
+            // The walk above is over checkouts, and Scratch is in none of
+            // them. Without this every caller that asks about a Scratch pane -
+            // its status, its close - reads it as a pane that is not there.
+            ?? scratchPane(paneID)
+    }
+
+    /// The Scratch pane with this id, if Scratch is the one that owns it.
+    func scratchPane(_ paneID: String) -> CorePaneSnapshot? {
+        scratch.tabs.lazy.flatMap(\.panes).first(where: { $0.id == paneID })
     }
 
     func paneStatus(for paneID: String) -> String {
@@ -1745,14 +1759,16 @@ final class ShellModel: ObservableObject {
         let activeFile = core.snapshot?.editor.activeTabID.flatMap { activeID in
             core.snapshot?.editor.tabs.first(where: { $0.id == activeID })
         }
+        let focusedScratchPane = focusedPaneID.flatMap(scratchPane(_:))
         let focusedPane = focusedPaneID.flatMap { paneID in
             focusedPanes.first(where: { $0.id == paneID })
-        }
+        } ?? focusedScratchPane
         switch CloseShortcutPolicy.action(
             hasWorkspace: focusedWorkspace != nil,
             hasActiveFileTab: activeFile != nil,
             hasActiveHerdrTab: focusedTab?.id != nil,
             hasFocusedPane: focusedPane != nil,
+            hasFocusedScratchPane: focusedScratchPane != nil,
             tabCount: unifiedTabs.count
         ) {
         case .closePane:

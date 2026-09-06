@@ -3627,6 +3627,24 @@ impl Runtime {
                             .any(|pane| pane.id == pane_id)
                     })
             });
+        // Scratch is in no checkout, so the flag above can never be true for
+        // one of its panes. This is captured here for the same reason that one
+        // is: the catalog reconciliation below replaces the Scratch node, and
+        // after it nothing records which space held a pane that has gone.
+        let previously_selected_in_scratch = self
+            .snapshot
+            .terminal
+            .pane_id
+            .as_deref()
+            .or(self.snapshot.ui_state.selected_pane_id.as_deref())
+            .is_some_and(|pane_id| {
+                self.snapshot
+                    .navigator
+                    .scratch
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+            });
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -3719,9 +3737,39 @@ impl Runtime {
                 // inside that checkout, or leave it empty. A pane that was
                 // never rendered is still a pending or invalid selection and
                 // keeps the explicit projection error below.
-                let selected_pane_retired = selected_was_projected
-                    && (selected_pane_missing || selected_left_focused_checkout);
-                let replacement_pane_id = selected_pane_retired
+                // Scratch belongs to no checkout, so the rule above cannot see
+                // one of its panes leave. Closing a Scratch tab left the
+                // selection on a pane that no longer existed, which raised the
+                // projection error below on every tick and left every later
+                // command reading as though no space were focused: ⌘T answered
+                // "create or register a workspace" while a Scratch tab was on
+                // screen. A Scratch pane that goes is the same expected
+                // transition, and it retargets inside Scratch for the same
+                // reason a checkout's retargets inside itself.
+                let scratch_pane_retired = previously_selected_in_scratch && selected_pane_missing;
+                let selected_pane_retired = scratch_pane_retired
+                    || (selected_was_projected
+                        && (selected_pane_missing || selected_left_focused_checkout));
+                let replacement_pane_id = if scratch_pane_retired {
+                    let scratch_workspaces = self.scratch_workspace_ids(&payload);
+                    let scratch_panes: Vec<&str> = payload
+                        .layouts
+                        .iter()
+                        .filter(|layout| {
+                            scratch_workspaces
+                                .iter()
+                                .any(|id| id == &layout.workspace_id)
+                        })
+                        .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.as_str()))
+                        .collect();
+                    payload
+                        .focused_pane_id
+                        .as_deref()
+                        .filter(|pane_id| scratch_panes.contains(pane_id))
+                        .or_else(|| scratch_panes.first().copied())
+                        .map(str::to_owned)
+                } else {
+                    selected_pane_retired
                     .then(|| {
                         previously_projected_tab
                             .as_deref()
@@ -3759,7 +3807,8 @@ impl Runtime {
                             .or_else(|| focused_checkout_pane_ids.first().map(String::as_str))
                             .map(str::to_owned)
                     })
-                    .flatten();
+                    .flatten()
+                };
                 let explicit_checkout_missing =
                     self.snapshot.ui_state.focused_checkout_id.is_some()
                         && focused_checkout.is_none();
@@ -10107,6 +10156,45 @@ mod tests {
             .map(|pane| pane.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(project_pane_ids, ["w1:p1"]);
+    }
+
+    /// R7: closing a Scratch tab leaves the operator inside Scratch.
+    ///
+    /// The selection reconciliation is written around checkouts, and Scratch
+    /// is in none of them. Before this, closing a Scratch tab left the closed
+    /// pane selected: `pane.projection_unavailable` was re-raised on every
+    /// tick and ⌘T answered "create or register a workspace" with a Scratch
+    /// tab still on screen.
+    #[test]
+    fn closing_the_selected_scratch_pane_selects_another_scratch_pane() {
+        let scratch_root = "/private/tmp/hide-scratch-close/scratch";
+        let project_path = "/private/tmp/hide-scratch-close/project";
+        let mut runtime = runtime_with_scratch(scratch_root);
+        ingest_scratch(
+            &mut runtime,
+            scratch_session(scratch_root, project_path, None),
+        );
+        runtime.snapshot.terminal.pane_id = Some("s1:p2".to_owned());
+        runtime.snapshot.ui_state.selected_pane_id = Some("s1:p2".to_owned());
+
+        let mut after_close = scratch_session(scratch_root, project_path, None);
+        after_close.panes.retain(|pane| pane.pane_id != "s1:p2");
+        after_close.tabs.retain(|tab| tab.tab_id != "s1:t2");
+        after_close.layouts.retain(|layout| layout.tab_id != "s1:t2");
+        ingest_scratch(&mut runtime, after_close);
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.ui_state.selected_pane_id.as_deref(),
+            Some("s1:p1"),
+            "the selection moves to the Scratch pane that is left"
+        );
+        assert_eq!(snapshot.focused.pane_id.as_deref(), Some("s1:p1"));
+        assert!(
+            snapshot.status.last_error.is_none(),
+            "a closed Scratch pane is an expected transition, not a projection failure: {:?}",
+            snapshot.status.last_error
+        );
     }
 
     /// AC4: the same panes twice produce the same answer. A projection that
