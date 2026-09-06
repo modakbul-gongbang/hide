@@ -66,6 +66,13 @@ Follow the official layer boundary when adding behavior:
   Check the target binary with `herdr --version` and `herdr api schema --json`, then compare it with `contracts/herdr-api.schema.json` through `scripts/check-herdr-contract.sh` before relying on new behavior.
 
 The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
+`herdr-core/build.rs` turns the five sub-schemas into Rust modules under `herdr_contract::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
+`herdr-core/src/wire.rs` is the only boundary that converts generated values into the core's projection and event inputs and builds generated subscription parameters.
+Do not write new wire deserialization structs in `session_sync.rs` or import generated types into domain, runtime or sidebar code.
+The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
+Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
+`live.rs` and `remote.rs` still contain legacy parsing and are the next consumers to move through this boundary.
+
 The app runs the Herdr it bundles: `HerdrRuntimeResolver` verifies the bundled binary against the manifest digest and starts it on the default socket when no server is running there; a server that is already running is joined as it is when its protocol matches, and refused with the two revisions and the `herdr server stop` remedy when it does not.
 There is no installed-CLI candidate list and no version floor; the pin is exact.
 The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
