@@ -101,4 +101,92 @@ struct TerminalImplicitLinkSpanTests {
             link(in: web, atColumn: column(of: "https", in: web)) == "https://example.com/a/b?q=1"
         )
     }
+
+    // MARK: Paths a transcript wraps across rows
+
+    /// Feeds `rows` as hard-broken lines into a `cols`-wide terminal and asks
+    /// what a click on `needle` in row `row` would open. The rows are hard
+    /// breaks on purpose: a TUI writes each screen row itself, so the terminal
+    /// never sees a soft wrap and has to recognize the join from the shape.
+    private func link(rows: [String], cols: Int, row: Int, needle: String) -> String? {
+        let headless = HeadlessTerminal(onEnd: { _ in })
+        let terminal = headless.terminal!
+        terminal.resize(cols: cols, rows: 24)
+        terminal.feed(text: rows.joined(separator: "\r\n"))
+        return terminal.link(
+            at: .buffer(Position(col: column(of: needle, in: rows[row]), row: row)),
+            mode: .explicitAndImplicit
+        )
+    }
+
+    /// The reported case, taken from a live Codex pane 50 columns wide: the
+    /// command row ends at the last separator that fit, and the rest of the
+    /// path follows on rows behind a `│` gutter. Clicking `/Users` opened
+    /// `/home/maintainer/projects` alone.
+    @Test func aPathCodexWrapsAtSeparatorsBehindAGutterJoinsBackIntoOne() {
+        let rows = [
+            "• Ran tail -45 /home/maintainer/projects/",
+            "  │ herdr-ide.worktrees/hide-native-spec/agents/",
+            "  │ runs/hide-native-responsiveness/evidence/",
+            "  │ … +3 lines",
+            "  └ (no output)",
+        ]
+        let whole = "/home/maintainer/projects/herdr-ide.worktrees/hide-native-spec/agents/"
+            + "runs/hide-native-responsiveness/evidence/"
+        #expect(link(rows: rows, cols: 50, row: 0, needle: "/home") == whole)
+        #expect(link(rows: rows, cols: 50, row: 1, needle: "herdr-ide") == whole)
+        #expect(link(rows: rows, cols: 50, row: 2, needle: "evidence") == whole)
+        // The elision row is not path text, so the join stops above it.
+        #expect(link(rows: rows, cols: 50, row: 3, needle: "lines") == nil)
+    }
+
+    /// The same pane's output block: an indented continuation without a
+    /// gutter, and a path that opens inside a parenthesis.
+    @Test func aPathCodexWrapsUnderAPlainIndentJoinsBackIntoOne() {
+        let rows = [
+            "  └    Compiling herdr-core v0.1.0 (/home/",
+            "    maintainer/projects/herdr-ide.worktrees/",
+            "    … +47 lines (ctrl + t to view transcript)",
+        ]
+        #expect(
+            link(rows: rows, cols: 50, row: 0, needle: "/home")
+                == "/home/maintainer/projects/herdr-ide.worktrees/"
+        )
+    }
+
+    /// A row filled to the edge is a wrap whatever it ends with; this is the
+    /// shape of an editor or a hard wrap, which the earlier rule already
+    /// joined and must keep joining.
+    @Test func aPathHardWrappedAtTheRightEdgeStillJoins() {
+        let rows = [
+            " wrote /home/maintainer/projects/herdr-ide/macos/S",
+            "  ources/HerdrMacOS/ShellModel.swift",
+        ]
+        #expect(rows[0].count == 50)
+        #expect(
+            link(rows: rows, cols: 50, row: 0, needle: "/home")
+                == "/home/maintainer/projects/herdr-ide/macos/Sources/HerdrMacOS/ShellModel.swift"
+        )
+    }
+
+    /// Two long paths listed one under the other are two links. The earlier
+    /// rule joined any pair whose upper row passed 80% of the width, so a
+    /// listing in a narrow pane clicked as one unopenable path. The room is
+    /// the same as in a wrap here (`macos/` would not have fit after the
+    /// first row either), so what keeps them apart is that the first row
+    /// ends in a file name, not in a separator.
+    @Test func adjacentPathsInAListingStaySeparate() {
+        let rows = [
+            "  macos/Sources/HerdrMacOS/TerminalHost.swift",
+            "  macos/Sources/HerdrMacOS/ShellModel.swift",
+        ]
+        #expect(
+            link(rows: rows, cols: 50, row: 0, needle: "macos")
+                == "macos/Sources/HerdrMacOS/TerminalHost.swift"
+        )
+        #expect(
+            link(rows: rows, cols: 50, row: 1, needle: "macos")
+                == "macos/Sources/HerdrMacOS/ShellModel.swift"
+        )
+    }
 }

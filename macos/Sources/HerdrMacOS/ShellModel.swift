@@ -657,6 +657,8 @@ final class ShellModel: ObservableObject {
             focus(.rightPanel)
             interactionNotice = nil
             HideLaunchTrace.mark("terminal.link.opened", detail: "local_file")
+        case .directory(let url):
+            openDirectory(url)
         case .unresolved(let message):
             // A click that resolves to nothing does nothing. Detection is a
             // guess made over arbitrary terminal output, so a wrong guess is
@@ -1110,6 +1112,34 @@ final class ShellModel: ObservableObject {
             )
         }
         focus(.terminal)
+    }
+
+    /// A directory inside the explorer's tree is revealed there, opened down
+    /// to its row; any other directory opens in Finder, the only view of it
+    /// Hide has. The explorer root, not the pane's working directory, draws
+    /// the line, because the outline can only reveal what it shows.
+    func openDirectory(_ url: URL) {
+        switch TerminalLinkResolver.directoryDestination(url, explorerRoot: focusedPath) {
+        case .explorer(let expand, let selectedPath):
+            var expanded = Set(core.snapshot?.uiState.expandedPaths ?? [])
+            expanded.formUnion(expand)
+            core.persistUIState(
+                rightPanelVisible: true,
+                rightPanelSection: .explorer,
+                expandedPaths: expanded.sorted(),
+                selectedPath: selectedPath
+            )
+            focus(.rightPanel)
+            interactionNotice = nil
+            HideLaunchTrace.mark("terminal.link.opened", detail: "explorer_directory")
+        case .finder:
+            ExternalFinder.open(url) { [weak self] message in
+                self?.interactionNotice = message
+                HideLaunchTrace.mark("terminal.link.failed", detail: "finder_open")
+            }
+            interactionNotice = nil
+            HideLaunchTrace.mark("terminal.link.opened", detail: "finder_directory")
+        }
     }
 
     func openFile(_ url: URL) {
