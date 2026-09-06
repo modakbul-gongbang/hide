@@ -225,11 +225,22 @@ enum TabDragPlacement {
 }
 
 enum HerdrStatusPresentation {
+    /// The one line the status bar shows. A launch that cannot proceed says
+    /// so first; after that, while Herdr is not connected, the reason the core
+    /// gives outranks the last action's error, because no action can succeed
+    /// until the connection does and the mismatch it names is what to fix.
     static func localMessage(
+        startupDiagnostic: String?,
         bridgeError: String?,
         state: String?,
         providerMessage: String?
     ) -> String {
+        if let startupDiagnostic {
+            return startupDiagnostic
+        }
+        if state != "connected", let providerMessage {
+            return providerMessage
+        }
         if let bridgeError {
             return bridgeError
         }

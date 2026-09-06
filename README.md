@@ -15,7 +15,7 @@
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-arm64-111111">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white">
   <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
-  <img alt="Herdr 0.8.2" src="https://img.shields.io/badge/Herdr-0.8.2-B9FF66">
+  <img alt="Bundled Herdr runtime" src="https://img.shields.io/badge/Herdr-bundled-B9FF66">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
@@ -67,17 +67,24 @@ open /Applications/hide.app
 ```
 
 The source build creates an ad-hoc signed `dist/hide.app`, a versioned zip archive, and a SHA-256 sidecar.
-It also bundles the pinned Herdr v0.8.2 runtime, so a separate Herdr install is not required for a first launch.
+It also bundles the pinned Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 runtime, so a separate Herdr install is not required for a first launch.
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
 ## Runtime boundaries
 
-- A compatible installed Herdr or an existing live local Herdr socket takes precedence over the bundled runtime.
+- hide starts the Herdr it bundles when no local Herdr server is running.
+  A server that is already running is used as it is when it speaks the protocol hide was built against, and hide says what to do when it does not.
 - hide does not collect or store SSH credentials, Herdr credentials, or agent CLI credentials.
 - Claude Code and Codex remain separate tools and must already be installed and signed in if you want to launch them from hide.
 - Remote Workbench trees are read-only.
   Remote edits stay in the terminal attached to that remote Herdr session.
+
+<!-- herdr-provenance:start -->
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
+This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
+The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
+<!-- herdr-provenance:end -->
 
 ## Development
 

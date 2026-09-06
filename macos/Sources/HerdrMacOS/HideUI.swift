@@ -1871,6 +1871,7 @@ private struct HideStatusBar: View {
             Text(model.isRemoteContext
                 ? model.remote.statusMessage
                 : HerdrStatusPresentation.localMessage(
+                    startupDiagnostic: model.core.startupDiagnostic,
                     bridgeError: model.core.bridgeError,
                     state: model.core.snapshot?.status.herdr.state,
                     providerMessage: model.core.snapshot?.status.herdr.message

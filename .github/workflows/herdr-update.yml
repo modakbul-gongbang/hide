@@ -32,13 +32,21 @@ jobs:
         run: |
           set -euo pipefail
           # The releases/latest endpoint excludes prereleases, which is what
-          # keeps the preview-* tags out of the pin.
-          latest=$(gh api repos/herdrdev/herdr/releases/latest --jq .tag_name)
-          latest=${latest#v}
+          # keeps the preview-* tags out of this proposal.
+          latest_tag=$(gh api repos/herdrdev/herdr/releases/latest --jq .tag_name)
+          latest=${latest_tag#v}
+          pinned_tag=$(jq -er .tag macos/Sources/HerdrMacOS/Resources/herdr-bundle.json)
           pinned=$(jq -er .version macos/Sources/HerdrMacOS/Resources/herdr-bundle.json)
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
-          if [ "$latest" = "$pinned" ]; then
+          # A preview pin reports "0.8.2-preview.<date>-<sha>": newer than the
+          # 0.8.2 stable it was cut after, older than a 0.8.3 stable. Comparing
+          # only the numeric prefix, and proposing only a strictly newer
+          # stable, is what stops a weekly proposal to move back to 0.8.2.
+          pinned_numeric=${pinned%%-*}
+          highest=$(printf '%s\n%s\n' "$pinned_numeric" "$latest" | sort -V | tail -n 1)
+          if [ "$latest_tag" = "$pinned_tag" ] || [ "$highest" = "$pinned_numeric" ]; then
             echo "needs_bump=false" >> "$GITHUB_OUTPUT"
           else
             echo "needs_bump=true" >> "$GITHUB_OUTPUT"
@@ -74,17 +82,11 @@ jobs:
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up Swift 6 toolchain
-        if: steps.existing.outputs.proceed == 'true'
-        uses: swift-actions/setup-swift@v2.4.0
-        with:
-          swift-version: "6.0.3"
-
-      - name: Move the pin and keep the verified binary
+      - name: Move the pin, regenerate the contract and keep the verified binary
         if: steps.existing.outputs.proceed == 'true'
         run: |
           set -euo pipefail
-          zsh scripts/bump-herdr.sh "${{ steps.upstream.outputs.latest }}" \
+          zsh scripts/bump-herdr.sh --repo herdrdev/herdr "${{ steps.upstream.outputs.latest_tag }}" \
             --keep-binary "$RUNNER_TEMP/herdr"
 
       - name: Check the API schema against the candidate CLI
@@ -127,6 +129,7 @@ jobs:
           git checkout -b "$branch"
           git add \
             macos/Sources/HerdrMacOS/Resources/herdr-bundle.json \
+            contracts/herdr-api.schema.json \
             macos/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt \
             README.md \
             docs/INSTALL.md
@@ -135,8 +138,9 @@ jobs:
           cat > "$RUNNER_TEMP/pr-body.md" <<BODY
           Moves the pinned Herdr runtime from v${pinned} to v${latest}.
 
-          The asset was downloaded, its reported version and SHA-256 verified, and the
-          manifest plus every document quoting the pin updated from that one source.
+          The asset was downloaded, its reported version and SHA-256 verified, the
+          contract regenerated from the schema that binary reports, and the manifest
+          plus every document quoting the pin updated from that one source.
 
           Checks that ran here:
 

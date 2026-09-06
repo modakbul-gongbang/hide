@@ -65,10 +65,18 @@ Follow the official layer boundary when adding behavior:
 - Do not guess method names, parameters, response fields, or protocol compatibility from existing call sites alone.
   Check the target binary with `herdr --version` and `herdr api schema --json`, then compare it with `contracts/herdr-api.schema.json` through `scripts/check-herdr-contract.sh` before relying on new behavior.
 
-The bundled Herdr version is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`.
-`herdr-core/build.rs` generates `BUNDLED_HERDR_VERSION` from it, the Swift shell reads it at launch, and `scripts/build-app.sh` downloads and verifies the asset against it; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
-Move the pin with `scripts/bump-herdr.sh <version>`, which verifies the asset before writing and rewrites the version tokens in the README, install guide and third-party notice.
+The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
+The app runs the Herdr it bundles: `HerdrRuntimeResolver` verifies the bundled binary against the manifest digest and starts it on the default socket when no server is running there; a server that is already running is joined as it is when its protocol matches, and refused with the two revisions and the `herdr server stop` remedy when it does not.
+There is no installed-CLI candidate list and no version floor; the pin is exact.
+The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
+Move the pin with `scripts/bump-herdr.sh <release-tag>` (a stable `v0.8.3` or a `preview-...` tag), which verifies the asset, writes the contract that binary reports, and rewrites the tag, version and digest tokens in the README, install guide and third-party notice.
 `.github/workflows/herdr-update.yml` polls for a new stable release weekly and opens a PR with that bump after running both test suites; it never merges, because the core's Herdr behavior assumptions are only asserted against fixtures this repository wrote.
+
+<!-- herdr-provenance:start -->
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
+This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
+The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
+<!-- herdr-provenance:end -->
 
 ## Performance Guide
 

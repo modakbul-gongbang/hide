@@ -52,8 +52,14 @@ swift build --package-path "$macos_root" --disable-keychain --disable-sandbox \
     -Xswiftc -D \
     -Xswiftc "HERDR_CORE_${rust_archive_hash}"
 
+# The app starts the Herdr it ships and nothing else, so a development bundle
+# without the pinned runtime has no server to start. The fetch is cached by
+# digest, so this costs a download once per pin.
+herdr_source="$(zsh "$worktree_root/scripts/fetch-herdr-runtime.sh")"
+
 rm -rf -- "$app_root"
-mkdir -p "$app_root/Contents/MacOS" "$app_root/Contents/Resources"
+mkdir -p "$app_root/Contents/MacOS" "$app_root/Contents/Resources/herdr-runtime"
+install -m 755 "$herdr_source" "$app_root/Contents/Resources/herdr-runtime/herdr"
 install -m 755 \
     "$macos_root/.build/arm64-apple-macosx/debug/HerdrMacOS" \
     "$app_root/Contents/MacOS/HerdrMacOS"
