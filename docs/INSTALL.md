@@ -81,7 +81,7 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned official Herdr v0.8.2 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned official Herdr v0.8.2-preview.2026-08-31-b1ff4582e968 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
 
 ## Verify the installed app
 
@@ -102,7 +102,7 @@ Exactly one matching process should be active before checking the UI.
 ## First launch
 
 hide runs the Herdr it bundles.
-On launch it verifies the bundled Herdr v0.8.2 binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
+On launch it verifies the bundled Herdr v0.8.2-preview.2026-08-31-b1ff4582e968 binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
 Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket; hide and every `herdr` process it starts follow the same value.
 
 A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.

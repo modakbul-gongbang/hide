@@ -67,7 +67,7 @@ open /Applications/hide.app
 ```
 
 The source build creates an ad-hoc signed `dist/hide.app`, a versioned zip archive, and a SHA-256 sidecar.
-It also bundles the pinned Herdr v0.8.2 runtime, so a separate Herdr install is not required for a first launch.
+It also bundles the pinned Herdr v0.8.2-preview.2026-08-31-b1ff4582e968 runtime, so a separate Herdr install is not required for a first launch.
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
