@@ -16,12 +16,14 @@ manifest=$project_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
   exit 1
 }
 
+repo=$(jq -er '.repo | strings | select(length > 0)' "$manifest")
 version=$(jq -er '.version' "$manifest")
 sha256=$(jq -er '.sha256' "$manifest")
 
 derived_sources=(
   scripts/build-app.sh
-  herdr-core/src/version.rs
+  scripts/fetch-herdr-runtime.sh
+  macos/scripts/build_dev_app.sh
   macos/Sources/HerdrMacOS/RuntimeEnvironment.swift
 )
 
@@ -37,6 +39,10 @@ for relative in $derived_sources; do
   }
   if grep -Fq -- "$version" "$source_path"; then
     print -u2 -- "error: $relative restates the pinned version $version; read it from the manifest"
+    failed=1
+  fi
+  if grep -Fq -- "$repo" "$source_path"; then
+    print -u2 -- "error: $relative restates the pinned repository; read it from the manifest"
     failed=1
   fi
   if grep -Fq -- "$sha256" "$source_path"; then

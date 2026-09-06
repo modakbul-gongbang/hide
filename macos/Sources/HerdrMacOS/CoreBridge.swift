@@ -1341,7 +1341,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var launchedHerdrServer: Process?
     private let statePath: String
     private let fixtureMode: Bool
-    private var startupDiagnostic: String?
+    /// Why this launch cannot proceed, when it cannot. Nil once the runtime
+    /// resolved and the server started, whatever the connection does after.
+    @Published private(set) var startupDiagnostic: String?
     private var runtimeInitializationStarted = false
     /// The runtime resolution started at init, awaited once before the core
     /// is created. Held so the two are the same piece of work rather than two
@@ -1426,7 +1428,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
         runtimePreparation = Task.detached(priority: .userInitiated) {
             RuntimeStartupPreparation(
-                selection: HerdrRuntimeResolver.resolve(bundlePath: bundlePath),
+                selection: HerdrRuntimeResolver.resolve(
+                    bundlePath: bundlePath,
+                    pin: HerdrRuntimePinLoader.pinned
+                ),
                 environment: HideRuntimeEnvironment.childEnvironment()
             )
         }
@@ -1444,7 +1449,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func startRuntimeInitialization() {
         guard !fixtureMode, !runtimeInitializationStarted else { return }
         runtimeInitializationStarted = true
-        let socketPath = Self.defaultHerdrSocketPath()
+        let socketPath = HideRuntimeEnvironment.herdrSocketPath()
         let startedAt = Date()
         HideLaunchTrace.mark("runtime_initialization.begin")
         Task { @MainActor [weak self] in
@@ -1452,7 +1457,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             self.runtimePreparation = nil
             let detail = preparation.selection.map {
-                "selected_\($0.source)_v\($0.version)"
+                "bundled_v\($0.version)"
             } ?? "no_runtime"
             HideLaunchTrace.mark(
                 "runtime_initialization.resolved",
@@ -1471,8 +1476,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             }
             HideLaunchTrace.markOnce(
                 "core_bridge.ready",
-                detail: preparation.selection.map { "runtime_\($0.source)" } ?? "socket_only"
+                detail: preparation.selection != nil ? "runtime_bundled" : "socket_only"
             )
+            // A missing or unverified bundle is reported even when a server
+            // is already running: the core can still read that socket, but
+            // nothing hide starts (agents, terminals) has a binary to run.
             guard preparation.selection != nil || socketExists else {
                 self.setStartupDiagnostic(HideStartupDiagnostic.runtimeUnavailable)
                 HideLaunchTrace.mark("runtime_initialization.failed", detail: "runtime_unavailable")
@@ -1517,7 +1525,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     ) -> OpaquePointer? {
         let options: [String: Any] = [
             "schema_version": coreSchemaVersion,
-            "herdr_socket_path": fixtureMode ? NSNull() : Self.defaultHerdrSocketPath() as Any,
+            "herdr_socket_path": fixtureMode ? NSNull() : HideRuntimeEnvironment.herdrSocketPath() as Any,
             "herdr_bin_path": herdrBinaryPath.map { $0 as Any } ?? NSNull(),
             "remote_targets": [[
                 "id": "mini",
@@ -1802,7 +1810,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         bypassWarnings: Bool
     ) {
         guard let runtimeSelection else {
-            bridgeError = "The verified bundled Herdr runtime is not available for this launch."
+            bridgeError = HideStartupDiagnostic.runtimeUnavailable
             return
         }
         let herdrPath = runtimeSelection.path
@@ -2460,12 +2468,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ]
     }
     #endif
-
-    /// The environment registry in herdr-core applies HERDR_SOCKET_PATH to
-    /// this configured default without exposing the raw value to Swift.
-    static func defaultHerdrSocketPath() -> String {
-        return NSHomeDirectory() + "/.config/herdr/herdr.sock"
-    }
 
     /// The release bundle identifier. A build carrying any other identifier is
     /// a per-worktree instance (see `macos/scripts/build_dev_app.sh`).

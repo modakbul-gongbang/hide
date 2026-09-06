@@ -10265,6 +10265,14 @@ mod tests {
         let root_b = format!("{root_a}-b");
         std::fs::create_dir_all(&root_a).expect("checkout a");
         std::fs::create_dir_all(&root_b).expect("checkout b");
+        // Keep these checkouts independent even when TMPDIR is inside a repository.
+        for root in [&root_a, &root_b] {
+            assert!(std::process::Command::new("git")
+                .args(["init", "--quiet", root])
+                .status()
+                .expect("initialize checkout fixture")
+                .success());
+        }
         runtime.snapshot.ui_state.workspace_registrations = vec![
             WorkspaceRegistration {
                 id: "workspace:a".to_owned(),
