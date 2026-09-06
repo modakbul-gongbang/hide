@@ -267,6 +267,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 
+    // Per-row render state, keyed by everything the row is drawn from, so a
+    // draw rebuilds only the rows that changed. Cleared wherever the inputs
+    // the key does not name change: fonts and colors.
+    var preparedRowCache: [PreparedRowKey: PreparedRow] = [:]
+
     // Timer to display the terminal buffer
     var link: CADisplayLink!
     // Cache for the colors in the 0..255 range
@@ -1581,6 +1586,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls whether this view applies the terminal's BiDi presentation state.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
             updateCursorPosition()
@@ -1590,6 +1596,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
         didSet {
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1611,6 +1618,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             _selectedTextBackgroundColor = newValue
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1624,6 +1632,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             _selectedTextForegroundColor = newValue
+            invalidatePreparedRows()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
