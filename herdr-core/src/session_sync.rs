@@ -1089,6 +1089,23 @@ struct ApplyOutcome {
     refresh_agents: bool,
 }
 
+/// Every top-level `session.snapshot` field the replica reads. The contract
+/// test asserts the pinned Herdr declares each one required, so a pin whose
+/// snapshot cannot feed the replica fails in CI rather than at the user's
+/// first launch with "snapshot is missing lineage".
+pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
+    "version",
+    "protocol",
+    "workspaces",
+    "tabs",
+    "panes",
+    "layouts",
+    "agents",
+    "lineage",
+    "host",
+    "event_sequence",
+];
+
 impl SessionReplica {
     fn from_snapshot(snapshot: &Value) -> Result<Self, SessionFetchError> {
         validate_protocol(snapshot)?;

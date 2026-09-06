@@ -50,13 +50,30 @@ import Testing
     #expect(environment["HERDR_CONFIG_PATH"] == "/private/tmp/hide-worktree/config")
 }
 
-@Test func anEmptyRoutingValueIsNotForwardedAsIfItWereConfigured() {
+@Test func everyChildIsPinnedToTheSocketTheCoreReads() {
+    // The server hide starts would otherwise bind wherever XDG_CONFIG_HOME
+    // sends it while the core watches the default under the home directory.
     let environment = HideRuntimeEnvironment.childEnvironment(
-        inherited: ["HOME": "/tmp/hide-routing", "USER": "tester", "HERDR_SOCKET_PATH": ""],
-        loginPath: "/usr/bin:/bin"
+        inherited: [
+            "HOME": "/tmp/hide-routing",
+            "USER": "tester",
+            "XDG_CONFIG_HOME": "/tmp/hide-xdg",
+        ],
+        loginPath: "/usr/bin:/bin",
+        homeDirectory: "/Users/tester"
     )
 
-    #expect(environment["HERDR_SOCKET_PATH"] == nil)
+    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/tester/.config/herdr/herdr.sock")
+}
+
+@Test func anEmptySocketOverrideFallsBackToTheDefaultTheCoreReads() {
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: ["HOME": "/tmp/hide-routing", "USER": "tester", "HERDR_SOCKET_PATH": ""],
+        loginPath: "/usr/bin:/bin",
+        homeDirectory: "/Users/tester"
+    )
+
+    #expect(environment["HERDR_SOCKET_PATH"] == "/Users/tester/.config/herdr/herdr.sock")
 }
 
 @Test func perWorktreeInstancesKeepSeparateUIState() {

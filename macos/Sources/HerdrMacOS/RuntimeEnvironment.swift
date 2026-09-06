@@ -146,28 +146,35 @@ enum HideRuntimeEnvironment {
     /// has one itself. Every key here is a path or a socket, never a secret.
     ///
     /// This list, not a chain of hand-written `if let` blocks, is what decides
-    /// the forwarded set. `HERDR_SOCKET_PATH` was missing for exactly that
-    /// reason: the core honoured the override and read one Herdr session while
-    /// the `herdr` processes the shell spawned reached the default socket, so
-    /// panes appeared in a session nobody asked for.
+    /// the forwarded set. The socket is not on it because it is never merely
+    /// forwarded: `childEnvironment` always sets `HERDR_SOCKET_PATH` to the
+    /// path the core reads, so the server hide starts and every `herdr` it
+    /// spawns bind to that socket whatever the launch environment carried.
+    /// Without that, `XDG_CONFIG_HOME` moves the server's default socket while
+    /// the core keeps watching `~/.config/herdr/herdr.sock`, and an override
+    /// that is forwarded only when present once left the spawned tools on the
+    /// default socket while the core read the override, so panes appeared in
+    /// a session nobody asked for.
     static let forwardedRoutingKeys = [
         "SSH_AUTH_SOCK",
         "HERDR_CONFIG_PATH",
-        "HERDR_SOCKET_PATH",
     ]
 
     /// Values every child needs, with what the shell substitutes when the
     /// launch environment (a Finder launch, notably) does not carry one.
-    static let substitutedKeys = ["HOME", "USER", "PATH"]
+    /// The socket is substituted too: the core's default rule fills it in.
+    static let substitutedKeys = ["HOME", "USER", "PATH", "HERDR_SOCKET_PATH"]
 
     static func childEnvironment(
         inherited: [String: String],
-        loginPath: String?
+        loginPath: String?,
+        homeDirectory: String = NSHomeDirectory()
     ) -> [String: String] {
         var environment: [String: String] = [
-            "HOME": inherited["HOME"] ?? NSHomeDirectory(),
+            "HOME": inherited["HOME"] ?? homeDirectory,
             "USER": inherited["USER"] ?? NSUserName(),
             "PATH": loginPath ?? inherited["PATH"] ?? "/usr/bin:/bin",
+            "HERDR_SOCKET_PATH": herdrSocketPath(environment: inherited, homeDirectory: homeDirectory),
         ]
         for key in forwardedRoutingKeys {
             if let value = inherited[key], !value.isEmpty {
