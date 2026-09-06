@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show the Swift toolchain
         run: swift --version
       - name: Test the core
@@ -27,7 +27,7 @@ jobs:
     needs: test
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Swift 6 toolchain
         uses: swift-actions/setup-swift@v2.4.0
         with:
