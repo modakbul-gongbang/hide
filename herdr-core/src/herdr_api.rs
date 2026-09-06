@@ -274,18 +274,12 @@ pub(crate) fn subscribe_with_connector(
     let mut stream = connector.connect()?;
     stream.set_write_timeout(Some(timeout))?;
     let request_id = "herdr-core:events.subscribe";
-    let filters = subscriptions
-        .iter()
-        .map(|event_type| json!({"type": event_type}))
-        .collect::<Vec<_>>();
     write_request(
         stream.as_mut(),
         request_id,
         "events.subscribe",
-        json!({
-            "after_sequence": after_sequence,
-            "subscriptions": filters,
-        }),
+        crate::wire::subscription_params(after_sequence, subscriptions)
+            .map_err(ApiError::Malformed)?,
     )?;
 
     let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;

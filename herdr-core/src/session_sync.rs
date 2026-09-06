@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+
+use crate::wire::{self, parse_subscription_line, protocol_mismatch};
 
 use crate::ffi::ChangeNotifier;
 use crate::herdr_api::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, HostScope};
@@ -216,13 +216,9 @@ fn run_coordinator(
         .then(|| crate::usage::ProviderUsageReader::new(home_path));
     // Git reads describe this machine's checkouts, so only the local
     // coordinator runs one.
-    let mut changes_reader = context
-        .is_local()
-        .then(crate::changes::ChangesReader::new);
+    let mut changes_reader = context.is_local().then(crate::changes::ChangesReader::new);
     // A listening port is this machine's, so only the local coordinator looks.
-    let mut ports_reader = context
-        .is_local()
-        .then(crate::ports::PortsReader::new);
+    let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -282,7 +278,8 @@ fn run_coordinator(
                     let current = replica
                         .as_mut()
                         .expect("active subscription always has a replica");
-                    let publish = agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                    let publish =
+                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
                     if publish {
                         current.replace_agents(agents);
                         if current.ready_to_publish()
@@ -585,13 +582,10 @@ fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, Session
         SYNC_REQUEST_TIMEOUT,
     )
     .map_err(session_error_from_api)?;
-    let snapshot = result
-        .get("snapshot")
-        .ok_or_else(|| SessionFetchError::Malformed("response is missing snapshot".to_owned()))?;
-    SessionReplica::from_snapshot(snapshot)
+    SessionReplica::from_decoded(wire::snapshot_response(result)?)
 }
 
-fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<WireAgent>, SessionFetchError> {
+fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
     if let SessionSyncTarget::Local { socket_path } = &context.target
         && !socket_path.exists()
     {
@@ -607,23 +601,14 @@ fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<WireAgent>, SessionF
         SYNC_REQUEST_TIMEOUT,
     )
     .map_err(session_error_from_api)?;
-    let response: AgentListResult = serde_json::from_value(result).map_err(|error| {
-        SessionFetchError::Malformed(format!("agent.list response is malformed: {error}"))
-    })?;
-    if response.kind != "agent_list" {
-        return Err(SessionFetchError::Malformed(format!(
-            "agent.list returned unexpected result type {:?}",
-            response.kind
-        )));
-    }
-    Ok(response.agents)
+    wire::agents_response(result)
 }
 
 /// Whether an agent refresh has to republish the projection.
 ///
 /// An `agent.list` identical to the one already held projects to the same
 /// sidebar, so recomputing it would rebuild the whole projection and the
-/// workspace catalog for a wire that did not move. `WireAgent` is exactly the
+/// workspace catalog for a wire that did not move. `ProjectedAgent` is exactly the
 /// projection's input - deserializing already drops the fields the projection
 /// never reads - so equality here is equality of the projection.
 ///
@@ -633,12 +618,11 @@ fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<WireAgent>, SessionF
 /// would freeze every branch and dirty mark in the navigator.
 fn agent_tick_needs_publish(
     replica: &SessionReplica,
-    agents: &[WireAgent],
+    agents: &[ProjectedAgent],
     catalog_cache: Option<&CatalogCache>,
 ) -> bool {
     replica.state.agents != agents
-        || catalog_cache
-            .is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+        || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
 }
 
 fn publish_replica(
@@ -896,89 +880,69 @@ struct ConnectFailure {
     needs_bootstrap: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-struct WorkspaceWire {
-    workspace_id: String,
-    label: String,
-    active_tab_id: String,
-    #[serde(default)]
-    worktree: Option<WorkspaceWorktreeWire>,
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProjectedWorkspace {
+    pub(crate) workspace_id: String,
+    pub(crate) label: String,
+    pub(crate) active_tab_id: String,
+    pub(crate) worktree: Option<ProjectedWorktree>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-struct WorkspaceWorktreeWire {
-    repo_key: String,
-    repo_name: String,
-    repo_root: String,
-    checkout_path: String,
-    is_linked_worktree: bool,
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProjectedWorktree {
+    pub(crate) repo_key: String,
+    pub(crate) repo_name: String,
+    pub(crate) repo_root: String,
+    pub(crate) checkout_path: String,
+    pub(crate) is_linked_worktree: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-struct TabWire {
-    tab_id: String,
-    workspace_id: String,
-    label: String,
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProjectedTab {
+    pub(crate) tab_id: String,
+    pub(crate) workspace_id: String,
+    pub(crate) label: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-struct PaneWire {
-    pane_id: String,
-    workspace_id: String,
-    tab_id: String,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    label: Option<String>,
-    #[serde(default)]
-    terminal_title: Option<String>,
-    #[serde(default)]
-    terminal_title_stripped: Option<String>,
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProjectedPane {
+    pub(crate) pane_id: String,
+    pub(crate) workspace_id: String,
+    pub(crate) tab_id: String,
+    pub(crate) cwd: Option<String>,
+    pub(crate) label: Option<String>,
+    pub(crate) terminal_title: Option<String>,
+    pub(crate) terminal_title_stripped: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-struct WireAgent {
-    pane_id: String,
-    #[serde(default)]
-    workspace_id: String,
-    #[serde(default)]
-    tab_id: String,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    agent: Option<String>,
-    #[serde(default)]
-    agent_status: Option<String>,
-    #[serde(default)]
-    agent_session: Option<crate::sidebar::SessionAgentSessionPayload>,
-    #[serde(default)]
-    spawned_from_pane_id: Option<String>,
-    #[serde(default)]
-    state_change_seq: u64,
-    #[serde(default)]
-    tokens: BTreeMap<String, Value>,
-    #[serde(default)]
-    ambient: Option<Value>,
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProjectedAgent {
+    pub(crate) pane_id: String,
+    pub(crate) workspace_id: String,
+    pub(crate) tab_id: String,
+    pub(crate) cwd: Option<String>,
+    pub(crate) agent: Option<String>,
+    pub(crate) agent_status: Option<String>,
+    pub(crate) agent_session: Option<crate::sidebar::SessionAgentSessionPayload>,
+    pub(crate) spawned_from_pane_id: Option<String>,
+    pub(crate) state_change_seq: u64,
+    pub(crate) tokens: BTreeMap<String, Value>,
+    pub(crate) ambient: Option<Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct ProjectionState {
-    #[serde(default)]
-    focused_pane_id: Option<String>,
+#[derive(Clone, Debug)]
+pub(crate) struct ProjectionState {
+    pub(crate) focused_pane_id: Option<String>,
     /// Herdr's focused workspace, read from `session.snapshot` and kept
     /// current from the focus events. A `tab_focused` or `pane_focused` in
     /// another workspace moves it too, because Herdr focuses the workspace
     /// along with the tab and does not always send `workspace_focused` first.
-    #[serde(default)]
-    focused_workspace_id: Option<String>,
-    #[serde(default)]
-    workspaces: Vec<WorkspaceWire>,
-    #[serde(default)]
-    tabs: Vec<TabWire>,
-    #[serde(default)]
-    panes: Vec<PaneWire>,
-    layouts: Vec<SessionLayoutPayload>,
-    agents: Vec<WireAgent>,
+    pub(crate) focused_workspace_id: Option<String>,
+    pub(crate) workspaces: Vec<ProjectedWorkspace>,
+    pub(crate) tabs: Vec<ProjectedTab>,
+    pub(crate) panes: Vec<ProjectedPane>,
+    pub(crate) layouts: Vec<SessionLayoutPayload>,
+    pub(crate) agents: Vec<ProjectedAgent>,
 }
 
 impl ProjectionState {
@@ -1065,11 +1029,7 @@ impl ProjectionState {
 pub(crate) fn project_snapshot(
     snapshot: &Value,
 ) -> Result<SessionSnapshotPayload, SessionFetchError> {
-    validate_protocol(snapshot)?;
-    let state: ProjectionState = serde_json::from_value(snapshot.clone()).map_err(|error| {
-        SessionFetchError::Malformed(format!("snapshot projection is malformed: {error}"))
-    })?;
-    Ok(state.project())
+    Ok(wire::snapshot(snapshot.clone())?.2.project())
 }
 
 #[derive(Clone)]
@@ -1107,52 +1067,14 @@ pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
 ];
 
 impl SessionReplica {
+    #[cfg(test)]
     fn from_snapshot(snapshot: &Value) -> Result<Self, SessionFetchError> {
-        validate_protocol(snapshot)?;
-        if !snapshot
-            .get("version")
-            .and_then(Value::as_str)
-            .is_some_and(|version| !version.trim().is_empty())
-        {
-            return Err(SessionFetchError::Malformed(
-                "snapshot is missing version".to_owned(),
-            ));
-        }
-        for field in [
-            "workspaces",
-            "tabs",
-            "panes",
-            "layouts",
-            "agents",
-            "lineage",
-        ] {
-            if !snapshot.get(field).is_some_and(Value::is_array) {
-                return Err(SessionFetchError::Malformed(format!(
-                    "snapshot is missing {field}"
-                )));
-            }
-        }
-        let host: HostScope =
-            serde_json::from_value(snapshot.get("host").cloned().ok_or_else(|| {
-                SessionFetchError::Malformed("snapshot is missing host".to_owned())
-            })?)
-            .map_err(|error| {
-                SessionFetchError::Malformed(format!("snapshot host is malformed: {error}"))
-            })?;
-        if host.host_id.trim().is_empty() || host.session_id.trim().is_empty() {
-            return Err(SessionFetchError::Malformed(
-                "snapshot host contains an empty identifier".to_owned(),
-            ));
-        }
-        let cursor = snapshot
-            .get("event_sequence")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| {
-                SessionFetchError::Malformed("snapshot is missing event_sequence".to_owned())
-            })?;
-        let state: ProjectionState = serde_json::from_value(snapshot.clone()).map_err(|error| {
-            SessionFetchError::Malformed(format!("snapshot projection is malformed: {error}"))
-        })?;
+        Self::from_decoded(wire::snapshot(snapshot.clone())?)
+    }
+
+    fn from_decoded(
+        (host, cursor, state): (HostScope, u64, ProjectionState),
+    ) -> Result<Self, SessionFetchError> {
         let replica = Self {
             host,
             cursor,
@@ -1295,8 +1217,7 @@ impl SessionReplica {
                                         .agents
                                         .iter()
                                         .find(|source| source.pane_id == pane.pane_id)
-                                        .and_then(|source| source.tokens.get("activity"))
-                                        .and_then(Value::as_str)
+                                        .and_then(wire::agent_activity)
                                         .and_then(|activity| activity.parse().ok()),
                                     fork: crate::runtime::pane_fork_snapshot(agent),
                                     // Ports describe this machine's listeners,
@@ -1310,10 +1231,7 @@ impl SessionReplica {
                             id: Some(remote_tab_id(target_id, &tab.tab_id)),
                             workspace_id: Some(workspace_id.clone()),
                             checkout_id: Some(checkout_id.clone()),
-                            label: Some(crate::model::display_tab_label(
-                                &tab.label,
-                                &tab.tab_id,
-                            )),
+                            label: Some(crate::model::display_tab_label(&tab.label, &tab.tab_id)),
                             empty: panes.is_empty(),
                             panes,
                         }
@@ -1418,11 +1336,11 @@ impl SessionReplica {
             && self.pending_active_tab_focuses.is_empty()
     }
 
-    fn replace_agents(&mut self, agents: Vec<WireAgent>) {
+    fn replace_agents(&mut self, agents: Vec<ProjectedAgent>) {
         self.state.agents = agents;
     }
 
-    fn apply(&mut self, event: SequencedEventEnvelope) -> Result<ApplyOutcome, SessionFetchError> {
+    fn apply(&mut self, event: ReplicaEnvelope) -> Result<ApplyOutcome, SessionFetchError> {
         if event.protocol != HERDR_PROTOCOL_REVISION {
             return Err(protocol_mismatch(event.protocol));
         }
@@ -1432,9 +1350,7 @@ impl SessionReplica {
                 event.host, self.host
             )));
         }
-        let fingerprint = serde_json::to_string(&event.raw).map_err(|error| {
-            SessionFetchError::Malformed(format!("event fingerprint could not be encoded: {error}"))
-        })?;
+        let fingerprint = event.fingerprint;
         if event.sequence < self.cursor {
             return Ok(ApplyOutcome {
                 publish: false,
@@ -1461,7 +1377,7 @@ impl SessionReplica {
         }
 
         let mut candidate = self.clone();
-        let refresh_agents = candidate.apply_new_event(&event.event, &event.data)?;
+        let refresh_agents = candidate.apply_new_event(event.data)?;
         candidate.cursor = event.sequence;
         candidate.last_event = Some((event.sequence, fingerprint));
         let publish = candidate.ready_to_publish();
@@ -1475,73 +1391,85 @@ impl SessionReplica {
         })
     }
 
-    fn apply_new_event(&mut self, event: &str, data: &Value) -> Result<bool, SessionFetchError> {
-        match event {
-            "workspace_created" => {
-                let payload: WorkspaceEvent = decode_event_data(data, event)?;
-                validate_workspace_wire(event, &payload.workspace)?;
+    fn apply_new_event(&mut self, data: ReplicaEvent) -> Result<bool, SessionFetchError> {
+        match data {
+            ReplicaEvent::WorkspaceCreated {
+                workspace: input_workspace,
+            } => {
+                let event = "workspace_created";
+                validate_workspace_wire(event, &input_workspace)?;
                 if self
                     .state
                     .workspaces
                     .iter()
-                    .any(|workspace| workspace.workspace_id == payload.workspace.workspace_id)
+                    .any(|workspace| workspace.workspace_id == input_workspace.workspace_id)
                 {
                     return Err(malformed_event(event, "created workspace already exists"));
                 }
                 self.pending_layouts
-                    .insert(payload.workspace.active_tab_id.clone());
-                self.state.workspaces.push(payload.workspace);
+                    .insert(input_workspace.active_tab_id.clone());
+                self.state.workspaces.push(input_workspace);
             }
-            "workspace_updated" | "workspace_metadata_updated" => {
-                let payload: WorkspaceEvent = decode_event_data(data, event)?;
-                validate_workspace_wire(event, &payload.workspace)?;
+            ReplicaEvent::WorkspaceUpdated {
+                workspace: input_workspace,
+            } => {
+                let event = "workspace_updated";
+                validate_workspace_wire(event, &input_workspace)?;
                 let workspace = self
                     .state
                     .workspaces
                     .iter_mut()
-                    .find(|workspace| workspace.workspace_id == payload.workspace.workspace_id)
+                    .find(|workspace| workspace.workspace_id == input_workspace.workspace_id)
                     .ok_or_else(|| malformed_event(event, "updated workspace does not exist"))?;
-                *workspace = payload.workspace;
+                *workspace = input_workspace;
             }
-            "workspace_renamed" => {
-                let payload: WorkspaceRenamedEvent = decode_event_data(data, event)?;
+            ReplicaEvent::WorkspaceRenamed {
+                workspace_id: input_workspace_id,
+                label: input_label,
+            } => {
+                let event = "workspace_renamed";
                 let workspace = self
                     .state
                     .workspaces
                     .iter_mut()
-                    .find(|workspace| workspace.workspace_id == payload.workspace_id)
+                    .find(|workspace| workspace.workspace_id == input_workspace_id)
                     .ok_or_else(|| malformed_event(event, "renamed workspace does not exist"))?;
-                workspace.label = payload.label;
+                workspace.label = input_label;
             }
-            "workspace_moved" => {
-                let payload: WorkspaceMovedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                for workspace in &payload.workspaces {
+            ReplicaEvent::WorkspaceMoved {
+                workspace_id: input_workspace_id,
+                insert_index: input_insert_index,
+                workspaces: input_workspaces,
+            } => {
+                let event = "workspace_moved";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                for workspace in &input_workspaces {
                     validate_workspace_wire(event, workspace)?;
                 }
-                if payload.insert_index > payload.workspaces.len()
-                    || !payload
-                        .workspaces
+                if input_insert_index > input_workspaces.len()
+                    || !input_workspaces
                         .iter()
-                        .any(|workspace| workspace.workspace_id == payload.workspace_id)
+                        .any(|workspace| workspace.workspace_id == input_workspace_id)
                 {
                     return Err(malformed_event(
                         event,
                         "resulting workspace order does not contain the moved workspace at a valid index",
                     ));
                 }
-                self.state.workspaces = payload.workspaces;
+                self.state.workspaces = input_workspaces;
             }
-            "workspace_reordered" => {
-                let payload: WorkspaceReorderedEvent = decode_event_data(data, event)?;
-                for workspace in &payload.workspaces {
+            ReplicaEvent::WorkspaceReordered {
+                workspace_ids: input_workspace_ids,
+                workspaces: input_workspaces,
+            } => {
+                let event = "workspace_reordered";
+                for workspace in &input_workspaces {
                     validate_workspace_wire(event, workspace)?;
                 }
-                if payload.workspace_ids.is_empty()
-                    || payload.workspace_ids.iter().any(|workspace_id| {
+                if input_workspace_ids.is_empty()
+                    || input_workspace_ids.iter().any(|workspace_id| {
                         workspace_id.trim().is_empty()
-                            || !payload
-                                .workspaces
+                            || !input_workspaces
                                 .iter()
                                 .any(|workspace| &workspace.workspace_id == workspace_id)
                     })
@@ -1551,50 +1479,61 @@ impl SessionReplica {
                         "resulting workspace order does not contain every reordered workspace",
                     ));
                 }
-                self.state.workspaces = payload.workspaces;
+                self.state.workspaces = input_workspaces;
             }
-            "workspace_closed" => {
-                let payload: WorkspaceClosedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+            ReplicaEvent::WorkspaceClosed {
+                workspace_id: input_workspace_id,
+            } => {
+                let event = "workspace_closed";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
                 if !self
                     .state
                     .workspaces
                     .iter()
-                    .any(|workspace| workspace.workspace_id == payload.workspace_id)
+                    .any(|workspace| workspace.workspace_id == input_workspace_id)
                 {
                     return Err(malformed_event(event, "closed workspace does not exist"));
                 }
-                self.remove_workspace(&payload.workspace_id);
+                self.remove_workspace(&input_workspace_id);
             }
-            "workspace_focused" => {
-                let payload: WorkspaceIdEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+            ReplicaEvent::WorkspaceFocused {
+                workspace_id: input_workspace_id,
+            } => {
+                let event = "workspace_focused";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
                 if !self
                     .state
                     .workspaces
                     .iter()
-                    .any(|workspace| workspace.workspace_id == payload.workspace_id)
+                    .any(|workspace| workspace.workspace_id == input_workspace_id)
                 {
                     return Err(malformed_event(event, "focused workspace does not exist"));
                 }
-                self.state.focused_workspace_id = Some(payload.workspace_id);
+                self.state.focused_workspace_id = Some(input_workspace_id);
             }
-            "worktree_created" => {
-                let payload: WorktreeCreatedEvent = decode_event_data(data, event)?;
-                validate_workspace_wire(event, &payload.workspace)?;
-                upsert_workspace(&mut self.state.workspaces, payload.workspace);
+            ReplicaEvent::WorktreeCreated {
+                workspace: input_workspace,
+            } => {
+                let event = "worktree_created";
+                validate_workspace_wire(event, &input_workspace)?;
+                upsert_workspace(&mut self.state.workspaces, input_workspace);
             }
-            "worktree_opened" => {
-                let payload: WorktreeOpenedEvent = decode_event_data(data, event)?;
-                validate_workspace_wire(event, &payload.workspace)?;
-                upsert_workspace(&mut self.state.workspaces, payload.workspace);
+            ReplicaEvent::WorktreeOpened {
+                workspace: input_workspace,
+            } => {
+                let event = "worktree_opened";
+                validate_workspace_wire(event, &input_workspace)?;
+                upsert_workspace(&mut self.state.workspaces, input_workspace);
             }
-            "worktree_removed" => {
-                let payload: WorktreeRemovedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                if let Some(workspace) = payload.workspace {
+            ReplicaEvent::WorktreeRemoved {
+                workspace_id: input_workspace_id,
+                workspace: input_workspace,
+            } => {
+                let event = "worktree_removed";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                if let Some(workspace) = input_workspace {
                     validate_workspace_wire(event, &workspace)?;
-                    if workspace.workspace_id != payload.workspace_id {
+                    if workspace.workspace_id != input_workspace_id {
                         return Err(malformed_event(
                             event,
                             "workspace does not match workspace_id",
@@ -1603,14 +1542,14 @@ impl SessionReplica {
                     upsert_workspace(&mut self.state.workspaces, workspace);
                 }
             }
-            "tab_created" => {
-                let payload: TabEvent = decode_event_data(data, event)?;
-                validate_tab_wire(event, &payload.tab)?;
+            ReplicaEvent::TabCreated { tab: input_tab } => {
+                let event = "tab_created";
+                validate_tab_wire(event, &input_tab)?;
                 if !self
                     .state
                     .workspaces
                     .iter()
-                    .any(|workspace| workspace.workspace_id == payload.tab.workspace_id)
+                    .any(|workspace| workspace.workspace_id == input_tab.workspace_id)
                 {
                     return Err(malformed_event(
                         event,
@@ -1621,29 +1560,32 @@ impl SessionReplica {
                     .state
                     .tabs
                     .iter()
-                    .any(|tab| tab.tab_id == payload.tab.tab_id)
+                    .any(|tab| tab.tab_id == input_tab.tab_id)
                 {
                     return Err(malformed_event(event, "created tab already exists"));
                 }
-                self.pending_layouts.insert(payload.tab.tab_id.clone());
-                self.state.tabs.push(payload.tab);
+                self.pending_layouts.insert(input_tab.tab_id.clone());
+                self.state.tabs.push(input_tab);
             }
-            "tab_closed" => {
-                let payload: TabIdEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+            ReplicaEvent::TabClosed {
+                workspace_id: input_workspace_id,
+                tab_id: input_tab_id,
+            } => {
+                let event = "tab_closed";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
                 let workspace_tab_count = self
                     .state
                     .tabs
                     .iter()
-                    .filter(|tab| tab.workspace_id == payload.workspace_id)
+                    .filter(|tab| tab.workspace_id == input_workspace_id)
                     .count();
                 let tab = self
                     .state
                     .tabs
                     .iter()
-                    .find(|tab| tab.tab_id == payload.tab_id)
+                    .find(|tab| tab.tab_id == input_tab_id)
                     .ok_or_else(|| malformed_event(event, "closed tab does not exist"))?;
-                if tab.workspace_id != payload.workspace_id {
+                if tab.workspace_id != input_workspace_id {
                     return Err(malformed_event(
                         event,
                         "closed tab belongs to another workspace",
@@ -1653,46 +1595,54 @@ impl SessionReplica {
                     .state
                     .workspaces
                     .iter()
-                    .find(|workspace| workspace.workspace_id == payload.workspace_id)
-                    .is_some_and(|workspace| workspace.active_tab_id == payload.tab_id);
+                    .find(|workspace| workspace.workspace_id == input_workspace_id)
+                    .is_some_and(|workspace| workspace.active_tab_id == input_tab_id);
                 if workspace_tab_count == 1 {
                     self.pending_workspace_closures
-                        .insert(payload.workspace_id.clone());
+                        .insert(input_workspace_id.clone());
                 } else if active_tab_closed {
                     self.pending_active_tab_focuses
-                        .insert(payload.workspace_id.clone());
+                        .insert(input_workspace_id.clone());
                 }
-                self.remove_tab(&payload.tab_id);
+                self.remove_tab(&input_tab_id);
             }
-            "tab_renamed" => {
-                let payload: TabRenamedEvent = decode_event_data(data, event)?;
+            ReplicaEvent::TabRenamed {
+                workspace_id: input_workspace_id,
+                tab_id: input_tab_id,
+                label: input_label,
+            } => {
+                let event = "tab_renamed";
                 let tab = self
                     .state
                     .tabs
                     .iter_mut()
-                    .find(|tab| tab.tab_id == payload.tab_id)
+                    .find(|tab| tab.tab_id == input_tab_id)
                     .ok_or_else(|| malformed_event(event, "renamed tab does not exist"))?;
-                if tab.workspace_id != payload.workspace_id {
+                if tab.workspace_id != input_workspace_id {
                     return Err(malformed_event(
                         event,
                         "renamed tab belongs to another workspace",
                     ));
                 }
-                tab.label = payload.label;
+                tab.label = input_label;
             }
-            "tab_moved" => {
-                let payload: TabMovedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                ensure_non_empty(event, "tab_id", &payload.tab_id)?;
-                for tab in &payload.tabs {
+            ReplicaEvent::TabMoved {
+                workspace_id: input_workspace_id,
+                tab_id: input_tab_id,
+                insert_index: input_insert_index,
+                tabs: input_tabs,
+            } => {
+                let event = "tab_moved";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                ensure_non_empty(event, "tab_id", &input_tab_id)?;
+                for tab in &input_tabs {
                     validate_tab_wire(event, tab)?;
                 }
-                if payload.insert_index > payload.tabs.len()
-                    || payload
-                        .tabs
+                if input_insert_index > input_tabs.len()
+                    || input_tabs
                         .iter()
-                        .any(|tab| tab.workspace_id != payload.workspace_id)
-                    || !payload.tabs.iter().any(|tab| tab.tab_id == payload.tab_id)
+                        .any(|tab| tab.workspace_id != input_workspace_id)
+                    || !input_tabs.iter().any(|tab| tab.tab_id == input_tab_id)
                 {
                     return Err(malformed_event(
                         event,
@@ -1701,42 +1651,43 @@ impl SessionReplica {
                 }
                 self.state
                     .tabs
-                    .retain(|tab| tab.workspace_id != payload.workspace_id);
-                self.state.tabs.extend(payload.tabs);
+                    .retain(|tab| tab.workspace_id != input_workspace_id);
+                self.state.tabs.extend(input_tabs);
             }
-            "tab_focused" => {
-                let payload: TabIdEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                ensure_non_empty(event, "tab_id", &payload.tab_id)?;
+            ReplicaEvent::TabFocused {
+                workspace_id: input_workspace_id,
+                tab_id: input_tab_id,
+            } => {
+                let event = "tab_focused";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                ensure_non_empty(event, "tab_id", &input_tab_id)?;
                 let workspace = self
                     .state
                     .workspaces
                     .iter_mut()
-                    .find(|workspace| workspace.workspace_id == payload.workspace_id)
+                    .find(|workspace| workspace.workspace_id == input_workspace_id)
                     .ok_or_else(|| malformed_event(event, "focused workspace does not exist"))?;
                 let tab = self
                     .state
                     .tabs
                     .iter()
-                    .find(|tab| tab.tab_id == payload.tab_id)
+                    .find(|tab| tab.tab_id == input_tab_id)
                     .ok_or_else(|| malformed_event(event, "focused tab does not exist"))?;
-                if tab.workspace_id != payload.workspace_id {
+                if tab.workspace_id != input_workspace_id {
                     return Err(malformed_event(
                         event,
                         "focused tab belongs to another workspace",
                     ));
                 }
-                workspace.active_tab_id = payload.tab_id;
-                self.state.focused_workspace_id = Some(payload.workspace_id.clone());
-                self.pending_active_tab_focuses
-                    .remove(&payload.workspace_id);
+                workspace.active_tab_id = input_tab_id;
+                self.state.focused_workspace_id = Some(input_workspace_id.clone());
+                self.pending_active_tab_focuses.remove(&input_workspace_id);
             }
-            "pane_created" => {
-                let payload: PaneEvent = decode_event_data(data, event)?;
-                validate_pane_wire(event, &payload.pane)?;
+            ReplicaEvent::PaneCreated { pane: input_pane } => {
+                let event = "pane_created";
+                validate_pane_wire(event, &input_pane)?;
                 if !self.state.tabs.iter().any(|tab| {
-                    tab.tab_id == payload.pane.tab_id
-                        && tab.workspace_id == payload.pane.workspace_id
+                    tab.tab_id == input_pane.tab_id && tab.workspace_id == input_pane.workspace_id
                 }) {
                     return Err(malformed_event(
                         event,
@@ -1747,23 +1698,26 @@ impl SessionReplica {
                     .state
                     .panes
                     .iter()
-                    .any(|pane| pane.pane_id == payload.pane.pane_id)
+                    .any(|pane| pane.pane_id == input_pane.pane_id)
                 {
                     return Err(malformed_event(event, "created pane already exists"));
                 }
-                self.pending_layouts.insert(payload.pane.tab_id.clone());
-                self.state.panes.push(payload.pane);
+                self.pending_layouts.insert(input_pane.tab_id.clone());
+                self.state.panes.push(input_pane);
             }
-            "pane_closed" => {
-                let payload: PaneClosedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+            ReplicaEvent::PaneClosed {
+                workspace_id: input_workspace_id,
+                pane_id: input_pane_id,
+            } => {
+                let event = "pane_closed";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
                 let pane = self
                     .state
                     .panes
                     .iter()
-                    .find(|pane| pane.pane_id == payload.pane_id)
+                    .find(|pane| pane.pane_id == input_pane_id)
                     .ok_or_else(|| malformed_event(event, "closed pane does not exist"))?;
-                if pane.workspace_id != payload.workspace_id {
+                if pane.workspace_id != input_workspace_id {
                     return Err(malformed_event(
                         event,
                         "closed pane belongs to another workspace",
@@ -1781,18 +1735,18 @@ impl SessionReplica {
                     .state
                     .tabs
                     .iter()
-                    .filter(|tab| tab.workspace_id == payload.workspace_id)
+                    .filter(|tab| tab.workspace_id == input_workspace_id)
                     .count();
                 if last_pane_in_tab && workspace_tab_count > 1 {
                     let active_tab_closed = self
                         .state
                         .workspaces
                         .iter()
-                        .find(|workspace| workspace.workspace_id == payload.workspace_id)
+                        .find(|workspace| workspace.workspace_id == input_workspace_id)
                         .is_some_and(|workspace| workspace.active_tab_id == tab_id);
                     if active_tab_closed {
                         self.pending_active_tab_focuses
-                            .insert(payload.workspace_id.clone());
+                            .insert(input_workspace_id.clone());
                     }
                     // Herdr 0.8.2 removes an emptied tab as part of pane.close
                     // without emitting a separate tab.closed event. Mirror that
@@ -1801,82 +1755,92 @@ impl SessionReplica {
                     self.remove_tab(&tab_id);
                 } else {
                     self.pending_layouts.insert(tab_id);
-                    self.remove_pane(&payload.pane_id);
+                    self.remove_pane(&input_pane_id);
                 }
             }
-            "pane_updated" => {
-                let payload: PaneEvent = decode_event_data(data, event)?;
-                validate_pane_wire(event, &payload.pane)?;
+            ReplicaEvent::PaneUpdated { pane: input_pane } => {
+                let event = "pane_updated";
+                validate_pane_wire(event, &input_pane)?;
                 let previous = self
                     .state
                     .panes
                     .iter()
-                    .find(|pane| pane.pane_id == payload.pane.pane_id)
+                    .find(|pane| pane.pane_id == input_pane.pane_id)
                     .cloned()
                     .ok_or_else(|| malformed_event(event, "updated pane does not exist"))?;
-                if previous.tab_id != payload.pane.tab_id
-                    || previous.workspace_id != payload.pane.workspace_id
+                if previous.tab_id != input_pane.tab_id
+                    || previous.workspace_id != input_pane.workspace_id
                 {
                     self.pending_layouts.insert(previous.tab_id);
-                    self.pending_layouts.insert(payload.pane.tab_id.clone());
+                    self.pending_layouts.insert(input_pane.tab_id.clone());
                 }
-                upsert_pane(&mut self.state.panes, payload.pane);
+                upsert_pane(&mut self.state.panes, input_pane);
             }
-            "pane_focused" => {
-                let payload: PaneFocusedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
+            ReplicaEvent::PaneFocused {
+                workspace_id: input_workspace_id,
+                pane_id: input_pane_id,
+            } => {
+                let event = "pane_focused";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
                 if !self.state.panes.iter().any(|pane| {
-                    pane.pane_id == payload.pane_id && pane.workspace_id == payload.workspace_id
+                    pane.pane_id == input_pane_id && pane.workspace_id == input_workspace_id
                 }) {
                     return Err(malformed_event(
                         event,
                         "focused pane does not exist in the stated workspace",
                     ));
                 }
-                self.state.focused_pane_id = Some(payload.pane_id.clone());
-                self.state.focused_workspace_id = Some(payload.workspace_id.clone());
+                self.state.focused_pane_id = Some(input_pane_id.clone());
+                self.state.focused_workspace_id = Some(input_workspace_id.clone());
                 if let Some(layout) = self.state.layouts.iter_mut().find(|layout| {
                     layout
                         .panes
                         .iter()
-                        .any(|pane| pane.pane_id == payload.pane_id)
+                        .any(|pane| pane.pane_id == input_pane_id)
                 }) {
-                    layout.focused_pane_id = payload.pane_id;
+                    layout.focused_pane_id = input_pane_id;
                 }
             }
-            "pane_moved" => {
-                let payload: PaneMovedEvent = decode_event_data(data, event)?;
+            ReplicaEvent::PaneMoved(payload) => {
                 self.apply_pane_moved(payload)?;
                 return Ok(true);
             }
-            "pane_exited" => {
-                let payload: PaneClosedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                ensure_non_empty(event, "pane_id", &payload.pane_id)?;
+            ReplicaEvent::PaneExited {
+                workspace_id: input_workspace_id,
+                pane_id: input_pane_id,
+            } => {
+                let event = "pane_exited";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                ensure_non_empty(event, "pane_id", &input_pane_id)?;
             }
-            "pane_agent_detected" => {
-                let payload: PaneClosedEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.workspace_id)?;
-                ensure_non_empty(event, "pane_id", &payload.pane_id)?;
+            ReplicaEvent::PaneAgentDetected {
+                workspace_id: input_workspace_id,
+                pane_id: input_pane_id,
+            } => {
+                let event = "pane_agent_detected";
+                ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                ensure_non_empty(event, "pane_id", &input_pane_id)?;
                 return Ok(true);
             }
-            "layout_updated" => {
-                let payload: LayoutEvent = decode_event_data(data, event)?;
-                ensure_non_empty(event, "workspace_id", &payload.layout.workspace_id)?;
-                ensure_non_empty(event, "tab_id", &payload.layout.tab_id)?;
-                ensure_non_empty(event, "focused_pane_id", &payload.layout.focused_pane_id)?;
+            ReplicaEvent::LayoutUpdated {
+                layout: input_layout,
+            } => {
+                let event = "layout_updated";
+                ensure_non_empty(event, "workspace_id", &input_layout.workspace_id)?;
+                ensure_non_empty(event, "tab_id", &input_layout.tab_id)?;
+                ensure_non_empty(event, "focused_pane_id", &input_layout.focused_pane_id)?;
                 if !self.state.tabs.iter().any(|tab| {
-                    tab.tab_id == payload.layout.tab_id
-                        && tab.workspace_id == payload.layout.workspace_id
+                    tab.tab_id == input_layout.tab_id
+                        && tab.workspace_id == input_layout.workspace_id
                 }) {
                     return Err(malformed_event(event, "layout references a missing tab"));
                 }
-                let tab_id = payload.layout.tab_id.clone();
+                let tab_id = input_layout.tab_id.clone();
                 let focused_was_missing =
                     self.state.focused_pane_id.as_ref().is_none_or(|focused| {
                         !self.state.panes.iter().any(|pane| &pane.pane_id == focused)
                     });
-                upsert_layout(&mut self.state.layouts, payload.layout);
+                upsert_layout(&mut self.state.layouts, input_layout);
                 self.pending_layouts.remove(&tab_id);
                 if focused_was_missing
                     && let Some(layout) = self
@@ -1888,7 +1852,7 @@ impl SessionReplica {
                     self.state.focused_pane_id = Some(layout.focused_pane_id.clone());
                 }
             }
-            unknown => {
+            ReplicaEvent::Unrequested(unknown) => {
                 return Err(SessionFetchError::Malformed(format!(
                     "Herdr subscription emitted unrequested event {unknown:?}"
                 )));
@@ -1897,7 +1861,7 @@ impl SessionReplica {
         Ok(false)
     }
 
-    fn apply_pane_moved(&mut self, payload: PaneMovedEvent) -> Result<(), SessionFetchError> {
+    fn apply_pane_moved(&mut self, payload: PaneMove) -> Result<(), SessionFetchError> {
         ensure_non_empty("pane_moved", "previous_pane_id", &payload.previous_pane_id)?;
         ensure_non_empty(
             "pane_moved",
@@ -2198,29 +2162,6 @@ impl SessionReplica {
     }
 }
 
-fn validate_protocol(snapshot: &Value) -> Result<(), SessionFetchError> {
-    let protocol = snapshot
-        .get("protocol")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| SessionFetchError::Malformed("snapshot is missing protocol".to_owned()))?;
-    if protocol != HERDR_PROTOCOL_REVISION {
-        return Err(protocol_mismatch(protocol));
-    }
-    Ok(())
-}
-
-/// The one message for a server built against another protocol revision. The
-/// app only ever starts its own bundled Herdr, so a mismatch means a server
-/// started elsewhere owns the socket, and the remedy is to stop it or to move
-/// to a hide built against it; both are named rather than left to guess.
-fn protocol_mismatch(received: u64) -> SessionFetchError {
-    SessionFetchError::Protocol(format!(
-        "The running Herdr speaks protocol {received}; this hide needs protocol {HERDR_PROTOCOL_REVISION}. \
-         Stop it with `herdr server stop` and reopen hide so it starts its bundled Herdr, \
-         or update hide to a release built against that Herdr."
-    ))
-}
-
 fn remote_workspace_id(target_id: &str, workspace_id: &str) -> String {
     format!("remote:{target_id}:workspace:{workspace_id}")
 }
@@ -2267,7 +2208,7 @@ fn ensure_non_empty(event: &str, field: &str, value: &str) -> Result<(), Session
 
 fn validate_workspace_wire(
     event: &str,
-    workspace: &WorkspaceWire,
+    workspace: &ProjectedWorkspace,
 ) -> Result<(), SessionFetchError> {
     ensure_non_empty(event, "workspace.workspace_id", &workspace.workspace_id)?;
     ensure_non_empty(event, "workspace.active_tab_id", &workspace.active_tab_id)?;
@@ -2284,7 +2225,7 @@ fn validate_workspace_wire(
     Ok(())
 }
 
-fn validate_tab_wire(event: &str, tab: &TabWire) -> Result<(), SessionFetchError> {
+fn validate_tab_wire(event: &str, tab: &ProjectedTab) -> Result<(), SessionFetchError> {
     ensure_non_empty(event, "tab.tab_id", &tab.tab_id)?;
     ensure_non_empty(event, "tab.workspace_id", &tab.workspace_id)
 }
@@ -2299,13 +2240,13 @@ fn non_blank(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn validate_pane_wire(event: &str, pane: &PaneWire) -> Result<(), SessionFetchError> {
+fn validate_pane_wire(event: &str, pane: &ProjectedPane) -> Result<(), SessionFetchError> {
     ensure_non_empty(event, "pane.pane_id", &pane.pane_id)?;
     ensure_non_empty(event, "pane.workspace_id", &pane.workspace_id)?;
     ensure_non_empty(event, "pane.tab_id", &pane.tab_id)
 }
 
-fn upsert_workspace(workspaces: &mut Vec<WorkspaceWire>, workspace: WorkspaceWire) {
+fn upsert_workspace(workspaces: &mut Vec<ProjectedWorkspace>, workspace: ProjectedWorkspace) {
     if let Some(existing) = workspaces
         .iter_mut()
         .find(|existing| existing.workspace_id == workspace.workspace_id)
@@ -2316,7 +2257,7 @@ fn upsert_workspace(workspaces: &mut Vec<WorkspaceWire>, workspace: WorkspaceWir
     }
 }
 
-fn upsert_tab(tabs: &mut Vec<TabWire>, tab: TabWire) {
+fn upsert_tab(tabs: &mut Vec<ProjectedTab>, tab: ProjectedTab) {
     if let Some(existing) = tabs
         .iter_mut()
         .find(|existing| existing.tab_id == tab.tab_id)
@@ -2327,7 +2268,7 @@ fn upsert_tab(tabs: &mut Vec<TabWire>, tab: TabWire) {
     }
 }
 
-fn upsert_pane(panes: &mut Vec<PaneWire>, pane: PaneWire) {
+fn upsert_pane(panes: &mut Vec<ProjectedPane>, pane: ProjectedPane) {
     if let Some(existing) = panes
         .iter_mut()
         .find(|existing| existing.pane_id == pane.pane_id)
@@ -2349,221 +2290,122 @@ fn upsert_layout(layouts: &mut Vec<SessionLayoutPayload>, layout: SessionLayoutP
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct AgentListResult {
-    #[serde(rename = "type")]
-    kind: String,
-    agents: Vec<WireAgent>,
+/// Inputs to replica transitions, with transport details removed by the boundary.
+#[derive(Clone, Debug)]
+pub(crate) enum ReplicaEvent {
+    WorkspaceCreated {
+        workspace: ProjectedWorkspace,
+    },
+    WorkspaceUpdated {
+        workspace: ProjectedWorkspace,
+    },
+    WorkspaceRenamed {
+        workspace_id: String,
+        label: String,
+    },
+    WorkspaceMoved {
+        workspace_id: String,
+        insert_index: usize,
+        workspaces: Vec<ProjectedWorkspace>,
+    },
+    WorkspaceReordered {
+        workspace_ids: Vec<String>,
+        workspaces: Vec<ProjectedWorkspace>,
+    },
+    WorkspaceClosed {
+        workspace_id: String,
+    },
+    WorkspaceFocused {
+        workspace_id: String,
+    },
+    WorktreeCreated {
+        workspace: ProjectedWorkspace,
+    },
+    WorktreeOpened {
+        workspace: ProjectedWorkspace,
+    },
+    WorktreeRemoved {
+        workspace_id: String,
+        workspace: Option<ProjectedWorkspace>,
+    },
+    TabCreated {
+        tab: ProjectedTab,
+    },
+    TabClosed {
+        workspace_id: String,
+        tab_id: String,
+    },
+    TabRenamed {
+        workspace_id: String,
+        tab_id: String,
+        label: String,
+    },
+    TabMoved {
+        workspace_id: String,
+        tab_id: String,
+        insert_index: usize,
+        tabs: Vec<ProjectedTab>,
+    },
+    TabFocused {
+        workspace_id: String,
+        tab_id: String,
+    },
+    PaneCreated {
+        pane: ProjectedPane,
+    },
+    PaneClosed {
+        workspace_id: String,
+        pane_id: String,
+    },
+    PaneUpdated {
+        pane: ProjectedPane,
+    },
+    PaneFocused {
+        workspace_id: String,
+        pane_id: String,
+    },
+    PaneMoved(PaneMove),
+    PaneExited {
+        workspace_id: String,
+        pane_id: String,
+    },
+    PaneAgentDetected {
+        workspace_id: String,
+        pane_id: String,
+    },
+    LayoutUpdated {
+        layout: SessionLayoutPayload,
+    },
+    Unrequested(String),
+}
+#[derive(Clone, Debug)]
+pub(crate) struct PaneMove {
+    pub(crate) previous_pane_id: String,
+    pub(crate) previous_workspace_id: String,
+    pub(crate) previous_tab_id: String,
+    pub(crate) pane: ProjectedPane,
+    pub(crate) created_workspace: Option<ProjectedWorkspace>,
+    pub(crate) created_tab: Option<ProjectedTab>,
+    pub(crate) closed_workspace_id: Option<String>,
+    pub(crate) closed_tab_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct SequencedEventEnvelope {
-    protocol: u64,
-    host: HostScope,
-    sequence: u64,
-    event: String,
-    data: Value,
-    #[serde(skip)]
-    raw: Value,
+#[derive(Clone, Debug)]
+pub(crate) struct ReplicaEnvelope {
+    pub(crate) protocol: u64,
+    pub(crate) host: HostScope,
+    pub(crate) sequence: u64,
+    pub(crate) data: ReplicaEvent,
+    pub(crate) fingerprint: String,
 }
 
-enum SubscriptionLine {
-    Event(SequencedEventEnvelope),
+pub(crate) enum SubscriptionLine {
+    Event(ReplicaEnvelope),
     Error { code: String, message: String },
-}
-
-fn parse_subscription_line(line: &str) -> Result<SubscriptionLine, SessionFetchError> {
-    if line.trim().is_empty() {
-        return Err(SessionFetchError::Malformed(
-            "Herdr event stream emitted an empty line".to_owned(),
-        ));
-    }
-    let value: Value = serde_json::from_str(line).map_err(|error| {
-        SessionFetchError::Malformed(format!("Herdr event stream emitted invalid JSON: {error}"))
-    })?;
-    if let Some(error) = value.get("error") {
-        let id = value.get("id").and_then(Value::as_str).ok_or_else(|| {
-            SessionFetchError::Malformed("Herdr subscription error is missing id".to_owned())
-        })?;
-        if id != "herdr-core:events.subscribe" {
-            return Err(SessionFetchError::Malformed(format!(
-                "Herdr subscription error id {id:?} is unexpected"
-            )));
-        }
-        let code = error
-            .get("code")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                SessionFetchError::Malformed("Herdr subscription error is missing code".to_owned())
-            })?
-            .to_owned();
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                SessionFetchError::Malformed(
-                    "Herdr subscription error is missing message".to_owned(),
-                )
-            })?
-            .to_owned();
-        return Ok(SubscriptionLine::Error { code, message });
-    }
-    let mut event: SequencedEventEnvelope =
-        serde_json::from_value(value.clone()).map_err(|error| {
-            SessionFetchError::Malformed(format!("Herdr sequenced event is malformed: {error}"))
-        })?;
-    event.raw = value;
-    Ok(SubscriptionLine::Event(event))
-}
-
-fn decode_event_data<T: DeserializeOwned>(
-    data: &Value,
-    expected_type: &str,
-) -> Result<T, SessionFetchError> {
-    let actual_type = data.get("type").and_then(Value::as_str).ok_or_else(|| {
-        malformed_event(
-            expected_type,
-            "event data is missing its type discriminator",
-        )
-    })?;
-    if actual_type != expected_type {
-        return Err(malformed_event(
-            expected_type,
-            &format!("event data type is {actual_type:?}"),
-        ));
-    }
-    serde_json::from_value(data.clone()).map_err(|error| {
-        malformed_event(expected_type, &format!("event data is malformed: {error}"))
-    })
 }
 
 fn malformed_event(event: &str, detail: &str) -> SessionFetchError {
     SessionFetchError::Malformed(format!("Herdr {event} event {detail}"))
-}
-
-#[derive(Deserialize)]
-struct WorkspaceEvent {
-    workspace: WorkspaceWire,
-}
-
-#[derive(Deserialize)]
-struct WorkspaceRenamedEvent {
-    workspace_id: String,
-    label: String,
-}
-
-#[derive(Deserialize)]
-struct WorkspaceMovedEvent {
-    workspace_id: String,
-    insert_index: usize,
-    workspaces: Vec<WorkspaceWire>,
-}
-
-#[derive(Deserialize)]
-struct WorkspaceReorderedEvent {
-    workspace_ids: Vec<String>,
-    workspaces: Vec<WorkspaceWire>,
-}
-
-#[derive(Deserialize)]
-struct WorkspaceClosedEvent {
-    workspace_id: String,
-}
-
-#[derive(Deserialize)]
-struct WorkspaceIdEvent {
-    workspace_id: String,
-}
-
-#[derive(Deserialize)]
-struct WorktreeCreatedEvent {
-    workspace: WorkspaceWire,
-    #[serde(rename = "worktree")]
-    _worktree: Value,
-}
-
-#[derive(Deserialize)]
-struct WorktreeOpenedEvent {
-    workspace: WorkspaceWire,
-    #[serde(rename = "worktree")]
-    _worktree: Value,
-    #[serde(rename = "already_open")]
-    _already_open: bool,
-}
-
-#[derive(Deserialize)]
-struct WorktreeRemovedEvent {
-    workspace_id: String,
-    #[serde(default)]
-    workspace: Option<WorkspaceWire>,
-    #[serde(rename = "worktree")]
-    _worktree: Value,
-    #[serde(rename = "forced")]
-    _forced: bool,
-}
-
-#[derive(Deserialize)]
-struct TabEvent {
-    tab: TabWire,
-}
-
-#[derive(Deserialize)]
-struct TabIdEvent {
-    workspace_id: String,
-    tab_id: String,
-}
-
-#[derive(Deserialize)]
-struct TabRenamedEvent {
-    workspace_id: String,
-    tab_id: String,
-    label: String,
-}
-
-#[derive(Deserialize)]
-struct TabMovedEvent {
-    workspace_id: String,
-    tab_id: String,
-    insert_index: usize,
-    tabs: Vec<TabWire>,
-}
-
-#[derive(Deserialize)]
-struct PaneEvent {
-    pane: PaneWire,
-}
-
-#[derive(Deserialize)]
-struct PaneClosedEvent {
-    pane_id: String,
-    workspace_id: String,
-}
-
-#[derive(Deserialize)]
-struct PaneFocusedEvent {
-    pane_id: String,
-    workspace_id: String,
-}
-
-#[derive(Deserialize)]
-struct PaneMovedEvent {
-    previous_pane_id: String,
-    previous_workspace_id: String,
-    previous_tab_id: String,
-    pane: PaneWire,
-    #[serde(default)]
-    created_workspace: Option<WorkspaceWire>,
-    #[serde(default)]
-    created_tab: Option<TabWire>,
-    #[serde(default)]
-    closed_workspace_id: Option<String>,
-    #[serde(default)]
-    closed_tab_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LayoutEvent {
-    layout: SessionLayoutPayload,
 }
 
 #[cfg(test)]
@@ -2587,17 +2429,19 @@ mod tests {
             "workspaces": [{
                 "workspace_id": "w1",
                 "label": "fixture",
+                "agent_status": "idle", "focused": true, "number": 1, "pane_count": 1, "tab_count": 1,
                 "active_tab_id": "w1:t1"
             }],
             "tabs": [{
                 "workspace_id": "w1",
                 "tab_id": "w1:t1",
-                "label": "1"
+                "agent_status": "idle", "focused": false, "number": 1, "pane_count": 1, "label": "1"
             }],
             "panes": [{
                 "workspace_id": "w1",
                 "tab_id": "w1:t1",
-                "pane_id": "w1:p1",
+                "pane_id": "w1:p1", "focused": false, "revision": 0, "agent_status": "idle",
+                "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
                 "cwd": "/tmp/fixture"
             }],
             "layouts": [{
@@ -2607,7 +2451,7 @@ mod tests {
                 "area": {"x": 0, "y": 0, "width": 120, "height": 60},
                 "focused_pane_id": "w1:p1",
                 "panes": [{
-                    "pane_id": "w1:p1",
+                    "pane_id": "w1:p1", "focused": false,
                     "rect": {"x": 0, "y": 0, "width": 120, "height": 60}
                 }],
                 "splits": []
@@ -2615,6 +2459,15 @@ mod tests {
             "agents": [],
             "lineage": []
         })
+    }
+
+    #[test]
+    fn every_session_sync_snapshot_fixture_obeys_the_generated_contract() {
+        for (fixture, panes) in [(snapshot(), 1), (two_tab_snapshot(), 2)] {
+            let (_, cursor, state) = wire::snapshot(fixture).expect("generated snapshot contract");
+            assert_eq!(cursor, 40);
+            assert_eq!(state.panes.len(), panes);
+        }
     }
 
     fn two_tab_snapshot() -> Value {
@@ -2625,7 +2478,7 @@ mod tests {
             .push(json!({
                 "workspace_id": "w1",
                 "tab_id": "w1:t2",
-                "label": "2"
+                "agent_status": "idle", "focused": false, "number": 2, "pane_count": 1, "label": "2"
             }));
         value["panes"]
             .as_array_mut()
@@ -2633,7 +2486,8 @@ mod tests {
             .push(json!({
                 "workspace_id": "w1",
                 "tab_id": "w1:t2",
-                "pane_id": "w1:p2",
+                "pane_id": "w1:p2", "focused": false, "revision": 0, "agent_status": "idle",
+                "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
                 "cwd": "/tmp/fixture"
             }));
         value["layouts"]
@@ -2646,7 +2500,7 @@ mod tests {
                 "area": {"x": 0, "y": 0, "width": 120, "height": 60},
                 "focused_pane_id": "w1:p2",
                 "panes": [{
-                    "pane_id": "w1:p2",
+                    "pane_id": "w1:p2", "focused": false,
                     "rect": {"x": 0, "y": 0, "width": 120, "height": 60}
                 }],
                 "splits": []
@@ -2654,7 +2508,7 @@ mod tests {
         value
     }
 
-    fn event(sequence: u64, kind: &str, data: Value) -> SequencedEventEnvelope {
+    fn event(sequence: u64, kind: &str, data: Value) -> ReplicaEnvelope {
         let raw = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "host": {"host_id": "fixture-host", "session_id": "fixture"},
@@ -2748,7 +2602,8 @@ mod tests {
                     "pane": {
                         "workspace_id": "w1",
                         "tab_id": "w1:t1",
-                        "pane_id": "w1:p2",
+                        "pane_id": "w1:p2", "focused": false, "revision": 0, "agent_status": "idle",
+                        "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
                         "cwd": "/tmp/fixture"
                     }
                 }),
@@ -2769,10 +2624,11 @@ mod tests {
                         "area": {"x": 0, "y": 0, "width": 120, "height": 60},
                         "focused_pane_id": "w1:p2",
                         "panes": [
-                            {"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
-                            {"pane_id": "w1:p2", "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                            {"pane_id": "w1:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                            {"pane_id": "w1:p2", "focused": false, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
                         ],
                         "splits": [{
+                            "id": "split_0_root",
                             "direction": "right",
                             "ratio": 0.5,
                             "rect": {"x": 0, "y": 0, "width": 120, "height": 60}
@@ -2794,7 +2650,7 @@ mod tests {
             "workspace_id": "w1",
             "tab_id": "w1:t1",
             "agent": "codex",
-            "agent_status": "working",
+            "agent_status": "working", "focused": false, "revision": 0, "terminal_id": "fixture-terminal",
             "state_change_seq": 1,
             "tokens": {}
         }]);
@@ -3133,10 +2989,7 @@ mod tests {
                 )
             ]
         );
-        assert_eq!(
-            checkout.active_tab_id,
-            Some(remote_tab_id("mini", "w1:t1"))
-        );
+        assert_eq!(checkout.active_tab_id, Some(remote_tab_id("mini", "w1:t1")));
     }
 
     #[test]
@@ -3166,8 +3019,8 @@ mod tests {
                     "tab_id": "w1:t2",
                     "insert_index": 0,
                     "tabs": [
-                        {"workspace_id": "w1", "tab_id": "w1:t2", "label": "2"},
-                        {"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}
+                        {"workspace_id": "w1", "tab_id": "w1:t2", "agent_status": "idle", "focused": false, "number": 2, "pane_count": 1, "label": "2"},
+                        {"workspace_id": "w1", "tab_id": "w1:t1", "agent_status": "idle", "focused": false, "number": 1, "pane_count": 1, "label": "1"}
                     ]
                 }),
             ))
@@ -3338,16 +3191,15 @@ mod tests {
         assert_eq!(replica.cursor, 57);
     }
 
-    fn agent(pane_id: &str, elapsed: &str) -> WireAgent {
-        serde_json::from_value(json!({
-            "pane_id": pane_id,
-            "workspace_id": "w1",
-            "tab_id": "w1:t1",
-            "agent": "claude",
-            "agent_status": "idle",
+    fn agent(pane_id: &str, elapsed: &str) -> ProjectedAgent {
+        wire::agents_response(json!({"type": "agent_list", "agents": [{
+            "pane_id": pane_id, "workspace_id": "w1", "tab_id": "w1:t1",
+            "agent": "claude", "agent_status": "idle", "focused": false,
+            "terminal_id": "fixture-terminal", "revision": 0,
             "tokens": {"status_idle": "\u{25cb}", "elapsed": elapsed, "activity": "1"}
-        }))
-        .expect("a wire agent")
+        }]}))
+        .expect("an agent list")
+        .remove(0)
     }
 
     fn fresh_catalog() -> CatalogCache {
@@ -3418,7 +3270,10 @@ mod tests {
                 json!({"type": "workspace_focused", "workspace_id": "w1"}),
             ))
             .expect("workspace focus applies");
-        assert_eq!(replica.project().focused_workspace_id.as_deref(), Some("w1"));
+        assert_eq!(
+            replica.project().focused_workspace_id.as_deref(),
+            Some("w1")
+        );
 
         let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
         replica
