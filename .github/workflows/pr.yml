@@ -42,7 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: macos/.build
           key: swift-build-${{ runner.os }}-${{ hashFiles('macos/Package.swift') }}
