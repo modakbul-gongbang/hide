@@ -6,7 +6,7 @@ review_profile: "standard"
 review_rationale: "Adds a click path that hands files outside a checkout to the default app with an executable guard, and changes attach lifetime and the scroll wire; no data, credential, billing, or destructive action, and every live effect is confined to a throwaway workspace and windows the run closes again."
 source_intake: "current conversation"
 created_at: "2026-09-05"
-updated_at: "2026-09-05"
+updated_at: "2026-09-06"
 ---
 
 # PRD: Hide paths and tab perf
@@ -102,7 +102,7 @@ pane 헤더의 fork는 "Forking w2X:p2F into a sibling pane. The agent has to st
 - SC8. pane fork: 운영자가 에이전트가 도는 pane의 헤더에서 fork를 누른다.
   Actors: 운영자.
   Primary path: 모달 없이 그 pane의 헤더가 "forking…" 접미로 진행을 보이고, 에이전트가 시작되면 오른쪽에 fork 표시가 붙은 형제 pane이 나타나며 접미가 사라진다.
-  Failure state: fork가 실패하면 접미가 사라지고 실패 이유가 상호작용 알림과 stderr 진단에 남는다.
+  Failure state: fork가 실패하면 접미가 사라지고 실패 이유가 모달 없이 그 pane 위의 알림과 stderr 진단에 남는다.
   Recovery: 같은 fork를 다시 누르면 새 시도가 된다. 진행 중에 다시 누른 것은 지금처럼 이름으로 거절된다.
   Reach: fixture 워크스페이스에 fork 가능한 claude 에이전트 pane을 하나 둔다(T1).
 
@@ -126,6 +126,7 @@ pane 헤더의 fork는 "Forking w2X:p2F into a sibling pane. The agent has to st
 - 해석되지 않는 링크는 지금처럼 화면에 아무것도 띄우지 않고 trace만 남긴다. 감지가 임의 출력 위의 추측이라 오탐이 일상이고, 모달은 운영자에게 잘못 클릭한 대가를 치르게 한다는 기존 결정을 유지한다.
 - `:line:col`로 에디터 커서를 옮기는 것. 에디터 탭은 지금처럼 파일 단위로 열린다. 에디터가 위치 이동을 지원하면 다시 본다.
 - herdr가 보이지 않는 pane을 서버에서 렌더하는 비용. herdr 쪽 변경이며 이 저장소 밖이다.
+- 새 빌드의 휠 버스트 성능 비교. 사용자 결정("성능은 그냥 두고 parked로 닫고 병합해줘")으로 이번 배포에서 제외한다. 결과적으로 스크롤 합치기의 효과는 코드와 단위 테스트로만 증명되고 끝단 측정은 없다. 세션 카탈로그가 뮤텍스를 잡은 채 git을 포크하는 문제를 고친 뒤 같은 조건에서 다시 잰다.
 - 우선순위 4 이하 항목: Cmd+W 레이블과 중복 단축키, herdr에 저장된 `Tab 2` 레이블 네 개, layout이 오지 않은 탭의 스트립 누락, 원격 읽음 기록. 메모리에 기록된 대로 다음 라운드로 넘긴다.
 - 사용자가 열어 둔 pane, 탭, 워크스페이스에 대한 어떤 변경. fixture 워크스페이스 w5D-w5H는 9월 7일 재검증을 위해 그대로 둔다.
 
@@ -195,7 +196,7 @@ DB, 인증, 결제, 원격 서비스 변경은 없다.
 - R8. 셸의 view 없는 pane 바이트 버퍼는 pane당 512 청크를 넘지 않고 넘치면 가장 오래된 청크를 버리며, pane의 세션이 풀리거나 pane이 사라지면 비워진다. 버린 사실은 trace에 남는다.
 - R9. 탭 드래그는 옮기는 탭의 herdr 워크스페이스 부분수열이 바뀔 때만 그 워크스페이스 안 삽입 인덱스로 `tab.move` 하나를 보내고, 다른 워크스페이스의 탭 사이로만 옮기면 herdr 호출 없이 스트립 순서를 로컬로 확정한다. herdr 응답의 워크스페이스 순서는 다른 워크스페이스의 탭이 섞인 체크아웃 순서와 대조해 확정된다. 체크아웃 단위 거절 경로와 `tab.reorder_split_workspace` 진단은 삭제된다.
 - R11. hide가 닫기를 요청한 pane, 또는 herdr가 이미 없다고 알린 pane의 attach 종료(`terminal_closed`)는 `ended`로 투영되지 않고 안내 청크도 붙지 않는다. pane은 마지막 화면 그대로 사라진다. 다른 이유의 종료는 지금처럼 `ended`와 이유로 보인다.
-- R12. fork는 모달 대신 그 pane의 헤더 접미로 진행을 보이고, 성공은 진단으로, 실패는 상호작용 알림과 stderr 진단으로 이유를 남긴다. fork로 생긴 pane은 헤더에 fork 표시가 붙는다. fixture의 claude pane에서 fork를 재현해 지금 pane이 나타나지 않는 원인을 확인하고, 원인이 이 저장소 안이면 고친다.
+- R12. fork는 모달 대신 그 pane의 헤더 접미로 진행을 보이고, 성공은 진단으로, 실패는 모달 없이 그 pane 위의 알림과 stderr 진단으로 이유를 남긴다. fork로 생긴 pane은 헤더에 fork 표시가 붙는다. fixture의 claude pane에서 fork를 재현해 지금 pane이 나타나지 않는 원인을 확인하고, 원인이 이 저장소 안이면 고친다.
 - R10. AGENTS.md의 런타임 아키텍처 단락은 경로 드러냄 이벤트, attach 상한과 `released`, 드래그 단위 소유권을 기술하고, 성능 가이드는 스크롤 쓰기가 프레임 단위인 이유와 그 사건을 기록한다.
 
 ## 7. Acceptance Criteria
@@ -208,7 +209,7 @@ DB, 인증, 결제, 원격 서비스 변경은 없다.
 | AC4 | 바깥 텍스트 파일 클릭은 기본 앱을, 바깥 폴더 클릭은 Finder 창을 앞에 띄우고, 실행 비트가 켜진 바깥 스크립트 클릭은 실행하지 않고 Finder에서 선택된 채 드러내며, hide의 체크아웃, 트리, 탭은 바뀌지 않는다 | judged | scripted run: click each of the three fixture paths, capture the frontmost window after each, show the script left no execution marker, and record the trace lines |
 | AC5 | 다른 체크아웃의 파일을 향한 드러냄 이벤트 뒤 snapshot은 그 체크아웃을 포커스로, 오른쪽 패널을 보임과 Explorer 섹션으로, 선택 경로를 그 파일로, 펼침 경로에 모든 조상을 담고 파일의 에디터 탭을 열어 두며, 폴더를 향한 이벤트는 같은 상태에 폴더 자체를 펼치고 탭을 열지 않으며, 등록되지 않은 체크아웃을 향한 이벤트는 상태를 바꾸지 않고 오류를 남긴다 | machine | - |
 | AC6 | 한 프레임 안에 들어온 휠 행 100개는 순 델타를 담은 쓰기 하나가 되고, 서로 상쇄되는 델타는 쓰기 0개가 되며, 크기 보고가 없는 pane의 휠은 쓰기 0개와 진단 하나가 되고, 어떤 순서의 휠도 합치지 않은 순서와 같은 최종 위치에 닿는다 | machine | - |
-| AC7 | 같은 5초 휠 버스트를 기준 빌드와 새 빌드에 걸었을 때 새 빌드의 app 표본과 herdr server 표본이 기준보다 낮거나 같고, 두 측정 모두 load와 인스턴스 상태가 함께 기록된다 | judged | two sampled windows per build on the fixture pane under a scripted wheel burst, each quoting load, pid, the other instance's presence, and the symbolication rate |
+| AC7 | 기준 빌드의 같은 5초 휠 버스트를 두 번 표본한 결과가 load, pid, 다른 인스턴스의 존재, 심볼 해석률과 함께 기록된다. 새 빌드와의 비교는 사용자 결정으로 이번 배포에서 제외한다(비목표 참조) | judged | two sampled windows on the baseline build over a scripted wheel burst on the fixture pane, each quoting load, pid, the other instance's presence, and the symbolication rate |
 | AC8 | 탭 일곱 개를 차례로 보이게 하면 attach 세션은 보이는 탭과 최근 네 탭의 pane에만 남고, 풀린 pane은 `released` 상태와 진단 하나를 가지며, herdr 상태가 그대로인 세션 tick은 어떤 pane도 다시 attach하지 않고, 풀린 탭을 다시 보이면 그 pane만 attach되며, 유지 캔버스 집합에서 풀린 pane이 빠진다 | machine | - |
 | AC9 | throwaway 워크스페이스의 탭 여덟 개를 방문한 뒤 dev 인스턴스가 가진 terminal session 자식 프로세스는 다섯 탭 분량을 넘지 않고, 사이드바는 풀린 pane을 오류로 보이지 않으며, 풀린 탭으로 돌아오면 현재 화면이 그려진다 | judged | scripted run: create eight tabs, visit them in order, list the dev instance's child processes filtered by parent pid, capture the sidebar and the revisited tab, and record the release diagnostics |
 | AC10 | view가 등록되지 않은 pane에 청크 600개를 넣으면 512개만 남고 가장 오래된 것이 버려지며, 세션이 풀리거나 pane이 사라지면 버퍼가 비고, 버린 사실이 trace에 남는다 | machine | - |
@@ -230,7 +231,7 @@ DB, 인증, 결제, 원격 서비스 변경은 없다.
 - T7. 드래그 단위 재정렬: 워크스페이스 부분수열 비교, `tab.move` 하나 또는 로컬 확정, 응답 대조, 거절 복구, 거절 경로 삭제, 테스트. Covers R9, AC11. Depends on: none.
 - T8. 런타임 검증: 접미가 붙은 dev 인스턴스와 T1 fixture로 SC1-SC3과 SC6을 스크립트로 몰아 증거를 남긴다. Covers AC2, AC3, AC4, AC12. Depends on: T1, T3, T7.
 - T9. attach 상한 런타임 검증: 탭 여덟 개 방문 뒤 자식 프로세스 수, 사이드바, 재방문 화면을 증거로 남긴다. Covers AC9. Depends on: T1, T5, T6.
-- T10. 성능 측정: 스크립트 휠 버스트로 기준 빌드와 새 빌드를 각각 표본하고 load, pid, 다른 인스턴스, 심볼 해석률을 함께 기록한다. Covers AC7. Depends on: T1, T4.
+- T10. 성능 측정: 스크립트 휠 버스트로 기준 빌드를 표본하고 load, pid, 다른 인스턴스, 심볼 해석률을 함께 기록한다. 새 빌드와의 비교는 사용자 결정으로 이번 배포에서 제외한다(비목표 참조). Covers AC7. Depends on: T1, T4.
 - T11. 문서: AGENTS.md 갱신. Covers R10, AC13. Depends on: T3, T4, T5, T7.
 - T13. 닫기 종료 투영: hide가 요청한 닫기와 herdr가 치운 pane의 `terminal_closed` 종료를 `ended`로 투영하지 않고 안내 청크를 붙이지 않으며, 다른 종료는 그대로 둔다. 테스트가 두 갈래를 증명한다. Covers R11, AC15. Depends on: T5.
 - T14. fork 표면: fixture의 claude pane에서 fork를 재현해 pane이 나타나지 않는 원인을 기록하고 이 저장소 안이면 고친 뒤, 모달을 헤더 접미로 바꾸고 결과를 알림과 stderr 진단으로 남긴다. Covers R12, AC16. Depends on: T1.
@@ -245,7 +246,7 @@ DB, 인증, 결제, 원격 서비스 변경은 없다.
 | build/static | yes | core와 셸 빌드, clippy, herdr 계약 검사 | none |
 | automated behavior | yes | 해석기 갈래, 드러냄 이벤트, 스크롤 합치기, attach 상한, 버퍼 상한, 재정렬 소유권의 회귀 | none |
 | app runtime | yes | SC1-SC3, SC5, SC6을 접미가 붙은 dev 인스턴스에서 스크립트로 몰고 창을 찍은 증거 | none; 사용자는 설치 뒤 사후 판단 |
-| performance measurement | yes | 휠 버스트 아래 app과 herdr server 표본, attach 자식 프로세스 수 | none |
+| performance measurement | yes | 기준 빌드의 휠 버스트 표본 기록, attach 자식 프로세스 수 | none |
 | live herdr integration | yes, throwaway 워크스페이스 한정 | 라이브 herdr 0.8.2의 스크롤 재도색 동작, `tab.move`, 세션 해제 | none |
 
 ### 9.2 Required Agent Verification
@@ -257,8 +258,8 @@ DB, 인증, 결제, 원격 서비스 변경은 없다.
 | V3 | automated behavior | AC5, AC6, AC8, AC11, AC15 | core 테스트가 드러냄 이벤트의 원자적 상태, 프레임당 쓰기 수와 최종 위치, attach 상한과 tick 안정성, 드래그 단위 소유권, 닫기 종료의 투영 제외를 증명한다 |
 | V4 | app runtime | AC2, AC3, AC4, SC1, SC2, SC3 | 접미가 붙은 dev 인스턴스에서 세 갈래의 클릭이 각 카드의 primary path, failure state, recovery를 보이고 창 캡처와 trace가 이를 담는다 |
 | V5 | app runtime | AC9, AC12, AC16, SC5, SC6, SC7, SC8 | 탭 여덟 개 방문 뒤 자식 프로세스가 상한 안에 있고 재방문이 그려지며, 분할 체크아웃의 두 드래그가 확정되고 유지되고, 닫기에 종료 안내가 없으며, fork가 접미와 형제 pane 또는 이유 있는 실패로 끝난다 |
-| V6 | performance measurement | AC7, SC4 | 기준 빌드와 새 빌드의 휠 버스트 표본이 load와 함께 기록되고 새 빌드가 낮거나 같다 |
-| V7 | live herdr integration | AC6 (T4의 사전 확인), AC12 | 라이브 서버의 스크롤 재도색 확인 결과가 기록되고 `tab.move`가 throwaway 워크스페이스에서 확정된다 |
+| V6 | performance measurement | AC7 | 기준 빌드의 휠 버스트 표본 두 개가 load와 인스턴스 상태, 심볼 해석률과 함께 기록된다 |
+| V7 | live herdr integration | AC6 (T4의 사전 확인), AC12, SC4 | 라이브 서버의 스크롤 재도색 확인 결과가 기록되고 `tab.move`가 throwaway 워크스페이스에서 확정된다 |
 | V8 | build/static | AC13 | AGENTS.md diff가 R10의 네 항목을 담는다 |
 
 ### 9.3 Human Verification

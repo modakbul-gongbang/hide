@@ -47,6 +47,26 @@ The notifier announces once per burst rather than once per change.
 Launch creates the core once, after the runtime resolution (login-shell PATH, binary, version) has finished, and the first window is presented before that resolution completes.
 The first attach uses the size the view reported, or the size persisted from the last launch, and never a placeholder; a pane with no known size is held back and says it is waiting.
 
+A clicked path is one event, not a sequence.
+The shell resolves the token on the filesystem, decides which registered checkout owns it by the longest symlink-resolved prefix, and sends `reveal_path`; the core then decides the focused checkout, the right panel's visibility and section, the tree's expanded set and selection, and the editor tab together.
+Dispatch is fire-and-forget, so four separate events would arrive as four frames and a refusal partway would leave the screen half moved.
+A path outside every checkout never reaches the core: the shell hands it to macOS, opening a file in its default application and a folder as a Finder window, and revealing rather than opening anything whose default application is the operating system running it - an executable file, an application bundle, an installer package - because link detection is a guess over arbitrary agent output and one wrong click must not start a program.
+
+An attach lives only while its tab is in the last five shown.
+Herdr renders a pane for every attached client, so an attach nobody is looking at costs a child process here and a render there for the life of the process; visiting eight tabs used to leave eight attaches alive.
+The core keeps the most recently shown tabs (`ATTACHED_TAB_LIMIT`) and releases the rest, which is the ordinary session drop, not a new path.
+A released pane keeps its projection entry carrying the transport state `released`, because the sidebar and the pane header read their state from there and a missing entry reads as a failure; the shell drops that pane's canvas and its held bytes on that state, so the tab redraws from Herdr's own frame on the next visit.
+Nothing re-attaches it until it is shown again: an idle tick attaches only the visible tab's panes.
+
+Tab reorder ownership is decided per drag, not per checkout.
+Herdr orders the tabs inside one of its workspaces and has no order that spans two of them, so a strip slot is refilled from the workspace that slot already belongs to and Hide owns how the workspaces and the file tabs interleave.
+A drag that changes the moved tab's own workspace subsequence sends one `tab.move` with an index counted in that workspace; a drag that only steps over another workspace's tabs settles locally with no Herdr call.
+Deciding this for the whole checkout is what refused every drag in a checkout two Herdr workspaces share, which is the ordinary arrangement for a repository opened twice.
+
+A pane that is going away ends its attach quietly.
+Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
+A close Hide asked for, or a pane Herdr has already stopped listing, projects `closing` with no notice chunk and keeps the pane's last frame until it is removed. Every other reason still reports `ended` with its message.
+
 ## Herdr API Contract
 
 Before changing, debugging, or reviewing any Herdr integration, read both current official references in full for the Herdr version this repository ships or targets:
@@ -103,11 +123,20 @@ Quote a mutex-wait figure with the load and the drive it was taken under or it m
   The signature is the enforcement, because the serializing half has no runtime in scope to lock; keep it that way rather than adding a convenience method that does both.
 - Never fork subprocesses (git especially) in a per-tick or per-event path.
   The workspace catalog caches by input equality plus a refresh window (`CatalogCache` in `session_sync.rs`); extend that cache rather than adding a new per-tick invocation.
+  The catalog was not the only fork: placing each tab into a checkout resolved the pane directory's repository root with `git rev-parse` inside `reconcile_session_catalog`, once per tab per publish, under the runtime mutex.
+  On 2026-09-06 with 18 agents and load 7 to 11 that held the mutex for 60% of a five-second window; the main thread waited on it for 33% of its samples and every attach reader for 25% to 35%, which is what "everything is slower than the herdr TUI" felt like.
+  The roots now ride the precomputed catalog (`RootIndex`), a stale precomputation keeps the last accepted catalog instead of rebuilding under the lock, and `reconciling_with_a_precomputed_catalog_runs_no_git` counts the forks.
 - The snapshot wire is sized by what changed, not by total state.
   Terminal chunks ride a sequence cursor; do not re-send retained state wholesale.
   When adding a snapshot field, decide its channel: rarely-changing sections belong in the revisioned `rest`, per-event scalars ride top-level, high-volume streams need their own cursor.
   A field on the revisioned `rest` section that no reader reads still costs a full-state re-send on every tick that writes it.
   Two `last_checked_at_unix_ms` fields nobody decoded restamped `rest` on every session heartbeat, which re-sent the whole navigator, ui state, status and pet about once a second; deleting them took an idle twenty-second window from 38 snapshot reads to one.
+- Coalesce a wheel burst into one write per frame.
+  A flick of the wheel is dozens of row events, and each one was its own `terminal.scroll` plus a same-size `terminal.resize` in one write: 65 writes a second became 65 server-side repaints a second.
+  The per-pane terminal writer thread now sums the signed row deltas that arrive inside one frame (`SCROLL_COALESCE_WINDOW`, 16 ms) and writes once; a sum of zero writes nothing, so a trackpad reversal inside one frame costs no repaint at all.
+  The window is spent on a blocking read the thread already makes, so it is not a timer and adds no thread.
+  The same-size `terminal.resize` that used to ride every scroll is gone. It was there to force a repaint, and a live 0.8.2 server measured on 2026-09-05 publishes one on its own: three scrolls sent alone on a control session produced three distinct frames, and appending the resize produced no extra frame. Confirm that again before assuming it on a later Herdr, and delete the resize rather than the coalescing if it ever has to come back.
+  A wheel on a pane whose view has not reported a size writes nothing and says so once. The 24x80 fallback that used to stand in for the missing size resized the PTY to a grid it was not running at, on every wheel row.
 - Announce changes once per burst, not once per change.
   `ChangeNotifier` latches on the false-to-true flip and `herdr_core_snapshot` clears the latch before it takes the lock.
   Clear-then-read costs at most one read for nothing; read-then-clear loses a change that lands during the read.

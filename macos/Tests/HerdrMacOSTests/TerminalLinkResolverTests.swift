@@ -78,12 +78,62 @@ struct TerminalLinkResolverTests {
         try Data("nested".utf8).write(to: nestedFile)
 
         #expect(route("target.txt", paneCWD: nested.path, checkoutRoot: fixture.root)
-            == .file(nestedFile.standardizedFileURL.resolvingSymlinksInPath()))
+            == .path(.externalFile(TerminalLinkResolver.canonical(nestedFile))))
     }
 
-    /// The operator asked for a file outside the checkout to open as a tab.
-    /// Nothing below the resolver ever refused one; only the resolver did.
-    @Test func anAbsolutePathOutsideTheCheckoutOpensAsAFile() throws {
+    /// AC1, R1, R4. The five branches, decided by where the path is and what
+    /// it would do if macOS opened it. `/tmp` is a symlink to `/private/tmp`
+    /// on macOS, so both sides are resolved before they are compared, and a
+    /// checkout nested inside another wins by being the longer prefix.
+    @Test func aResolvedPathTakesTheBranchItsLocationAndKindDecide() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let checkout = fixture.root.appendingPathComponent("checkout", isDirectory: true)
+        let nestedCheckout = checkout.appendingPathComponent("vendor/inner", isDirectory: true)
+        let folder = checkout.appendingPathComponent("Sources", isDirectory: true)
+        let outsideFolder = fixture.root.appendingPathComponent("elsewhere", isDirectory: true)
+        for directory in [checkout, nestedCheckout, folder, outsideFolder] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let inside = folder.appendingPathComponent("App.swift")
+        let nestedFile = nestedCheckout.appendingPathComponent("vendored.swift")
+        let outsideFile = fixture.root.appendingPathComponent("outside.txt")
+        let script = fixture.root.appendingPathComponent("run.sh")
+        let bundle = fixture.root.appendingPathComponent("Thing.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        for file in [inside, nestedFile, outsideFile, script] {
+            try Data("body".utf8).write(to: file)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        // The checkout roots are spelled through the `/tmp` symlink, the way
+        // the navigator carries a path the operator registered.
+        let checkouts = [
+            TerminalLinkCheckout(id: "c-outer", workspaceID: "w1", path: symlinked(checkout)),
+            TerminalLinkCheckout(id: "c-inner", workspaceID: "w2", path: symlinked(nestedCheckout)),
+        ]
+        let resolve = { (url: URL) in TerminalLinkResolver.canonical(url) }
+
+        #expect(route(inside.path, checkouts: checkouts)
+            == .path(.checkoutFile(url: resolve(inside), checkout: checkouts[0])))
+        #expect(route(folder.path, checkouts: checkouts)
+            == .path(.checkoutFolder(url: resolve(folder), checkout: checkouts[0])))
+        // The nested checkout is the longer prefix, so it owns its own files.
+        #expect(route(nestedFile.path, checkouts: checkouts)
+            == .path(.checkoutFile(url: resolve(nestedFile), checkout: checkouts[1])))
+        #expect(route(outsideFile.path, checkouts: checkouts)
+            == .path(.externalFile(resolve(outsideFile))))
+        #expect(route(outsideFolder.path, checkouts: checkouts)
+            == .path(.externalFolder(resolve(outsideFolder))))
+        // Opening these would run them, so they are revealed instead (A1).
+        #expect(route(script.path, checkouts: checkouts)
+            == .path(.externalReveal(resolve(script))))
+        #expect(route(bundle.path, checkouts: checkouts)
+            == .path(.externalReveal(resolve(bundle))))
+    }
+
+    /// With no checkout registered at all, every resolved path is outside.
+    @Test func anAbsolutePathOutsideEveryCheckoutIsHandedToMacOS() throws {
         let fixture = try LocalFileFixture()
         defer { fixture.remove() }
         let checkout = fixture.root.appendingPathComponent("checkout", isDirectory: true)
@@ -92,7 +142,123 @@ struct TerminalLinkResolverTests {
         try Data("outside".utf8).write(to: outside)
 
         #expect(route(outside.path, paneCWD: checkout.path, checkoutRoot: checkout)
-            == .file(outside.standardizedFileURL.resolvingSymlinksInPath()))
+            == .path(.externalFile(TerminalLinkResolver.canonical(outside))))
+    }
+
+    /// AC1, R1. Every layer below the resolver carries the physical path: the
+    /// navigator's checkout, the file tree's rows, the core's expanded set.
+    /// Foundation's `resolvingSymlinksInPath` does not answer with it - it
+    /// strips a leading `/private`, turning the real `/private/tmp/x` into
+    /// `/tmp/x` - and a reveal that carried that spelling switched the
+    /// checkout and opened the tab while the tree stayed exactly where it was.
+    @Test func aResolvedPathIsSpelledTheWayEveryOtherLayerSpellsIt() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let physical = TerminalLinkResolver.canonical(fixture.root)
+        try #require(physical.path.hasPrefix("/private/"), "the fixture root is under /private on macOS")
+        let file = physical.appendingPathComponent("target.txt")
+        try Data("body".utf8).write(to: file)
+        let checkouts = [
+            TerminalLinkCheckout(id: "c1", workspaceID: "w1", path: symlinked(physical)),
+        ]
+
+        // Spelled either way, the route names the physical path and the
+        // checkout that owns it.
+        for spelling in [file.path, symlinked(file)] {
+            #expect(
+                route(spelling, checkouts: checkouts)
+                    == .path(.checkoutFile(url: file, checkout: checkouts[0])),
+                "\(spelling) did not resolve to the physical path"
+            )
+        }
+    }
+
+    /// The `/tmp` spelling of a real path under `/private/tmp`, which is what
+    /// a registered checkout path looks like on macOS.
+    /// AC1, R1. Which checkout owns a path is decided on the canonical root,
+    /// not on the path the navigator happens to carry. The inner checkout here
+    /// is spelled through a symlink, so it is the longer directory while being
+    /// the shorter string: ranking on the raw path hands its own file to the
+    /// outer checkout.
+    @Test func theInnerCheckoutOwnsItsFileEvenWhenItIsSpelledMoreBriefly() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let outer = fixture.root.appendingPathComponent("checkout", isDirectory: true)
+        let inner = outer.appendingPathComponent("v", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        let innerFile = inner.appendingPathComponent("vendored.swift")
+        try Data("body".utf8).write(to: innerFile)
+        let alias = fixture.root.appendingPathComponent("c", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: outer)
+
+        let outerPath = outer.standardizedFileURL.path
+        let innerPath = alias.appendingPathComponent("v", isDirectory: true).standardizedFileURL.path
+        #expect(innerPath.count < outerPath.count, "the fixture must make the inner root spell shorter")
+
+        let checkouts = [
+            TerminalLinkCheckout(id: "c-outer", workspaceID: "w1", path: outerPath),
+            TerminalLinkCheckout(id: "c-inner", workspaceID: "w2", path: innerPath),
+        ]
+        #expect(route(innerFile.path, checkouts: checkouts)
+            == .path(.checkoutFile(url: TerminalLinkResolver.canonical(innerFile), checkout: checkouts[1])))
+    }
+
+    /// AC2, AC3, SC1 and SC2 failure and recovery. A path printed minutes ago
+    /// can be gone by the time it is clicked. It then resolves to nothing at
+    /// all, so no reveal is dispatched and the tree, the selection and the tab
+    /// strip are left exactly as they were, and the operator is told which
+    /// path could not be found. Putting the file or the folder back makes the
+    /// same click work, with nothing else done in between.
+    @Test func aClickOnAPathThatIsGoneRevealsNothingAndSaysWhichUntilItIsBack() throws {
+        let fixture = try LocalFileFixture()
+        defer { fixture.remove() }
+        let checkout = fixture.root.appendingPathComponent("checkout", isDirectory: true)
+        let folder = checkout.appendingPathComponent("deep", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("target.txt")
+        try Data("body".utf8).write(to: file)
+        let checkouts = [
+            TerminalLinkCheckout(id: "c", workspaceID: "w1", path: checkout.path),
+        ]
+        let resolve = { (url: URL) in TerminalLinkResolver.canonical(url) }
+
+        // Both resolve while they exist.
+        #expect(route(file.path, checkouts: checkouts)
+            == .path(.checkoutFile(url: resolve(file), checkout: checkouts[0])))
+        #expect(route(folder.path, checkouts: checkouts)
+            == .path(.checkoutFolder(url: resolve(folder), checkout: checkouts[0])))
+
+        // The file goes away. The click carries no reveal, and names the path.
+        try FileManager.default.removeItem(at: file)
+        let missingFile = route(file.path, checkouts: checkouts)
+        if case .unresolved(let message) = missingFile {
+            #expect(message.hasPrefix("Hide could not resolve "))
+            #expect(message.contains(String(file.path.prefix(40))), "the reason names the path that was clicked")
+        } else {
+            Issue.record("a deleted file must reveal nothing and say so, got \(missingFile)")
+        }
+
+        // The folder goes away too, taking the same branch rather than a
+        // different one.
+        try FileManager.default.removeItem(at: folder)
+        let missingFolder = route(folder.path, checkouts: checkouts)
+        if case .unresolved = missingFolder {} else {
+            Issue.record("a deleted folder must reveal nothing and say so, got \(missingFolder)")
+        }
+
+        // Both come back, and the same click resolves again.
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("body".utf8).write(to: file)
+        #expect(route(folder.path, checkouts: checkouts)
+            == .path(.checkoutFolder(url: resolve(folder), checkout: checkouts[0])))
+        #expect(route(file.path, checkouts: checkouts)
+            == .path(.checkoutFile(url: resolve(file), checkout: checkouts[0])))
+    }
+
+    private func symlinked(_ url: URL) -> String {
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix("/private/") else { return path }
+        return String(path.dropFirst("/private".count))
     }
 
     @Test func aSourceLocationSuffixStillResolvesTheFileItNames() throws {
@@ -102,12 +268,14 @@ struct TerminalLinkResolverTests {
         try Data("code".utf8).write(to: file)
 
         #expect(route("\(file.path):19:4", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
-            == .file(file.standardizedFileURL.resolvingSymlinksInPath()))
+            == .path(.externalFile(TerminalLinkResolver.canonical(file))))
         #expect(route("'App.swift:27'", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
-            == .file(file.standardizedFileURL.resolvingSymlinksInPath()))
+            == .path(.externalFile(TerminalLinkResolver.canonical(file))))
     }
 
-    @Test func aFolderIsRoutedAsADirectoryAndAnUnreadableFileStatesItsReason() throws {
+    /// A folder is a route now, not a refusal: the operator who clicks one
+    /// asked for the tree. An unreadable file still says what it is.
+    @Test func aFolderIsARouteAndAnUnreadableFileStatesItsOwnReason() throws {
         let fixture = try LocalFileFixture()
         defer { fixture.remove() }
         let folder = fixture.root.appendingPathComponent("Assets", isDirectory: true)
@@ -120,64 +288,9 @@ struct TerminalLinkResolverTests {
         }
 
         #expect(route("Assets", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
-            == .directory(folder.standardizedFileURL.resolvingSymlinksInPath()))
-        #expect(route("Assets/", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
-            == .directory(folder.standardizedFileURL.resolvingSymlinksInPath()))
+            == .path(.externalFolder(TerminalLinkResolver.canonical(folder))))
         #expect(route("secret.txt", paneCWD: fixture.root.path, checkoutRoot: fixture.root)
             == .unresolved("Hide found secret.txt, but it is not readable."))
-    }
-
-    /// A directory the explorer shows is revealed in it, opened down to its
-    /// row; anything the explorer cannot show goes to Finder. The returned
-    /// paths are spelled under the explorer root as given, because the outline
-    /// names its rows by appending to that root.
-    @Test func aDirectoryInsideTheExplorerRootIsRevealedThereAndOneOutsideGoesToFinder() {
-        let root = URL(fileURLWithPath: "/home/me/projects/hide", isDirectory: true)
-        let nested = URL(fileURLWithPath: "/home/me/projects/hide/agents/runs/spec", isDirectory: true)
-        #expect(
-            TerminalLinkResolver.directoryDestination(nested, explorerRoot: root)
-                == .explorer(
-                    expand: [
-                        "/home/me/projects/hide/agents",
-                        "/home/me/projects/hide/agents/runs",
-                        "/home/me/projects/hide/agents/runs/spec",
-                    ],
-                    selectedPath: "/home/me/projects/hide/agents/runs/spec"
-                )
-        )
-        #expect(
-            TerminalLinkResolver.directoryDestination(root, explorerRoot: root)
-                == .explorer(expand: [], selectedPath: nil)
-        )
-
-        let sibling = URL(fileURLWithPath: "/home/me/projects/hide.worktrees/spec", isDirectory: true)
-        #expect(TerminalLinkResolver.directoryDestination(sibling, explorerRoot: root) == .finder)
-        #expect(TerminalLinkResolver.directoryDestination(nested, explorerRoot: nil) == .finder)
-    }
-
-    /// The resolver hands back a symlink-resolved directory while the explorer
-    /// root may be spelled through a symlink; containment is judged resolved
-    /// and the reveal is spelled the way the outline is.
-    @Test func aDirectoryUnderASymlinkedExplorerRootIsStillRevealedUnderThatRoot() throws {
-        let fixture = try LocalFileFixture()
-        defer { fixture.remove() }
-        let real = fixture.root.appendingPathComponent("real", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: real.appendingPathComponent("docs", isDirectory: true),
-            withIntermediateDirectories: true
-        )
-        let alias = fixture.root.appendingPathComponent("alias", isDirectory: true)
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
-
-        let resolved = real.appendingPathComponent("docs", isDirectory: true)
-            .standardizedFileURL.resolvingSymlinksInPath()
-        #expect(
-            TerminalLinkResolver.directoryDestination(resolved, explorerRoot: alias)
-                == .explorer(
-                    expand: [alias.standardizedFileURL.path + "/docs"],
-                    selectedPath: alias.standardizedFileURL.path + "/docs"
-                )
-        )
     }
 
     @Test func anEmptyLinkIsRejectedRatherThanResolved() {
@@ -187,9 +300,15 @@ struct TerminalLinkResolverTests {
     private func route(
         _ value: String,
         paneCWD: String = "",
-        checkoutRoot: URL? = nil
+        checkoutRoot: URL? = nil,
+        checkouts: [TerminalLinkCheckout] = []
     ) -> TerminalLinkRoute {
-        TerminalLinkResolver.route(value, paneCWD: paneCWD, checkoutRoot: checkoutRoot)
+        TerminalLinkResolver.route(
+            value,
+            paneCWD: paneCWD,
+            checkoutRoot: checkoutRoot,
+            checkouts: checkouts
+        )
     }
 }
 

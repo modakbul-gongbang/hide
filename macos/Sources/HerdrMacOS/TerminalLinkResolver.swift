@@ -1,32 +1,75 @@
 import Foundation
 
+/// One registered checkout, as the resolver needs to see it: an id to hand
+/// back to the core and a path to measure a clicked path against.
+struct TerminalLinkCheckout: Equatable {
+    let id: String
+    let workspaceID: String
+    let path: String
+}
+
+/// Where a resolved filesystem path goes.
+///
+/// The five branches are the product policy: inside a registered checkout Hide
+/// shows the path itself, outside it macOS does, and a path that would run
+/// something is revealed rather than opened. Link detection is a guess made
+/// over arbitrary agent output, so one wrong click must never start a program.
+enum TerminalPathRoute: Equatable {
+    /// A file inside a checkout: an editor tab plus the tree reveal.
+    case checkoutFile(url: URL, checkout: TerminalLinkCheckout)
+    /// A folder inside a checkout: the tree reveal alone.
+    case checkoutFolder(url: URL, checkout: TerminalLinkCheckout)
+    /// A file outside every checkout, handed to its default application.
+    case externalFile(URL)
+    /// A folder outside every checkout, opened as a Finder window.
+    case externalFolder(URL)
+    /// Something outside every checkout that opening would execute - an
+    /// executable file, an application bundle, an installer package. Finder
+    /// selects it instead.
+    case externalReveal(URL)
+
+    var url: URL {
+        switch self {
+        case .checkoutFile(let url, _), .checkoutFolder(let url, _): url
+        case .externalFile(let url), .externalFolder(let url), .externalReveal(let url): url
+        }
+    }
+
+    var namesAFolder: Bool {
+        switch self {
+        case .checkoutFolder, .externalFolder: true
+        case .checkoutFile, .externalFile, .externalReveal: false
+        }
+    }
+
+    /// The branch name carried in the trace, so a click's route is answerable
+    /// from outside the process.
+    var traceName: String {
+        switch self {
+        case .checkoutFile: "checkout_file"
+        case .checkoutFolder: "checkout_folder"
+        case .externalFile: "external_file"
+        case .externalFolder: "external_folder"
+        case .externalReveal: "external_reveal"
+        }
+    }
+}
+
 /// Where a clicked terminal link goes.
 enum TerminalLinkRoute: Equatable {
     case web(URL)
-    case file(URL)
-    case directory(URL)
+    case path(TerminalPathRoute)
     case unresolved(String)
 }
 
 /// What a path names on this filesystem. "Found but unusable" is kept apart
 /// from "not found" so an unreadable file says which it is instead of being
-/// reported as an unresolvable token.
+/// reported as an unresolvable token. A folder is no longer unusable: it is a
+/// route of its own.
 enum TerminalFileResolution: Equatable {
-    case file(URL)
-    case directory(URL)
+    case found(url: URL, isDirectory: Bool)
     case unusable(String)
     case notFound
-}
-
-/// Where a clicked directory goes. A directory the explorer can show is
-/// revealed there; any other directory is handed to Finder, which is the
-/// only view of it Hide has.
-enum TerminalDirectoryDestination: Equatable {
-    /// `expand` lists the directory and every ancestor below the explorer
-    /// root, so the outline opens down to it; `selectedPath` is the
-    /// directory itself, or nil when it is the root, which has no row.
-    case explorer(expand: [String], selectedPath: String?)
-    case finder
 }
 
 /// Routes a clicked terminal link by what it resolves to, not by how it is
@@ -54,10 +97,36 @@ enum TerminalLinkResolver {
         "io", "me", "net", "org", "page", "sh", "so", "xyz",
     ]
 
+    /// Files whose "default application" is the operating system running
+    /// them. A click on one reveals it in Finder instead.
+    private static let executableExtensions: Set<String> = ["app", "pkg", "dmg"]
+
+    /// The one spelling of a path every other layer uses.
+    ///
+    /// `URL.resolvingSymlinksInPath()` is not that spelling: it resolves
+    /// symlinks and then strips a leading `/private`, so it turns the real
+    /// `/private/tmp/x` into `/tmp/x`. The navigator, the checkout ids and the
+    /// file tree all carry the physical path, so a resolved link that kept
+    /// Foundation's answer named a path the tree had no row for - the reveal
+    /// switched the checkout and opened the tab, and the tree did not move.
+    /// `realpath` answers with the physical path and no such exception.
+    ///
+    /// Its answer is used as it stands. `standardizedFileURL` applies the same
+    /// `/private` removal on the way back out, so standardizing the result
+    /// would undo exactly what this is for; the `.` and `..` it would remove
+    /// are already gone, because `realpath` removes them itself.
+    static func canonical(_ url: URL) -> URL {
+        let standardized = url.standardizedFileURL
+        guard let resolved = realpath(standardized.path, nil) else { return standardized }
+        defer { free(resolved) }
+        return URL(fileURLWithPath: String(cString: resolved))
+    }
+
     static func route(
         _ rawValue: String,
         paneCWD: String,
-        checkoutRoot: URL?
+        checkoutRoot: URL?,
+        checkouts: [TerminalLinkCheckout] = []
     ) -> TerminalLinkRoute {
         let value = stripBalancedBoundaryQuotes(
             rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -70,11 +139,15 @@ enum TerminalLinkResolver {
             guard url.isFileURL, !url.path.isEmpty else {
                 return .unresolved("The terminal file URL has no usable path.")
             }
-            return route(resolution: resolveFile(
-                path: splitSourceLocation(url.path).path,
-                paneCWD: paneCWD,
-                checkoutRoot: checkoutRoot
-            ), displaying: url.path)
+            return route(
+                resolution: resolveFile(
+                    path: splitSourceLocation(url.path).path,
+                    paneCWD: paneCWD,
+                    checkoutRoot: checkoutRoot
+                ),
+                checkouts: checkouts,
+                displaying: url.path
+            )
         }
 
         if let url = explicitExternalURL(in: value) {
@@ -87,17 +160,15 @@ enum TerminalLinkResolver {
         }
 
         // Resolution first: a path that names something real on this
-        // filesystem wins over any reading of its spelling, inside the
-        // checkout or outside it.
+        // filesystem wins over any reading of its spelling, inside a checkout
+        // or outside every one of them.
         switch resolveFile(
             path: splitSourceLocation(value).path,
             paneCWD: paneCWD,
             checkoutRoot: checkoutRoot
         ) {
-        case .file(let url):
-            return .file(url)
-        case .directory(let url):
-            return .directory(url)
+        case .found(let url, let isDirectory):
+            return .path(pathRoute(url: url, isDirectory: isDirectory, checkouts: checkouts))
         case .unusable(let message):
             return .unresolved(message)
         case .notFound:
@@ -136,41 +207,70 @@ enum TerminalLinkResolver {
 
     private static func route(
         resolution: TerminalFileResolution,
+        checkouts: [TerminalLinkCheckout],
         displaying path: String
     ) -> TerminalLinkRoute {
         switch resolution {
-        case .file(let url): .file(url)
-        case .directory(let url): .directory(url)
+        case .found(let url, let isDirectory):
+            .path(pathRoute(url: url, isDirectory: isDirectory, checkouts: checkouts))
         case .unusable(let message): .unresolved(message)
         case .notFound: .unresolved("Hide could not find \(path).")
         }
     }
 
-    /// Decides where a directory opens from the explorer's root, which is
-    /// the tree the panel can reveal. Both sides are compared with symlinks
-    /// resolved, and the paths handed back are spelled under `explorerRoot`
-    /// as given, because the outline names its rows by appending to that
-    /// root and would not find a row under the resolved spelling.
-    static func directoryDestination(
-        _ directory: URL,
-        explorerRoot: URL?
-    ) -> TerminalDirectoryDestination {
-        guard let explorerRoot else { return .finder }
-        let root = explorerRoot.standardizedFileURL.resolvingSymlinksInPath().path
-        let target = directory.standardizedFileURL.resolvingSymlinksInPath().path
-        let rootPath = explorerRoot.standardizedFileURL.path
-        if target == root {
-            return .explorer(expand: [], selectedPath: nil)
+    /// Which of the five branches a resolved path takes.
+    ///
+    /// Ownership is decided by the longest checkout path the resolved path
+    /// sits under. Both sides are symlink-resolved before they are compared,
+    /// because macOS hands out `/tmp` for a directory it stores at
+    /// `/private/tmp`, and a nested checkout must win over the checkout that
+    /// contains it or a worktree's files would open in the wrong tree.
+    static func pathRoute(
+        url: URL,
+        isDirectory: Bool,
+        checkouts: [TerminalLinkCheckout]
+    ) -> TerminalPathRoute {
+        if let checkout = owningCheckout(of: url, in: checkouts) {
+            return isDirectory
+                ? .checkoutFolder(url: url, checkout: checkout)
+                : .checkoutFile(url: url, checkout: checkout)
         }
-        guard target.hasPrefix(root + "/") else { return .finder }
-        let relative = target.dropFirst(root.count + 1).split(separator: "/")
-        var expand: [String] = []
-        var current = rootPath
-        for component in relative {
-            current += "/" + component
-            expand.append(current)
+        if executableExtensions.contains(url.pathExtension.lowercased()) {
+            return .externalReveal(url)
         }
-        return .explorer(expand: expand, selectedPath: current)
+        if isDirectory {
+            return .externalFolder(url)
+        }
+        if FileManager.default.isExecutableFile(atPath: url.path) {
+            return .externalReveal(url)
+        }
+        return .externalFile(url)
+    }
+
+    /// The registered checkout a path belongs to, or `nil` when it belongs to
+    /// none of them.
+    static func owningCheckout(
+        of url: URL,
+        in checkouts: [TerminalLinkCheckout]
+    ) -> TerminalLinkCheckout? {
+        let target = canonical(url).path
+        // Containment and specificity are both decided on the canonical root.
+        // A checkout spelled through a symlink has a shorter raw path than the
+        // directory it resolves to, so ranking on the raw path can hand a
+        // nested path to the outer checkout.
+        return checkouts
+            .compactMap { checkout -> (checkout: TerminalLinkCheckout, root: String)? in
+                let root = canonical(
+                    URL(fileURLWithPath: checkout.path, isDirectory: true)
+                ).path
+                guard !root.isEmpty else { return nil }
+                if target == root { return (checkout, root) }
+                let prefix = root.hasSuffix("/") ? root : root + "/"
+                guard target.hasPrefix(prefix) else { return nil }
+                return (checkout, root)
+            }
+            .max { $0.root.count < $1.root.count }?
+            .checkout
     }
 
     private static func explicitExternalURL(in value: String) -> URL? {
@@ -240,7 +340,10 @@ enum TerminalLinkResolver {
 
     /// Resolves a path against the pane's working directory, the checkout
     /// root, and the filesystem root, with no containment restriction: an
-    /// absolute path outside the checkout opens like any other file.
+    /// absolute path outside every checkout resolves like any other path.
+    ///
+    /// A folder resolves rather than being reported unusable: the operator
+    /// clicking one asked for the tree, which is a route the caller takes.
     static func resolveFile(
         path: String,
         paneCWD: String,
@@ -253,7 +356,7 @@ enum TerminalLinkResolver {
                 continue
             }
             if isDirectory.boolValue {
-                return .directory(candidate)
+                return .found(url: candidate, isDirectory: true)
             }
             guard FileManager.default.isReadableFile(atPath: candidate.path) else {
                 unusable = unusable ?? "Hide found \(candidate.lastPathComponent), but it is not readable."
@@ -263,7 +366,7 @@ enum TerminalLinkResolver {
                 unusable = unusable ?? "Hide found \(candidate.lastPathComponent), but it is not a regular file."
                 continue
             }
-            return .file(candidate)
+            return .found(url: candidate, isDirectory: false)
         }
         if let unusable { return .unusable(unusable) }
         return .notFound
@@ -277,7 +380,7 @@ enum TerminalLinkResolver {
         guard !path.isEmpty else { return [] }
         let expanded = NSString(string: path).expandingTildeInPath
         if expanded.hasPrefix("/") {
-            return [URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath()]
+            return [canonical(URL(fileURLWithPath: expanded))]
         }
         var bases: [URL] = []
         if !paneCWD.isEmpty {
@@ -286,9 +389,7 @@ enum TerminalLinkResolver {
         if let checkoutRoot, !bases.contains(where: { $0.standardizedFileURL == checkoutRoot.standardizedFileURL }) {
             bases.append(checkoutRoot)
         }
-        return bases.map {
-            $0.appendingPathComponent(expanded).standardizedFileURL.resolvingSymlinksInPath()
-        }
+        return bases.map { canonical($0.appendingPathComponent(expanded)) }
     }
 
     private static func stripBalancedBoundaryQuotes(_ value: String) -> String {

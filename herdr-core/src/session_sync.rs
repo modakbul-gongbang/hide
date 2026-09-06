@@ -64,6 +64,9 @@ const TOPOLOGY_SUBSCRIPTIONS: &[&str] = &[
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+    /// Every pane directory's repository root, so the reconcile that places
+    /// tabs into checkouts never asks git while it holds the runtime lock.
+    pub roots: workspace::RootIndex,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,6 +134,7 @@ struct CatalogCache {
     /// be republished unchanged.
     worktrees: crate::model::WorktreeCatalogSnapshot,
     workspaces: Vec<WorkspaceSnapshot>,
+    roots: workspace::RootIndex,
     built_at: Instant,
 }
 
@@ -758,11 +762,13 @@ fn publish_replica(
     });
     if !cache_is_fresh {
         let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
+        let roots = workspace::root_index(&spaces);
         *catalog_cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
             worktrees,
             workspaces,
+            roots,
             built_at: Instant::now(),
         });
     }
@@ -772,6 +778,7 @@ fn publish_replica(
     let precomputed = PrecomputedCatalog {
         registrations,
         workspaces: cache.workspaces.clone(),
+        roots: cache.roots.clone(),
     };
 
     let Some(runtime) = context.runtime.upgrade() else {
@@ -3401,6 +3408,7 @@ mod tests {
             spaces: Vec::new(),
             worktrees: crate::model::WorktreeCatalogSnapshot::default(),
             workspaces: Vec::new(),
+            roots: workspace::RootIndex::new(),
             built_at: Instant::now(),
         }
     }

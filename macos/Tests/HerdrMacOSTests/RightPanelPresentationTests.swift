@@ -147,6 +147,81 @@ struct RightPanelPresentationTests {
         #expect(decoded.contentsUTF8 == "draft")
     }
 
+    /// AC3, SC2 failure and recovery. A folder path printed minutes ago can be
+    /// deleted before it is clicked. The click then leaves the screen exactly
+    /// as it was - the panel does not open, nothing is expanded or selected,
+    /// no editor tab appears - because no reveal is dispatched at all, and the
+    /// operator is told which path could not be found. Recreating the folder
+    /// makes the identical click reveal it, with nothing else done between.
+    @Test @MainActor func aClickOnADeletedFolderChangesNothingOnScreenUntilTheFolderIsBack() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hide-reveal-recovery-\(UUID().uuidString)", isDirectory: true)
+        let folder = root.appendingPathComponent("deep/nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hide-reveal-recovery-state-\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stateURL)
+        }
+
+        let bridge = CoreBridge(arguments: [
+            "HerdrMacOS",
+            "--verification-ui-fixture",
+            "--workspace-root", root.path,
+            "--state-path", stateURL.path,
+        ])
+        try await Task.sleep(for: .milliseconds(100))
+        guard let workspace = bridge.snapshot?.navigator.workspaces.first,
+              let checkout = workspace.checkouts.first
+        else {
+            Issue.record("the verification fixture should project a workspace and checkout")
+            return
+        }
+        let model = ShellModel(core: bridge)
+        let paneID = "p1"
+
+        // The folder is gone by the time the printed path is clicked.
+        try FileManager.default.removeItem(at: root.appendingPathComponent("deep", isDirectory: true))
+        let before = bridge.snapshot?.uiState
+        model.openTerminalLink(folder.path, paneID: paneID)
+        try await Task.sleep(for: .milliseconds(150))
+        let after = bridge.snapshot?.uiState
+        #expect(after?.rightPanelVisible == before?.rightPanelVisible, "the panel must not open for a path that is gone")
+        #expect(after?.rightPanelSection == before?.rightPanelSection)
+        #expect(after?.expandedPaths == before?.expandedPaths, "nothing may be expanded for a path that is gone")
+        #expect(after?.selectedPath == before?.selectedPath, "nothing may be selected for a path that is gone")
+        #expect(bridge.snapshot?.editor.tabs.isEmpty == true, "a folder click never opens a document")
+        // The reason does not go on screen. Detection is a guess made over
+        // arbitrary terminal output, so a wrong guess is ordinary and a modal
+        // would make the operator dismiss a dialog for a mis-click; the reason
+        // leaves through the trace instead. What has to hold here is that
+        // nothing was raised, and that the reason names the clicked path.
+        #expect(model.interactionNotice == nil, "a click that resolves to nothing raises no modal")
+        let reason = TerminalLinkResolver.route(
+            folder.path,
+            paneCWD: "",
+            checkoutRoot: nil,
+            checkouts: [TerminalLinkCheckout(id: checkout.id, workspaceID: workspace.id, path: checkout.path)]
+        )
+        if case .unresolved(let message) = reason {
+            #expect(message.contains(String(folder.path.prefix(40))), "the reason names the path that was clicked")
+        } else {
+            Issue.record("a deleted folder must resolve to nothing, got \(reason)")
+        }
+
+        // The folder comes back, and the identical click reveals it.
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        model.openTerminalLink(folder.path, paneID: paneID)
+        try await Task.sleep(for: .milliseconds(150))
+        let revealed = bridge.snapshot?.uiState
+        #expect(revealed?.rightPanelVisible == true)
+        #expect(revealed?.rightPanelSection == .explorer)
+        #expect(revealed?.selectedPath == TerminalLinkResolver.canonical(folder).path)
+        #expect(revealed?.expandedPaths.contains(TerminalLinkResolver.canonical(folder).path) == true)
+        #expect(bridge.snapshot?.editor.tabs.isEmpty == true, "a folder is not a document")
+    }
+
     @Test @MainActor func bridgeFileTabsDeduplicateAndCloseRestoresThePreviousFile() async throws {
         let stateURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("hide-right-panel-state-\(UUID().uuidString).json")

@@ -43,6 +43,7 @@ fn ordered_strip(
     stored: &[String],
     herdr: &[StripTabSnapshot],
     files: &[StripTabSnapshot],
+    workspace_of: &BTreeMap<String, String>,
 ) -> Vec<StripTabSnapshot> {
     let mut by_id = BTreeMap::new();
     for entry in herdr.iter().chain(files.iter()) {
@@ -67,14 +68,26 @@ fn ordered_strip(
             .filter(|entry| !held.contains(&entry.id))
             .cloned(),
     );
-    // Herdr's order decides which Herdr tab sits in which Herdr slot; the file
-    // slots between them are untouched.
-    let mut from_herdr = herdr.iter();
+    // Herdr orders its own workspace's tabs; it has no order that spans two of
+    // them. So each Herdr slot is filled from the queue of the workspace that
+    // slot already belongs to, which leaves Hide owning how the workspaces and
+    // the file tabs interleave. Refilling from one flat queue is what undid
+    // every drag in a checkout two Herdr workspaces share.
+    let mut queues: BTreeMap<&str, VecDeque<&StripTabSnapshot>> = BTreeMap::new();
+    let owner = |entry: &StripTabSnapshot| {
+        workspace_of
+            .get(&entry.source_id)
+            .map_or("", |workspace_id| workspace_id.as_str())
+    };
+    for entry in herdr {
+        queues.entry(owner(entry)).or_default().push_back(entry);
+    }
     for entry in &mut placed {
         if entry.kind == StripTabKind::Herdr {
-            *entry = from_herdr
-                .next()
-                .expect("every Herdr slot has a Herdr tab to fill it")
+            *entry = queues
+                .get_mut(owner(entry))
+                .and_then(VecDeque::pop_front)
+                .expect("every Herdr slot has a Herdr tab from its own workspace to fill it")
                 .clone();
         }
     }
@@ -86,8 +99,13 @@ fn ordered_strip(
 struct PendingTabMove {
     /// The whole strip order the entry was dropped into, as strip entry ids.
     desired: Vec<String>,
-    /// The Herdr tab ids of `desired` in order. Herdr reporting exactly this
-    /// order for the checkout is what commits the arrangement.
+    /// The Herdr workspace the move was asked of. A checkout can hold tabs
+    /// from several workspaces, and `tab.move` is indexed inside one of them,
+    /// so this is the workspace whose reported order settles the move.
+    workspace_id: String,
+    /// The moved tab's own workspace's tabs in this checkout, in the order
+    /// the operator asked for. That workspace reporting exactly this order is
+    /// what commits the arrangement.
     herdr_order: Vec<String>,
     generation: u64,
 }
@@ -133,6 +151,31 @@ fn herdr_insert_index(
             .position(|tab_id| tab_id != moved)
             .map_or(workspace_order.len(), |offset| after_predecessor + offset),
     )
+}
+
+/// The folders that have to be open for a revealed path to have a row in the
+/// tree: every ancestor between the checkout root and the path, and the path
+/// itself when it is a folder.
+///
+/// The checkout root is left out because the outline always expands its own
+/// root row; recording it would put a path in the persisted set that the view
+/// never reads.
+fn reveal_expansion_paths(checkout_path: &str, path: &str, is_directory: bool) -> Vec<String> {
+    let root = Path::new(checkout_path);
+    let Ok(relative) = Path::new(path).strip_prefix(root) else {
+        return Vec::new();
+    };
+    let mut expanded = Vec::new();
+    let mut current = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        current.push(component);
+        if components.peek().is_none() && !is_directory {
+            break;
+        }
+        expanded.push(current.to_string_lossy().into_owned());
+    }
+    expanded
 }
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
@@ -233,6 +276,15 @@ impl PendingViewFocus {
 
 /// How many diagnostics the snapshot keeps. Newest are kept; the oldest go.
 const DIAGNOSTIC_RETENTION: usize = 256;
+
+/// How many tabs keep their panes attached: the one on screen and the four
+/// most recently shown.
+///
+/// Five is the operator's working set, not a memory bound. Time-based expiry
+/// was rejected because the core owns no timer and the behaviour could not be
+/// proved without one; a visit count is decided by the same events that draw
+/// the screen.
+const ATTACHED_TAB_LIMIT: usize = 5;
 
 /// What Herdr says about its tabs, kept per Herdr workspace.
 ///
@@ -733,6 +785,22 @@ struct FileTabPayload {
     tab_id: String,
 }
 
+/// One clicked path, already resolved on the filesystem by the shell.
+///
+/// The shell owns filesystem resolution because reading directory entries
+/// under the runtime mutex is exactly what the performance guide forbids. The
+/// core owns every screen effect the click has, and it owns them together:
+/// the checkout switch, the panel, the tree and the editor tab land in one
+/// event or the dispatch's fire-and-forget ordering would let the operator
+/// see a half-applied reveal.
+#[derive(Debug, Deserialize)]
+struct RevealPathPayload {
+    path: String,
+    workspace_id: String,
+    checkout_id: String,
+    is_directory: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct RemoteFileListPayload {
     target_id: String,
@@ -874,6 +942,12 @@ struct TerminalResizePayload {
     rows: u16,
 }
 
+/// A view asking for the frame it has nothing to draw without.
+#[derive(Debug, Deserialize)]
+struct TerminalRepaintPayload {
+    pane_id: String,
+}
+
 enum ValidatedEvent {
     Key(KeyPayload),
     TerminalOutput(TerminalOutputPayload),
@@ -902,6 +976,7 @@ enum ValidatedEvent {
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
+    RevealPath(RevealPathPayload),
     FileFocus(FileTabPayload),
     FileClose(FileTabPayload),
     FileDraft(FileDraftPayload),
@@ -911,6 +986,7 @@ enum ValidatedEvent {
     RetryConnect(RetryConnectPayload),
     TerminalResize(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
+    TerminalRepaint(TerminalRepaintPayload),
     PaneFind(PaneFindPayload),
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
@@ -929,6 +1005,17 @@ enum ValidatedEvent {
     PetDrag(PetDragPayload),
     PetActivity,
     PetShortcutUpdate(PetShortcutPayload),
+}
+
+/// A file tab that has been read but not yet put on screen.
+enum PreparedFileTab {
+    /// The file already has a tab; showing it is a focus.
+    Open(String),
+    /// The file was read and needs a tab of its own.
+    Read {
+        tab_id: String,
+        document: EditorDocumentSnapshot,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -960,7 +1047,7 @@ fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bo
     !has_active_session
         && !matches!(
             state,
-            "starting" | "controlling" | "observing" | "unavailable" | "ended"
+            "starting" | "controlling" | "observing" | "unavailable" | "ended" | "closing"
         )
 }
 
@@ -984,6 +1071,23 @@ pub struct Runtime {
     /// sizes the PTY from the attach, so starting one at a guess costs a
     /// full frame at the wrong size and a second one after the resize.
     panes_awaiting_size: HashSet<String>,
+    /// The tabs that have been on screen, most recent first. An attach lives
+    /// for as long as its tab is in this window; every other pane's session is
+    /// released. Herdr renders a pane for every attached client, so an attach
+    /// nobody is looking at costs a child process here and a render there for
+    /// the life of the process.
+    recent_visible_tabs: Vec<String>,
+    /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
+    /// attach child ends before the `pane_closed` event arrives and the pane
+    /// is still on screen when its transport reports the close. Projecting
+    /// that as a failure is what put "terminal attach ended" on screen for one
+    /// frame every time the operator closed a pane.
+    panes_closing: HashSet<String>,
+    /// Panes that were scrolled before any view reported their size. One
+    /// diagnostic answers for the whole wait; a wheel burst against a pane
+    /// with no size would otherwise fill the bounded diagnostics list with the
+    /// same sentence and push out everything else that happened.
+    panes_scrolled_before_size: HashSet<String>,
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
@@ -1041,6 +1145,11 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    /// The catalog and root index most recently accepted from the sync
+    /// coordinator, reused when a later precomputation arrives stale so the
+    /// reconcile never rebuilds under the runtime lock.
+    last_accepted_catalog: Option<Vec<WorkspaceSnapshot>>,
+    catalog_roots: workspace::RootIndex,
     /// The strip order each local checkout has, as strip entry ids. It is
     /// memory only by decision: Herdr persists its own tab order and file tabs
     /// do not survive a restart, so there is nothing here worth writing to
@@ -1214,6 +1323,9 @@ impl Runtime {
             next_remote_file_generation: 0,
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
+            recent_visible_tabs: Vec::new(),
+            panes_closing: HashSet::new(),
+            panes_scrolled_before_size: HashSet::new(),
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -1231,6 +1343,8 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            last_accepted_catalog: None,
+            catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
             pending_tab_move: BTreeMap::new(),
@@ -2123,21 +2237,48 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
         self.last_session_spaces = Self::session_spaces(payload);
-        // The catalog shells out to git, so the sync coordinator builds it before
-        // taking the runtime lock; a catalog whose registrations no longer
-        // match current state is discarded and rebuilt inline.
-        let mut workspaces = match precomputed {
+        // The catalog and the root index shell out to git, so the sync
+        // coordinator builds them before taking the runtime lock. A
+        // precomputation whose registrations no longer match current state is
+        // stale; the last accepted catalog stands in for it and the next
+        // publish, a second away, brings a fresh one. It is not rebuilt here:
+        // one `git rev-parse` per tab under this lock stalled the main thread
+        // and every attach reader for a third of their time (2026-09-06,
+        // 18 agents, load 7 to 11). Only a runtime that has never accepted a
+        // catalog builds one inline, which is the fixture and test path.
+        let (mut workspaces, roots) = match precomputed {
             Some(catalog)
                 if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
             {
-                catalog.workspaces
+                self.last_accepted_catalog = Some(catalog.workspaces.clone());
+                self.catalog_roots = catalog.roots.clone();
+                (catalog.workspaces, catalog.roots)
             }
-            _ => workspace::build_catalog(
-                &self.snapshot.ui_state.workspace_registrations,
-                &self.last_session_spaces,
-                &self.worktree_catalog,
-            ),
+            Some(_) if self.last_accepted_catalog.is_some() => {
+                self.push_diagnostic(
+                    "catalog.precomputed_stale",
+                    "The precomputed workspace catalog no longer matches the registrations; the last accepted catalog stands until the next publish".to_owned(),
+                );
+                (
+                    self.last_accepted_catalog
+                        .clone()
+                        .expect("checked by the match guard"),
+                    self.catalog_roots.clone(),
+                )
+            }
+            _ => {
+                let workspaces = workspace::build_catalog(
+                    &self.snapshot.ui_state.workspace_registrations,
+                    &self.last_session_spaces,
+                    &self.worktree_catalog,
+                );
+                let roots = workspace::root_index(&self.last_session_spaces);
+                self.last_accepted_catalog = Some(workspaces.clone());
+                self.catalog_roots = roots.clone();
+                (workspaces, roots)
+            }
         };
+        let mut unresolved_roots: Vec<String> = Vec::new();
         Self::apply_workspace_expansion(
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
@@ -2204,6 +2345,8 @@ impl Runtime {
                 &mut workspaces,
                 context_path.as_deref(),
                 &layout.workspace_id,
+                &roots,
+                &mut unresolved_roots,
             ) else {
                 continue;
             };
@@ -2328,6 +2471,20 @@ impl Runtime {
         // checkout let the last workspace in payload order overwrite the
         // others, and a tab focus on any other workspace was then never
         // confirmed and always followed back.
+        if !unresolved_roots.is_empty() {
+            unresolved_roots.sort();
+            unresolved_roots.dedup();
+            self.push_diagnostic(
+                "catalog.root_unresolved",
+                format!(
+                    "{} pane director{} placed by path alone because the root index did not carry {}: {}",
+                    unresolved_roots.len(),
+                    if unresolved_roots.len() == 1 { "y was" } else { "ies were" },
+                    if unresolved_roots.len() == 1 { "it" } else { "them" },
+                    unresolved_roots.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+                ),
+            );
+        }
         let mut unresolved_active_tabs = BTreeSet::new();
         let herdr_tabs = HerdrTabView::from_payload(payload);
         for session_workspace in &payload.workspaces {
@@ -2491,35 +2648,52 @@ impl Runtime {
             return true;
         }
 
-        // Herdr indexes a move in the whole workspace's tab list. A checkout
-        // holding tabs from two Herdr workspaces cannot express an order that
-        // interleaves them, so that is refused here rather than sent as an
-        // index one of the two workspaces would misread.
-        let mut owning_workspaces = current_herdr.iter().map(|tab_id| {
-            self.herdr_workspace_tab_order
-                .iter()
-                .find(|(_, order)| order.contains(tab_id))
-                .map(|(workspace_id, _)| workspace_id.as_str())
-        });
-        let owner = owning_workspaces.next().flatten();
-        let workspace_order = owner
-            .filter(|owner| owning_workspaces.all(|candidate| candidate == Some(owner)))
-            .and_then(|owner| self.herdr_workspace_tab_order.get(owner))
-            .cloned();
-        let Some(workspace_order) = workspace_order else {
+        // Herdr indexes a move inside the workspace that owns the tab, so the
+        // drag - not the checkout - decides whether Herdr hears about it. What
+        // matters is the moved tab's own workspace subsequence: a drag that
+        // only steps over tabs belonging to another Herdr workspace changes
+        // nothing Herdr can see, and the strip settles locally.
+        //
+        // Deciding this per checkout is what refused every drag in a checkout
+        // whose tabs come from two Herdr workspaces, which is the ordinary
+        // arrangement for a repository opened twice.
+        let Some((moved_workspace_id, workspace_order)) = self
+            .herdr_workspace_tab_order
+            .iter()
+            .find(|(_, order)| order.contains(&moved.source_id))
+            .map(|(workspace_id, order)| (workspace_id.clone(), order.clone()))
+        else {
             self.set_error(
-                "tab.reorder_split_workspace",
+                "tab.reorder_inconsistent",
                 format!(
-                    "Tab {} cannot be placed there: this checkout's tabs come from more than one Herdr workspace",
+                    "Tab {} cannot be placed there: Herdr does not list it in any workspace",
                     moved.source_id
                 ),
                 false,
             );
             return true;
         };
+        let owned = |entries: &[String]| {
+            entries
+                .iter()
+                .filter(|tab_id| workspace_order.contains(tab_id))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let current_owned = owned(&current_herdr);
+        let desired_owned = owned(&desired_herdr);
+        if current_owned == desired_owned {
+            // The moved tab kept its place among its own workspace's tabs, so
+            // only slots Hide arranges changed and the drop is final now.
+            self.pending_tab_move.remove(&payload.checkout_id);
+            self.checkout_tab_order
+                .insert(payload.checkout_id.clone(), desired_ids);
+            self.rebuild_tab_strips();
+            return true;
+        }
 
         let Some(insert_index) =
-            herdr_insert_index(&workspace_order, &desired_herdr, &moved.source_id)
+            herdr_insert_index(&workspace_order, &desired_owned, &moved.source_id)
         else {
             self.set_error(
                 "tab.reorder_inconsistent",
@@ -2545,14 +2719,20 @@ impl Runtime {
             payload.checkout_id.clone(),
             PendingTabMove {
                 desired: desired_ids,
-                herdr_order: desired_herdr.clone(),
+                workspace_id: moved_workspace_id,
+                // The order asked for is the moved tab's own workspace's, the
+                // same subsequence the request was indexed in. Holding the
+                // checkout's mixed order here would wait for an interleaving
+                // Herdr never reports once a checkout draws tabs from two
+                // workspaces, and the drag would snap back and stay back.
+                herdr_order: desired_owned.clone(),
                 generation,
             },
         );
         self.push_diagnostic(
             "tab.move.requested",
             format!(
-                "Asking Herdr to insert tab {} at {insert_index}",
+                "Asking Herdr to insert tab {} at {insert_index} in its own workspace",
                 moved.source_id
             ),
         );
@@ -2562,7 +2742,10 @@ impl Runtime {
                 checkout_id: payload.checkout_id.clone(),
                 tab_id: moved.source_id,
                 insert_index,
-                expected_order: desired_herdr,
+                // Herdr answers with its own workspace's tabs, so the order to
+                // check the answer against is the moved tab's workspace
+                // subsequence, never the checkout's mixed order.
+                expected_order: desired_owned,
                 generation,
             },
         ) {
@@ -2599,6 +2782,17 @@ impl Runtime {
         let file_tabs = &self.snapshot.editor.tabs;
         let order = &mut self.checkout_tab_order;
         let pending = &mut self.pending_tab_move;
+        // Which Herdr workspace each tab belongs to, so a strip slot is
+        // refilled from that workspace's order rather than from a flat one.
+        let owners = &self
+            .herdr_workspace_tab_order
+            .iter()
+            .flat_map(|(workspace_id, tab_ids)| {
+                tab_ids
+                    .iter()
+                    .map(move |tab_id| (tab_id.clone(), workspace_id.clone()))
+            })
+            .collect::<BTreeMap<String, String>>();
         let mut live_checkouts = BTreeSet::new();
         // Checkouts whose held arrangement became unreachable. The diagnostic
         // is pushed after the loop, which is where the snapshot is free again.
@@ -2625,23 +2819,27 @@ impl Runtime {
                 // can never be reported, so it is dropped rather than kept
                 // waiting for an order that cannot arrive.
                 if let Some(held) = pending.get(&checkout.id) {
-                    let live_herdr = herdr
+                    // Only the tabs the move was asked about: the workspace
+                    // it named, as this checkout currently holds them.
+                    let live_owned = herdr
                         .iter()
-                        .map(|entry| entry.source_id.clone())
-                        .collect::<BTreeSet<_>>();
-                    if held.herdr_order.iter().cloned().collect::<BTreeSet<_>>() != live_herdr {
+                        .map(|entry| &entry.source_id)
+                        .filter(|tab_id| {
+                            owners.get(*tab_id) == Some(&held.workspace_id)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if live_owned.iter().cloned().collect::<BTreeSet<_>>()
+                        != held.herdr_order.iter().cloned().collect::<BTreeSet<_>>()
+                    {
                         pending.remove(&checkout.id);
                         dropped_moves.push(checkout.id.clone());
-                    } else if held
-                        .herdr_order
-                        .iter()
-                        .eq(herdr.iter().map(|entry| &entry.source_id))
-                    {
+                    } else if live_owned == held.herdr_order {
                         *stored = held.desired.clone();
                         pending.remove(&checkout.id);
                     }
                 }
-                checkout.strip = ordered_strip(stored, &herdr, &files);
+                checkout.strip = ordered_strip(stored, &herdr, &files, owners);
                 *stored = checkout.strip.iter().map(|entry| entry.id.clone()).collect();
             }
         }
@@ -3380,6 +3578,8 @@ impl Runtime {
                 .retain(|pane_id, _| keep(pane_id));
             self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
             self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
+            self.panes_scrolled_before_size.retain(|pane_id| keep(pane_id));
+            self.panes_closing.retain(|pane_id| keep(pane_id));
         }
         let mut excluded = Vec::new();
         let mut rejected_layouts: Vec<(String, String)> = Vec::new();
@@ -3697,6 +3897,7 @@ impl Runtime {
             changed |= self.apply_pane_layout(layout);
         }
         changed |= self.align_visible_tab_with_selected_pane();
+        changed |= self.track_visible_tab_attachments();
         changed | self.refresh_pet()
     }
 
@@ -4769,20 +4970,41 @@ impl Runtime {
         let changed = self.snapshot.find != next;
         self.snapshot.find = next;
         if let Some((direction, lines)) = outcome.scroll {
-            let (rows, cols) = self
-                .terminal_sizes
-                .get(pane_id)
-                .copied()
-                .unwrap_or((24, 80));
+            if let Some(said) = self.scroll_withheld_for_missing_size(pane_id) {
+                return said || changed;
+            }
+            let lines = i32::from(lines) * if direction == "up" { 1 } else { -1 };
             if let Some(session) = self.terminal_sessions.get_mut(pane_id)
                 && session.mode == TerminalSessionMode::Control
-                && let Err(message) = session.scroll(&direction, lines, rows, cols)
+                && let Err(message) = session.scroll(live::ScrollRequest { lines })
             {
                 self.set_error("terminal.scroll_failed", message, true);
                 return true;
             }
         }
         changed
+    }
+
+    /// Whether a scroll must be withheld because the pane reported no size,
+    /// and whether saying so changed the snapshot.
+    ///
+    /// `None` means the pane can be scrolled. The attach is held back until
+    /// the same size arrives, so a pane without one has nothing to write to,
+    /// and the guessed 24x80 that used to stand in only ever resized the PTY
+    /// to a grid it was not running at. Every scroll producer goes through
+    /// here so the wait is said once per pane rather than once per producer.
+    fn scroll_withheld_for_missing_size(&mut self, pane_id: &str) -> Option<bool> {
+        if self.terminal_sizes.contains_key(pane_id) {
+            return None;
+        }
+        if self.panes_scrolled_before_size.insert(pane_id.to_owned()) {
+            self.push_diagnostic(
+                "terminal.scroll_deferred",
+                format!("Pane {pane_id} was scrolled before its view reported a size; nothing was sent"),
+            );
+            return Some(true);
+        }
+        Some(false)
     }
 
     pub fn ingest_fork_result(
@@ -4792,6 +5014,9 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         self.forks_in_flight.remove(parent_pane_id);
+        // Either outcome leaves the process, because a fork that produced no
+        // pane and no message is the report the operator brought: a modal
+        // appeared and nothing else happened.
         match result {
             Ok(forked_pane_id) => {
                 self.push_diagnostic(
@@ -4800,6 +5025,16 @@ impl Runtime {
                         "Forked pane {parent_pane_id} into {forked_pane_id} in {elapsed_ms}ms"
                     ),
                 );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_fork",
+                        "kind": "pane.fork.created",
+                        "pane_id": parent_pane_id,
+                        "forked_pane_id": forked_pane_id,
+                        "duration_ms": elapsed_ms,
+                    })
+                );
                 true
             }
             Err(message) => {
@@ -4807,6 +5042,16 @@ impl Runtime {
                     "pane.fork_failed",
                     format!("Pane {parent_pane_id} could not be forked: {message}"),
                     true,
+                );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "pane_fork",
+                        "kind": "pane.fork_failed",
+                        "pane_id": parent_pane_id,
+                        "message": message,
+                        "duration_ms": elapsed_ms,
+                    })
                 );
                 true
             }
@@ -5310,6 +5555,17 @@ impl Runtime {
     /// Handles a `terminal.closed` envelope or stdout EOF. An owner conflict
     /// falls back exactly once to Herdr's concurrent read-only observer; every
     /// other close ends only the transport, never the authoritative pane.
+    /// Whether this pane is on its way out: Hide asked Herdr to close it, or
+    /// Herdr has already stopped listing it in any tab's layout.
+    fn pane_is_going_away(&self, pane_id: &str) -> bool {
+        if self.panes_closing.contains(pane_id) {
+            return true;
+        }
+        // An empty layout list is a session that has not arrived, not a pane
+        // that left one.
+        !self.snapshot.pane_layouts.is_empty() && self.layout_holding_pane(pane_id).is_none()
+    }
+
     pub fn ingest_terminal_session_closed(
         &mut self,
         pane_id: &str,
@@ -5336,6 +5592,7 @@ impl Runtime {
         let message = reason
             .unwrap_or_else(|| format!("Pane {pane_id} terminal {} session ended", mode.as_str()));
 
+
         if mode == TerminalSessionMode::Control && category == "owner_conflict" {
             eprintln!(
                 "{}",
@@ -5359,6 +5616,44 @@ impl Runtime {
                 Some(format!(
                     "Another client owns terminal control. Viewing {pane_id} read-only; use Reconnect to try control again."
                 )),
+            );
+            return true;
+        }
+
+        // A pane that is going away, either because Hide asked or because
+        // Herdr has already stopped reporting it, ends its transport as a
+        // consequence of the close. It is not a failure, so nothing is drawn
+        // over the pane's last frame and no notice is appended to it: the pane
+        // keeps what it was showing until it is removed. Every other reason
+        // still reports itself.
+        if self.pane_is_going_away(pane_id) {
+            self.panes_closing.remove(pane_id);
+            self.terminal_session_lifecycles.insert(
+                pane_id.to_owned(),
+                TerminalSessionLifecycle {
+                    state: "closing",
+                    message: None,
+                    generation,
+                    attempt,
+                    mode: Some(mode),
+                    exit_category: Some(category.to_owned()),
+                    retry_decision: "none",
+                },
+            );
+            self.sync_transport_projection(pane_id);
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "terminal_session",
+                    "kind": "terminal.session_closed_with_pane",
+                    "pane_id": pane_id,
+                    "generation": generation,
+                    "attempt": attempt,
+                    "mode": mode.as_str(),
+                    "duration_ms": 0,
+                    "exit_category": category,
+                    "retry_decision": "none",
+                })
             );
             return true;
         }
@@ -5575,6 +5870,8 @@ impl Runtime {
             &self.last_session_spaces,
             &self.worktree_catalog,
         );
+        self.last_accepted_catalog = Some(workspaces.clone());
+        self.catalog_roots = workspace::root_index(&self.last_session_spaces);
         Self::apply_workspace_expansion(
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
@@ -5686,6 +5983,291 @@ impl Runtime {
             }
         }
         self.sync_focused_terminal_projection();
+    }
+
+    /// Opens or focuses the file tab for one path in a checkout Hide is
+    /// already showing. The caller owns the context check and the persistence,
+    /// because a reveal has already made that decision by the time it gets
+    /// here and would otherwise make it twice.
+    /// The tab the operator is looking at: the focused checkout's visible tab.
+    ///
+    /// Another checkout's visible tab is that checkout's memory, not a tab on
+    /// screen, so it does not renew an attach.
+    fn focused_visible_tab_id(&self) -> Option<String> {
+        self.snapshot
+            .navigator
+            .focused_checkout_id
+            .as_deref()
+            .and_then(|checkout_id| self.visible_tab_ids.get(checkout_id))
+            .cloned()
+    }
+
+    /// Records that a tab was on screen and releases whatever fell out of the
+    /// window that leaves.
+    fn track_visible_tab_attachments(&mut self) -> bool {
+        let known_tabs = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .map(|layout| layout.tab_id.clone())
+            .collect::<HashSet<_>>();
+        // A tab Herdr no longer reports cannot come back, so holding its slot
+        // would shrink the window for the tabs that can.
+        self.recent_visible_tabs
+            .retain(|tab_id| known_tabs.contains(tab_id));
+        if let Some(tab_id) = self.focused_visible_tab_id()
+            && self.recent_visible_tabs.first() != Some(&tab_id)
+        {
+            self.recent_visible_tabs.retain(|held| held != &tab_id);
+            self.recent_visible_tabs.insert(0, tab_id);
+        }
+        self.recent_visible_tabs.truncate(ATTACHED_TAB_LIMIT);
+        self.release_sessions_outside_attach_window()
+    }
+
+    /// Ends the terminal session of every pane whose tab has left the attach
+    /// window.
+    ///
+    /// The pane keeps its projection entry, carrying `released`, because the
+    /// sidebar and the pane header read their state from there and a missing
+    /// entry would read as a failure rather than as a pane nobody is watching.
+    /// The shell drops the canvas and the buffered bytes on that state, so the
+    /// tab redraws from Herdr's own frame when it is next shown.
+    fn release_sessions_outside_attach_window(&mut self) -> bool {
+        let window = self
+            .recent_visible_tabs
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let attached = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .filter(|layout| window.contains(&layout.tab_id))
+            .flat_map(|layout| layout.pane_ids())
+            .map(str::to_owned)
+            .collect::<HashSet<_>>();
+        // A pane no layout claims is not a pane that left the window; the
+        // session reconcile owns those and drops them with the session.
+        let placed = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .flat_map(|layout| layout.pane_ids())
+            .map(str::to_owned)
+            .collect::<HashSet<_>>();
+        let releasing = self
+            .terminal_sessions
+            .keys()
+            .filter(|pane_id| !pane_id.starts_with("remote:"))
+            .filter(|pane_id| placed.contains(*pane_id) && !attached.contains(*pane_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if releasing.is_empty() {
+            return false;
+        }
+        for pane_id in releasing {
+            let _released_session = self.terminal_sessions.remove(&pane_id);
+            self.panes_awaiting_size.remove(&pane_id);
+            let attempt = self
+                .terminal_session_lifecycles
+                .get(&pane_id)
+                .map_or(0, |lifecycle| lifecycle.attempt);
+            let generation = self
+                .terminal_session_generations
+                .get(&pane_id)
+                .copied()
+                .unwrap_or_default();
+            self.terminal_session_lifecycles.insert(
+                pane_id.clone(),
+                TerminalSessionLifecycle {
+                    state: "released",
+                    message: Some(format!(
+                        "Pane {pane_id} was detached after its tab left the last {ATTACHED_TAB_LIMIT} shown"
+                    )),
+                    generation,
+                    attempt,
+                    mode: None,
+                    exit_category: None,
+                    retry_decision: "on_next_visit",
+                },
+            );
+            self.sync_transport_projection(&pane_id);
+            self.push_diagnostic(
+                "terminal.session_released",
+                format!("Released the terminal session for pane {pane_id}"),
+            );
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "terminal_session",
+                    "kind": "terminal.session_released",
+                    "pane_id": pane_id,
+                    "generation": generation,
+                    "attempt": attempt,
+                    "retry_decision": "on_next_visit",
+                })
+            );
+        }
+        true
+    }
+
+    /// Reads what a file tab needs without putting anything on screen.
+    ///
+    /// The read is the only fallible part of opening a file, so it is done on
+    /// its own: a caller that changes other state can then read first and
+    /// change nothing when the file cannot be read.
+    fn prepare_file_tab(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+    ) -> Result<PreparedFileTab, String> {
+        if let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
+            (tab.workspace_id == workspace_id && tab.checkout_id == checkout_id && tab.path == path)
+                .then(|| tab.id.clone())
+        }) {
+            return Ok(PreparedFileTab::Open(tab_id));
+        }
+        files::open(Path::new(path)).map(|document| PreparedFileTab::Read {
+            tab_id: Self::file_tab_id(workspace_id, checkout_id, path),
+            document,
+        })
+    }
+
+    /// Puts a prepared file tab on screen. Nothing here can fail on the file.
+    fn show_file_tab(
+        &mut self,
+        prepared: PreparedFileTab,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+    ) {
+        let tab_id = match prepared {
+            PreparedFileTab::Open(tab_id) => tab_id,
+            PreparedFileTab::Read { tab_id, document } => {
+                self.editor_documents.insert(tab_id.clone(), document);
+                self.snapshot.editor.tabs.push(FileTabSnapshot {
+                    id: tab_id.clone(),
+                    workspace_id: workspace_id.to_owned(),
+                    checkout_id: checkout_id.to_owned(),
+                    path: path.to_owned(),
+                    label: Path::new(path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or(path)
+                        .to_owned(),
+                    dirty: false,
+                });
+                // A new file tab takes a slot at the end of the strip.
+                self.rebuild_tab_strips();
+                tab_id
+            }
+        };
+        if let Err(message) = self.activate_file_tab(&tab_id) {
+            self.set_error("file.focus_failed", message, false);
+        }
+        self.snapshot.ui_state.selected_path = Some(path.to_owned());
+    }
+
+    fn open_file_tab(&mut self, workspace_id: &str, checkout_id: &str, path: &str) {
+        match self.prepare_file_tab(workspace_id, checkout_id, path) {
+            Ok(prepared) => self.show_file_tab(prepared, workspace_id, checkout_id, path),
+            Err(message) => self.set_error("file.open_failed", message, true),
+        }
+    }
+
+    /// Everything one clicked path changes on screen, decided in one event.
+    ///
+    /// The checkout comes forward, the right panel opens on Explorer, the tree
+    /// expands every ancestor and selects the path, and a file also takes an
+    /// editor tab. They are one event because the shell's dispatch is
+    /// fire-and-forget: sent as separate events the operator would watch the
+    /// checkout switch, then the panel appear, then the tree move, and a
+    /// refusal partway would leave the screen in a state nobody asked for.
+    fn reveal_path(&mut self, payload: RevealPathPayload) -> bool {
+        let Some(checkout_path) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == payload.workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == payload.checkout_id)
+                    .map(|checkout| checkout.path.clone())
+            })
+        else {
+            self.set_error(
+                "reveal.unknown_checkout",
+                format!(
+                    "Checkout {} is not registered, so {} was not revealed",
+                    payload.checkout_id, payload.path
+                ),
+                false,
+            );
+            return true;
+        };
+        // The file is read before anything moves. Reading is the only part of
+        // a reveal that can fail, and a reveal that settles the whole screen
+        // at once must not leave the checkout focused and the tree expanded
+        // around a document that never arrived.
+        let prepared = if payload.is_directory {
+            None
+        } else {
+            match self.prepare_file_tab(
+                &payload.workspace_id,
+                &payload.checkout_id,
+                &payload.path,
+            ) {
+                Ok(prepared) => Some(prepared),
+                Err(message) => {
+                    self.set_error("file.open_failed", message, true);
+                    return true;
+                }
+            }
+        };
+        if self.snapshot.navigator.focused_checkout_id.as_deref()
+            != Some(payload.checkout_id.as_str())
+        {
+            self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+        }
+        self.snapshot.ui_state.right_panel_visible = true;
+        self.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
+        for expanded in
+            reveal_expansion_paths(&checkout_path, &payload.path, payload.is_directory)
+        {
+            if !self.snapshot.ui_state.expanded_paths.contains(&expanded) {
+                self.snapshot.ui_state.expanded_paths.push(expanded);
+            }
+        }
+        self.snapshot.ui_state.selected_path = Some(payload.path.clone());
+        if let Some(prepared) = prepared {
+            self.show_file_tab(
+                prepared,
+                &payload.workspace_id,
+                &payload.checkout_id,
+                &payload.path,
+            );
+        }
+        self.push_diagnostic(
+            "path.revealed",
+            format!(
+                "Revealed {} {} in checkout {}",
+                if payload.is_directory {
+                    "folder"
+                } else {
+                    "file"
+                },
+                payload.path,
+                payload.checkout_id
+            ),
+        );
+        self.persist_current_ui_state();
+        true
     }
 
     fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
@@ -5842,6 +6424,7 @@ impl Runtime {
                 Some(session_sync::PrecomputedCatalog {
                     registrations: self.snapshot.ui_state.workspace_registrations.clone(),
                     workspaces: outcome.workspaces,
+                    roots: self.catalog_roots.clone(),
                 }),
             );
         } else {
@@ -5913,7 +6496,12 @@ impl Runtime {
         };
 
         let cleared_error = self.snapshot.status.last_error.take().is_some();
-        self.apply(event) || cleared_error
+        let changed = self.apply(event) || cleared_error;
+        // Every event that can move the visible tab funnels through here, so
+        // the attach window is maintained once rather than at each of the four
+        // places a tab becomes visible.
+        let released = self.track_visible_tab_attachments();
+        changed || released
     }
 
     fn apply(&mut self, event: ValidatedEvent) -> bool {
@@ -6688,6 +7276,7 @@ impl Runtime {
                 };
                 let pane_id = payload.pane_id;
                 self.retain_project_before_last_pane_closes(&pane_id);
+                self.panes_closing.insert(pane_id.clone());
                 self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
                 if let Err(message) =
                     live::spawn_pane_control(context, PaneControlAction::Close { pane_id })
@@ -6759,7 +7348,11 @@ impl Runtime {
                 self.fork_sequence += 1;
                 // The name is already unique and already sanitized, so it is
                 // also the retry identity rather than a second thing to keep
-                // unique.
+                // unique. It is used as the idempotency key unchanged: a
+                // `hide-` prefix on the key used to make a second string that
+                // nothing kept inside Herdr's name rule, and the key is what
+                // the CLI puts in its request id, so a key that broke the rule
+                // was the value the operator saw refused.
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
@@ -6769,13 +7362,15 @@ impl Runtime {
                     agent: agent_kind,
                     session_id,
                     cwd,
-                    idempotency_key: format!("hide-{name}"),
+                    idempotency_key: name.clone(),
                     name,
                 };
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
                 if let Err(message) = live::spawn_agent_fork(context, request) {
-                    self.forks_in_flight.remove(&pane_id);
-                    self.set_error("pane.fork_worker_failed", message, true);
+                    // A worker that never started is a fork that failed, and
+                    // the operator is owed the same notice and the same
+                    // stderr diagnostic either way.
+                    self.ingest_fork_result(&pane_id, Err(message), 0);
                 }
                 true
             }
@@ -6801,52 +7396,11 @@ impl Runtime {
                     );
                     return true;
                 }
-                if let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
-                    (tab.workspace_id == payload.workspace_id
-                        && tab.checkout_id == payload.checkout_id
-                        && tab.path == payload.path)
-                        .then(|| tab.id.clone())
-                }) {
-                    if let Err(message) = self.activate_file_tab(&tab_id) {
-                        self.set_error("file.focus_failed", message, false);
-                    }
-                    self.snapshot.ui_state.selected_path = Some(payload.path);
-                    self.persist_current_ui_state();
-                    return true;
-                }
-                match files::open(Path::new(&payload.path)) {
-                    Ok(document) => {
-                        let tab_id = Self::file_tab_id(
-                            &payload.workspace_id,
-                            &payload.checkout_id,
-                            &payload.path,
-                        );
-                        self.editor_documents.insert(tab_id.clone(), document);
-                        self.snapshot.editor.tabs.push(FileTabSnapshot {
-                            id: tab_id.clone(),
-                            workspace_id: payload.workspace_id,
-                            checkout_id: payload.checkout_id,
-                            path: payload.path.clone(),
-                            label: Path::new(&payload.path)
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .filter(|name| !name.is_empty())
-                                .unwrap_or(payload.path.as_str())
-                                .to_owned(),
-                            dirty: false,
-                        });
-                        if let Err(message) = self.activate_file_tab(&tab_id) {
-                            self.set_error("file.focus_failed", message, false);
-                        }
-                        // A new file tab takes a slot at the end of the strip.
-                        self.rebuild_tab_strips();
-                        self.snapshot.ui_state.selected_path = Some(payload.path);
-                    }
-                    Err(message) => self.set_error("file.open_failed", message, true),
-                }
+                self.open_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path);
                 self.persist_current_ui_state();
                 true
             }
+            ValidatedEvent::RevealPath(payload) => self.reveal_path(payload),
             ValidatedEvent::FileFocus(payload) => {
                 let Some(tab) = self
                     .snapshot
@@ -7082,6 +7636,7 @@ impl Runtime {
                 }
                 let size = (payload.rows, payload.cols);
                 let previous = self.terminal_sizes.insert(payload.pane_id.clone(), size);
+                self.panes_scrolled_before_size.remove(&payload.pane_id);
                 // A view reporting the size the pane is already running at is
                 // the common case right after an attach. Sending it on would
                 // make Herdr answer with a second full frame for a size that
@@ -7115,20 +7670,70 @@ impl Runtime {
                 }
                 false
             }
+            ValidatedEvent::TerminalRepaint(payload) => {
+                // A view built for a pane whose session is already running has
+                // no frame of its own: Herdr sent the attach frame to the view
+                // that came before it, and it sends nothing more until the
+                // pane produces output, so the new grid stays empty until the
+                // operator touches it. A resize at the size the pane already
+                // has is the repaint Herdr offers, and it answers with a full
+                // frame. The ordinary same-size resize is still swallowed:
+                // this is the one place that asks for the frame on purpose.
+                // The two ways out of here are both the ordinary first
+                // visit, not a failure: a pane with no reported size and a
+                // pane with no session yet are about to be attached, and the
+                // attach draws its own full frame. Only a view that arrived
+                // after the frame did has nothing coming.
+                let Some((rows, cols)) = self.terminal_sizes.get(&payload.pane_id).copied() else {
+                    return false;
+                };
+                let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id) else {
+                    return false;
+                };
+                // An observing session has no write channel; its pane is
+                // read-only and asking would only raise a client conflict.
+                if session.mode != TerminalSessionMode::Control {
+                    return false;
+                }
+                if let Err(message) = session.resize(rows, cols) {
+                    self.set_error("terminal.repaint_failed", message, true);
+                    return true;
+                }
+                self.push_diagnostic(
+                    "terminal.repaint_requested",
+                    format!(
+                        "Asked Herdr to repaint pane {} at {rows}x{cols}",
+                        payload.pane_id
+                    ),
+                );
+                // A pane that draws nothing is diagnosed from outside the
+                // process, and the question is always whether the frame was
+                // asked for at all. One line per view built answers it.
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "component": "terminal_session",
+                        "kind": "terminal.repaint_requested",
+                        "pane_id": payload.pane_id,
+                        "rows": rows,
+                        "cols": cols,
+                    })
+                );
+                true
+            }
             ValidatedEvent::TerminalScroll(payload) => {
                 // Herdr owns the pane's history, so the wheel is a request it
                 // answers with a fresh frame rather than a local buffer move.
                 // A pane another client controls is read-only, not broken, so
                 // it simply does not scroll - the same shape as resize.
-                let (rows, cols) = self
-                    .terminal_sizes
-                    .get(&payload.pane_id)
-                    .copied()
-                    .unwrap_or((24, 80));
+                if let Some(said) = self.scroll_withheld_for_missing_size(&payload.pane_id) {
+                    return said;
+                }
+                let lines = i32::from(payload.lines)
+                    * if payload.direction == "up" { 1 } else { -1 };
                 if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
                     && session.mode == TerminalSessionMode::Control
-                    && let Err(message) =
-                        session.scroll(&payload.direction, payload.lines, rows, cols)
+                    && let Err(message) = session.scroll(live::ScrollRequest { lines })
                 {
                     self.set_error("terminal.scroll_failed", message, true);
                     return true;
@@ -7745,6 +8350,8 @@ fn find_workspace_for_context<'a>(
     workspaces: &'a mut Vec<crate::model::WorkspaceSnapshot>,
     context_path: Option<&str>,
     session_workspace_id: &str,
+    roots: &workspace::RootIndex,
+    unresolved_roots: &mut Vec<String>,
 ) -> Option<&'a mut crate::model::WorkspaceSnapshot> {
     let Some(raw_path) = context_path else {
         return workspaces
@@ -7753,9 +8360,13 @@ fn find_workspace_for_context<'a>(
             .and_then(|index| workspaces.get_mut(index));
     };
     let path = Path::new(raw_path);
-    let root = workspace::git_root(path)
-        .map(|root| workspace::normalized_for_comparison(&root))
-        .unwrap_or_else(|| workspace::normalized_for_comparison(path));
+    // The root was resolved outside the runtime lock; a directory the index
+    // does not carry is placed by its own path and reported, never by asking
+    // git from here.
+    let root = roots.get(raw_path).cloned().unwrap_or_else(|| {
+        unresolved_roots.push(raw_path.to_owned());
+        workspace::normalized_for_comparison(path)
+    });
     let normalized = root.clone();
     // A navigator project records the Herdr workspaces occupying it. One
     // Herdr workspace can span two repositories and so two projects, so the
@@ -7868,6 +8479,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
+        "reveal_path" => decode!(RevealPathPayload, RevealPath),
         "file_focus" => decode!(FileTabPayload, FileFocus),
         "file_close" => decode!(FileTabPayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
@@ -7877,6 +8489,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
+        "terminal_repaint" => decode!(TerminalRepaintPayload, TerminalRepaint),
         "pane_find" => decode!(PaneFindPayload, PaneFind),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
@@ -7973,6 +8586,164 @@ mod tests {
     use super::*;
 
     /// The catalog before the worktree reader has answered.
+    /// Reconciling a session with a precomputed catalog runs no git at all.
+    ///
+    /// Placing each tab into a checkout used to resolve the pane directory's
+    /// repository root with `git rev-parse` while the runtime lock was held,
+    /// once per tab per publish. The root index arrives with the catalog
+    /// instead, so the lock is never held across a subprocess.
+    #[test]
+    fn reconciling_with_a_precomputed_catalog_runs_no_git() {
+        let base = workspace::temp_base_outside_any_repository();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let roots: Vec<std::path::PathBuf> = (0..3)
+            .map(|index| base.join(format!("hide-no-git-reconcile-{stamp}-{index}")))
+            .collect();
+        for root in &roots {
+            std::fs::create_dir_all(root).expect("fixture directory");
+        }
+        let cwds: Vec<String> = roots
+            .iter()
+            .map(|root| root.to_string_lossy().into_owned())
+            .collect();
+        let tabs: Vec<serde_json::Value> = (0..3)
+            .map(|index| serde_json::json!({"workspace_id": "w1", "tab_id": format!("w1:t{index}"), "label": ""}))
+            .collect();
+        let panes: Vec<serde_json::Value> = (0..3)
+            .map(|index| serde_json::json!({"pane_id": format!("w1:p{index}"), "cwd": cwds[index]}))
+            .collect();
+        let layouts: Vec<serde_json::Value> = (0..3)
+            .map(|index| serde_json::json!({
+                "workspace_id": "w1",
+                "tab_id": format!("w1:t{index}"),
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": format!("w1:p{index}"),
+                "panes": [{"pane_id": format!("w1:p{index}"), "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }))
+            .collect();
+        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "workspaces": [{"workspace_id": "w1", "label": "three"}],
+            "panes": panes,
+            "tabs": tabs,
+            "layouts": layouts,
+        }))
+        .expect("three-tab payload");
+        let spaces = Runtime::session_spaces(&payload);
+        let catalog = session_sync::PrecomputedCatalog {
+            registrations: Vec::new(),
+            workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
+            roots: workspace::root_index(&spaces),
+        };
+        let mut runtime = runtime();
+
+        let before = workspace::git_calls_on_this_thread();
+        assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
+        let after = workspace::git_calls_on_this_thread();
+
+        assert_eq!(after - before, 0, "the reconcile ran git under the runtime lock");
+        let placed: usize = runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .map(|checkout| checkout.tabs.len())
+            .sum();
+        assert_eq!(placed, 3, "every tab landed in a checkout without git");
+        assert!(
+            !runtime
+                .snapshot()
+                .status
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.kind == "catalog.root_unresolved"),
+            "the root index carried every pane directory"
+        );
+        for root in &roots {
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    /// A precomputed catalog whose registrations went stale between the
+    /// coordinator's read and the reconcile is not rebuilt under the lock: the
+    /// last accepted catalog stands, and a diagnostic says so.
+    #[test]
+    fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
+        let base = workspace::temp_base_outside_any_repository();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = base.join(format!("hide-stale-catalog-{stamp}"));
+        std::fs::create_dir_all(&root).expect("fixture directory");
+        let cwd = root.to_string_lossy().into_owned();
+        let payload = || -> SessionSnapshotPayload {
+            serde_json::from_value(serde_json::json!({
+                "agents": [],
+                "workspaces": [{"workspace_id": "w1", "label": "one"}],
+                "panes": [{"pane_id": "w1:p1", "cwd": cwd}],
+                "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1", "label": ""}],
+                "layouts": [{
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }]
+            }))
+            .expect("one-tab payload")
+        };
+        let spaces = Runtime::session_spaces(&payload());
+        let fresh = session_sync::PrecomputedCatalog {
+            registrations: Vec::new(),
+            workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
+            roots: workspace::root_index(&spaces),
+        };
+        let mut runtime = runtime();
+        assert!(runtime.ingest_session_with_catalog(Ok(payload()), Some(fresh)));
+        let accepted = runtime.snapshot().navigator.workspaces.clone();
+        assert!(!accepted.is_empty(), "the first catalog was accepted");
+
+        let stale = session_sync::PrecomputedCatalog {
+            registrations: vec![WorkspaceRegistration {
+                id: "workspace:stale".to_owned(),
+                label: "stale".to_owned(),
+                path: cwd.clone(),
+                device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+            }],
+            workspaces: Vec::new(),
+            roots: workspace::RootIndex::new(),
+        };
+        let before = workspace::git_calls_on_this_thread();
+        runtime.ingest_session_with_catalog(Ok(payload()), Some(stale));
+        let after = workspace::git_calls_on_this_thread();
+
+        assert_eq!(after - before, 0, "a stale catalog was rebuilt under the runtime lock");
+        assert_eq!(
+            runtime.snapshot().navigator.workspaces,
+            accepted,
+            "the last accepted catalog stands until the next publish"
+        );
+        assert!(
+            runtime
+                .snapshot()
+                .status
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.kind == "catalog.precomputed_stale"),
+            "the stale catalog was reported"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn no_worktrees() -> crate::model::WorktreeCatalogSnapshot {
         crate::model::WorktreeCatalogSnapshot::default()
     }
@@ -10924,13 +11695,20 @@ mod tests {
         let root_b = format!("{root_a}-b");
         std::fs::create_dir_all(&root_a).expect("checkout a");
         std::fs::create_dir_all(&root_b).expect("checkout b");
-        // Keep these checkouts independent even when TMPDIR is inside a repository.
+        // Each root is its own repository. The catalog keys a checkout by the
+        // repository that contains it, so two plain directories under one
+        // repository - which is what a temporary directory inside the project
+        // is - collapse into a single checkout and this test loses the second
+        // one before it starts.
         for root in [&root_a, &root_b] {
-            assert!(std::process::Command::new("git")
-                .args(["init", "--quiet", root])
-                .status()
-                .expect("initialize checkout fixture")
-                .success());
+            assert!(
+                std::process::Command::new("git")
+                    .args(["init", "-q", "-b", "main"])
+                    .current_dir(root)
+                    .status()
+                    .expect("git init runs")
+                    .success()
+            );
         }
         runtime.snapshot.ui_state.workspace_registrations = vec![
             WorkspaceRegistration {
@@ -11849,6 +12627,12 @@ mod tests {
         let git = |arguments: &[&str], directory: &Path| {
             assert!(
                 std::process::Command::new("git")
+                    // The fixture owns its identity, and it must not reach for
+                    // the operator's signing key: a commit the fixture makes
+                    // failed whenever the signing agent was not answering,
+                    // which made this suite fail for a reason that had nothing
+                    // to do with the code under test.
+                    .args(["-c", "commit.gpgsign=false"])
                     .args(arguments)
                     .current_dir(directory)
                     .env("GIT_AUTHOR_NAME", "fixture")
@@ -12063,6 +12847,7 @@ mod tests {
             checkout_id.clone(),
             PendingTabMove {
                 desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
+                workspace_id: "w-order".to_owned(),
                 herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
                 generation: 7,
             },
@@ -12094,6 +12879,140 @@ mod tests {
         std::fs::remove_dir_all(&directory).ok();
     }
 
+    /// AC12, SC6 recovery. A refused move leaves the strip where Herdr last
+    /// put it and says so, and the operator's answer to that is to drag again.
+    /// The retry has to be an ordinary drag: the same request goes out, and
+    /// the order lands when Herdr reports it, with nothing left over from the
+    /// refusal to hold it back.
+    #[test]
+    fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("herdr-retry");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let tabs = ["w-order:t1", "w-order:t2"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))));
+        let before = strip_ids(&runtime, &checkout_id);
+
+        let socket_root = PathBuf::from("/tmp").join(format!(
+            "herdr-core-tab-retry-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&socket_root).expect("socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
+        // Both drags are answered; what the answer says does not matter here,
+        // because the worker's callback is what carries it and this test
+        // drives that by hand.
+        let server = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept tab.move");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: serde_json::Value =
+                    serde_json::from_str(&line).expect("tab.move request JSON");
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::json!({
+                        "id": request["id"],
+                        "result": {
+                            "type": "tab_list",
+                            "tabs": [{"tab_id": "w-order:t2"}, {"tab_id": "w-order:t1"}]
+                        }
+                    })
+                )
+                .expect("write tab_list response");
+                requests.push(request);
+            }
+            requests
+        });
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+
+        // The first drag is refused.
+        assert!(reorder_tab(
+            &mut runtime,
+            &checkout_id,
+            "herdr:w-order:t1",
+            1
+        ));
+        let generation = runtime.pending_tab_move[&checkout_id].generation;
+        assert!(runtime.ingest_local_control_result(
+            RemoteControlAction::MoveTab {
+                checkout_id: checkout_id.clone(),
+                tab_id: "w-order:t1".to_owned(),
+                insert_index: 2,
+                expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+                generation,
+            },
+            Err("tab.move failed: tab_not_found: tab w-order:t1 not found".to_owned()),
+            4,
+        ));
+        assert_eq!(strip_ids(&runtime, &checkout_id), before);
+        assert!(runtime.pending_tab_move.is_empty());
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .expect("a refused move is reported")
+                .kind,
+            "tab.move_refused"
+        );
+
+        // The same drag again, with nothing else in between.
+        assert!(reorder_tab(
+            &mut runtime,
+            &checkout_id,
+            "herdr:w-order:t1",
+            1
+        ));
+        let requests = server.join().expect("fixture server joins");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1]["method"], "tab.move");
+        assert_eq!(
+            requests[1]["params"], requests[0]["params"],
+            "the retry asks Herdr for exactly what the refused drag asked for"
+        );
+        assert_eq!(
+            runtime.pending_tab_move[&checkout_id].herdr_order,
+            vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()]
+        );
+
+        // Herdr grants it this time, and the strip lands.
+        let moved = ["w-order:t2", "w-order:t1"];
+        assert!(runtime.ingest_session(Ok(tab_order_payload(
+            &checkout_path,
+            &moved,
+            &tabs,
+            "w-order:t1"
+        ))));
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()]
+        );
+        assert!(runtime.pending_tab_move.is_empty());
+
+        std::fs::remove_dir_all(&socket_root).ok();
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
     #[test]
     fn tab_strip_reorder_ignores_a_result_a_later_drag_has_replaced() {
         let (mut runtime, checkout_id, directory) = strip_checkout("herdr-superseded");
@@ -12106,6 +13025,7 @@ mod tests {
         ))));
         let live = PendingTabMove {
             desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
+            workspace_id: "w-order".to_owned(),
             herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
             generation: 9,
         };
@@ -12485,6 +13405,7 @@ mod tests {
                 &spaces,
                 &crate::model::WorktreeCatalogSnapshot::default(),
             ),
+            roots: workspace::root_index(&spaces),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -12579,6 +13500,7 @@ mod tests {
                 &spaces,
                 &crate::model::WorktreeCatalogSnapshot::default(),
             ),
+            roots: workspace::RootIndex::new(),
         };
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
 
@@ -12709,6 +13631,7 @@ mod tests {
                 &spaces,
                 &crate::model::WorktreeCatalogSnapshot::default(),
             ),
+            roots: workspace::root_index(&spaces),
         };
         runtime.restore_hint_pending = false;
         assert!(runtime.ingest_session_with_catalog(Ok(occupied), Some(catalog)));
@@ -12864,6 +13787,7 @@ mod tests {
         let catalog = session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![selected_workspace],
+            roots: workspace::RootIndex::new(),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -12971,6 +13895,7 @@ mod tests {
             Some(session_sync::PrecomputedCatalog {
                 registrations: vec![registration],
                 workspaces: vec![current_workspace],
+                roots: workspace::RootIndex::new(),
             }),
         ));
         assert_eq!(
@@ -13057,6 +13982,7 @@ mod tests {
             Some(session_sync::PrecomputedCatalog {
                 registrations: vec![registration],
                 workspaces: vec![current_workspace],
+                roots: workspace::RootIndex::new(),
             }),
         ));
         assert_eq!(runtime.snapshot().terminal.pane_id, None);
@@ -13145,6 +14071,7 @@ mod tests {
             Some(session_sync::PrecomputedCatalog {
                 registrations: vec![registration],
                 workspaces: vec![current_workspace],
+                roots: workspace::RootIndex::new(),
             }),
         ));
         assert_eq!(
@@ -13209,6 +14136,7 @@ mod tests {
         let catalog = session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![selected_workspace],
+            roots: workspace::RootIndex::new(),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -13284,6 +14212,7 @@ mod tests {
         let catalog = session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![selected_workspace],
+            roots: workspace::RootIndex::new(),
         };
 
         assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -13329,6 +14258,7 @@ mod tests {
             Some(session_sync::PrecomputedCatalog {
                 registrations: Vec::new(),
                 workspaces: Vec::new(),
+                roots: workspace::RootIndex::new(),
             }),
         ));
         assert_eq!(runtime.snapshot().status.last_error, None);
@@ -13394,6 +14324,7 @@ mod tests {
             Some(session_sync::PrecomputedCatalog {
                 registrations: Vec::new(),
                 workspaces: Vec::new(),
+                roots: workspace::RootIndex::new(),
             }),
         ));
         // The layout stays in the snapshot because it is Herdr's and it
@@ -14044,5 +14975,835 @@ mod tests {
             !runtime.ingest_session(Ok(working_payload())),
             "an unchanged snapshot must not wake the shell on every refresh"
         );
+    }
+
+    /// Two registered checkouts with the first focused, so a reveal into the
+    /// second has a checkout switch to make. The second holds
+    /// `deep/nested/leaf/target.txt`, which is the shape SC1 and SC2 describe.
+    fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
+        let mut roots = Vec::new();
+        for name in ["one", "two"] {
+            let directory = std::env::temp_dir().join(format!(
+                "hide-reveal-{name}-{}-{}",
+                std::process::id(),
+                NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(directory.join("deep/nested/leaf")).expect("fixture tree");
+            let directory = directory.canonicalize().expect("a real checkout path");
+            assert!(
+                std::process::Command::new("git")
+                    .args(["init", "-q", "-b", "main"])
+                    .current_dir(&directory)
+                    .status()
+                    .expect("git init runs")
+                    .success()
+            );
+            std::fs::write(directory.join("deep/nested/leaf/target.txt"), "found\n")
+                .expect("fixture file");
+            roots.push(directory);
+        }
+        let mut runtime = runtime();
+        runtime.snapshot.ui_state.workspace_registrations = roots
+            .iter()
+            .enumerate()
+            .map(|(index, path)| WorkspaceRegistration {
+                id: format!("workspace:{index}"),
+                label: format!("workspace {index}"),
+                path: path.to_string_lossy().into_owned(),
+                device_id: "local".to_owned(),
+            })
+            .collect();
+        runtime.rebuild_catalog();
+        let ids = roots
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                workspace::checkout_id_for_path(&format!("workspace:{index}"), path)
+            })
+            .collect::<Vec<_>>();
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:0".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(ids[0].clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(ids[0].clone());
+        runtime.snapshot.navigator.root_path = Some(roots[0].to_string_lossy().into_owned());
+        // The panel starts hidden on a section that is not the tree, which is
+        // the state SC1 names: the reveal has to open it and switch it.
+        runtime.snapshot.ui_state.right_panel_visible = false;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
+        let (first, second) = (roots[0].clone(), roots[1].clone());
+        (runtime, first, ids[0].clone(), second, ids[1].clone())
+    }
+
+    fn reveal_event(workspace_id: &str, checkout_id: &str, path: &Path, is_directory: bool) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "reveal_path",
+            "payload": {
+                "path": path.to_string_lossy(),
+                "workspace_id": workspace_id,
+                "checkout_id": checkout_id,
+                "is_directory": is_directory
+            }
+        }))
+        .expect("reveal event")
+    }
+
+    /// AC5, R2, SC1. One click on a file printed by a pane in another checkout
+    /// brings that checkout forward, opens the tree on it, expands every
+    /// ancestor, selects the file and opens its editor tab - in one event,
+    /// because the shell's dispatch is fire-and-forget and could not order
+    /// four of them.
+    #[test]
+    fn revealing_a_file_switches_the_checkout_and_settles_the_whole_screen_at_once() {
+        let (mut runtime, _first, first_id, second, second_id) = reveal_runtime();
+        let target = second.join("deep/nested/leaf/target.txt");
+        assert_eq!(
+            runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+            Some(first_id.as_str())
+        );
+
+        assert!(runtime.dispatch_json(&reveal_event("workspace:1", &second_id, &target, false)));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.navigator.focused_checkout_id.as_deref(),
+            Some(second_id.as_str())
+        );
+        assert!(snapshot.ui_state.right_panel_visible);
+        assert_eq!(snapshot.ui_state.right_panel_section, RightPanelSection::Explorer);
+        assert_eq!(
+            snapshot.ui_state.selected_path.as_deref(),
+            Some(target.to_string_lossy().as_ref())
+        );
+        for ancestor in ["deep", "deep/nested", "deep/nested/leaf"] {
+            let expected = second.join(ancestor).to_string_lossy().into_owned();
+            assert!(
+                snapshot.ui_state.expanded_paths.contains(&expected),
+                "the tree does not open {expected}: {:?}",
+                snapshot.ui_state.expanded_paths
+            );
+        }
+        assert!(
+            !snapshot
+                .ui_state
+                .expanded_paths
+                .contains(&target.to_string_lossy().into_owned()),
+            "a file is not a folder to expand"
+        );
+        let tab = snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.path == target.to_string_lossy())
+            .expect("the revealed file takes an editor tab");
+        assert_eq!(snapshot.editor.active_tab_id.as_deref(), Some(tab.id.as_str()));
+        assert!(snapshot.status.last_error.is_none());
+
+        // Rule 11: the same click again keeps the tab it already opened and
+        // the selection it already made.
+        assert!(runtime.dispatch_json(&reveal_event("workspace:1", &second_id, &target, false)));
+        assert_eq!(runtime.snapshot().editor.tabs.len(), 1);
+        assert_eq!(
+            runtime.snapshot().ui_state.selected_path.as_deref(),
+            Some(target.to_string_lossy().as_ref())
+        );
+    }
+
+    /// AC5, R3, SC2. A folder opens the tree on itself and takes no editor
+    /// AC5, R4. A reveal settles the whole screen at once or not at all. A
+    /// file that cannot be read - deleted between being printed and being
+    /// clicked, or unreadable - leaves the focused checkout, the panel, the
+    /// expanded set and the selection exactly as they were, and says why.
+    /// Reading after the screen has moved would leave a reveal half applied.
+    #[test]
+    fn revealing_a_file_that_cannot_be_read_moves_nothing_and_says_why() {
+        let (mut runtime, _first, _first_id, second, second_id) = reveal_runtime();
+        let missing = second.join("deep/nested/leaf/gone.txt");
+        let before = runtime.snapshot().clone();
+
+        assert!(runtime.dispatch_json(&reveal_event(
+            "workspace:1",
+            &second_id,
+            &missing,
+            false
+        )));
+
+        let after = runtime.snapshot().clone();
+        assert_eq!(
+            after.navigator.focused_checkout_id,
+            before.navigator.focused_checkout_id,
+            "the checkout must not move for a file that cannot be read"
+        );
+        assert_eq!(
+            after.ui_state.right_panel_visible,
+            before.ui_state.right_panel_visible
+        );
+        assert_eq!(
+            after.ui_state.right_panel_section,
+            before.ui_state.right_panel_section
+        );
+        assert_eq!(after.ui_state.expanded_paths, before.ui_state.expanded_paths);
+        assert_eq!(after.ui_state.selected_path, before.ui_state.selected_path);
+        assert!(after.editor.tabs.is_empty(), "no tab for a file with no contents");
+        let error = after
+            .status
+            .last_error
+            .as_ref()
+            .expect("an unreadable file is reported");
+        assert_eq!(error.kind, "file.open_failed");
+    }
+
+    /// tab. A4 records that the folder itself expands, not only its ancestors.
+    #[test]
+    fn revealing_a_folder_expands_it_and_opens_no_editor_tab() {
+        let (mut runtime, _first, _first_id, second, second_id) = reveal_runtime();
+        let target = second.join("deep/nested");
+
+        assert!(runtime.dispatch_json(&reveal_event("workspace:1", &second_id, &target, true)));
+
+        let snapshot = runtime.snapshot();
+        assert!(snapshot.ui_state.right_panel_visible);
+        assert_eq!(snapshot.ui_state.right_panel_section, RightPanelSection::Explorer);
+        assert!(
+            snapshot
+                .ui_state
+                .expanded_paths
+                .contains(&target.to_string_lossy().into_owned()),
+            "the clicked folder itself stays closed: {:?}",
+            snapshot.ui_state.expanded_paths
+        );
+        assert!(
+            snapshot
+                .ui_state
+                .expanded_paths
+                .contains(&second.join("deep").to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            snapshot.ui_state.selected_path.as_deref(),
+            Some(target.to_string_lossy().as_ref())
+        );
+        assert!(snapshot.editor.tabs.is_empty(), "a folder is not a document");
+    }
+
+    /// AC5, R5. A reveal aimed at a checkout Hide does not have leaves the
+    /// screen exactly as it was and says why.
+    #[test]
+    fn revealing_into_an_unregistered_checkout_changes_nothing_and_reports_it() {
+        let (mut runtime, first, first_id, second, _second_id) = reveal_runtime();
+        let before = runtime.snapshot().ui_state.clone();
+
+        assert!(runtime.dispatch_json(&reveal_event(
+            "workspace:9",
+            "checkout:missing",
+            &second.join("deep"),
+            true
+        )));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.status.last_error.as_ref().map(|error| error.kind.as_str()),
+            Some("reveal.unknown_checkout")
+        );
+        assert_eq!(
+            snapshot.navigator.focused_checkout_id.as_deref(),
+            Some(first_id.as_str())
+        );
+        assert_eq!(snapshot.ui_state.right_panel_visible, before.right_panel_visible);
+        assert_eq!(snapshot.ui_state.right_panel_section, before.right_panel_section);
+        assert_eq!(snapshot.ui_state.expanded_paths, before.expanded_paths);
+        assert_eq!(snapshot.ui_state.selected_path, before.selected_path);
+        assert!(snapshot.editor.tabs.is_empty());
+        let _ = first;
+    }
+
+    /// AC6, R6. A wheel on a pane whose view has not reported a size sends
+    /// nothing at all. The fallback that guessed 24x80 resized the PTY to a
+    /// grid it was not running at, and it did so on every wheel row. The wait
+    /// is said once, not once per row.
+    #[test]
+    fn a_wheel_on_a_pane_with_no_reported_size_writes_nothing_and_says_so_once() {
+        let mut runtime = runtime();
+        let scroll = |lines: u16| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "terminal_scroll",
+                "payload": {"pane_id": "w1:p1", "direction": "up", "lines": lines}
+            }))
+            .expect("scroll event")
+        };
+        assert!(runtime.dispatch_json(&scroll(3)));
+        for _ in 0..20 {
+            runtime.dispatch_json(&scroll(3));
+        }
+
+        let deferred = runtime
+            .snapshot()
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == "terminal.scroll_deferred")
+            .count();
+        assert_eq!(deferred, 1, "a wheel burst filled the diagnostics list");
+        assert!(!runtime.terminal_sizes.contains_key("w1:p1"));
+
+        // Once the view reports, the wait is over and a later wheel is
+        // ordinary again.
+        let resize = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": "w1:p1", "rows": 30, "cols": 100}
+        }))
+        .expect("resize event");
+        runtime.dispatch_json(&resize);
+        assert!(!runtime.panes_scrolled_before_size.contains("w1:p1"));
+    }
+
+    /// R6, R7. A pane keeps its session while its canvas is rebuilt - a zoom,
+    /// a tab visit, a return to a checkout - and the view that comes back has
+    /// an empty grid. Herdr sent the attach frame to the view that came
+    /// before it and sends nothing more until the pane produces output, so
+    /// the operator sees a blank pane that a single wheel notch repairs.
+    /// The repaint has to reach Herdr even though the size did not change.
+    #[test]
+    fn a_rebuilt_view_for_an_attached_pane_is_given_a_frame_to_draw() {
+        let checkout_path = "/private/tmp/hide-pane-repaint";
+        let (mut runtime, _checkout_id) = live_tab_order_runtime(checkout_path);
+        runtime.suppress_terminal_session_workers = true;
+        let tabs = ["w-repaint:t1"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-repaint:t1",
+        )));
+        let pane_id = "w-repaint:t1:p";
+        let resize = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
+        }))
+        .expect("resize event");
+        let repaint = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_repaint",
+            "payload": {"pane_id": pane_id}
+        }))
+        .expect("repaint event");
+
+        // A repaint asked for before anything is attached is the first visit,
+        // whose attach draws its own frame. It writes nothing and is not an
+        // error.
+        assert!(!runtime.dispatch_json(&repaint));
+        assert!(runtime.snapshot().status.last_error.is_none());
+
+        // The first view reporting its size is what starts the attach.
+        runtime.dispatch_json(&resize);
+        assert!(runtime.terminal_sessions.contains_key(pane_id));
+        let _attach_writes = runtime.terminal_sessions[pane_id].test_written_lines();
+
+        // The same size reported again is still swallowed: that is the report
+        // every settled view makes, and answering it would double the frames.
+        runtime.dispatch_json(&resize);
+        assert!(
+            runtime.terminal_sessions[pane_id]
+                .test_written_lines()
+                .is_empty(),
+            "a size that did not change was forwarded to Herdr"
+        );
+
+        // The rebuilt view says it has nothing to draw, and that one does
+        // reach Herdr.
+        assert!(runtime.dispatch_json(&repaint));
+        let written = runtime.terminal_sessions[pane_id].test_written_lines();
+        assert_eq!(written.len(), 1, "the repaint did not reach Herdr exactly once");
+        let line: serde_json::Value =
+            serde_json::from_str(written[0].trim_end()).expect("repaint line is JSON");
+        assert_eq!(line["type"], "terminal.resize");
+        assert_eq!(line["rows"], 30);
+        assert_eq!(line["cols"], 100);
+        assert!(runtime.snapshot().status.last_error.is_none());
+    }
+
+    /// AC8, R7, SC5. Attaching every tab the operator ever visited left a
+    /// child process and a server-side render alive for each one. Only the tab
+    /// on screen and the four before it keep their panes attached; the rest
+    /// are released, say so, and attach again on the next visit.
+    #[test]
+    fn only_the_last_five_shown_tabs_keep_their_panes_attached() {
+        let checkout_path = "/private/tmp/hide-attach-window";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        runtime.suppress_terminal_session_workers = true;
+        let tabs = [
+            "w-order:t1",
+            "w-order:t2",
+            "w-order:t3",
+            "w-order:t4",
+            "w-order:t5",
+            "w-order:t6",
+            "w-order:t7",
+        ];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        // The first tab is already on screen; its view reports, which is what
+        // starts an attach.
+        let report_size = |runtime: &mut Runtime, tab_id: &str| {
+            let resize = serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "terminal_resize",
+                "payload": {"pane_id": format!("{tab_id}:p"), "rows": 30, "cols": 100}
+            }))
+            .expect("resize event");
+            runtime.dispatch_json(&resize);
+        };
+        report_size(&mut runtime, "w-order:t1");
+        assert!(runtime.terminal_sessions.contains_key("w-order:t1:p"));
+        for tab_id in &tabs[1..] {
+            assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab_id)));
+            report_size(&mut runtime, tab_id);
+        }
+
+        let attached = runtime
+            .terminal_sessions
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            attached,
+            ["w-order:t3:p", "w-order:t4:p", "w-order:t5:p", "w-order:t6:p", "w-order:t7:p"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>(),
+            "the attach window is not the last five tabs shown"
+        );
+
+        // A released pane says what happened to it rather than looking broken.
+        let released = runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "w-order:t1:p")
+            .expect("a released pane keeps its projection entry")
+            .clone();
+        assert_eq!(released.transport_state, "released");
+        assert!(released.transport_exit_category.is_none());
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.kind == "terminal.session_released"
+                    && diagnostic.message.contains("w-order:t1:p"))
+                .count(),
+            1
+        );
+
+        // A tick that changes nothing must not attach any of them again.
+        let before = runtime
+            .terminal_sessions
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t7",
+        )));
+        assert_eq!(
+            runtime
+                .terminal_sessions
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            before,
+            "an idle tick re-attached a released pane"
+        );
+
+        // Going back attaches that tab's pane and nothing else.
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+        assert!(runtime.terminal_sessions.contains_key("w-order:t1:p"));
+        assert_eq!(runtime.terminal_sessions.len(), ATTACHED_TAB_LIMIT);
+    }
+
+    /// AC11, R9, SC6. A checkout whose tabs come from two Herdr workspaces
+    /// refused every drag, because ownership was decided for the checkout
+    /// rather than for the drag. A drag that only steps over the other
+    /// workspace's tabs changes nothing Herdr can see, so it lands locally.
+    #[test]
+    fn tab_strip_reorder_a_drag_past_another_workspaces_tabs_needs_no_herdr_move() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("split-local");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        assert!(runtime.ingest_session(Ok(split_checkout_payload(
+            &checkout_path,
+            &[
+                ("w-left", &["w-left:t1"][..], "w-left:t1"),
+                ("w-right", &["w-right:t1", "w-right:t2"][..], "w-right:t1"),
+            ],
+            "w-left"
+        ))));
+        let before = strip_ids(&runtime, &checkout_id);
+        assert_eq!(before.len(), 3, "the split checkout holds both workspaces: {before:?}");
+
+        // There is no live connection here, so any request to Herdr would fail
+        // loudly. Landing silently is the assertion.
+        let moved = before[0].clone();
+        assert!(reorder_tab(&mut runtime, &checkout_id, &moved, 1));
+
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            None
+        );
+        let after = strip_ids(&runtime, &checkout_id);
+        assert_eq!(after[1], moved, "the drop did not land: {after:?}");
+        assert!(runtime.pending_tab_move.is_empty());
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// AC11, R9. A drag that does change the moved tab's own workspace order
+    /// still asks Herdr, and asks with an index counted in that workspace, not
+    /// in the mixed strip the operator sees.
+    #[test]
+    fn tab_strip_reorder_a_drag_within_one_workspace_uses_that_workspaces_index() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("split-herdr");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        assert!(runtime.ingest_session(Ok(split_checkout_payload(
+            &checkout_path,
+            &[
+                ("w-left", &["w-left:t1"][..], "w-left:t1"),
+                ("w-right", &["w-right:t1", "w-right:t2"][..], "w-right:t1"),
+            ],
+            "w-left"
+        ))));
+        let before = strip_ids(&runtime, &checkout_id);
+
+        let socket_root = PathBuf::from("/tmp").join(format!(
+            "herdr-core-split-move-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&socket_root).expect("socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
+        let server = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            let (mut stream, _) = listener.accept().expect("accept tab.move");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut line)
+                .expect("read request");
+            let request: serde_json::Value =
+                serde_json::from_str(&line).expect("tab.move request JSON");
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "id": request["id"],
+                    "result": {
+                        "type": "tab_list",
+                        "tabs": [
+                            {"tab_id": "w-right:t2"},
+                            {"tab_id": "w-right:t1"}
+                        ]
+                    }
+                })
+            )
+            .expect("write tab_list response");
+            request
+        });
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+
+        // Move the right workspace's first tab behind its second.
+        let moved = before
+            .iter()
+            .find(|id| id.ends_with("w-right:t1"))
+            .expect("the right workspace's first tab")
+            .clone();
+        let target = before
+            .iter()
+            .position(|id| id.ends_with("w-right:t2"))
+            .expect("the right workspace's second tab");
+        assert!(reorder_tab(&mut runtime, &checkout_id, &moved, target));
+
+        let request = server.join().expect("fixture server joins");
+        assert_eq!(request["method"], "tab.move");
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"tab_id": "w-right:t1", "insert_index": 2}),
+            "the index was not counted in the moved tab's own workspace"
+        );
+        // Nothing lands on the operator's word alone.
+        assert_eq!(strip_ids(&runtime, &checkout_id), before);
+
+        // Herdr reports the new order for the workspace it moved a tab in.
+        // The held arrangement has to land here: the checkout holds two
+        // workspaces' tabs, so what Herdr reports for one of them is never the
+        // whole checkout's list, and a hold that waited for the whole list
+        // would never be released.
+        assert!(runtime.ingest_session(Ok(split_checkout_payload(
+            &checkout_path,
+            &[
+                ("w-left", &["w-left:t1"][..], "w-left:t1"),
+                ("w-right", &["w-right:t2", "w-right:t1"][..], "w-right:t1"),
+            ],
+            "w-left"
+        ))));
+        let after = strip_ids(&runtime, &checkout_id);
+        let right = after
+            .iter()
+            .filter(|id| id.contains("w-right:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            right,
+            vec![
+                "herdr:w-right:t2".to_owned(),
+                "herdr:w-right:t1".to_owned()
+            ],
+            "the move Herdr granted did not land: {after:?}"
+        );
+        assert!(
+            runtime.pending_tab_move.is_empty(),
+            "a granted move stayed pending in a checkout two workspaces share"
+        );
+
+        std::fs::remove_dir_all(&socket_root).ok();
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// AC11, R9, SC6. A drag can both reorder the moved tab inside its own
+    /// workspace and carry it past another workspace's tabs. The operator's
+    /// arrangement is then an interleaving Herdr never reports, because Herdr
+    /// only ever states one workspace's order. Holding the checkout's mixed
+    /// order and waiting for it to come back left the drag pending forever and
+    /// the strip snapped back to where the tab started.
+    #[test]
+    fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("split-interleaved");
+        let checkout_path = directory.to_string_lossy().into_owned();
+        let workspaces: [(&str, &[&str], &str); 2] = [
+            ("w-left", &["w-left:t1"][..], "w-left:t1"),
+            ("w-right", &["w-right:t1", "w-right:t2"][..], "w-right:t1"),
+        ];
+        assert!(runtime.ingest_session(Ok(split_checkout_payload(
+            &checkout_path,
+            &workspaces,
+            "w-left"
+        ))));
+        let before = strip_ids(&runtime, &checkout_id);
+        assert_eq!(
+            before,
+            vec![
+                "herdr:w-left:t1".to_owned(),
+                "herdr:w-right:t1".to_owned(),
+                "herdr:w-right:t2".to_owned()
+            ],
+            "the fixture strip is not the order this test reasons about: {before:?}"
+        );
+
+        let socket_root = PathBuf::from("/tmp").join(format!(
+            "herdr-core-split-interleave-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&socket_root).expect("socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
+        let server = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            let (mut stream, _) = listener.accept().expect("accept tab.move");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut line)
+                .expect("read request");
+            let request: serde_json::Value =
+                serde_json::from_str(&line).expect("tab.move request JSON");
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "id": request["id"],
+                    "result": {
+                        "type": "tab_list",
+                        "tabs": [
+                            {"tab_id": "w-right:t2"},
+                            {"tab_id": "w-right:t1"}
+                        ]
+                    }
+                })
+            )
+            .expect("write tab_list response");
+            request
+        });
+        runtime.live = Some(live::LiveContext {
+            socket_path: socket_path.clone(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        });
+
+        // The right workspace's second tab is dragged to the very front, over
+        // the left workspace's tab as well as its own sibling.
+        assert!(reorder_tab(&mut runtime, &checkout_id, "herdr:w-right:t2", 0));
+        let request = server.join().expect("fixture server joins");
+        assert_eq!(request["method"], "tab.move");
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"tab_id": "w-right:t2", "insert_index": 0}),
+            "the index was not counted in the moved tab's own workspace"
+        );
+
+        // Herdr states the right workspace's new order. The checkout still
+        // lists its tabs workspace by workspace, so what comes back is
+        // `w-left:t1, w-right:t2, w-right:t1` - never the operator's
+        // interleaving.
+        let moved_workspaces: [(&str, &[&str], &str); 2] = [
+            ("w-left", &["w-left:t1"][..], "w-left:t1"),
+            ("w-right", &["w-right:t2", "w-right:t1"][..], "w-right:t1"),
+        ];
+        assert!(runtime.ingest_session(Ok(split_checkout_payload(
+            &checkout_path,
+            &moved_workspaces,
+            "w-left"
+        ))));
+
+        assert!(
+            runtime.pending_tab_move.is_empty(),
+            "a granted move stayed pending because the operator interleaved two workspaces"
+        );
+        assert_eq!(
+            strip_ids(&runtime, &checkout_id),
+            vec![
+                "herdr:w-right:t2".to_owned(),
+                "herdr:w-left:t1".to_owned(),
+                "herdr:w-right:t1".to_owned()
+            ],
+            "the drag did not stay where the operator dropped it"
+        );
+
+        std::fs::remove_dir_all(&socket_root).ok();
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// AC15, R11, SC7. Herdr closes the PTY before it reports the pane gone,
+    /// so the attach child ends while the pane is still drawn. Reading that as
+    /// a transport failure is what flashed "terminal attach ended" over a pane
+    /// the operator had just closed.
+    #[test]
+    fn close_projection_a_close_hide_asked_for_is_not_a_transport_failure() {
+        let checkout_path = "/private/tmp/hide-close-projection";
+        let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+        runtime.suppress_terminal_session_workers = true;
+        let tabs = ["w-order:t1"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        let pane_id = "w-order:t1:p";
+        let resize = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
+        }))
+        .expect("resize event");
+        runtime.dispatch_json(&resize);
+        assert!(runtime.terminal_sessions.contains_key(pane_id));
+        let generation = runtime.terminal_session_generations[pane_id];
+        let chunks_before = runtime.snapshot().terminal.chunks.len();
+
+        let close = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "close_pane",
+            "payload": {"pane_id": pane_id, "confirmed": true}
+        }))
+        .expect("close pane event");
+        runtime.dispatch_json(&close);
+        assert!(runtime.ingest_terminal_session_closed(
+            pane_id,
+            generation,
+            TerminalSessionMode::Control,
+            None,
+        ));
+
+        let pane = runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .expect("the pane is still drawn until Herdr removes it")
+            .clone();
+        assert_eq!(pane.transport_state, "closing");
+        assert!(pane.transport_message.is_none());
+        assert_eq!(
+            runtime.snapshot().terminal.chunks.len(),
+            chunks_before,
+            "a notice was written over the pane's last frame"
+        );
+        let _ = checkout_id;
+    }
+
+    /// The other half of the same rule: a close that is not the pane going
+    /// away still reports itself exactly as it did.
+    #[test]
+    fn close_projection_a_failure_on_a_living_pane_still_reports_ended() {
+        let checkout_path = "/private/tmp/hide-close-failure";
+        let (mut runtime, _checkout_id) = live_tab_order_runtime(checkout_path);
+        runtime.suppress_terminal_session_workers = true;
+        let tabs = ["w-order:t1"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        let pane_id = "w-order:t1:p";
+        let resize = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "terminal_resize",
+            "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
+        }))
+        .expect("resize event");
+        runtime.dispatch_json(&resize);
+        let generation = runtime.terminal_session_generations[pane_id];
+
+        assert!(runtime.ingest_terminal_session_closed(
+            pane_id,
+            generation,
+            TerminalSessionMode::Control,
+            Some("herdr terminal session control exited with status 1".to_owned()),
+        ));
+
+        let pane = runtime
+            .snapshot()
+            .terminal
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .expect("the pane is still projected")
+            .clone();
+        assert_eq!(pane.transport_state, "ended");
+        assert!(pane.transport_message.is_some());
     }
 }
