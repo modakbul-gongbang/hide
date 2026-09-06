@@ -27,7 +27,9 @@ use russh::{Channel, ChannelMsg, ChannelOpenFailure, Disconnect, Pty};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileType as SftpFileType, OpenFlags};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+#[cfg(test)]
+use serde_json::Value;
+use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::runtime::{Builder, Runtime};
@@ -57,8 +59,7 @@ pub const REMOTE_PROCESS_ENVIRONMENT: &[EnvironmentContract] = &[
         key: "SSH_AUTH_SOCK",
         value: None,
         requirement: "optional",
-        missing_behavior:
-            "agent authentication uses the ssh config IdentityAgent, and reports an explicit action-required failure when neither is set",
+        missing_behavior: "agent authentication uses the ssh config IdentityAgent, and reports an explicit action-required failure when neither is set",
     },
 ];
 
@@ -716,200 +717,12 @@ pub struct RemoteSnapshotEnvelope {
     pub agent_ids: Vec<String>,
 }
 
+#[cfg(test)]
 pub fn decode_remote_snapshot(
     value: &Value,
     operation_id: &str,
 ) -> RemoteResult<RemoteSnapshotEnvelope> {
-    let snapshot = value
-        .get("result")
-        .and_then(|result| result.get("snapshot"))
-        .or_else(|| value.get("snapshot"))
-        .ok_or_else(|| {
-            remote_error(
-                operation_id,
-                "herdr",
-                RemoteStage::Herdr,
-                "response does not contain result.snapshot",
-                true,
-                false,
-            )
-        })?;
-    let protocol_value = snapshot
-        .get("protocol")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| {
-            remote_error(
-                operation_id,
-                "herdr",
-                RemoteStage::Protocol,
-                "snapshot.protocol is missing",
-                false,
-                true,
-            )
-        })?;
-    let protocol = u32::try_from(protocol_value).map_err(|_| {
-        remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Protocol,
-            "snapshot.protocol exceeds u32",
-            false,
-            true,
-        )
-    })?;
-    if protocol != REMOTE_PROTOCOL_REVISION {
-        return Err(remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Protocol,
-            format!("protocol mismatch expected={REMOTE_PROTOCOL_REVISION} received={protocol}"),
-            false,
-            true,
-        ));
-    }
-    let host_value = snapshot.get("host").ok_or_else(|| {
-        remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Herdr,
-            "snapshot.host is missing",
-            false,
-            true,
-        )
-    })?;
-    let host = HostScope {
-        host_id: required_string(host_value, "host_id", operation_id)?,
-        session_id: required_string(host_value, "session_id", operation_id)?,
-    };
-    let event_sequence = snapshot
-        .get("event_sequence")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| {
-            remote_error(
-                operation_id,
-                "herdr",
-                RemoteStage::Protocol,
-                "snapshot.event_sequence is missing",
-                false,
-                true,
-            )
-        })?;
-    let workspace_ids = string_ids(snapshot, "workspaces", "workspace_id", operation_id)?;
-    let pane_ids = string_ids(snapshot, "panes", "pane_id", operation_id)?;
-    let agent_ids = optional_string_ids(snapshot, "agents", "agent_instance_id", operation_id)?;
-    Ok(RemoteSnapshotEnvelope {
-        host,
-        protocol,
-        event_sequence,
-        workspace_ids,
-        pane_ids,
-        agent_ids,
-    })
-}
-
-fn required_string(value: &Value, key: &str, operation_id: &str) -> RemoteResult<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            remote_error(
-                operation_id,
-                "herdr",
-                RemoteStage::Protocol,
-                format!("missing non-empty field {key}"),
-                false,
-                true,
-            )
-        })
-}
-
-fn string_ids(
-    value: &Value,
-    array_key: &str,
-    id_key: &str,
-    operation_id: &str,
-) -> RemoteResult<Vec<String>> {
-    let Some(values) = value.get(array_key) else {
-        return Ok(Vec::new());
-    };
-    let values = values.as_array().ok_or_else(|| {
-        remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Protocol,
-            format!("{array_key} is not an array"),
-            false,
-            true,
-        )
-    })?;
-    let mut ids = values
-        .iter()
-        .map(|value| required_string(value, id_key, operation_id))
-        .collect::<RemoteResult<Vec<_>>>()?;
-    ids.sort();
-    if ids.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Protocol,
-            format!("{array_key} contains duplicate {id_key}"),
-            false,
-            true,
-        ));
-    }
-    Ok(ids)
-}
-
-fn optional_string_ids(
-    value: &Value,
-    array_key: &str,
-    id_key: &str,
-    operation_id: &str,
-) -> RemoteResult<Vec<String>> {
-    let Some(values) = value.get(array_key) else {
-        return Ok(Vec::new());
-    };
-    let values = values.as_array().ok_or_else(|| {
-        remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Protocol,
-            format!("{array_key} is not an array"),
-            false,
-            true,
-        )
-    })?;
-    let mut ids = Vec::new();
-    for value in values {
-        match value.get(id_key) {
-            None | Some(Value::Null) => {}
-            Some(Value::String(id)) if !id.is_empty() => ids.push(id.clone()),
-            Some(_) => {
-                return Err(remote_error(
-                    operation_id,
-                    "herdr",
-                    RemoteStage::Protocol,
-                    format!("{array_key}.{id_key} must be a non-empty string or null"),
-                    false,
-                    true,
-                ));
-            }
-        }
-    }
-    ids.sort();
-    if ids.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(remote_error(
-            operation_id,
-            "herdr",
-            RemoteStage::Protocol,
-            format!("{array_key} contains duplicate {id_key}"),
-            false,
-            true,
-        ));
-    }
-    Ok(ids)
+    crate::wire::remote_snapshot(value, operation_id)
 }
 
 pub struct RemoteHerdrProjection {
@@ -1034,7 +847,8 @@ impl RemoteHerdrProjection {
     /// Applies the remote snapshot identity envelope. A full `DomainSnapshot` can be
     /// installed with [`Self::apply_snapshot`] after the caller has decoded the
     /// server-specific layout payload. Keeping that distinction explicit prevents a
-    /// sparse wire envelope from being mistaken for a complete event baseline.
+    /// decoded ID envelope from being mistaken for a complete event baseline.
+    #[cfg(test)]
     pub fn apply_wire_snapshot(&mut self, value: &Value, operation_id: &str) -> RemoteResult<()> {
         let envelope = match decode_remote_snapshot(value, operation_id) {
             Ok(envelope) => envelope,
@@ -2052,37 +1866,42 @@ impl RusshRemoteClient {
     }
 
     pub fn fetch_herdr_snapshot(&self, socket_path: &str) -> RemoteResult<RemoteSnapshotEnvelope> {
-        let value = self.fetch_herdr_snapshot_value(socket_path)?;
-        decode_remote_snapshot(&value, "remote-herdr-snapshot")
+        let connector = self.herdr_api_connector(socket_path)?;
+        let response = crate::herdr_api::request_with_connector(
+            &connector,
+            "session.snapshot",
+            crate::wire::empty_params(),
+            SSH_OPERATION_TIMEOUT,
+        )
+        .map_err(|error| self.remote_snapshot_error(error))?;
+        crate::wire::remote_snapshot(&response, "remote-herdr-snapshot")
     }
 
-    /// Returns the transport JSON value from the remote Herdr snapshot call.
-    /// The caller may decode the full server layout payload at the projection boundary;
-    /// raw values must not be copied into diagnostics or logs.
+    #[cfg(test)]
     pub fn fetch_herdr_snapshot_value(&self, socket_path: &str) -> RemoteResult<Value> {
         let connector = self.herdr_api_connector(socket_path)?;
         crate::herdr_api::request_with_connector(
             &connector,
             "session.snapshot",
-            json!({}),
+            crate::wire::empty_params(),
             SSH_OPERATION_TIMEOUT,
         )
-        .map_err(|error| {
-            let (stage, retryable, action_required) = match &error {
-                ApiError::Malformed(_) => (RemoteStage::Protocol, false, true),
-                ApiError::Transport(_) | ApiError::Remote { .. } => {
-                    (RemoteStage::Herdr, true, false)
-                }
-            };
-            remote_error(
-                "remote-herdr-snapshot",
-                &self.host.host_id,
-                stage,
-                error,
-                retryable,
-                action_required,
-            )
-        })
+        .map_err(|error| self.remote_snapshot_error(error))
+    }
+
+    fn remote_snapshot_error(&self, error: ApiError) -> RemoteError {
+        let (stage, retryable, action_required) = match &error {
+            ApiError::Malformed(_) => (RemoteStage::Protocol, false, true),
+            ApiError::Transport(_) | ApiError::Remote { .. } => (RemoteStage::Herdr, true, false),
+        };
+        remote_error(
+            "remote-herdr-snapshot",
+            &self.host.host_id,
+            stage,
+            error,
+            retryable,
+            action_required,
+        )
     }
 
     pub fn open_pty(&self, endpoint: RemotePtyEndpoint) -> RemoteResult<RemotePtySession> {
@@ -4407,14 +4226,15 @@ mod tests {
         let value = serde_json::json!({
             "result": {"snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
+                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
                 "host": {"host_id": "ssh:mini", "session_id": "s1"},
                 "event_sequence": 9,
-                "workspaces": [{"workspace_id": "w1"}],
-                "panes": [{"pane_id": "p1"}],
+                "workspaces": [{"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}],
+                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
                 "agents": [
-                    {"agent_instance_id": "a1"},
-                    {"agent_instance_id": null},
-                    {"pane_id": "p2"}
+                    {"agent_instance_id": "a1", "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
+                    {"agent_instance_id": null, "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
+                    {"pane_id": "p2", "terminal_id": "fixture2", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
                 ]
             }}
         });
@@ -4438,9 +4258,11 @@ mod tests {
         let duplicate = serde_json::json!({
             "snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
+                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
                 "host": {"host_id": "h", "session_id": "s"},
                 "event_sequence": 1,
-                "panes": [{"pane_id": "p1"}, {"pane_id": "p1"}]
+                "workspaces": [], "agents": [],
+                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}, {"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
             }
         });
         let error = decode_remote_snapshot(&duplicate, "op").unwrap_err();
@@ -4513,11 +4335,12 @@ mod tests {
         let value = serde_json::json!({
             "snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
+                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
                 "host": {"host_id": "ssh:mini", "session_id": "s1"},
                 "event_sequence": 9,
-                "workspaces": [{"workspace_id": "w1"}],
-                "panes": [{"pane_id": "p1"}],
-                "agents": [{"agent_instance_id": "a1"}]
+                "workspaces": [{"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}],
+                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
+                "agents": [{"agent_instance_id": "a1", "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
             }
         });
         projection.apply_wire_snapshot(&value, "op").unwrap();
@@ -4544,11 +4367,12 @@ mod tests {
         let value = serde_json::json!({
             "snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
+                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
                 "host": {"host_id": "ssh:mini", "session_id": "s1"},
                 "event_sequence": 9,
-                "workspaces": [{"workspace_id": "w1"}],
-                "panes": [{"pane_id": "p1"}],
-                "agents": [{"agent_instance_id": "a1"}]
+                "workspaces": [{"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}],
+                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
+                "agents": [{"agent_instance_id": "a1", "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
             }
         });
         projection.apply_wire_snapshot(&value, "op-1").unwrap();

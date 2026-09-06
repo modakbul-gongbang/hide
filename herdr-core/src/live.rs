@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::wire;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
@@ -215,18 +216,9 @@ fn create_herdr_workspace(
     let result = control_request(
         connector,
         "workspace.create",
-        json!({
-            "cwd": cwd,
-            "focus": true,
-            "label": label,
-        }),
+        wire::workspace_create_params(cwd, label)?,
     )?;
-    let pane_id = result
-        .pointer("/root_pane/pane_id")
-        .and_then(Value::as_str)
-        .filter(|pane_id| !pane_id.trim().is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| "workspace.create response is missing root_pane.pane_id".to_owned())?;
+    let pane_id = wire::created_workspace_pane(result)?;
     Ok(CreatedWorkspace { pane_id })
 }
 
@@ -425,12 +417,12 @@ fn execute_remote_control(
             control_request(
                 connector,
                 "workspace.focus",
-                json!({"workspace_id": workspace_id}),
+                wire::workspace_target_params(workspace_id)?,
             )?;
             (None, None)
         }
         RemoteControlAction::FocusTab { tab_id } => {
-            control_request(connector, "tab.focus", json!({"tab_id": tab_id}))?;
+            control_request(connector, "tab.focus", wire::tab_target_params(tab_id)?)?;
             (None, None)
         }
         RemoteControlAction::CreateTab {
@@ -441,29 +433,13 @@ fn execute_remote_control(
             let result = control_request(
                 connector,
                 "tab.create",
-                json!({
-                    "workspace_id": workspace_id,
-                    "cwd": cwd,
-                    "focus": true,
-                    "label": label,
-                }),
+                wire::tab_create_params(workspace_id, cwd, label)?,
             )?;
-            let tab_id = result
-                .pointer("/tab/tab_id")
-                .and_then(Value::as_str)
-                .filter(|tab_id| !tab_id.trim().is_empty())
-                .map(str::to_owned)
-                .ok_or_else(|| "tab.create response is missing tab.tab_id".to_owned())?;
-            let pane_id = result
-                .pointer("/root_pane/pane_id")
-                .and_then(Value::as_str)
-                .filter(|pane_id| !pane_id.trim().is_empty())
-                .map(str::to_owned)
-                .ok_or_else(|| "tab.create response is missing root_pane.pane_id".to_owned())?;
+            let (tab_id, pane_id) = wire::created_tab(result)?;
             (Some(tab_id), Some(pane_id))
         }
         RemoteControlAction::CloseTab { tab_id } => {
-            control_request(connector, "tab.close", json!({"tab_id": tab_id}))?;
+            control_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
             (None, None)
         }
         RemoteControlAction::MoveTab {
@@ -477,22 +453,9 @@ fn execute_remote_control(
             let result = control_request(
                 connector,
                 "tab.move",
-                json!({"tab_id": tab_id, "insert_index": insert_index}),
+                wire::tab_move_params(tab_id, *insert_index)?,
             )?;
-            let tabs = result
-                .get("tabs")
-                .and_then(Value::as_array)
-                .ok_or_else(|| "tab.move response is missing tabs".to_owned())?;
-            let tab_ids = tabs
-                .iter()
-                .map(|tab| {
-                    tab.get("tab_id")
-                        .and_then(Value::as_str)
-                        .filter(|tab_id| !tab_id.trim().is_empty())
-                        .map(str::to_owned)
-                        .ok_or_else(|| "tab.move response has a tab without an id".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let tab_ids = wire::moved_tabs(result)?;
             return Ok(RemoteControlOutcome::TabsOrdered { tab_ids });
         }
     };
@@ -511,7 +474,7 @@ fn execute_pane_control(
             .map(|layout| PaneControlOutcome::Projected { layout });
     }
     if let PaneControlAction::Focus { pane_id } = action {
-        control_request(connector, "pane.focus", json!({"pane_id": pane_id}))?;
+        control_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)?;
         return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
         });
@@ -525,7 +488,7 @@ fn execute_pane_control(
         control_request(
             connector,
             "pane.resize",
-            json!({"pane_id": pane_id, "direction": direction.as_str(), "amount": amount}),
+            wire::pane_resize_params(pane_id, *direction, *amount)?,
         )?;
         return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
@@ -541,34 +504,16 @@ fn execute_pane_control(
             // The user split to work in the new pane, so Herdr focuses it as
             // part of the split and the pane_focused event lands the shell's
             // selection there with no second round trip.
-            let mut params = json!({
-                "target_pane_id": pane_id,
-                "direction": direction.as_str(),
-                "focus": true,
-            });
-            if let Some(cwd) = cwd.as_deref().filter(|value| !value.trim().is_empty()) {
-                params["cwd"] = Value::String(cwd.to_owned());
-            }
+            let params = wire::pane_split_params(pane_id, *direction, cwd.as_deref())?;
             let result = control_request(connector, "pane.split", params)?;
-            Some(
-                result
-                    .pointer("/pane/pane_id")
-                    .and_then(Value::as_str)
-                    .filter(|pane_id| !pane_id.trim().is_empty())
-                    .map(str::to_owned)
-                    .ok_or_else(|| "pane.split response is missing pane.pane_id".to_owned())?,
-            )
+            Some(wire::split_pane(result)?)
         }
         PaneControlAction::ToggleZoom { pane_id } => {
-            control_request(
-                connector,
-                "pane.zoom",
-                json!({"pane_id": pane_id, "mode": "toggle"}),
-            )?;
+            control_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
             None
         }
         PaneControlAction::Close { pane_id } => {
-            control_request(connector, "pane.close", json!({"pane_id": pane_id}))?;
+            control_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
             None
         }
         PaneControlAction::Project { .. }
@@ -591,14 +536,8 @@ fn fetch_pane_layout(
     connector: &dyn ApiConnector,
     pane_id: &str,
 ) -> Result<PaneLayoutSnapshot, String> {
-    let result = control_request(connector, "pane.layout", json!({"pane_id": pane_id}))?;
-    let layout = serde_json::from_value::<SessionLayoutPayload>(
-        result
-            .get("layout")
-            .cloned()
-            .ok_or_else(|| "pane.layout response is missing layout".to_owned())?,
-    )
-    .map_err(|error| format!("pane.layout response is malformed: {error}"))?;
+    let result = control_request(connector, "pane.layout", wire::pane_layout_params(pane_id)?)?;
+    let layout = wire::pane_layout(result)?;
     project_layout(&layout)
 }
 
@@ -756,9 +695,9 @@ fn run_pane_find(
     })
 }
 
-struct PaneText {
-    text: String,
-    truncated: bool,
+pub(crate) struct PaneText {
+    pub(crate) text: String,
+    pub(crate) truncated: bool,
 }
 
 fn read_pane_text(
@@ -769,27 +708,9 @@ fn read_pane_text(
     let response = control_request(
         connector,
         "pane.read",
-        json!({
-            "pane_id": pane_id,
-            "source": source,
-            "lines": PANE_FIND_LINE_LIMIT,
-            "format": "text",
-        }),
+        wire::pane_read_params(pane_id, source, PANE_FIND_LINE_LIMIT)?,
     )?;
-    let read = response
-        .get("read")
-        .ok_or_else(|| "pane.read returned no read section".to_owned())?;
-    Ok(PaneText {
-        text: read
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        truncated: read
-            .get("truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
+    wire::pane_text(response)
 }
 
 pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<(), String> {
@@ -838,30 +759,7 @@ fn run_agent_fork(
             stderr
         });
     }
-    let response: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("herdr agent new returned unreadable output: {error}"))?;
-    forked_pane_id(&response)
-        .ok_or_else(|| "herdr agent new reported no created pane".to_owned())
-}
-
-/// The created pane's id, wherever the CLI puts it. The command answers with
-/// the pane it made, and that id is what proves the fork landed.
-fn forked_pane_id(response: &Value) -> Option<String> {
-    for pointer in [
-        "/result/pane/pane_id",
-        "/result/agent/pane_id",
-        "/pane/pane_id",
-        "/agent/pane_id",
-    ] {
-        if let Some(pane_id) = response
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            .filter(|pane_id| !pane_id.trim().is_empty())
-        {
-            return Some(pane_id.to_owned());
-        }
-    }
-    None
+    wire::created_agent_pane(&output.stdout)
 }
 
 pub fn spawn_remote_control(
@@ -1062,14 +960,11 @@ fn fetch_session_with_connector(
     let result = request_with_connector(
         connector,
         "session.snapshot",
-        json!({}),
+        wire::empty_params(),
         Duration::from_secs(5),
     )
     .map_err(|error| SessionFetchError::Unreachable(error.to_string()))?;
-    let snapshot = result
-        .get("snapshot")
-        .ok_or_else(|| SessionFetchError::Malformed("response is missing snapshot".to_owned()))?;
-    project_session(snapshot)
+    wire::live_session_response(result)
 }
 
 /// Maps the herdr wire snapshot into the sidebar session payload. Tokens are
@@ -1310,13 +1205,7 @@ pub fn parse_terminal_session_line(line: &str) -> Result<TerminalSessionEvent, S
 }
 
 pub fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
-    let mut line = serde_json::to_string(&json!({
-        "type": "terminal.input",
-        "bytes": encode_base64(bytes),
-    }))
-    .map_err(|error| format!("terminal input could not be encoded: {error}"))?;
-    line.push('\n');
-    Ok(line)
+    wire::terminal_input_line(bytes)
 }
 
 /// Asks Herdr to move the pane through its own host scrollback.
@@ -1328,23 +1217,7 @@ pub fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
 /// the same path the Herdr TUI uses, which is why that client scrolls panes
 /// this one could not.
 pub fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, String> {
-    if !matches!(direction, "up" | "down") {
-        return Err(format!(
-            "terminal scroll direction is not up or down: {direction}"
-        ));
-    }
-    if lines == 0 {
-        return Err("terminal scroll needs at least one line".to_owned());
-    }
-    let mut line = serde_json::to_string(&json!({
-        "type": "terminal.scroll",
-        "direction": direction,
-        "lines": lines,
-        "source": "wheel",
-    }))
-    .map_err(|error| format!("terminal scroll could not be encoded: {error}"))?;
-    line.push('\n');
-    Ok(line)
+    wire::terminal_scroll_line(direction, lines)
 }
 
 /// Sends the viewport move and a same-size repaint request as one ordered
@@ -1367,23 +1240,11 @@ pub fn terminal_scroll_request_lines(
 }
 
 pub fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
-    if rows == 0 || cols == 0 {
-        return Err("terminal dimensions must be positive".to_owned());
-    }
-    let mut line = serde_json::to_string(&json!({
-        "type": "terminal.resize",
-        "cols": cols,
-        "rows": rows,
-        "cell_width_px": 0,
-        "cell_height_px": 0,
-    }))
-    .map_err(|error| format!("terminal resize could not be encoded: {error}"))?;
-    line.push('\n');
-    Ok(line)
+    wire::terminal_resize_line(rows, cols)
 }
 
 pub fn terminal_release_line() -> String {
-    "{\"type\":\"terminal.release\"}\n".to_owned()
+    wire::terminal_release_line()
 }
 
 pub fn terminal_closed_category(reason: Option<&str>) -> &'static str {
@@ -2138,9 +1999,9 @@ mod tests {
                     "id": request["id"],
                     "result": {
                         "type": "workspace_created",
-                        "workspace": {"workspace_id": "w1"},
-                        "tab": {"tab_id": "w1:t1"},
-                        "root_pane": {"pane_id": "w1:p1"},
+                        "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
+                        "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
+                        "root_pane": {"pane_id": "w1:p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
                     }
                 })
             )
@@ -2179,6 +2040,7 @@ mod tests {
                     json!({
                         "target_pane_id": "w1:p1",
                         "direction": "right",
+                        "right_click": "herdr",
                         "focus": true,
                         "cwd": "/tmp/herdr-ide-verify-shortcuts"
                     }),
@@ -2188,6 +2050,7 @@ mod tests {
                     json!({
                         "target_pane_id": "w1:p1",
                         "direction": "down",
+                        "right_click": "herdr",
                         "focus": true
                     }),
                 ),
@@ -2204,12 +2067,16 @@ mod tests {
                 assert_eq!(request["method"], method);
                 assert_eq!(request["params"], params);
                 let result = if method == "pane.split" {
-                    json!({"pane": {"pane_id": "w1:p2"}})
+                    json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
                 } else {
-                    json!({"changed": true})
+                    json!({"type": "ok"})
                 };
-                writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
-                    .expect("write response");
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
             }
         });
         let connector = UnixSocketConnector::new(&socket_path);
@@ -2250,12 +2117,12 @@ mod tests {
                 (
                     "workspace.focus",
                     json!({"workspace_id": "w1"}),
-                    json!({"type": "workspace_focused"}),
+                    json!({"type": "ok"}),
                 ),
                 (
                     "tab.focus",
                     json!({"tab_id": "w1:t2"}),
-                    json!({"type": "tab_focused"}),
+                    json!({"type": "ok"}),
                 ),
                 (
                     "tab.create",
@@ -2267,8 +2134,8 @@ mod tests {
                     }),
                     json!({
                         "type": "tab_created",
-                        "tab": {"tab_id": "w1:t3"},
-                        "root_pane": {"pane_id": "w1:p3"}
+                        "tab": {"tab_id": "w1:t3", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
+                        "root_pane": {"pane_id": "w1:p3", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
                     }),
                 ),
                 (
@@ -2286,8 +2153,12 @@ mod tests {
                 let request: Value = serde_json::from_str(&line).expect("request JSON");
                 assert_eq!(request["method"], method);
                 assert_eq!(request["params"], params);
-                writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
-                    .expect("write response");
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
             }
         });
         let connector = UnixSocketConnector::new(&socket_path);
@@ -2529,7 +2400,7 @@ mod tests {
                 "{}",
                 json!({
                     "id": request["id"],
-                    "result": {"pane": {"pane_id": "w1:p2"}}
+                    "result": {"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}}
                 })
             )
             .expect("write response");
@@ -2584,9 +2455,10 @@ mod tests {
                 assert_eq!(request["method"], expected_method);
                 assert_eq!(request["params"]["pane_id"], "fixture:p2");
                 let result = if expected_method == "pane.focus" {
-                    json!({"pane": {"pane_id": "fixture:p2"}})
+                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
                 } else {
                     json!({
+                        "type": "pane_layout",
                         "layout": {
                             "workspace_id": "fixture",
                             "tab_id": "fixture:t1",
@@ -2594,17 +2466,21 @@ mod tests {
                             "area": {"x": 0, "y": 0, "width": 120, "height": 60},
                             "focused_pane_id": "fixture:p2",
                             "panes": [
-                                {"pane_id": "fixture:p1", "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
-                                {"pane_id": "fixture:p2", "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                                {"pane_id": "fixture:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                                {"pane_id": "fixture:p2", "focused": true, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
                             ],
                             "splits": [
-                                {"direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
+                                {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
                             ]
                         }
                     })
                 };
-                writeln!(stream, "{}", json!({"id": request["id"], "result": result}))
-                    .expect("write response");
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
             }
         });
 
@@ -2672,8 +2548,14 @@ mod tests {
         assert_eq!(payload.agents[1].workspace_label.as_deref(), Some("w9"));
 
         let projected = crate::sidebar::project_agents(payload).agents;
-        assert_eq!((projected[0].demand.as_str(), projected[0].activity.as_str()), ("none", "working"));
-        assert_eq!((projected[1].demand.as_str(), projected[1].activity.as_str()), ("none", "stopped"));
+        assert_eq!(
+            (projected[0].demand.as_str(), projected[0].activity.as_str()),
+            ("none", "working")
+        );
+        assert_eq!(
+            (projected[1].demand.as_str(), projected[1].activity.as_str()),
+            ("none", "stopped")
+        );
     }
 
     #[test]
