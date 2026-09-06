@@ -320,8 +320,11 @@ struct CoreNavigatorSnapshot: Decodable {
     let workspaces: [CoreWorkspaceSnapshot]
     let agents: [SidebarAgent]
     let providerUsage: [CoreProviderUsageSnapshot]
+    /// The one space that is not a project.
+    let scratch: CoreScratchSnapshot
 
     enum CodingKeys: String, CodingKey {
+        case scratch
         case rootPath = "root_path"
         case focusedDeviceID = "focused_device_id"
         case focusedWorkspaceID = "focused_workspace_id"
@@ -345,7 +348,79 @@ struct CoreNavigatorSnapshot: Decodable {
             [CoreProviderUsageSnapshot].self,
             forKey: .providerUsage
         ) ?? []
+        scratch = try container.decodeIfPresent(CoreScratchSnapshot.self, forKey: .scratch)
+            ?? CoreScratchSnapshot.empty
     }
+}
+
+/// The Scratch node as the sidebar draws it: one folder, and the tabs in it.
+struct CoreScratchSnapshot: Decodable {
+    let id: String
+    let label: String
+    let path: String
+    let expanded: Bool
+    let sessionWorkspaceIDs: [String]
+    let tabs: [CoreScratchTabSnapshot]
+
+    static let empty = CoreScratchSnapshot(
+        id: "scratch",
+        label: "Scratch",
+        path: "",
+        expanded: false,
+        sessionWorkspaceIDs: [],
+        tabs: []
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case path
+        case expanded
+        case sessionWorkspaceIDs = "session_workspace_ids"
+        case tabs
+    }
+
+    init(
+        id: String,
+        label: String,
+        path: String,
+        expanded: Bool,
+        sessionWorkspaceIDs: [String],
+        tabs: [CoreScratchTabSnapshot]
+    ) {
+        self.id = id
+        self.label = label
+        self.path = path
+        self.expanded = expanded
+        self.sessionWorkspaceIDs = sessionWorkspaceIDs
+        self.tabs = tabs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? "scratch"
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? "Scratch"
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        expanded = try container.decodeIfPresent(Bool.self, forKey: .expanded) ?? false
+        sessionWorkspaceIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .sessionWorkspaceIDs
+        ) ?? []
+        tabs = try container.decodeIfPresent([CoreScratchTabSnapshot].self, forKey: .tabs) ?? []
+    }
+}
+
+/// One Scratch row.
+struct CoreScratchTabSnapshot: Decodable, Identifiable {
+    let id: String
+    let label: String
+    /// The chat's title, when the composer wrote one onto its pane.
+    let title: String?
+    let panes: [CorePaneSnapshot]
+
+    /// What the row says: the title when there is one, the tab label when
+    /// there is not. Derived once here so no view has to decide it again.
+    var displayName: String { title ?? label }
 }
 
 struct CoreProviderUsageSnapshot: Decodable, Identifiable {
@@ -1190,8 +1265,16 @@ struct CoreUIStateSnapshot: Decodable {
     /// per document, and it is not a pane, so it carries a scale of its own
     /// instead of a row in the pane-keyed map.
     let editorTextScale: Double
+    /// The composer's defaults for the next chat, and whether the Scratch
+    /// section is open. Written by those surfaces only.
+    let lastAgentKind: String
+    let lastAgentBypass: Bool
+    let scratchExpanded: Bool
 
     enum CodingKeys: String, CodingKey {
+        case lastAgentKind = "last_agent_kind"
+        case lastAgentBypass = "last_agent_bypass"
+        case scratchExpanded = "scratch_expanded"
         case leftSidebarVisible = "left_sidebar_visible"
         case rightPanelVisible = "right_panel_visible"
         case rightPanelSection = "right_panel_section"
@@ -1225,6 +1308,10 @@ struct CoreUIStateSnapshot: Decodable {
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
+        lastAgentKind = try container.decodeIfPresent(String.self, forKey: .lastAgentKind)
+            ?? AgentProvider.claude.rawValue
+        lastAgentBypass = try container.decodeIfPresent(Bool.self, forKey: .lastAgentBypass) ?? false
+        scratchExpanded = try container.decodeIfPresent(Bool.self, forKey: .scratchExpanded) ?? false
         shortcutBindings = try container.decodeIfPresent(
             [String: String].self,
             forKey: .shortcutBindings
@@ -2138,48 +2225,63 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func startAgent(
-        agent: String,
-        checkoutPath: String,
-        checkoutID: String,
-        workspaceID: String?,
-        bypassWarnings: Bool
+    /// Starts one chat and reports what happened.
+    ///
+    /// The four Herdr calls run on a detached task, never on the main actor
+    /// and never under the runtime lock: the readiness wait alone is up to
+    /// thirty seconds, and holding either through it would freeze the window.
+    /// The completion is what unlocks the composer, so the sheet stays locked
+    /// for exactly as long as the work takes.
+    func startChat(
+        destination: ChatDestination,
+        provider: AgentProvider,
+        message: String,
+        bypassWarnings: Bool,
+        completion: @escaping @MainActor (ChatLaunchResult) -> Void
     ) {
         guard let runtimeSelection else {
             bridgeError = HideStartupDiagnostic.runtimeUnavailable
+            completion(
+                ChatLaunchResult(
+                    succeeded: false,
+                    failedStep: .createTab,
+                    message: HideStartupDiagnostic.runtimeUnavailable,
+                    paneID: nil
+                )
+            )
             return
         }
         let herdrPath = runtimeSelection.path
         HideLaunchTrace.mark(
-            "agent.launch.requested",
-            detail: "kind=\(agent) workspace_id=\(workspaceID ?? "new")"
+            "chat.launch.requested",
+            detail: "kind=\(provider.rawValue) workspace_id=\(destination.workspaceID ?? "new")"
         )
         Task { @MainActor [weak self] in
             let result = await Task.detached {
-                HerdrAgentLauncher.launch(
+                HerdrChatLauncher.start(
                     herdrPath: herdrPath,
-                    agent: agent,
-                    checkoutPath: checkoutPath,
-                    workspaceID: workspaceID,
+                    destination: destination,
+                    provider: provider,
+                    message: message,
                     bypassWarnings: bypassWarnings
                 )
             }.value
             guard let self else { return }
             HideLaunchTrace.mark(
-                result.succeeded ? "agent.launch.ready" : "agent.launch.failed",
-                detail: result.message
+                result.succeeded ? "chat.launch.ready" : "chat.launch.failed",
+                detail: result.failedStep.map { "step=\($0.rawValue)" } ?? "ok"
             )
             if let paneID = result.paneID {
-                // Match the terminal-launch contract: the CLI-created root
-                // pane anchors this checkout until session sync publishes its
-                // authoritative layout. Keep the tab visible even when agent
-                // startup fails after Herdr has already created it.
-                persistUIState(
+                // The CLI-created root pane anchors the selection until
+                // session sync publishes its authoritative layout. The tab
+                // stays visible even when a later step failed, because it is
+                // a shell prompt the operator can still use.
+                self.persistUIState(
                     selectedPaneID: paneID,
-                    focusedCheckoutID: checkoutID
+                    focusedCheckoutID: destination.checkoutID
                 )
             }
-            bridgeError = result.message
+            completion(result)
         }
     }
 
@@ -2467,7 +2569,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         focusedCheckoutID: String? = nil,
         shortcutBindings: [String: String]? = nil,
         accentHex: String? = nil,
-        fontSize: Double? = nil
+        fontSize: Double? = nil,
+        lastAgentKind: String? = nil,
+        lastAgentBypass: Bool? = nil,
+        scratchExpanded: Bool? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -2492,6 +2597,19 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             // This is the one explicit local-selection anchor used after a
             // terminal launcher returns. It never asks Herdr to change focus.
             payload["focused_checkout_id"] = focusedCheckoutID
+        }
+        // The composer's memory and the Scratch section's state are written
+        // only by the surfaces that own them. Absent means unchanged, so a
+        // navigator save cannot reset the composer and a submission cannot
+        // close the Scratch section.
+        if let lastAgentKind {
+            payload["last_agent_kind"] = lastAgentKind
+        }
+        if let lastAgentBypass {
+            payload["last_agent_bypass"] = lastAgentBypass
+        }
+        if let scratchExpanded {
+            payload["scratch_expanded"] = scratchExpanded
         }
         if selectedPaneID != nil || focusedCheckoutID != nil {
             HideLaunchTrace.mark(

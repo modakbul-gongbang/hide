@@ -104,3 +104,48 @@ private func checkout(id: String, paneIDs: [String]) throws -> CoreCheckoutSnaps
 
     #expect(SidebarGrouping.agents(agents, in: mine).map(\.id) == ["a"])
 }
+
+private func scratchTab(id: String, paneIDs: [String], title: String?) throws
+    -> CoreScratchTabSnapshot
+{
+    let panes = paneIDs
+        .map { paneID in
+            #"{"id":"\#(paneID)","label":"\#(paneID)","cwd":"/scratch","status_label":"Idle","requires_close_confirmation":false}"#
+        }
+        .joined(separator: ",")
+    let titleField = title.map { "\"\($0)\"" } ?? "null"
+    let json = """
+        {"id":"\(id)","label":"Tab 1","title":\(titleField),"panes":[\(panes)]}
+        """
+    return try JSONDecoder().decode(CoreScratchTabSnapshot.self, from: Data(json.utf8))
+}
+
+/// AC6: a Scratch agent that Needs You already raised to the top is not drawn
+/// a second time under Scratch. Two rows for one agent is the defect; the
+/// project tree has always followed this rule and Scratch joins it.
+@Test func aRaisedScratchAgentIsNotDrawnAgainUnderScratch() throws {
+    let agents = [
+        agent(id: "waiting", paneID: "s1:p1", group: "needs_you"),
+        agent(id: "working", paneID: "s1:p2", group: "working"),
+    ]
+    let tabs = [
+        try scratchTab(id: "s1:t1", paneIDs: ["s1:p1"], title: "waiting chat"),
+        try scratchTab(id: "s1:t2", paneIDs: ["s1:p2"], title: "working chat"),
+        try scratchTab(id: "s1:t3", paneIDs: ["s1:p3"], title: nil),
+    ]
+
+    let drawn = SidebarGrouping.scratchTabsBelowRaisedSections(tabs: tabs, agents: agents)
+
+    #expect(drawn.map(\.id) == ["s1:t2", "s1:t3"])
+}
+
+/// The row's own name: its title when the composer wrote one, the tab label
+/// when it did not. A row that showed nothing would be worse than one showing
+/// `Tab 1`.
+@Test func aScratchRowNamesItselfByTitleThenLabel() throws {
+    let titled = try scratchTab(id: "s1:t1", paneIDs: ["s1:p1"], title: "build me a parser")
+    let untitled = try scratchTab(id: "s1:t2", paneIDs: ["s1:p2"], title: nil)
+
+    #expect(titled.displayName == "build me a parser")
+    #expect(untitled.displayName == "Tab 1")
+}

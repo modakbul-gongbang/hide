@@ -291,6 +291,7 @@ mod tests {
             ambient: None,
             session_id: None,
             spawned_from_pane_id: None,
+            chat_title: None,
         }
     }
 

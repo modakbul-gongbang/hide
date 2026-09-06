@@ -451,7 +451,7 @@ private struct HideAgentSettings: View {
 
         HideSettingsGroup(title: "Launch safety") {
             HideSettingsNote(
-                text: "Permission bypass is always off when a New Agent dialog opens, and it applies only to that one launch.",
+                text: "Permission bypass is a choice the composer remembers, and the chip says so while it is on.",
                 systemImage: "shield.lefthalf.filled",
                 showsDivider: false
             )

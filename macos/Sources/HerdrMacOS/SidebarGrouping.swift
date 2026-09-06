@@ -68,6 +68,22 @@ enum SidebarGrouping {
         sections(agents).filter { raisedGroups.contains($0.group) }
     }
 
+    /// The Scratch rows the tree below should draw.
+    ///
+    /// A Scratch agent that is waiting or finished is already a row at the
+    /// top, so drawing it again under Scratch would show one agent twice. The
+    /// project tree follows the same rule; this states it once for Scratch so
+    /// the two cannot drift.
+    static func scratchTabsBelowRaisedSections(
+        tabs: [CoreScratchTabSnapshot],
+        agents: [SidebarAgent]
+    ) -> [CoreScratchTabSnapshot] {
+        let raised = Set(raised(agents).flatMap(\.agents).map(\.paneID))
+        return tabs.filter { tab in
+            !tab.panes.contains { raised.contains($0.id) }
+        }
+    }
+
     /// The agents running in a checkout, found through the panes that checkout
     /// owns. Herdr reports the pane an agent runs in and the checkout already
     /// carries its panes, so no second grouping key is needed.

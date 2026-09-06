@@ -401,7 +401,7 @@ struct ShellCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             menuButton(.newTab) { model.addTab() }
-            menuButton(.newAgent) { model.openNewAgent() }
+            menuButton(.newChat) { model.openComposer() }
             menuButton(.newWorkspace) { model.openNewWorkspace() }
             menuButton(.search) { model.openSearch() }
             menuButton(.openFile) { model.openFileSearch() }

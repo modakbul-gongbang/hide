@@ -257,7 +257,7 @@ final class ShellModel: ObservableObject {
     @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
-    @Published var showNewAgent = false
+    @Published var showComposer = false
     @Published var showSearch = false
     @Published var showFileSearch = false
     @Published var showSettings = false
@@ -277,9 +277,14 @@ final class ShellModel: ObservableObject {
     @Published private(set) var paneNotices: [String: String] = [:]
 
     private var lastReportedForkFailure: UInt64?
-    @Published var selectedAgentKind = "claude"
-    @Published var selectedAgentCheckoutID: String?
-    @Published var selectedAgentDeviceID = "local"
+    /// Which checkout the composer opens on, or `nil` for Scratch. Scratch is
+    /// the default from every entry point that is not a project one, which is
+    /// what makes `⌘N` a question rather than a folder chooser.
+    @Published var composerCheckoutID: String?
+    @Published var composerDeviceID = "local"
+    /// True from submission until the four steps answer. The sheet is locked
+    /// for exactly that long: no cancel, and a second `⌘↩` does nothing.
+    @Published private(set) var composerSubmitting = false
     @Published private(set) var paneShortcuts: [PaneCommand: PaneShortcut]
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
@@ -808,10 +813,17 @@ final class ShellModel: ObservableObject {
         }
     }
 
-    func openNewAgent(checkoutID: String? = nil) {
-        selectedAgentCheckoutID = checkoutID ?? focusedCheckout?.id
-        selectedAgentDeviceID = core.snapshot?.navigator.focusedDeviceID ?? "local"
-        showNewAgent = true
+    /// Opens the composer.
+    ///
+    /// `checkoutID` is the project entry points' way of preselecting Where;
+    /// every other entry point leaves it nil and the sheet opens on Scratch.
+    /// A submission already in flight swallows the request rather than opening
+    /// a second sheet over it.
+    func openComposer(checkoutID: String? = nil) {
+        guard !composerSubmitting else { return }
+        composerCheckoutID = checkoutID
+        composerDeviceID = core.snapshot?.navigator.focusedDeviceID ?? "local"
+        showComposer = true
         interactionNotice = nil
     }
 
@@ -900,6 +912,12 @@ final class ShellModel: ObservableObject {
     }
 
     func selectAgent(_ agent: SidebarAgent) {
+        // A Scratch agent has no checkout to focus alongside its pane, which
+        // is what "not a project" means. Focusing the pane is the whole of it.
+        if scratchPaneIDs.contains(agent.paneID) {
+            focusPane(agent.paneID)
+            return
+        }
         guard let identity = workspaces.lazy.compactMap({ workspace in
             workspace.checkouts.lazy.compactMap { checkout in
                 checkout.tabs.contains(where: { tab in
@@ -1190,6 +1208,17 @@ final class ShellModel: ObservableObject {
     }
 
     func addTab() {
+        // Scratch answers first. It has no checkout, so the project path
+        // below would refuse a new tab in exactly the space that is meant to
+        // be the easiest place to open one.
+        if scratchIsFocused {
+            core.createTab(
+                workspaceID: scratch.id,
+                checkoutID: nil,
+                label: nextScratchTabLabel
+            )
+            return
+        }
         guard let workspace = focusedWorkspace else {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
@@ -1274,23 +1303,62 @@ final class ShellModel: ObservableObject {
         core.closeFileTab(tab.id)
     }
 
-    func startAgent(bypassWarnings: Bool) {
-        guard let checkout = selectedAgentCheckout else {
-            interactionNotice = "Choose a checkout before starting an agent."
-            return
-        }
-        guard selectedAgentDeviceID == "local" else {
-            interactionNotice = "Remote agent start is delegated to the remote Herdr session in v1. Connect that device first."
-            return
-        }
-        core.startAgent(
-            agent: selectedAgentKind,
-            checkoutPath: checkout.path,
-            checkoutID: checkout.id,
-            workspaceID: HerdrLiveWorkspaceIdentity.workspaceID(for: checkout.tabs),
-            bypassWarnings: bypassWarnings
+    /// Sends the composer's message: one tab, one agent, that message, and
+    /// the title it earns.
+    ///
+    /// The sheet stays open and locked until the four steps answer, then
+    /// closes whatever the outcome was. A failure after the tab exists leaves
+    /// the tab in place and says which step failed; a failure to make the tab
+    /// leaves nothing behind.
+    func sendComposerMessage(
+        provider: AgentProvider,
+        message: String,
+        bypassWarnings: Bool
+    ) {
+        guard !composerSubmitting else { return }
+        let scratch = scratch
+        let route = ChatSubmissionRouting.route(
+            deviceID: composerDeviceID,
+            checkout: composerCheckout.map { checkout in
+                .checkout(
+                    id: checkout.id,
+                    path: checkout.path,
+                    workspaceID: HerdrLiveWorkspaceIdentity.workspaceID(for: checkout.tabs)
+                )
+            },
+            scratchPath: scratch.path,
+            scratchWorkspaceID: scratch.sessionWorkspaceIDs.first
         )
-        showNewAgent = false
+        let destination: ChatDestination
+        switch route {
+        case .refuse(let notice):
+            interactionNotice = notice
+            showComposer = false
+            return
+        case .start(let resolved):
+            destination = resolved
+        }
+        // The operator's choices are remembered before the work starts, so a
+        // failed launch still leaves the composer offering what they picked.
+        core.persistUIState(
+            lastAgentKind: provider.rawValue,
+            lastAgentBypass: bypassWarnings
+        )
+        composerSubmitting = true
+        interactionNotice = nil
+        core.startChat(
+            destination: destination,
+            provider: provider,
+            message: message,
+            bypassWarnings: bypassWarnings
+        ) { [weak self] result in
+            guard let self else { return }
+            self.composerSubmitting = false
+            self.showComposer = false
+            if !result.succeeded {
+                self.interactionNotice = result.message
+            }
+        }
     }
 
     func updatePreferences(accentHex: String? = nil, fontSize: Double? = nil) {
@@ -1394,11 +1462,82 @@ final class ShellModel: ObservableObject {
         checkoutStartState = .idle
     }
 
-    var selectedAgentCheckout: CoreCheckoutSnapshot? {
-        guard let selectedAgentCheckoutID else { return focusedCheckout }
+    /// The checkout the composer's Where chip names, or nil for Scratch.
+    ///
+    /// Unlike the sheet it replaces, no checkout is substituted when none was
+    /// chosen: nothing chosen means Scratch, which is a destination rather
+    /// than a missing answer.
+    var composerCheckout: CoreCheckoutSnapshot? {
+        guard let composerCheckoutID else { return nil }
         return workspaces.lazy.compactMap { workspace in
-            workspace.checkouts.first(where: { $0.id == selectedAgentCheckoutID })
+            workspace.checkouts.first(where: { $0.id == composerCheckoutID })
         }.first
+    }
+
+    /// Every checkout the Where chip can offer. A checkout git no longer has
+    /// cannot be started in, so it is not offered.
+    var composerCheckouts: [(workspace: CoreWorkspaceSnapshot, checkout: CoreCheckoutSnapshot)] {
+        workspaces.flatMap { workspace in
+            workspace.checkouts
+                .filter(\.exists)
+                .map { (workspace: workspace, checkout: $0) }
+        }
+    }
+
+    /// Opens or closes the Scratch section, and remembers which.
+    func toggleScratchExpanded() {
+        core.persistUIState(scratchExpanded: !scratch.expanded)
+    }
+
+    /// Focuses a Scratch tab by the pane it holds. A tab with no pane has
+    /// nothing to focus, and says so rather than sending a command that
+    /// cannot land.
+    func focusScratchTab(_ tab: CoreScratchTabSnapshot) {
+        guard let paneID = tab.panes.first?.id else {
+            interactionNotice = "That Scratch tab has no pane yet."
+            return
+        }
+        focusPane(paneID)
+    }
+
+    /// Every pane Scratch holds, for the two places that need to know whether
+    /// a pane is one of its own.
+    var scratchPaneIDs: Set<String> {
+        Set(scratch.tabs.flatMap(\.panes).map(\.id))
+    }
+
+    /// The label the next Scratch terminal tab carries. Herdr's own numbering
+    /// is per workspace, so counting the rows already drawn is what keeps two
+    /// tabs from both being `Tab 1`.
+    var nextScratchTabLabel: String { "Tab \(scratch.tabs.count + 1)" }
+
+    /// The Scratch node, as the core projected it.
+    var scratch: CoreScratchSnapshot {
+        core.snapshot?.navigator.scratch ?? CoreScratchSnapshot.empty
+    }
+
+    /// Whether the selected pane is one of Scratch's.
+    ///
+    /// This is what `⌘T` reads: Scratch has no checkout to be focused, so
+    /// "Scratch is where I am" is derived from the pane the operator is in
+    /// rather than tracked as a second kind of focus.
+    var scratchIsFocused: Bool {
+        guard let paneID = focusedPaneID else { return false }
+        return scratchPaneIDs.contains(paneID)
+    }
+
+    /// The agents running in Scratch, found through the panes it owns.
+    func scratchAgent(for tab: CoreScratchTabSnapshot) -> SidebarAgent? {
+        let paneIDs = Set(tab.panes.map(\.id))
+        return agents.first { paneIDs.contains($0.paneID) }
+    }
+
+    /// Scratch rows the raised Needs You and Done sections already drew.
+    ///
+    /// The project tree follows the same rule, so a waiting agent is one row
+    /// at the top rather than two rows in two places.
+    var scratchTabsBelowRaisedSections: [CoreScratchTabSnapshot] {
+        SidebarGrouping.scratchTabsBelowRaisedSections(tabs: scratch.tabs, agents: agents)
     }
 
     var leftSidebarVisible: Bool {

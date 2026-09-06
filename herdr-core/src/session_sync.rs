@@ -744,16 +744,17 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees) = match runtime.lock() {
+    let (registrations, worktrees, scratch_root) = match runtime.lock() {
         Ok(guard) => (
             guard.snapshot().ui_state.workspace_registrations.clone(),
             guard.worktree_catalog(),
+            guard.scratch_root(),
         ),
         Err(_) => return false,
     };
     drop(runtime);
 
-    let spaces = Runtime::session_spaces(&payload);
+    let spaces = Runtime::session_spaces(&payload, &scratch_root);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         cache.registrations == registrations
             && cache.spaces == spaces

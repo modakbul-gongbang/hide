@@ -131,13 +131,16 @@ pub fn spawn_workspace_creation(
             // must carry the worktree rows the reader has already found.
             // Building it from an empty catalog would drop every worktree
             // without a pane until the next read.
-            let worktrees = context
+            let (worktrees, scratch_root) = context
                 .runtime
                 .upgrade()
                 .and_then(|runtime| {
-                    let catalog = runtime.lock().ok().map(|guard| guard.worktree_catalog());
+                    let read = runtime
+                        .lock()
+                        .ok()
+                        .map(|guard| (guard.worktree_catalog(), guard.scratch_root()));
                     drop(runtime);
-                    catalog
+                    read
                 })
                 .unwrap_or_default();
             let result = workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID)
@@ -166,7 +169,7 @@ pub fn spawn_workspace_creation(
                                 error.message()
                             )
                         })?;
-                    let before_spaces = Runtime::session_spaces(&before);
+                    let before_spaces = Runtime::session_spaces(&before, &scratch_root);
                     let before_catalog = workspace::build_catalog(&registrations, &before_spaces, &worktrees);
                     let needs_herdr_workspace = before_catalog
                         .iter()
@@ -192,7 +195,7 @@ pub fn spawn_workspace_creation(
                     } else {
                         before
                     };
-                    let spaces = Runtime::session_spaces(&session);
+                    let spaces = Runtime::session_spaces(&session, &scratch_root);
                     let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
                     Ok(WorkspaceCreationOutcome {
                         registration,
@@ -878,6 +881,83 @@ pub fn spawn_local_control(
         })
         .map(|_| ())
         .map_err(|error| format!("local tab control worker could not be started: {error}"))
+}
+
+/// What a Scratch tab needs to exist: the folder, and either the Herdr
+/// workspace already holding Scratch or a new one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScratchTabRequest {
+    /// The folder Scratch runs in. Created here when it is missing, because
+    /// the first tab is what brings Scratch into existence.
+    pub root: String,
+    /// The Herdr workspace to add a tab to, or `None` to create the
+    /// workspace. Herdr drops a workspace with its last pane, so Scratch is
+    /// regularly in the second state without the operator having done
+    /// anything.
+    pub workspace_id: Option<String>,
+    pub label: String,
+}
+
+/// Creates a Scratch tab off the runtime lock.
+///
+/// Three steps that can each fail, and each failure names its own step: a
+/// folder that could not be created is not a Herdr error, and the operator is
+/// owed the difference.
+pub fn spawn_scratch_tab_creation(
+    context: LiveContext,
+    request: ScratchTabRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-scratch-tab".to_owned())
+        .spawn(move || {
+            let started = Instant::now();
+            let result = create_scratch_tab(context.api_connector.as_ref(), &request);
+            let elapsed_ms = started.elapsed().as_millis();
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_scratch_tab_result(result, elapsed_ms),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("scratch tab worker could not be started: {error}"))
+}
+
+fn create_scratch_tab(
+    connector: &dyn ApiConnector,
+    request: &ScratchTabRequest,
+) -> Result<String, String> {
+    // An existing folder is a success, so a second tab costs nothing and a
+    // repeated request cannot fail on the folder it already made.
+    std::fs::create_dir_all(&request.root).map_err(|error| {
+        format!(
+            "scratch folder: {} could not be created: {error}",
+            request.root
+        )
+    })?;
+    match request.workspace_id.as_deref() {
+        Some(workspace_id) => {
+            let result = control_request(
+                connector,
+                "tab.create",
+                wire::tab_create_params(workspace_id, &request.root, &request.label)?,
+            )
+            .map_err(|error| format!("tab.create: {error}"))?;
+            let (_, pane_id) = wire::created_tab(result)?;
+            Ok(pane_id)
+        }
+        None => {
+            let created = create_herdr_workspace(connector, &request.root, &request.label)
+                .map_err(|error| format!("workspace.create: {error}"))?;
+            Ok(created.pane_id)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
