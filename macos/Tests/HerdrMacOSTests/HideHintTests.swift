@@ -97,22 +97,37 @@ struct HideHintTests {
         let model = ShellModel(core: bridge)
 
         model.setShortcutModifiersHeld([.command])
-        try await Task.sleep(for: .milliseconds(450))
-        #expect(model.shortcutHintState.revealed)
+        #expect(try await revealed(model))
 
         model.showFileSearch = true
         #expect(model.hintSheetPresented)
         #expect(model.shortcutHintState.modifiers.isEmpty)
         #expect(!model.shortcutHintState.revealed)
+        // A hold while a sheet is up schedules nothing: no deadline means no
+        // reveal can arrive later, so this needs no waiting to be proven.
         model.setShortcutModifiersHeld([.command])
-        try await Task.sleep(for: .milliseconds(450))
+        #expect(model.shortcutHintState.deadline == nil)
+        #expect(model.shortcutHintState.modifiers.isEmpty)
         #expect(!model.shortcutHintState.revealed)
 
         model.showFileSearch = false
         #expect(!model.hintSheetPresented)
         model.setShortcutModifiersHeld([.command])
-        try await Task.sleep(for: .milliseconds(450))
-        #expect(model.shortcutHintState.revealed)
+        #expect(try await revealed(model))
+    }
+
+    /// The reveal rides a 150 ms task on the main actor, and the actor is
+    /// shared with every other main-actor test in the process, so a fixed
+    /// sleep passes or fails with the machine's load. Wait for the state
+    /// itself, bounded well above anything the scheduler can add.
+    @MainActor private func revealed(_ model: ShellModel, within limit: Duration = .seconds(10)) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + limit
+        while clock.now < deadline {
+            if model.shortcutHintState.revealed { return true }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        return model.shortcutHintState.revealed
     }
 
     @MainActor @Test func observerPreservesEveryKeyDownAndOnlyObservesFlags() throws {
