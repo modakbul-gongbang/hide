@@ -3,6 +3,26 @@ import Foundation
 import SwiftUI
 
 enum HideTheme {
+    enum GitIcon {
+        static let refresh = "arrow.clockwise"
+        static let merged = "checkmark.circle"
+        static let unmerged = "circle"
+        static let dirty = "circle.fill"
+        static let clean = "checkmark"
+        static let pullMerged = "arrow.triangle.merge"
+        static let pullClosed = "xmark.circle"
+        static let unavailable = "exclamationmark.circle"
+        static let noPullRequest = "minus.circle"
+    }
+    static let gitSectionIcon = "externaldrive.badge.checkmark"
+    static let gitPullRequestIcon = "arrow.triangle.pull"
+    static let lineageIndent: CGFloat = 12
+    static let lineageDeepIndent: CGFloat = 6
+    static let lineageChevronWidth: CGFloat = 16
+    static let worktreeDialogWidth: CGFloat = 440
+    static let gitRowFontSize: CGFloat = 11
+    static let gitDetailFontSize: CGFloat = 10
+
     static let background = Color(red: 0.035, green: 0.043, blue: 0.055)
     static let sidebar = Color(red: 0.055, green: 0.063, blue: 0.078)
     static let panel = Color(red: 0.070, green: 0.080, blue: 0.098)
@@ -254,13 +274,27 @@ struct ShellView: View {
                 secondaryButton: .cancel()
             )
         }
-        .alert(item: $model.worktreeToDelete) { checkout in
-            Alert(
-                title: Text("Delete worktree \(checkout.label)?"),
-                message: Text(model.worktreeDeletionConsequence(checkout)),
-                primaryButton: .destructive(Text("Delete worktree"), action: model.confirmDeleteWorktree),
-                secondaryButton: .cancel()
-            )
+        .sheet(item: $model.worktreeToDelete) { worktree in
+            VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
+                Text("Delete worktree \(worktree.label)?")
+                    .hideFont(size: HideTheme.gitRowFontSize, weight: .semibold)
+                Text(worktree.deletionConsequence)
+                    .hideFont(size: HideTheme.gitRowFontSize)
+                    .foregroundStyle(HideTheme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if worktree.deletionGate.canDeleteBranch {
+                    Toggle("Also delete local branch \(worktree.branch ?? "")", isOn: $model.deleteWorktreeBranch)
+                        .toggleStyle(.checkbox)
+                }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { model.worktreeToDelete = nil }.keyboardShortcut(.cancelAction)
+                    Button(worktree.deletionGate.buttonLabel, role: .destructive, action: model.confirmDeleteWorktree)
+                }
+            }
+            .padding(HideTheme.spacingXL)
+            .frame(width: HideTheme.worktreeDialogWidth)
+            .background(HideTheme.panel)
         }
         .alert(
             "Hide",
@@ -1177,10 +1211,7 @@ private struct WorkspaceNavigatorRow: View {
 
     private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
         let isFocused = model.focusedCheckout?.id == checkout.id
-        let checkoutAgents = model.agents(in: checkout)
-        let visibleAgents = isFocused
-            ? checkoutAgents.filter { !raisedAgentIDs.contains($0.id) }
-            : []
+        let visibleAgents = SidebarGrouping.tree(model.agents, checkoutID: checkout.id, excluding: raisedAgentIDs)
         let checkoutPresentation = SidebarCheckoutPresentation(
             workspace: workspace,
             checkout: checkout,
@@ -1251,7 +1282,7 @@ private struct CheckoutNavigatorRow: View {
                 } else if checkout.temporary {
                     SidebarBadge(label: "temporary", color: HideTheme.warning)
                 } else if presentation.isPrimary {
-                    SidebarBadge(label: "primary", color: HideTheme.secondary)
+                    SidebarBadge(label: "main worktree", color: HideTheme.secondary)
                 }
                 // The three things a row may say about a worktree, and no
                 // more: what its pull request is, that something is
@@ -1306,9 +1337,11 @@ private struct CheckoutNavigatorRow: View {
             Button("Start agent here") { model.openNewAgent(checkoutID: checkout.id) }
             if checkout.isWorktree {
                 Divider()
-                Button("Delete worktree…", role: .destructive) {
+                Button(checkout.worktree?.deletionGate.buttonLabel ?? "Delete worktree…", role: .destructive) {
                     model.requestDeleteWorktree(checkout)
                 }
+                .disabled(checkout.worktree?.deletionGate.blockedReason != nil || checkout.worktree == nil)
+                if let reason = checkout.worktree?.deletionGate.blockedReason { Text(reason) }
             }
         }
     }
@@ -1345,19 +1378,44 @@ private struct AgentNavigatorRow: View {
     private var density: AgentRowDensity { showsWorkspace ? .prominent : .compact }
 
     var body: some View {
-        AgentRow(
-            presentation: AgentRowPresentation(
-                agent: agent,
-                density: density,
-                accent: accent
-            ),
-            density: density,
-            isFocused: model.focusedPaneID == agent.paneID,
-            shortcutNumber: model.agentShortcutHintsVisible
-                ? model.agentShortcutNumber(paneID: agent.paneID)
-                : nil,
-            action: { model.selectAgent(agent) }
-        )
+        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+            HStack(spacing: HideTheme.spacingNone) {
+                if !showsWorkspace && !agent.lineageChildPaneIDs.isEmpty {
+                    Button {
+                        model.core.dispatch(kind: "agent_tree_toggle", payload: ["pane_id": agent.paneID])
+                    } label: {
+                        Image(systemName: agent.lineageCollapsed ? "chevron.right" : "chevron.down")
+                            .foregroundStyle(HideTheme.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: HideTheme.lineageChevronWidth)
+                    .help(agent.lineageCollapsed ? "Expand descendants" : "Collapse descendants")
+                }
+                AgentRow(
+                    presentation: AgentRowPresentation(
+                        agent: agent,
+                        density: density,
+                        accent: accent
+                    ),
+                    density: density,
+                    isFocused: model.focusedPaneID == agent.paneID,
+                    shortcutNumber: model.agentShortcutHintsVisible
+                        ? model.agentShortcutNumber(paneID: agent.paneID)
+                        : nil,
+                    action: { model.selectAgent(agent) }
+                )
+            }
+            if !showsWorkspace, let badge = agent.lineageWorktreeBadge {
+                SidebarBadge(label: badge, color: HideTheme.secondary)
+            }
+            if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
+                Text(hint).hideFont(size: HideTheme.gitDetailFontSize).foregroundStyle(HideTheme.muted)
+            }
+        }
+        .padding(.leading, showsWorkspace ? HideTheme.spacingNone :
+            CGFloat(min(agent.lineageDepth, 2)) * HideTheme.lineageIndent +
+            CGFloat(max(0, agent.lineageDepth - 2)) * HideTheme.lineageDeepIndent)
+
         .animation(.easeOut(duration: 0.12), value: model.agentShortcutHintsVisible)
         .accessibilityIdentifier("hide-agent-\(agent.id)")
     }

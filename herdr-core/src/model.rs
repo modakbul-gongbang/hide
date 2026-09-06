@@ -42,6 +42,10 @@ pub struct Snapshot {
     pub editor: EditorSnapshot,
     pub changes: ChangesSnapshot,
     pub card: CheckoutCardSnapshot,
+    pub git_worktrees: Option<ProjectWorktreesSnapshot>,
+    pub git_worktrees_loading: bool,
+    pub git_worktrees_remote: bool,
+    pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -239,6 +243,15 @@ pub struct SidebarAgentSnapshot {
     pub session_id: Option<String>,
     /// The pane this agent was spawned from, as Herdr's own lineage records it.
     pub spawned_from_pane_id: Option<String>,
+    /// Tree-only presentation. The canonical agent list and its read axes stay flat.
+    pub lineage_depth: usize,
+    pub lineage_child_pane_ids: Vec<String>,
+    pub lineage_root_checkout_id: Option<String>,
+    pub lineage_worktree_badge: Option<String>,
+    pub lineage_orphan: bool,
+    pub lineage_hint: Option<String>,
+    pub raised_hint: Option<String>,
+    pub lineage_collapsed: bool,
 }
 
 /// The only three values this client ever reads out of a pane's optional
@@ -298,6 +311,9 @@ pub struct CheckoutSnapshot {
     /// This branch's pull request, absent when it has none or when `gh` could
     /// not say. `GithubStatusSnapshot` on the card is what tells those apart.
     pub pull_request: Option<PullRequestSnapshot>,
+    /// The complete worktree row backing the card and both removal menus.
+    /// All three surfaces therefore consume one core-owned policy result.
+    pub worktree: Option<WorktreeSnapshot>,
     pub tabs: Vec<TabSnapshot>,
     /// The tab Herdr reports as active in this checkout, or `None` when the
     /// workspace's active tab lives in a sibling checkout. A checkout never
@@ -649,14 +665,14 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's two sections. The set is closed: a third section is a
-/// product decision, not a value a caller may invent.
+/// The right panel's three persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
     Explorer,
     Changes,
+    Git,
 }
 
 impl RightPanelSection {
@@ -664,6 +680,7 @@ impl RightPanelSection {
         match value {
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
+            "git" => Some(Self::Git),
             _ => None,
         }
     }
@@ -683,6 +700,10 @@ pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
+    #[serde(default)]
+    pub project_base_branches: BTreeMap<String, String>,
+    #[serde(default)]
+    pub collapsed_agent_pane_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
@@ -782,6 +803,8 @@ impl Default for UiStateSnapshot {
             right_panel_section: RightPanelSection::default(),
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
+            project_base_branches: BTreeMap::new(),
+            collapsed_agent_pane_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),
@@ -1003,6 +1026,7 @@ pub struct PullRequestSnapshot {
 /// inferred from an empty list.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct GithubStatusSnapshot {
+    pub failure_category: Option<String>,
     /// `gh` is installed and logged in.
     pub available: bool,
     /// No lookup has completed yet for this repository.
@@ -1021,9 +1045,6 @@ pub struct GithubProjectSnapshot {
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,
     pub status: GithubStatusSnapshot,
-    /// The repository default branch, used as the comparison base for a
-    /// branch that has no pull request.
-    pub default_branch: Option<String>,
     /// One entry per branch that has a pull request.
     pub pull_requests: Vec<PullRequestSnapshot>,
 }
@@ -1055,6 +1076,21 @@ pub struct UnpushedSnapshot {
 /// counts the row badge and the card show.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
+    pub head_sha: Option<String>,
+    pub last_commit_unix_seconds: Option<u64>,
+    pub nested: bool,
+    pub merged: Option<bool>,
+    pub upstream_state: String,
+    pub unavailable_reason: Option<String>,
+    pub last_fetch_at_unix_ms: Option<u64>,
+    pub measured_at_unix_ms: Option<u64>,
+    pub pane_count: usize,
+    pub running_agent_count: usize,
+    pub disk: DiskUsageSnapshot,
+    pub pull_request: Option<PullRequestSnapshot>,
+    pub github: GithubStatusSnapshot,
+    pub deletion_gate: WorktreeDeletionGateSnapshot,
+    pub open_error: Option<String>,
     pub path: String,
     pub branch: Option<String>,
     /// Git lists the worktree but its path is not on disk.
@@ -1076,9 +1112,36 @@ pub struct WorktreeSnapshot {
     pub unpushed: Option<UnpushedSnapshot>,
 }
 
+/// One policy shared by all worktree deletion surfaces.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorktreeDeletionGateSnapshot {
+    pub blocked_reason: Option<String>,
+    pub warnings: Vec<String>,
+    pub button_label: String,
+    pub can_delete_branch: bool,
+}
+
+/// Shell authorization issued only after Herdr confirms every pane is gone.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WorktreeRemovalSnapshot {
+    pub id: u64,
+    pub repository_root: String,
+    pub checkout_path: String,
+    pub expected_head_sha: Option<String>,
+    pub expected_branch: Option<String>,
+    pub protected_base_branch: Option<String>,
+    pub branch: Option<String>,
+    pub delete_branch: bool,
+    pub phase: String,
+    pub message: Option<String>,
+}
+
 /// One repository's worktrees.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectWorktreesSnapshot {
+    pub base_branch: Option<String>,
+    pub base_source: String,
+    pub base_branch_fallback: Option<String>,
     pub root_path: String,
     pub default_branch: Option<String>,
     pub worktrees: Vec<WorktreeSnapshot>,
@@ -1104,6 +1167,7 @@ impl WorktreeCatalogSnapshot {
 /// the biggest share of it.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct DiskUsageSnapshot {
+    pub measured_at_unix_ms: Option<u64>,
     /// The checkout this measurement describes. A card whose selection has
     /// moved on compares this against its own path and shows `measuring`
     /// rather than the previous checkout's size.
@@ -1130,12 +1194,7 @@ pub struct CheckoutCardSnapshot {
     pub disk: DiskUsageSnapshot,
     /// True while the selected checkout's size is still being measured.
     pub disk_measuring: bool,
-    /// The card offers a Remove worktree button only for a settled pull
-    /// request on a linked worktree.
-    pub remove_offered: bool,
-    /// Why the offered button is disabled. `None` with `remove_offered` means
-    /// it is enabled.
-    pub remove_blocked_reason: Option<String>,
+    pub deletion_gate: Option<WorktreeDeletionGateSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1347,6 +1406,10 @@ impl Snapshot {
             },
             changes: ChangesSnapshot::default(),
             card: CheckoutCardSnapshot::default(),
+            git_worktrees: None,
+            git_worktrees_loading: true,
+            git_worktrees_remote: false,
+            worktree_removal: None,
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -1421,6 +1484,10 @@ impl PetSnapshot {
 pub struct RestSections {
     pub navigator: NavigatorSnapshot,
     pub card: CheckoutCardSnapshot,
+    pub git_worktrees: Option<ProjectWorktreesSnapshot>,
+    pub git_worktrees_loading: bool,
+    pub git_worktrees_remote: bool,
+    pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -1442,6 +1509,10 @@ impl RestSections {
         Self {
             navigator: snapshot.navigator.clone(),
             card: snapshot.card.clone(),
+            git_worktrees: snapshot.git_worktrees.clone(),
+            git_worktrees_loading: snapshot.git_worktrees_loading,
+            git_worktrees_remote: snapshot.git_worktrees_remote,
+            worktree_removal: snapshot.worktree_removal.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -1464,6 +1535,10 @@ impl RestSections {
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
         self.navigator == snapshot.navigator
             && self.card == snapshot.card
+            && self.git_worktrees == snapshot.git_worktrees
+            && self.git_worktrees_loading == snapshot.git_worktrees_loading
+            && self.git_worktrees_remote == snapshot.git_worktrees_remote
+            && self.worktree_removal == snapshot.worktree_removal
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -1550,6 +1625,10 @@ impl<'a> SnapshotDeltaWire<'a> {
 pub struct RestWire<'a> {
     pub navigator: &'a NavigatorSnapshot,
     pub card: &'a CheckoutCardSnapshot,
+    pub git_worktrees: &'a Option<ProjectWorktreesSnapshot>,
+    pub git_worktrees_loading: bool,
+    pub git_worktrees_remote: bool,
+    pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -1568,6 +1647,10 @@ impl<'a> RestWire<'a> {
         Self {
             navigator: &rest.navigator,
             card: &rest.card,
+            git_worktrees: &rest.git_worktrees,
+            git_worktrees_loading: rest.git_worktrees_loading,
+            git_worktrees_remote: rest.git_worktrees_remote,
+            worktree_removal: &rest.worktree_removal,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

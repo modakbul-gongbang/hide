@@ -456,6 +456,8 @@ mod tests {
                 }
             }
         }
-        panic!("every pipe was inherited by a concurrently spawned fixture, so the write under test never happened");
+        panic!(
+            "every pipe was inherited by a concurrently spawned fixture, so the write under test never happened"
+        );
     }
 }

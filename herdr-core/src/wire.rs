@@ -325,7 +325,7 @@ record_conversions!(ev);
 impl From<res::AgentInfo> for ProjectedAgent {
     fn from(v: res::AgentInfo) -> Self {
         Self {
-            pane_id: v.pane_id, workspace_id: v.workspace_id, tab_id: v.tab_id, cwd: v.cwd,
+            pane_id: v.pane_id, name: v.name, workspace_id: v.workspace_id, tab_id: v.tab_id, cwd: v.cwd,
             agent: v.agent, agent_status: Some(v.agent_status.to_string()),
             agent_session: v.agent_session.map(|s| SessionAgentSessionPayload { kind: s.kind.to_string(), value: s.value }),
             spawned_from_pane_id: v.spawned_from_pane_id, state_change_seq: v.state_change_seq,

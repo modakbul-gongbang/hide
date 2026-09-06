@@ -299,13 +299,7 @@ fn run_coordinator(
                     let publish =
                         agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
                     if publish {
-                        let stopped_in = current.replace_agents(agents);
-                        if !stopped_in.is_empty()
-                            && !request_pull_request_refresh(&context, &stopped_in)
-                        {
-                            stop_subscription(&mut subscription);
-                            return;
-                        }
+                        current.replace_agents(agents);
                         if current.ready_to_publish()
                             && !publish_replica(&context, current, &mut catalog_cache)
                         {
@@ -433,6 +427,11 @@ fn run_coordinator(
                             Ok(outcome) => {
                                 if outcome.refresh_agents {
                                     next_agent_refresh = Instant::now();
+                                }
+                                if outcome.refresh_worktrees && !request_worktree_refresh(&context)
+                                {
+                                    stop_subscription(&mut subscription);
+                                    return;
                                 }
                                 if outcome.publish
                                     && !publish_replica(&context, current, &mut catalog_cache)
@@ -870,25 +869,6 @@ fn read_worktrees_request(
     Some(request)
 }
 
-/// Records that the pull requests must be read again now.
-///
-/// Several agents finishing at once are one refresh, because the runtime's
-/// counter is the request and an unchanged request is not re-read (G7).
-fn request_pull_request_refresh(context: &SessionSyncContext, directories: &[String]) -> bool {
-    let Some(runtime) = context.runtime.upgrade() else {
-        return false;
-    };
-    let recorded = match runtime.lock() {
-        Ok(mut guard) => {
-            guard.refresh_pull_requests_in(directories);
-            true
-        }
-        Err(_) => false,
-    };
-    drop(runtime);
-    recorded
-}
-
 fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::GithubRequest> {
     let runtime = context.runtime.upgrade()?;
     let request = runtime.lock().ok()?.github_request();
@@ -901,6 +881,21 @@ fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRe
     let request = runtime.lock().ok()?.disk_request();
     drop(runtime);
     Some(request)
+}
+
+/// Invalidates the local reader when Herdr reports a worktree topology event.
+/// This only changes an in-memory generation while the mutex is held; the git
+/// read itself starts later on `WorktreeReader`'s background worker.
+fn request_worktree_refresh(context: &SessionSyncContext) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    match runtime.lock() {
+        Ok(mut guard) => guard.refresh_worktrees(),
+        Err(_) => return false,
+    }
+    context.notifier.notify();
+    true
 }
 
 /// Stores a worktree catalog. `None` means the runtime is gone; `Some(true)`
@@ -930,7 +925,10 @@ fn publish_github(context: &SessionSyncContext, github: crate::model::GithubSnap
     true
 }
 
-fn publish_disk_usage(context: &SessionSyncContext, disk: crate::model::DiskUsageSnapshot) -> bool {
+fn publish_disk_usage(
+    context: &SessionSyncContext,
+    disk: Vec<crate::model::DiskUsageSnapshot>,
+) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
@@ -1090,6 +1088,7 @@ pub(crate) struct ProjectedPane {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedAgent {
     pub(crate) pane_id: String,
+    pub(crate) name: Option<String>,
     pub(crate) workspace_id: String,
     pub(crate) tab_id: String,
     pub(crate) cwd: Option<String>,
@@ -1137,7 +1136,7 @@ impl ProjectionState {
                     })
                     .map(str::to_owned);
                 SessionAgentPayload {
-                    id: Some(agent.pane_id.clone()),
+                    id: agent.name.clone().or_else(|| Some(agent.pane_id.clone())),
                     pane_id: Some(agent.pane_id.clone()),
                     workspace_label,
                     cwd: agent.cwd.clone(),
@@ -1220,6 +1219,7 @@ struct SessionReplica {
 struct ApplyOutcome {
     publish: bool,
     refresh_agents: bool,
+    refresh_worktrees: bool,
 }
 
 /// Every top-level `session.snapshot` field the replica reads. The contract
@@ -1561,6 +1561,7 @@ impl SessionReplica {
             return Ok(ApplyOutcome {
                 publish: false,
                 refresh_agents: false,
+                refresh_worktrees: false,
             });
         }
         if event.sequence == self.cursor {
@@ -1574,6 +1575,7 @@ impl SessionReplica {
                 return Ok(ApplyOutcome {
                     publish: false,
                     refresh_agents: false,
+                    refresh_worktrees: false,
                 });
             }
             return Err(SessionFetchError::Malformed(format!(
@@ -1583,6 +1585,12 @@ impl SessionReplica {
         }
 
         let mut candidate = self.clone();
+        let refresh_worktrees = matches!(
+            event.data,
+            ReplicaEvent::WorktreeCreated { .. }
+                | ReplicaEvent::WorktreeOpened { .. }
+                | ReplicaEvent::WorktreeRemoved { .. }
+        );
         let refresh_agents = candidate.apply_new_event(event.data)?;
         candidate.cursor = event.sequence;
         candidate.last_event = Some((event.sequence, fingerprint));
@@ -1594,6 +1602,7 @@ impl SessionReplica {
         Ok(ApplyOutcome {
             publish,
             refresh_agents,
+            refresh_worktrees,
         })
     }
 
@@ -2728,6 +2737,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn worktree_events_invalidate_the_change_driven_reader_once() {
+        let value = snapshot();
+        let workspace = value["workspaces"][0].clone();
+        let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+        let opened = event(
+            41,
+            "worktree_opened",
+            json!({
+                "type": "worktree_opened",
+                "workspace": workspace,
+                "worktree": {"path": "/tmp/fixture", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": true, "label": "fixture"},
+                "already_open": true
+            }),
+        );
+        let outcome = replica.apply(opened.clone()).expect("worktree event");
+        assert!(outcome.refresh_worktrees);
+        let duplicate = replica.apply(opened).expect("duplicate event");
+        assert!(!duplicate.refresh_worktrees);
+    }
+
     fn accept_request(listener: &UnixListener) -> (UnixStream, Value) {
         let (stream, _) = listener.accept().expect("accept request");
         let mut line = String::new();
@@ -2863,24 +2893,63 @@ mod tests {
             "hide_browser_owns_target": "false"
         });
         replica
-            .apply(event(41, "pane_updated", json!({"type": "pane_updated", "pane": pane})))
+            .apply(event(
+                41,
+                "pane_updated",
+                json!({"type": "pane_updated", "pane": pane}),
+            ))
             .expect("host report");
         let projected = replica.project();
-        let content = crate::pane_content::PaneContent::from_tokens(&projected.panes[0].tokens, false);
+        let content =
+            crate::pane_content::PaneContent::from_tokens(&projected.panes[0].tokens, false);
         assert!(matches!(content,
             crate::pane_content::PaneContent::Browser { target_id, .. } if target_id == "A12B"));
         let (remote, _) = replica.project_remote("mini").expect("remote projection");
-        assert!(matches!(remote.workspaces[0].checkouts[0].tabs[0].panes[0].content,
-            crate::pane_content::PaneContent::Unavailable { .. }));
+        assert!(matches!(
+            remote.workspaces[0].checkouts[0].tabs[0].panes[0].content,
+            crate::pane_content::PaneContent::Unavailable { .. }
+        ));
         // A host release must remove its content identity without leaving a
         // stale browser over a shell that now occupies the same layout leaf.
         pane["tokens"] = json!({});
         replica
-            .apply(event(42, "pane_updated", json!({"type": "pane_updated", "pane": pane})))
+            .apply(event(
+                42,
+                "pane_updated",
+                json!({"type": "pane_updated", "pane": pane}),
+            ))
             .expect("host release");
-        assert!(crate::pane_content::PaneContent::from_tokens(
-            &replica.project().panes[0].tokens, false
-        ).is_terminal());
+        assert!(
+            crate::pane_content::PaneContent::from_tokens(
+                &replica.project().panes[0].tokens,
+                false
+            )
+            .is_terminal()
+        );
+    }
+
+    #[test]
+    fn agent_projection_keeps_the_herdr_name_for_lineage_hints() {
+        let mut value = snapshot();
+        value["agents"] = json!([{
+            "pane_id": "w1:p1",
+            "workspace_id": "w1",
+            "tab_id": "w1:t1",
+            "terminal_id": "fixture-terminal",
+            "focused": false,
+            "revision": 1,
+            "name": "observer",
+            "agent": "claude",
+            "agent_status": "working",
+            "state_change_seq": 1,
+            "tokens": {}
+        }]);
+        let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+
+        assert_eq!(
+            replica.project().agents[0].id.as_deref(),
+            Some("observer")
+        );
     }
 
     #[test]

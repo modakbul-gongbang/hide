@@ -30,6 +30,10 @@ struct CoreSnapshot {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+    var gitWorktrees: CoreProjectWorktrees? = nil
+    var gitWorktreesLoading: Bool = false
+    var gitWorktreesRemote: Bool = false
+    var worktreeRemoval: CoreWorktreeRemoval? = nil
 
     /// Rebuilds the snapshot with only the independently revisioned sections
     /// that arrived, so a delta carrying one of them leaves the rest alone.
@@ -50,7 +54,9 @@ struct CoreSnapshot {
             find: find,
             uiState: uiState,
             status: status,
-            pet: pet
+            pet: pet,
+            gitWorktrees: gitWorktrees, gitWorktreesLoading: gitWorktreesLoading,
+            gitWorktreesRemote: gitWorktreesRemote, worktreeRemoval: worktreeRemoval
         )
     }
 }
@@ -114,6 +120,10 @@ struct CoreRestSnapshot: Decodable {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+    var gitWorktrees: CoreProjectWorktrees? = nil
+    var gitWorktreesLoading: Bool = false
+    var gitWorktreesRemote: Bool = false
+    var worktreeRemoval: CoreWorktreeRemoval? = nil
 
     enum CodingKeys: String, CodingKey {
         case navigator
@@ -124,6 +134,10 @@ struct CoreRestSnapshot: Decodable {
         case uiState = "ui_state"
         case status
         case pet
+        case gitWorktrees = "git_worktrees"
+        case gitWorktreesLoading = "git_worktrees_loading"
+        case gitWorktreesRemote = "git_worktrees_remote"
+        case worktreeRemoval = "worktree_removal"
     }
 
     init(from decoder: Decoder) throws {
@@ -136,6 +150,10 @@ struct CoreRestSnapshot: Decodable {
         uiState = try container.decode(CoreUIStateSnapshot.self, forKey: .uiState)
         status = try container.decode(CoreStatusSnapshot.self, forKey: .status)
         pet = try container.decode(CorePetSnapshot.self, forKey: .pet)
+        gitWorktrees = try container.decodeIfPresent(CoreProjectWorktrees.self, forKey: .gitWorktrees)
+        gitWorktreesLoading = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesLoading) ?? false
+        gitWorktreesRemote = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesRemote) ?? false
+        worktreeRemoval = try container.decodeIfPresent(CoreWorktreeRemoval.self, forKey: .worktreeRemoval)
     }
 }
 
@@ -469,6 +487,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let label: String
     let path: String
     let branch: String?
+    var worktree: CoreGitWorktree? = nil
     let isWorktree: Bool
     let exists: Bool
     let temporary: Bool
@@ -503,6 +522,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case label
         case path
         case branch
+        case worktree
         case isWorktree = "is_worktree"
         case exists
         case temporary
@@ -577,6 +597,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         label = try container.decode(String.self, forKey: .label)
         path = try container.decode(String.self, forKey: .path)
         branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        worktree = try container.decodeIfPresent(CoreGitWorktree.self, forKey: .worktree)
         isWorktree = try container.decodeIfPresent(Bool.self, forKey: .isWorktree) ?? false
         exists = try container.decodeIfPresent(Bool.self, forKey: .exists) ?? true
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
@@ -642,7 +663,7 @@ enum CorePullRequestBadge: String, Decodable, Equatable {
     case review
     case open
 
-    /// The two states a worktree may be removed from.
+    /// Settled pull requests dim their checkout row; deletion uses its own core gate.
     var isSettled: Bool { self == .merged || self == .closed }
 }
 
@@ -687,6 +708,8 @@ struct CoreGithubStatus: Decodable, Equatable {
     /// failure.
     let unavailableReason: String?
 
+    var failureCategory: String? = nil
+
     static let empty = CoreGithubStatus(
         available: false,
         loading: false,
@@ -696,6 +719,7 @@ struct CoreGithubStatus: Decodable, Equatable {
     )
 
     enum CodingKeys: String, CodingKey {
+        case failureCategory = "failure_category"
         case available
         case loading
         case stale
@@ -734,18 +758,14 @@ struct CoreCheckoutCard: Decodable, Equatable {
     let github: CoreGithubStatus
     let disk: CoreDiskUsage
     let diskMeasuring: Bool
-    let removeOffered: Bool
-    /// Why the offered button is disabled. `nil` with `removeOffered` means it
-    /// is enabled.
-    let removeBlockedReason: String?
+    let deletionGate: CoreWorktreeDeletionGate?
 
     static let empty = CoreCheckoutCard(
         checkoutID: nil,
         github: .empty,
         disk: .empty,
         diskMeasuring: false,
-        removeOffered: false,
-        removeBlockedReason: nil
+        deletionGate: nil
     )
 
     enum CodingKeys: String, CodingKey {
@@ -753,8 +773,7 @@ struct CoreCheckoutCard: Decodable, Equatable {
         case github
         case disk
         case diskMeasuring = "disk_measuring"
-        case removeOffered = "remove_offered"
-        case removeBlockedReason = "remove_blocked_reason"
+        case deletionGate = "deletion_gate"
     }
 
     init(
@@ -762,15 +781,13 @@ struct CoreCheckoutCard: Decodable, Equatable {
         github: CoreGithubStatus,
         disk: CoreDiskUsage,
         diskMeasuring: Bool,
-        removeOffered: Bool,
-        removeBlockedReason: String?
+        deletionGate: CoreWorktreeDeletionGate?
     ) {
         self.checkoutID = checkoutID
         self.github = github
         self.disk = disk
         self.diskMeasuring = diskMeasuring
-        self.removeOffered = removeOffered
-        self.removeBlockedReason = removeBlockedReason
+        self.deletionGate = deletionGate
     }
 
     init(from decoder: Decoder) throws {
@@ -779,8 +796,7 @@ struct CoreCheckoutCard: Decodable, Equatable {
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         disk = try container.decodeIfPresent(CoreDiskUsage.self, forKey: .disk) ?? .empty
         diskMeasuring = try container.decodeIfPresent(Bool.self, forKey: .diskMeasuring) ?? false
-        removeOffered = try container.decodeIfPresent(Bool.self, forKey: .removeOffered) ?? false
-        removeBlockedReason = try container.decodeIfPresent(String.self, forKey: .removeBlockedReason)
+        deletionGate = try container.decodeIfPresent(CoreWorktreeDeletionGate.self, forKey: .deletionGate)
     }
 }
 
@@ -971,6 +987,15 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let lastActivity: String
     let ambient: CoreAmbientSignal?
 
+    var lineageDepth: Int = 0
+    var lineageChildPaneIDs: [String] = []
+    var lineageRootCheckoutID: String? = nil
+    var lineageWorktreeBadge: String? = nil
+    var lineageOrphan: Bool = false
+    var lineageHint: String? = nil
+    var raisedHint: String? = nil
+    var lineageCollapsed: Bool = false
+
     /// Fixtures and tests build a row directly. Every derived value defaults
     /// to the quiet reading, so a fixture states only what it is exercising.
     init(
@@ -1013,6 +1038,36 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.ambient = ambient
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        workspaceLabel = try container.decode(String.self, forKey: .workspaceLabel)
+        checkoutLabel = try container.decodeIfPresent(String.self, forKey: .checkoutLabel)
+        agentKind = try container.decode(String.self, forKey: .agentKind)
+        demand = try container.decode(String.self, forKey: .demand)
+        activity = try container.decode(String.self, forKey: .activity)
+        unread = try container.decode(Bool.self, forKey: .unread)
+        blocked = try container.decode(Bool.self, forKey: .blocked)
+        group = try container.decode(String.self, forKey: .group)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        emphasized = try container.decode(Bool.self, forKey: .emphasized)
+        statusLabel = try container.decode(String.self, forKey: .statusLabel)
+        requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
+        summary = try container.decode(String.self, forKey: .summary)
+        elapsed = try container.decode(String.self, forKey: .elapsed)
+        lastActivity = try container.decode(String.self, forKey: .lastActivity)
+        ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
+        lineageDepth = try container.decodeIfPresent(Int.self, forKey: .lineageDepth) ?? 0
+        lineageChildPaneIDs = try container.decodeIfPresent([String].self, forKey: .lineageChildPaneIDs) ?? []
+        lineageRootCheckoutID = try container.decodeIfPresent(String.self, forKey: .lineageRootCheckoutID)
+        lineageWorktreeBadge = try container.decodeIfPresent(String.self, forKey: .lineageWorktreeBadge)
+        lineageOrphan = try container.decodeIfPresent(Bool.self, forKey: .lineageOrphan) ?? false
+        lineageHint = try container.decodeIfPresent(String.self, forKey: .lineageHint)
+        raisedHint = try container.decodeIfPresent(String.self, forKey: .raisedHint)
+        lineageCollapsed = try container.decodeIfPresent(Bool.self, forKey: .lineageCollapsed) ?? false
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case paneID = "pane_id"
@@ -1032,6 +1087,14 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case elapsed
         case lastActivity = "last_activity"
         case ambient
+        case lineageDepth = "lineage_depth"
+        case lineageChildPaneIDs = "lineage_child_pane_ids"
+        case lineageRootCheckoutID = "lineage_root_checkout_id"
+        case lineageWorktreeBadge = "lineage_worktree_badge"
+        case lineageOrphan = "lineage_orphan"
+        case lineageHint = "lineage_hint"
+        case raisedHint = "raised_hint"
+        case lineageCollapsed = "lineage_collapsed"
     }
 }
 
@@ -1195,7 +1258,12 @@ struct CoreUIStateSnapshot: Decodable {
     /// instead of a row in the pane-keyed map.
     let editorTextScale: Double
 
+    var collapsedAgentPaneIDs: [String] = []
+    var projectBaseBranches: [String: String] = [:]
+
     enum CodingKeys: String, CodingKey {
+        case collapsedAgentPaneIDs = "collapsed_agent_pane_ids"
+        case projectBaseBranches = "project_base_branches"
         case leftSidebarVisible = "left_sidebar_visible"
         case rightPanelVisible = "right_panel_visible"
         case rightPanelSection = "right_panel_section"
@@ -1216,6 +1284,8 @@ struct CoreUIStateSnapshot: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        collapsedAgentPaneIDs = try container.decodeIfPresent([String].self, forKey: .collapsedAgentPaneIDs) ?? []
+        projectBaseBranches = try container.decodeIfPresent([String: String].self, forKey: .projectBaseBranches) ?? [:]
         leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
         rightPanelVisible = try container.decodeIfPresent(Bool.self, forKey: .rightPanelVisible) ?? true
         rightPanelSection = try container.decodeIfPresent(
@@ -1289,11 +1359,12 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-/// The right panel's two sections. The core owns which one is showing, so the
+/// The right panel's three sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
     case explorer
     case changes
+    case git
 
     var id: String { rawValue }
 
@@ -1301,6 +1372,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         switch self {
         case .explorer: "Explorer"
         case .changes: "Changes"
+        case .git: "Git"
         }
     }
 
@@ -1308,6 +1380,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         switch self {
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
+        case .git: HideTheme.gitSectionIcon
         }
     }
 }
@@ -2530,12 +2603,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "card_measure_disk", payload: [:])
     }
 
-    /// Tells the core a worktree folder is gone, so the worktree list is read
-    /// again and the row disappears with it.
-    func worktreeRemoved() {
-        dispatch(kind: "worktree_removed", payload: [:])
-    }
-
     func dispatch(kind: String, payload: [String: Any]) {
         if CoreDispatchRoutingPolicy.blocks(
             kind: kind,
@@ -2649,7 +2716,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     find: decoded.find,
                     uiState: rest.uiState,
                     status: rest.status,
-                    pet: rest.pet
+                    pet: rest.pet,
+                    gitWorktrees: rest.gitWorktrees, gitWorktreesLoading: rest.gitWorktreesLoading,
+                    gitWorktreesRemote: rest.gitWorktreesRemote, worktreeRemoval: rest.worktreeRemoval
                 ))
             } else if decoded.editor != nil
                 || decoded.changes != nil

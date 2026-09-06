@@ -167,19 +167,21 @@ private func presentationAgent(
 }
 
 @Test func shortcutCandidatesFollowTheVisibleSidebarView() {
-    let agents = (1...4).map {
-        presentationAgent(id: "agent-\($0)", paneID: "pane-\($0)", group: "seen")
+    let agents = (1...4).map { index in
+        var row = presentationAgent(id: "agent-\(index)", paneID: "pane-\(index)", group: "seen")
+        row.lineageRootCheckoutID = index >= 3 ? "main" : "other"
+        return row
     }
     let checkout = presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-3", "pane-4"])
 
     let agentsView = AgentShortcutNumbering.candidates(
-        for: .agents, agents: agents, focusedCheckout: checkout
+        for: .agents, agents: agents, visibleCheckoutIDs: [checkout.id]
     )
     let projectsView = AgentShortcutNumbering.candidates(
-        for: .projects, agents: agents, focusedCheckout: checkout
+        for: .projects, agents: agents, visibleCheckoutIDs: [checkout.id]
     )
     let noCheckout = AgentShortcutNumbering.candidates(
-        for: .projects, agents: agents, focusedCheckout: nil
+        for: .projects, agents: agents, visibleCheckoutIDs: []
     )
 
     #expect(agentsView.map(\.paneID) == ["pane-1", "pane-2", "pane-3", "pane-4"])
