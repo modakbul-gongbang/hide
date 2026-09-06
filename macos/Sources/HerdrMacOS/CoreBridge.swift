@@ -1681,7 +1681,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var lastLoggedSnapshotRevision: UInt64?
     private var lastTerminalSequence: UInt64 = 0
     private var haveRevision: UInt64 = 0
-    private var pendingTerminalBytes: [String: [[UInt8]]] = [:]
+    private var pendingTerminalBytes = PendingTerminalBuffer()
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
     private var pendingFileSave: Task<Void, Never>?
@@ -1928,6 +1928,16 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "cols": cols,
             "rows": rows,
         ])
+    }
+
+    /// Asks for the frame a freshly built view has nothing to draw without.
+    ///
+    /// A pane keeps its session while its canvas is rebuilt, so the view that
+    /// comes back is empty and Herdr, having already sent the attach frame to
+    /// the view before it, sends nothing more until the pane produces output.
+    /// The core turns this into the one same-size resize it does not swallow.
+    func repaintTerminal(paneID: String) {
+        dispatch(kind: "terminal_repaint", payload: ["pane_id": paneID])
     }
 
     /// Herdr owns the pane's history, so the wheel is forwarded to it rather
@@ -2364,6 +2374,24 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
+    /// One clicked path, with everything it changes on screen decided by the
+    /// core in a single event.
+    ///
+    /// This is deliberately not a sequence of `focusCheckout`, `persistUIState`
+    /// and `openFile`: dispatch is fire-and-forget, so those would arrive as
+    /// separate frames and a refusal partway would leave the screen half
+    /// moved. The shell's part is the filesystem question - what the path is,
+    /// and whose checkout it belongs to - which cannot run under the runtime
+    /// mutex.
+    func revealPath(_ url: URL, workspaceID: String, checkoutID: String, isDirectory: Bool) {
+        dispatch(kind: "reveal_path", payload: [
+            "path": url.path,
+            "workspace_id": workspaceID,
+            "checkout_id": checkoutID,
+            "is_directory": isDirectory,
+        ])
+    }
+
     func openFile(_ url: URL, workspaceID: String, checkoutID: String) {
         dispatch(kind: "file_open", payload: [
             "path": url.path,
@@ -2647,7 +2675,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     bridgeError = "terminal.invalid_base64: sequence \(chunk.sequence)"
                     continue
                 }
-                pendingTerminalBytes[chunk.paneID, default: []].append([UInt8](data))
+                let dropped = pendingTerminalBytes.append([UInt8](data), for: chunk.paneID)
+                if dropped > 0 {
+                    HideLaunchTrace.mark(
+                        "terminal.buffer.dropped",
+                        detail: "pane_\(chunk.paneID)_chunks_\(dropped)"
+                    )
+                }
                 drainPendingTerminalBytes(for: chunk.paneID)
             }
         } catch {
@@ -2698,6 +2732,28 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             lastLoggedProjection = projection
             HideLaunchTrace.mark("core.snapshot.projection", detail: projection)
         }
+        // A pane whose session the core released, or that has left the
+        // session, redraws from Herdr's own full frame when it is next shown.
+        // Its held bytes are frames nobody will draw, so they go now rather
+        // than being carried for the life of the process.
+        //
+        // Which panes still exist is read from Herdr's layouts, not from the
+        // transport projection. The projection is emptied while a selection is
+        // in progress - `clear_terminal_projection` in the core does exactly
+        // that, and deliberately leaves the layouts alone - so a tick taken in
+        // that moment lists no pane at all. Dropping every held frame on that
+        // is what left a pane blank after a zoom or a switch to a tab of
+        // several panes: the full frame was thrown away while its view was
+        // still being built, and the next small delta drew on an empty grid.
+        // An empty layout set is no answer either, so nothing is dropped then.
+        if let keep = PendingTerminalRetention.keep(
+            layouts: decoded.paneLayouts,
+            transportPanes: decoded.terminal.panes
+        ) {
+            for paneID in pendingTerminalBytes.retain(paneIDs: keep) {
+                HideLaunchTrace.mark("terminal.buffer.cleared", detail: "pane_\(paneID)")
+            }
+        }
         let previousFocusedPaneID = snapshot?.focusedPaneID
         snapshot = decoded
         bridgeError = routingError
@@ -2726,7 +2782,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     private func drainPendingTerminalBytes(for paneID: String) {
         guard let registration = terminalRegistrations[paneID],
-              let pending = pendingTerminalBytes.removeValue(forKey: paneID)
+              let pending = pendingTerminalBytes.take(paneID)
         else { return }
         for bytes in pending {
             registration.receive(bytes)

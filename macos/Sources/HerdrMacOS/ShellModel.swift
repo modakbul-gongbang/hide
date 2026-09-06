@@ -267,6 +267,16 @@ final class ShellModel: ObservableObject {
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
     @Published var worktreeToDelete: CoreCheckoutSnapshot?
     @Published var interactionNotice: String?
+    /// When the last reported fork failure happened, so one failure is raised
+    /// once rather than on every snapshot that still carries it.
+    /// Panes with a fork in flight, which is what puts "forking…" in the
+    /// header and what a failure is attributed to.
+    @Published private(set) var panesForking: Set<String> = []
+
+    /// A failure that belongs to one pane, keyed by that pane.
+    @Published private(set) var paneNotices: [String: String] = [:]
+
+    private var lastReportedForkFailure: UInt64?
     @Published var selectedAgentKind = "claude"
     @Published var selectedAgentCheckoutID: String?
     @Published var selectedAgentDeviceID = "local"
@@ -315,6 +325,7 @@ final class ShellModel: ObservableObject {
         observeTabFocus()
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
+            self.observeForkFailure(in: snapshot)
             self.observeAgentFocus(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
             self.observeTabFocus()
@@ -333,6 +344,61 @@ final class ShellModel: ObservableObject {
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
         }
+    }
+
+    /// A fork that failed has to say so where the operator is looking, and
+    /// nowhere else.
+    ///
+    /// Success needs nothing here: the forked pane appears with its fork mark,
+    /// which is the result itself. Failure has no such evidence - the header
+    /// suffix simply stops - so the reason is put on the pane that was forked,
+    /// in the pane's own notice row. It does not go in a dialog: a fork the
+    /// operator can simply try again is not worth a box to dismiss first, and
+    /// the reason has to stay readable while they try.
+    ///
+    /// The pane is found by looking for one this shell has a fork in flight
+    /// for inside the core's message, rather than by parsing the message's
+    /// shape; `ForkFailurePresentation` carries the matching rule. When no
+    /// pane matches, the reason still leaves the process through the trace and
+    /// the core's own stderr diagnostic.
+    private func observeForkFailure(in snapshot: CoreSnapshot?) {
+        clearSettledForks(in: snapshot)
+        guard let error = snapshot?.status.lastError,
+              error.kind == "pane.fork_failed",
+              lastReportedForkFailure != error.occurredAt
+        else { return }
+        lastReportedForkFailure = error.occurredAt
+        HideLaunchTrace.mark("pane.fork.failed", detail: error.message)
+        guard let owner = ForkFailurePresentation.owner(of: error.message, amongst: panesForking)
+        else { return }
+        panesForking.remove(owner)
+        paneNotices[owner] = error.message
+    }
+
+    /// Drops the in-flight mark from a pane whose fork has arrived. Herdr's
+    /// own lineage on the new pane is the evidence, so a fork that landed
+    /// while this shell was not looking settles the same way.
+    private func clearSettledForks(in snapshot: CoreSnapshot?) {
+        guard !panesForking.isEmpty else { return }
+        let arrived = Set(
+            (snapshot?.navigator.workspaces ?? [])
+                .flatMap(\.checkouts)
+                .flatMap(\.tabs)
+                .flatMap(\.panes)
+                .compactMap { PaneHeaderControls.forkMark($0.fork) }
+        )
+        panesForking.subtract(arrived)
+    }
+
+    /// What a pane is doing right now, shown after its name in the header.
+    func paneActivity(for paneID: String) -> String {
+        panesForking.contains(paneID) ? " · forking…" : ""
+    }
+
+    /// A failure that belongs to one pane, shown in that pane rather than in
+    /// a dialog.
+    func paneNotice(for paneID: String) -> String? {
+        paneNotices[paneID]
     }
 
     var workspaces: [CoreWorkspaceSnapshot] {
@@ -456,7 +522,15 @@ final class ShellModel: ObservableObject {
         return PaneGridPresentation.retainedCanvases(
             tabIDs: checkout.tabs.compactMap(\.id),
             layouts: core.snapshot?.paneLayouts ?? [],
-            attachedPaneIDs: Set((core.snapshot?.terminal.panes ?? []).map(\.paneID)),
+            // A pane whose session the core released keeps its projection
+            // entry so its state is readable, but it has no live stream, so
+            // its canvas goes with the session and the tab redraws from
+            // Herdr's own frame when it is shown again.
+            attachedPaneIDs: Set(
+                (core.snapshot?.terminal.panes ?? [])
+                    .filter { $0.transportState != "released" }
+                    .map(\.paneID)
+            ),
             visibleTabID: focusedTab?.id,
             visibleFocusedPaneID: focusedPaneID
         )
@@ -639,7 +713,8 @@ final class ShellModel: ObservableObject {
         switch TerminalLinkResolver.route(
             rawValue,
             paneCWD: paneMetadata(for: paneID)?.cwd ?? "",
-            checkoutRoot: focusedCheckout.map { URL(fileURLWithPath: $0.path, isDirectory: true) }
+            checkoutRoot: focusedCheckout.map { URL(fileURLWithPath: $0.path, isDirectory: true) },
+            checkouts: registeredCheckouts
         ) {
         case .web(let url):
             ExternalBrowser.open(url) { [weak self] message in
@@ -648,13 +723,8 @@ final class ShellModel: ObservableObject {
             }
             interactionNotice = nil
             HideLaunchTrace.mark("terminal.link.opened", detail: "external")
-        case .file(let url):
-            openFile(url)
-            focus(.rightPanel)
-            interactionNotice = nil
-            HideLaunchTrace.mark("terminal.link.opened", detail: "local_file")
-        case .directory(let url):
-            openDirectory(url)
+        case .path(let route):
+            open(route)
         case .unresolved(let message):
             // A click that resolves to nothing does nothing. Detection is a
             // guess made over arbitrary terminal output, so a wrong guess is
@@ -664,6 +734,49 @@ final class ShellModel: ObservableObject {
             // answerable without putting it on screen.
             HideLaunchTrace.mark("terminal.link.failed", detail: message)
         }
+    }
+
+    /// Every checkout this Mac has registered, which is what "inside the
+    /// scope" means for a clicked path (A3). A remote checkout is not one:
+    /// its paths name files on the other machine.
+    private var registeredCheckouts: [TerminalLinkCheckout] {
+        (core.snapshot?.navigator.workspaces ?? [])
+            .filter { $0.remoteTargetID == nil }
+            .flatMap(\.checkouts)
+            .map { TerminalLinkCheckout(id: $0.id, workspaceID: $0.workspaceID, path: $0.path) }
+    }
+
+    /// Takes one of the five path branches.
+    ///
+    /// A checkout path becomes one core event that settles the whole screen; a
+    /// path outside every checkout is handed to macOS. Either way the branch
+    /// and its outcome reach the trace, so a click is answerable from outside
+    /// the process.
+    private func open(_ route: TerminalPathRoute) {
+        switch route {
+        case .checkoutFile(let url, let checkout), .checkoutFolder(let url, let checkout):
+            core.revealPath(
+                url,
+                workspaceID: checkout.workspaceID,
+                checkoutID: checkout.id,
+                isDirectory: route.namesAFolder
+            )
+            // The core opens the panel in the same event; reaching for it here
+            // would send a second, stale UI-state save that undid the reveal.
+            activeSurface = .rightPanel
+            interactionNotice = nil
+        case .externalFile(let url), .externalFolder(let url):
+            ExternalFileOpener.open(url) { [weak self] message in
+                self?.interactionNotice = message
+                HideLaunchTrace.mark("terminal.link.failed", detail: "external_open")
+            }
+            interactionNotice = nil
+        case .externalReveal(let url):
+            // Opening this would run it. Finder selects it instead (A1).
+            ExternalFileOpener.reveal(url)
+            interactionNotice = nil
+        }
+        HideLaunchTrace.mark("terminal.link.opened", detail: route.traceName)
     }
 
     var herdrIsConnected: Bool {
@@ -1135,34 +1248,6 @@ final class ShellModel: ObservableObject {
             )
         }
         focus(.terminal)
-    }
-
-    /// A directory inside the explorer's tree is revealed there, opened down
-    /// to its row; any other directory opens in Finder, the only view of it
-    /// Hide has. The explorer root, not the pane's working directory, draws
-    /// the line, because the outline can only reveal what it shows.
-    func openDirectory(_ url: URL) {
-        switch TerminalLinkResolver.directoryDestination(url, explorerRoot: focusedPath) {
-        case .explorer(let expand, let selectedPath):
-            var expanded = Set(core.snapshot?.uiState.expandedPaths ?? [])
-            expanded.formUnion(expand)
-            core.persistUIState(
-                rightPanelVisible: true,
-                rightPanelSection: .explorer,
-                expandedPaths: expanded.sorted(),
-                selectedPath: selectedPath
-            )
-            focus(.rightPanel)
-            interactionNotice = nil
-            HideLaunchTrace.mark("terminal.link.opened", detail: "explorer_directory")
-        case .finder:
-            ExternalFinder.open(url) { [weak self] message in
-                self?.interactionNotice = message
-                HideLaunchTrace.mark("terminal.link.failed", detail: "finder_open")
-            }
-            interactionNotice = nil
-            HideLaunchTrace.mark("terminal.link.opened", detail: "finder_directory")
-        }
     }
 
     func openFile(_ url: URL) {
@@ -1713,16 +1798,19 @@ final class ShellModel: ObservableObject {
 
     /// Forks one pane into a sibling carrying its conversation forward.
     ///
-    /// The wait is real - the agent has to start before the pane appears - so
-    /// the notice says the fork was asked for rather than leaving the header
-    /// looking inert.
+    /// The wait is real - the agent has to start before the pane appears - and
+    /// it is shown where the split already shows its own wait: as a suffix on
+    /// that pane's header. A modal was the wrong shape for it, because it made
+    /// the operator dismiss a dialog to see the result it was covering, and it
+    /// said the same thing whether the fork then worked or failed.
     func forkPaneFromHeader(_ paneID: String) {
+        paneNotices[paneID] = nil
         guard let pane = paneMetadata(for: paneID), canForkPane(pane) else {
-            interactionNotice = "This pane has no agent session that can be forked."
+            paneNotices[paneID] = "This pane has no agent session that can be forked."
             return
         }
+        panesForking.insert(paneID)
         core.forkPane(paneID)
-        interactionNotice = "Forking \(paneID) into a sibling pane. The agent has to start before it appears."
     }
 
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
@@ -1916,5 +2004,44 @@ final class ShellModel: ObservableObject {
         case "ui_state.missing": "No shortcut state file was found. Default pane shortcuts are active."
         default: "The shortcut state file was corrupt. Default pane shortcuts are active."
         }
+    }
+}
+
+/// Which pane a fork failure belongs to.
+enum ForkFailurePresentation {
+    /// The core names the pane in the message it raises, so the pane is found
+    /// there rather than parsed out of the message's shape.
+    ///
+    /// Plain containment is not enough: `w1:p1` is a substring of `w1:p10`, so
+    /// a failure for the second would be shown on the first. An id counts only
+    /// where the message stops spelling an id, and when more than one still
+    /// fits, the longest wins. Candidates are ordered before they are compared
+    /// so the answer never depends on set iteration order.
+    static func owner(of message: String, amongst forking: Set<String>) -> String? {
+        forking
+            .filter { names($0, in: message) }
+            .sorted { ($0.count, $0) > ($1.count, $1) }
+            .first
+    }
+
+    private static func names(_ paneID: String, in message: String) -> Bool {
+        guard !paneID.isEmpty else { return false }
+        var searchStart = message.startIndex
+        while let found = message.range(of: paneID, range: searchStart..<message.endIndex) {
+            let beforeIsIDCharacter = found.lowerBound > message.startIndex
+                && isIDCharacter(message[message.index(before: found.lowerBound)])
+            let afterIsIDCharacter = found.upperBound < message.endIndex
+                && isIDCharacter(message[found.upperBound])
+            if !beforeIsIDCharacter && !afterIsIDCharacter {
+                return true
+            }
+            searchStart = found.upperBound
+        }
+        return false
+    }
+
+    private static func isIDCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || character == ":" || character == "-"
+            || character == "_"
     }
 }

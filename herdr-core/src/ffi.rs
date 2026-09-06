@@ -416,27 +416,47 @@ mod tests {
     /// caller sees, instead of ending the process. The test harness already
     /// ignores SIGPIPE for its own process, so the default action is
     /// restored first to make the call under test do the work.
+    ///
+    /// The loop is not a retry of the assertion: it re-establishes the
+    /// precondition. Other tests in this binary spawn fixture processes, and a
+    /// child inherits every descriptor open at the instant it forks, so a
+    /// child that starts between `pipe` and the close-on-exec flags keeps the
+    /// read end open and the pipe stays writable. That is a different
+    /// situation from the one under test, not a passing one, so an attempt
+    /// that meets it is discarded and a fresh pipe is made. A write that
+    /// succeeds is never accepted as a result.
     #[test]
     fn a_write_to_a_closed_pipe_fails_instead_of_terminating_the_process() {
         use std::io::Write;
         use std::os::fd::FromRawFd;
 
-        // SAFETY: restoring the default disposition and creating a pipe are
-        // plain libc calls with no memory handed across the boundary.
-        let (reader, mut writer) = unsafe {
-            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-            let mut fds = [0; 2];
-            assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
-            (
-                std::fs::File::from_raw_fd(fds[0]),
-                std::fs::File::from_raw_fd(fds[1]),
-            )
-        };
-        ignore_sigpipe();
-        drop(reader);
-        let error = writer
-            .write_all(b"release\n")
-            .expect_err("the reader is gone");
-        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        for _ in 0..16 {
+            // SAFETY: restoring the default disposition, creating a pipe and
+            // marking its ends close-on-exec are plain libc calls with no
+            // memory handed across the boundary.
+            let (reader, mut writer) = unsafe {
+                libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+                let mut fds = [0; 2];
+                assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+                for fd in fds {
+                    assert_ne!(libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC), -1);
+                }
+                (
+                    std::fs::File::from_raw_fd(fds[0]),
+                    std::fs::File::from_raw_fd(fds[1]),
+                )
+            };
+            ignore_sigpipe();
+            drop(reader);
+            match writer.write_all(b"release\n") {
+                // Someone else still holds the read end; try a fresh pipe.
+                Ok(()) => continue,
+                Err(error) => {
+                    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+                    return;
+                }
+            }
+        }
+        panic!("every pipe was inherited by a concurrently spawned fixture, so the write under test never happened");
     }
 }

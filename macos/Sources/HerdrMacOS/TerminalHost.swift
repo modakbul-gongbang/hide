@@ -146,6 +146,10 @@ struct TerminalHost: NSViewRepresentable {
         var onOpenLink: @MainActor @Sendable (String) -> Void
         var registrationID: UUID?
         weak var terminal: TerminalView?
+        /// Whether this view has already asked for the frame it was built
+        /// without. One view asks once: later size reports are the operator
+        /// resizing a pane that is already drawing.
+        private var askedForRepaint = false
 
         init(
             bridge: CoreBridge,
@@ -175,12 +179,23 @@ struct TerminalHost: NSViewRepresentable {
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
             guard newCols > 0, newRows > 0 else { return }
             let paneID = self.paneID
+            // The first report is this view's geometry settling, and it is
+            // also the moment the pane is known to be sized. If the pane was
+            // already running at this size the core swallows the resize, and
+            // this new grid would stay empty until the pane happened to write
+            // something, so the repaint is asked for right behind it. A pane
+            // that is not attached yet ignores it and draws its attach frame.
+            let repaint = !askedForRepaint
+            askedForRepaint = true
             Task { @MainActor [weak bridge] in
                 bridge?.resizeTerminal(
                     paneID: paneID,
                     cols: newCols,
                     rows: newRows
                 )
+                if repaint {
+                    bridge?.repaintTerminal(paneID: paneID)
+                }
             }
         }
 

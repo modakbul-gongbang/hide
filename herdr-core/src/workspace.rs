@@ -5,7 +5,7 @@
 //! after a session update. Removing a registration therefore cannot remove a
 //! checkout or terminate a remote process.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -147,6 +147,45 @@ pub struct SessionSpace {
     pub id: String,
     pub label: String,
     pub cwds: Vec<String>,
+}
+
+/// Each pane directory's repository root in comparison form, keyed by the raw
+/// directory Herdr reported. Resolved by the sync coordinator before it takes
+/// the runtime lock, because the answer costs one `git rev-parse` per
+/// directory and the reconcile that consumes it runs on every publish.
+pub type RootIndex = BTreeMap<String, String>;
+
+/// Resolves every directory the session's panes occupy to its repository root,
+/// or to the directory itself when it is not inside a repository.
+pub fn root_index(spaces: &[SessionSpace]) -> RootIndex {
+    let mut index = RootIndex::new();
+    for space in spaces {
+        for cwd in &space.cwds {
+            if index.contains_key(cwd) {
+                continue;
+            }
+            let path = Path::new(cwd);
+            let root = git_root(path)
+                .map(|root| normalized_for_comparison(&root))
+                .unwrap_or_else(|| normalized_for_comparison(path));
+            index.insert(cwd.clone(), root);
+        }
+    }
+    index
+}
+
+/// How many times the current thread has run git. A test that asserts a code
+/// path never shells out reads it before and after; the runtime lock is held
+/// through some of those paths, and a fork there is a stall for every thread.
+/// Per thread, because the test runner runs other tests' git alongside.
+#[cfg(test)]
+thread_local! {
+    static GIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn git_calls_on_this_thread() -> usize {
+    GIT_CALLS.with(|calls| calls.get())
 }
 
 pub fn build_catalog(
@@ -567,6 +606,8 @@ fn checkout(
 }
 
 fn git(path: &Path, arguments: &[&str]) -> Result<std::process::Output, String> {
+    #[cfg(test)]
+    GIT_CALLS.with(|calls| calls.set(calls.get() + 1));
     Command::new("git")
         .arg("-C")
         .arg(path)

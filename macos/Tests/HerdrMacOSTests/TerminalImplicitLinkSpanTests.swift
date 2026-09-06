@@ -85,7 +85,7 @@ struct TerminalImplicitLinkSpanTests {
             paneCWD: root.path,
             checkoutRoot: root
         )
-        #expect(resolved == .file(readme))
+        #expect(resolved == .path(.externalFile(TerminalLinkResolver.canonical(readme))))
     }
 
     @Test func aRootedPathStillNeedsMoreThanOneSegmentButAWebAddressIsUntouched() {

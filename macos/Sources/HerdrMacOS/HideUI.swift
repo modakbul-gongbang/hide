@@ -1719,6 +1719,8 @@ private struct HideTabCanvas: View {
                     isFocused: item.isFocused,
                     isZoomed: isZoomed,
                     showsFork: model.canForkPane(pane),
+                    activity: model.paneActivity(for: pane.id),
+                    notice: model.paneNotice(for: pane.id),
                     onFocus: { model.focusPane(pane.id) },
                     onReconnect: { model.reconnectPane(pane.id) },
                     onClose: { model.closePaneFromHeader(pane.id) },

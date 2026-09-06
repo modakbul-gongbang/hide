@@ -4005,7 +4005,7 @@ mod tests {
         scroll_requested.store(true, Ordering::Release);
         writer
             .write_all(
-                crate::live::terminal_scroll_request_lines("up", 1_000, 30, 100)
+                crate::live::terminal_scroll_line("up", 1_000)
                     .unwrap()
                     .as_bytes(),
             )

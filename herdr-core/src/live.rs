@@ -4,7 +4,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -340,9 +340,12 @@ pub enum RemoteControlAction {
     ///
     /// Herdr owns the order of its own tabs, so this is a request, not a
     /// local edit: the strip keeps the order Herdr last reported until Herdr
-    /// reports the new one. `expected_order` is the checkout-scoped Herdr tab
-    /// order the operator asked for, carried so the acknowledgement can be
-    /// checked against what was requested rather than assumed.
+    /// reports the new one. `expected_order` is the tab order the operator
+    /// asked for *within the single Herdr workspace that owns the moved tab*,
+    /// not across the checkout: a checkout can hold tabs from several
+    /// workspaces, and `tab.move` answers with one workspace's list. It is
+    /// carried so the acknowledgement can be checked against what was
+    /// requested rather than assumed.
     MoveTab {
         checkout_id: String,
         tab_id: String,
@@ -1233,25 +1236,6 @@ pub fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, Strin
     wire::terminal_scroll_line(direction, lines)
 }
 
-/// Sends the viewport move and a same-size repaint request as one ordered
-/// terminal-session write.
-///
-/// Herdr 0.8.2 updates its host scrollback for `terminal.scroll`, but does not
-/// publish a new attach frame until another repaint-producing request arrives.
-/// A same-size resize is part of the official terminal-session protocol and
-/// preserves the host scroll offset, so every wheel request gets the frame the
-/// client asked Herdr to render.
-pub fn terminal_scroll_request_lines(
-    direction: &str,
-    lines: u16,
-    rows: u16,
-    cols: u16,
-) -> Result<String, String> {
-    let mut request = terminal_scroll_line(direction, lines)?;
-    request.push_str(&terminal_resize_line(rows, cols)?);
-    Ok(request)
-}
-
 pub fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
     wire::terminal_resize_line(rows, cols)
 }
@@ -1301,6 +1285,12 @@ pub struct TerminalSession {
     cleanup: Option<TerminalSessionCleanup>,
     writer: Option<Sender<TerminalWriterCommand>>,
     reader: Option<Box<dyn Read + Send>>,
+    /// The stub's own end of its writer channel. A test asks what a pane was
+    /// told to do by reading the lines the session would have sent, so the
+    /// receiver has to outlive the send; dropping it here would close the
+    /// channel and turn every write into an error.
+    #[cfg(test)]
+    written: Option<Receiver<TerminalWriterCommand>>,
 }
 
 enum TerminalSessionCleanup {
@@ -1308,8 +1298,32 @@ enum TerminalSessionCleanup {
     Remote(Box<dyn FnOnce() + Send>),
 }
 
+/// One wheel movement, as a signed row delta. Up is positive, matching the
+/// direction the viewport travels through the scrollback.
+///
+/// The wire carries a direction and an unsigned count, but coalescing has to
+/// add opposing movements, so the sign lives here and is spelled back out at
+/// the moment the line is encoded.
+///
+/// A movement used to carry the grid too, because a same-size `terminal.resize`
+/// was appended to every scroll to force a repaint. Measured against a live
+/// 0.8.2 server on 2026-09-05, `terminal.scroll` publishes its own frame -
+/// three scrolls on their own produced three distinct frames - so the resize
+/// was doing nothing but doubling the writes, and it is gone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScrollRequest {
+    pub lines: i32,
+}
+
+/// One display frame. A wheel burst arrives at roughly the display's own rate,
+/// so this is the window in which several movements are one movement; it is
+/// not a timer, only the bound on a blocking read the writer thread already
+/// performs.
+pub const SCROLL_COALESCE_WINDOW: Duration = Duration::from_millis(16);
+
 enum TerminalWriterCommand {
     Line(String),
+    Scroll(ScrollRequest),
     Release {
         line: String,
         acknowledged: Sender<()>,
@@ -1319,14 +1333,36 @@ enum TerminalWriterCommand {
 impl TerminalSession {
     #[cfg(test)]
     pub fn test_stub(pane_id: &str, generation: u64, mode: TerminalSessionMode) -> Self {
+        // The stub keeps a writer so a test can read what the runtime asked
+        // Herdr to do. A session with no writer is the read-only case, and
+        // standing in for a controlling session with one would make every
+        // write look like a client conflict.
+        let (writer, written) = channel();
         Self {
             pane_id: pane_id.to_owned(),
             generation,
             mode,
             cleanup: None,
-            writer: None,
+            writer: Some(writer),
             reader: None,
+            written: Some(written),
         }
+    }
+
+    /// Every protocol line this session was asked to write, oldest first.
+    #[cfg(test)]
+    pub fn test_written_lines(&self) -> Vec<String> {
+        let Some(written) = self.written.as_ref() else {
+            return Vec::new();
+        };
+        written
+            .try_iter()
+            .filter_map(|command| match command {
+                TerminalWriterCommand::Line(line) => Some(line),
+                TerminalWriterCommand::Release { line, .. } => Some(line),
+                TerminalWriterCommand::Scroll(_) => None,
+            })
+            .collect()
     }
 
     pub fn spawn(
@@ -1413,6 +1449,8 @@ impl TerminalSession {
             mode,
             cleanup: Some(TerminalSessionCleanup::Local(child)),
             reader: Some(Box::new(reader)),
+            #[cfg(test)]
+            written: None,
             writer,
         })
     }
@@ -1470,6 +1508,8 @@ impl TerminalSession {
             cleanup: Some(TerminalSessionCleanup::Remote(shutdown)),
             writer,
             reader: Some(reader),
+            #[cfg(test)]
+            written: None,
         })
     }
 
@@ -1571,16 +1611,18 @@ impl TerminalSession {
             .map_err(|_| "terminal control input channel is closed".to_owned())
     }
 
-    pub fn scroll(&self, direction: &str, lines: u16, rows: u16, cols: u16) -> Result<(), String> {
+    /// Queues one wheel movement. The writer thread sums whatever else lands
+    /// inside the same frame before it writes, so a burst of wheel rows costs
+    /// one write rather than one per row.
+    pub fn scroll(&self, request: ScrollRequest) -> Result<(), String> {
         let Some(writer) = self.writer.as_ref() else {
             return Err(format!(
                 "Pane {} is read-only because another client owns terminal control",
                 self.pane_id
             ));
         };
-        let request = terminal_scroll_request_lines(direction, lines, rows, cols)?;
         writer
-            .send(TerminalWriterCommand::Line(request))
+            .send(TerminalWriterCommand::Scroll(request))
             .map_err(|_| "terminal control scroll repaint channel is closed".to_owned())
     }
 
@@ -1610,9 +1652,44 @@ fn spawn_terminal_control_writer(
     thread::Builder::new()
         .name(format!("herdr-core-terminal-writer-{writer_pane}"))
         .spawn(move || {
-            for command in receiver {
+            // A command the coalescer read while draining a wheel burst and
+            // did not consume. Holding it here is what keeps input, resize and
+            // release in the order they were sent.
+            let mut carried: Option<TerminalWriterCommand> = None;
+            loop {
+                let command = match carried.take() {
+                    Some(command) => command,
+                    None => match receiver.recv() {
+                        Ok(command) => command,
+                        Err(_) => return,
+                    },
+                };
                 let (line, release_acknowledgement, is_release) = match command {
                     TerminalWriterCommand::Line(line) => (line, None, false),
+                    TerminalWriterCommand::Scroll(request) => {
+                        let (summed, next) =
+                            coalesce_scroll(&receiver, request, SCROLL_COALESCE_WINDOW);
+                        carried = next;
+                        // Movements that cancel each other inside one frame
+                        // leave the viewport where it was, so there is nothing
+                        // to ask Herdr for.
+                        let Some(line) = scroll_request_line(summed) else {
+                            continue;
+                        };
+                        match line {
+                            Ok(line) => (line, None, false),
+                            Err(error) => {
+                                deliver_terminal_session_write_failure(
+                                    &runtime,
+                                    &notifier,
+                                    &writer_pane,
+                                    generation,
+                                    error,
+                                );
+                                return;
+                            }
+                        }
+                    }
                     TerminalWriterCommand::Release { line, acknowledged } => {
                         (line, Some(acknowledged), true)
                     }
@@ -1645,6 +1722,44 @@ fn spawn_terminal_control_writer(
         })
         .map_err(|error| format!("terminal control writer could not be started: {error}"))?;
     Ok(sender)
+}
+
+/// Sums the wheel movements that arrive inside one frame window.
+///
+/// The window is spent on a blocking read the thread would be making anyway,
+/// so no timer and no extra thread appear. A command that is not a scroll ends
+/// the drain and is handed back rather than consumed, because it is the next
+/// thing the session has to write.
+fn coalesce_scroll(
+    receiver: &Receiver<TerminalWriterCommand>,
+    first: ScrollRequest,
+    window: Duration,
+) -> (ScrollRequest, Option<TerminalWriterCommand>) {
+    let deadline = Instant::now() + window;
+    let mut summed = first;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return (summed, None);
+        }
+        match receiver.recv_timeout(remaining) {
+            Ok(TerminalWriterCommand::Scroll(next)) => summed.lines += next.lines,
+            Ok(other) => return (summed, Some(other)),
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                return (summed, None);
+            }
+        }
+    }
+}
+
+/// The wire line for a summed movement, or `None` when the sum is zero.
+fn scroll_request_line(request: ScrollRequest) -> Option<Result<String, String>> {
+    if request.lines == 0 {
+        return None;
+    }
+    let direction = if request.lines > 0 { "up" } else { "down" };
+    let lines = u16::try_from(request.lines.unsigned_abs()).unwrap_or(u16::MAX);
+    Some(terminal_scroll_line(direction, lines))
 }
 
 impl Drop for TerminalSession {
@@ -1871,6 +1986,127 @@ mod tests {
     /// synced from Herdr itself by `scripts/sync-herdr-contract.sh`. A core that
     /// silently spoke a different revision than the contract would fail at
     /// runtime with an empty sidebar, so the divergence is caught here instead.
+    /// A sink the writer thread can be handed in place of a child's stdin, so
+    /// what actually reached Herdr is countable rather than inferred.
+    #[derive(Clone)]
+    struct RecordedSink(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for RecordedSink {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("sink lock").extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn written_lines(sink: &Arc<Mutex<Vec<u8>>>) -> Vec<Value> {
+        String::from_utf8(sink.lock().expect("sink lock").clone())
+            .expect("the session wire is UTF-8")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("each write is one JSON line"))
+            .collect()
+    }
+
+    /// The writer thread, driven to completion. Dropping the sender ends the
+    /// loop, and the join proves every queued command was written before the
+    /// assertions read the sink.
+    fn drain_writer(commands: Vec<TerminalWriterCommand>) -> Vec<Value> {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let sender = spawn_terminal_control_writer(
+            Weak::new(),
+            ChangeNotifier::noop(),
+            "w1:p1",
+            1,
+            Box::new(RecordedSink(Arc::clone(&sink))),
+        )
+        .expect("writer thread starts");
+        for command in commands {
+            sender.send(command).expect("the writer is listening");
+        }
+        drop(sender);
+        // The coalescing window is the only wait in the loop, so one window
+        // plus a margin is long enough for the thread to have written and
+        // exited. The sink is read after that, never during.
+        thread::sleep(SCROLL_COALESCE_WINDOW * 8);
+        written_lines(&sink)
+    }
+
+    fn wheel(lines: i32) -> TerminalWriterCommand {
+        TerminalWriterCommand::Scroll(ScrollRequest { lines })
+    }
+
+    /// AC6, R6. One flick of the wheel is dozens of row events, and each one
+    /// used to be its own write and its own server-side repaint. What Herdr
+    /// hears is now one movement per frame carrying the whole distance.
+    #[test]
+    fn a_frame_of_wheel_rows_is_one_write_carrying_the_summed_distance() {
+        let written = drain_writer((0..100).map(|_| wheel(1)).collect());
+
+        assert_eq!(written.len(), 1, "one movement, one write: {written:?}");
+        assert_eq!(written[0]["type"], "terminal.scroll");
+        assert_eq!(written[0]["direction"], "up");
+        assert_eq!(written[0]["lines"], 100);
+    }
+
+    /// Movements that cancel each other leave the viewport where it was, so
+    /// there is nothing to ask for. A trackpad reversal inside one frame is
+    /// the everyday case.
+    #[test]
+    fn wheel_rows_that_cancel_inside_one_frame_are_not_written_at_all() {
+        let written = drain_writer(
+            (0..40)
+                .map(|index| wheel(if index % 2 == 0 { 3 } else { -3 }))
+                .collect(),
+        );
+
+        assert!(written.is_empty(), "an unmoved viewport was written: {written:?}");
+    }
+
+    /// The summed movement is the same distance the unsummed sequence would
+    /// have travelled, whatever order the rows arrived in.
+    #[test]
+    fn any_order_of_wheel_rows_reaches_the_position_the_unsummed_order_reaches() {
+        for rows in [
+            vec![5, -2, 7, -1],
+            vec![-1, 7, -2, 5],
+            vec![7, 5, -2, -1],
+            vec![-2, -1, 5, 7],
+        ] {
+            let expected: i32 = rows.iter().sum();
+            let written = drain_writer(rows.iter().copied().map(wheel).collect());
+            assert_eq!(written.len(), 1, "one movement per frame: {written:?}");
+            assert_eq!(written[0]["direction"], "up");
+            assert_eq!(written[0]["lines"], expected);
+        }
+    }
+
+    /// Input, resize and release still reach Herdr in the order they were
+    /// sent. The coalescer stops at the first command that is not a wheel row
+    /// and hands it back rather than swallowing it.
+    #[test]
+    fn a_command_that_is_not_a_wheel_row_ends_the_window_and_is_still_written() {
+        let written = drain_writer(vec![
+            wheel(4),
+            TerminalWriterCommand::Line(
+                terminal_input_line(b"ls\n").expect("input line"),
+            ),
+            wheel(-6),
+        ]);
+
+        let types = written
+            .iter()
+            .map(|line| line["type"].as_str().unwrap_or_default().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(types, ["terminal.scroll", "terminal.input", "terminal.scroll"]);
+        assert_eq!(written[0]["lines"], 4);
+        assert_eq!(written[2]["direction"], "down");
+        assert_eq!(written[2]["lines"], 6);
+    }
+
     #[test]
     fn protocol_revision_matches_the_canonical_contract() {
         const CONTRACT: &str = include_str!("../../contracts/herdr-api.schema.json");
@@ -1935,8 +2171,10 @@ mod tests {
         assert_eq!(resize["cell_width_px"], 0);
         assert_eq!(resize["cell_height_px"], 0);
 
-        let scroll_request =
-            terminal_scroll_request_lines("up", 12, 30, 100).expect("scroll repaint request");
+        // A wheel movement is one line and nothing else. The same-size resize
+        // that used to follow it was there to force a repaint that a live
+        // 0.8.2 server turned out to publish on its own.
+        let scroll_request = terminal_scroll_line("up", 12).expect("scroll line");
         let mut scroll_lines = scroll_request.lines();
         let scroll: Value =
             serde_json::from_str(scroll_lines.next().expect("scroll line")).expect("scroll JSON");
@@ -1949,9 +2187,6 @@ mod tests {
                 "source": "wheel",
             })
         );
-        let repaint: Value =
-            serde_json::from_str(scroll_lines.next().expect("repaint line")).expect("repaint JSON");
-        assert_eq!(repaint, resize);
         assert_eq!(scroll_lines.next(), None);
 
         let release: Value =

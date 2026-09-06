@@ -511,6 +511,8 @@ struct PaneTerminalCell<Content: View>: View {
     let isFocused: Bool
     let isZoomed: Bool
     let showsFork: Bool
+    let activity: String
+    let notice: String?
     let onFocus: () -> Void
     let onReconnect: () -> Void
     let onClose: () -> Void
@@ -525,6 +527,8 @@ struct PaneTerminalCell<Content: View>: View {
         isFocused: Bool,
         isZoomed: Bool = false,
         showsFork: Bool = false,
+        activity: String = "",
+        notice: String? = nil,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
@@ -538,6 +542,8 @@ struct PaneTerminalCell<Content: View>: View {
         self.isFocused = isFocused
         self.isZoomed = isZoomed
         self.showsFork = showsFork
+        self.activity = activity
+        self.notice = notice
         self.onFocus = onFocus
         self.onReconnect = onReconnect
         self.onClose = onClose
@@ -562,6 +568,8 @@ struct PaneTerminalCell<Content: View>: View {
             isZoomed: isZoomed,
             forkedFrom: PaneHeaderControls.forkMark(pane.fork),
             showsFork: showsFork,
+            activity: activity,
+            notice: notice,
             ports: pane.ports,
             onFocus: onFocus,
             onReconnect: onReconnect,
@@ -649,6 +657,12 @@ struct HideTerminalPaneCard<Content: View>: View {
     /// The pane this one was forked from, when Herdr's lineage says so.
     let forkedFrom: String?
     let showsFork: Bool
+    /// What this pane is doing right now, shown after its name.
+    let activity: String
+    /// A failure that belongs to this pane, shown in place rather than in a
+    /// dialog: it is answerable where the control that caused it is, and a
+    /// modal would make the operator dismiss a box before trying again.
+    let notice: String?
     /// Ports a server is listening on from this pane's directory.
     let ports: [UInt16]
     let onFocus: () -> Void
@@ -667,6 +681,8 @@ struct HideTerminalPaneCard<Content: View>: View {
         isZoomed: Bool = false,
         forkedFrom: String? = nil,
         showsFork: Bool = false,
+        activity: String = "",
+        notice: String? = nil,
         ports: [UInt16] = [],
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
@@ -683,6 +699,8 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.isZoomed = isZoomed
         self.forkedFrom = forkedFrom
         self.showsFork = showsFork
+        self.activity = activity
+        self.notice = notice
         self.ports = ports
         self.onFocus = onFocus
         self.onReconnect = onReconnect
@@ -696,7 +714,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: HideTheme.spacingXS) {
                 Button(action: onFocus) {
-                    Text(title)
+                    Text(title + activity)
                         .hideFont(size: 10, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
                         .lineLimit(1)
@@ -784,6 +802,22 @@ struct HideTerminalPaneCard<Content: View>: View {
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
+
+            if let notice {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(notice)
+                        .lineLimit(2)
+                    Spacer(minLength: HideTheme.spacingSM)
+                }
+                .hideFont(size: 9)
+                .foregroundStyle(HideTheme.warning)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HideTheme.elevated)
+                .accessibilityIdentifier("pane-notice-\(paneID)")
+            }
 
             if let transportNotice {
                 HStack(alignment: .top, spacing: 6) {
