@@ -132,17 +132,17 @@ struct TerminalLinkResolverTests {
     /// paths are spelled under the explorer root as given, because the outline
     /// names its rows by appending to that root.
     @Test func aDirectoryInsideTheExplorerRootIsRevealedThereAndOneOutsideGoesToFinder() {
-        let root = URL(fileURLWithPath: "/Users/me/projects/hide", isDirectory: true)
-        let nested = URL(fileURLWithPath: "/Users/me/projects/hide/agents/runs/spec", isDirectory: true)
+        let root = URL(fileURLWithPath: "/home/me/projects/hide", isDirectory: true)
+        let nested = URL(fileURLWithPath: "/home/me/projects/hide/agents/runs/spec", isDirectory: true)
         #expect(
             TerminalLinkResolver.directoryDestination(nested, explorerRoot: root)
                 == .explorer(
                     expand: [
-                        "/Users/me/projects/hide/agents",
-                        "/Users/me/projects/hide/agents/runs",
-                        "/Users/me/projects/hide/agents/runs/spec",
+                        "/home/me/projects/hide/agents",
+                        "/home/me/projects/hide/agents/runs",
+                        "/home/me/projects/hide/agents/runs/spec",
                     ],
-                    selectedPath: "/Users/me/projects/hide/agents/runs/spec"
+                    selectedPath: "/home/me/projects/hide/agents/runs/spec"
                 )
         )
         #expect(
@@ -150,7 +150,7 @@ struct TerminalLinkResolverTests {
                 == .explorer(expand: [], selectedPath: nil)
         )
 
-        let sibling = URL(fileURLWithPath: "/Users/me/projects/hide.worktrees/spec", isDirectory: true)
+        let sibling = URL(fileURLWithPath: "/home/me/projects/hide.worktrees/spec", isDirectory: true)
         #expect(TerminalLinkResolver.directoryDestination(sibling, explorerRoot: root) == .finder)
         #expect(TerminalLinkResolver.directoryDestination(nested, explorerRoot: nil) == .finder)
     }

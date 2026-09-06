@@ -122,18 +122,18 @@ struct TerminalImplicitLinkSpanTests {
     /// The reported case, taken from a live Codex pane 50 columns wide: the
     /// command row ends at the last separator that fit, and the rest of the
     /// path follows on rows behind a `│` gutter. Clicking `/Users` opened
-    /// `/Users/hoyeonlee/projects` alone.
+    /// `/home/maintainer/projects` alone.
     @Test func aPathCodexWrapsAtSeparatorsBehindAGutterJoinsBackIntoOne() {
         let rows = [
-            "• Ran tail -45 /Users/hoyeonlee/projects/",
+            "• Ran tail -45 /home/maintainer/projects/",
             "  │ herdr-ide.worktrees/hide-native-spec/agents/",
             "  │ runs/hide-native-responsiveness/evidence/",
             "  │ … +3 lines",
             "  └ (no output)",
         ]
-        let whole = "/Users/hoyeonlee/projects/herdr-ide.worktrees/hide-native-spec/agents/"
+        let whole = "/home/maintainer/projects/herdr-ide.worktrees/hide-native-spec/agents/"
             + "runs/hide-native-responsiveness/evidence/"
-        #expect(link(rows: rows, cols: 50, row: 0, needle: "/Users") == whole)
+        #expect(link(rows: rows, cols: 50, row: 0, needle: "/home") == whole)
         #expect(link(rows: rows, cols: 50, row: 1, needle: "herdr-ide") == whole)
         #expect(link(rows: rows, cols: 50, row: 2, needle: "evidence") == whole)
         // The elision row is not path text, so the join stops above it.
@@ -144,13 +144,13 @@ struct TerminalImplicitLinkSpanTests {
     /// gutter, and a path that opens inside a parenthesis.
     @Test func aPathCodexWrapsUnderAPlainIndentJoinsBackIntoOne() {
         let rows = [
-            "  └    Compiling herdr-core v0.1.0 (/Users/",
-            "    hoyeonlee/projects/herdr-ide.worktrees/",
+            "  └    Compiling herdr-core v0.1.0 (/home/",
+            "    maintainer/projects/herdr-ide.worktrees/",
             "    … +47 lines (ctrl + t to view transcript)",
         ]
         #expect(
-            link(rows: rows, cols: 50, row: 0, needle: "/Users")
-                == "/Users/hoyeonlee/projects/herdr-ide.worktrees/"
+            link(rows: rows, cols: 50, row: 0, needle: "/home")
+                == "/home/maintainer/projects/herdr-ide.worktrees/"
         )
     }
 
@@ -159,13 +159,13 @@ struct TerminalImplicitLinkSpanTests {
     /// joined and must keep joining.
     @Test func aPathHardWrappedAtTheRightEdgeStillJoins() {
         let rows = [
-            " wrote /Users/hoyeonlee/projects/herdr-ide/macos/S",
+            " wrote /home/maintainer/projects/herdr-ide/macos/S",
             "  ources/HerdrMacOS/ShellModel.swift",
         ]
         #expect(rows[0].count == 50)
         #expect(
-            link(rows: rows, cols: 50, row: 0, needle: "/Users")
-                == "/Users/hoyeonlee/projects/herdr-ide/macos/Sources/HerdrMacOS/ShellModel.swift"
+            link(rows: rows, cols: 50, row: 0, needle: "/home")
+                == "/home/maintainer/projects/herdr-ide/macos/Sources/HerdrMacOS/ShellModel.swift"
         )
     }
 
