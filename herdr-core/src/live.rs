@@ -2624,13 +2624,20 @@ mod tests {
     fn wire_snapshot_projects_agents_with_workspace_labels_and_verbatim_tokens() {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
+            "version": "fixture",
+            "host": {"host_id": "fixture-host", "session_id": "fixture"},
+            "event_sequence": 0,
+            "panes": [],
+            "tabs": [],
+            "lineage": [],
             "workspaces": [
-                {"workspace_id": "w1", "label": "herdr-ide", "active_tab_id": "w1:t1"},
+                {"workspace_id": "w1", "label": "herdr-ide", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"},
             ],
             "layouts": [],
             "agents": [
                 {
                     "pane_id": "w1:p1",
+                    "terminal_id": "terminal-1", "tab_id": "w1:t1", "focused": true, "revision": 1,
                     "workspace_id": "w1",
                     "agent": "claude",
                     "agent_status": "working",
@@ -2644,6 +2651,7 @@ mod tests {
                 },
                 {
                     "pane_id": "w9:p2",
+                    "terminal_id": "terminal-2", "tab_id": "w9:t1", "focused": false, "revision": 1, "agent_status": "idle",
                     "workspace_id": "w9",
                     "tokens": {"status_idle": "○", "activity": "1787963036672"}
                 }
@@ -2672,7 +2680,12 @@ mod tests {
     fn wire_snapshot_preserves_herdr_tab_labels() {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
-            "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1"}],
+            "version": "fixture",
+            "host": {"host_id": "fixture-host", "session_id": "fixture"},
+            "event_sequence": 0,
+            "panes": [],
+            "lineage": [],
+            "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"}],
             "tabs": [{
                 "workspace_id": "w1",
                 "tab_id": "w1:t1",
@@ -2704,7 +2717,13 @@ mod tests {
     fn session_layout_projects_authoritative_nested_tree_and_zoom() {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
-            "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1"}],
+            "version": "fixture",
+            "host": {"host_id": "fixture-host", "session_id": "fixture"},
+            "event_sequence": 0,
+            "panes": [],
+            "tabs": [],
+            "lineage": [],
+            "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"}],
             "agents": [],
             "focused_pane_id": "w1:p3",
             "layouts": [{

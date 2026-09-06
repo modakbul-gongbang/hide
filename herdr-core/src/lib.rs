@@ -20,6 +20,7 @@ mod runtime;
 mod session_sync;
 mod sidebar;
 mod usage;
+mod wire;
 pub mod workspace;
 
 pub use ffi::{
