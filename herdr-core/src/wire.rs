@@ -269,6 +269,7 @@ macro_rules! record_conversions {
                     workspace_id: v.workspace_id,
                     tab_id: v.tab_id,
                     cwd: v.cwd,
+                    tokens: v.tokens.into_iter().map(|(k, v)| (k.into(), Value::String(v))).collect(),
                     label: v.label,
                     terminal_title: v.terminal_title,
                     terminal_title_stripped: v.terminal_title_stripped,
@@ -324,7 +325,7 @@ record_conversions!(ev);
 impl From<res::AgentInfo> for ProjectedAgent {
     fn from(v: res::AgentInfo) -> Self {
         Self {
-            pane_id: v.pane_id, workspace_id: v.workspace_id, tab_id: v.tab_id, cwd: v.cwd,
+            pane_id: v.pane_id, name: v.name, workspace_id: v.workspace_id, tab_id: v.tab_id, cwd: v.cwd,
             agent: v.agent, agent_status: Some(v.agent_status.to_string()),
             agent_session: v.agent_session.map(|s| SessionAgentSessionPayload { kind: s.kind.to_string(), value: s.value }),
             spawned_from_pane_id: v.spawned_from_pane_id, state_change_seq: v.state_change_seq,
@@ -920,7 +921,15 @@ pub(crate) fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
     Ok(line)
 }
 
-pub(crate) fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String, String> {
+/// A wheel carries the pointer's cell and modifiers because Herdr uses them
+/// when the application tracks the mouse. Coordinates are zero-based.
+pub(crate) fn terminal_scroll_line(
+    direction: &str,
+    lines: u16,
+    column: Option<u16>,
+    row: Option<u16>,
+    modifiers: u8,
+) -> Result<String, String> {
     if !matches!(direction, "up" | "down") {
         return Err(format!(
             "terminal scroll direction is not up or down: {direction}"
@@ -934,6 +943,9 @@ pub(crate) fn terminal_scroll_line(direction: &str, lines: u16) -> Result<String
         "direction": direction,
         "lines": lines,
         "source": "wheel",
+        "column": column,
+        "row": row,
+        "modifiers": modifiers,
     }))
     .map_err(|error| format!("terminal scroll could not be encoded: {error}"))?;
     line.push('\n');

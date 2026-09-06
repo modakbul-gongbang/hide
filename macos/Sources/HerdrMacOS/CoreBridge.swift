@@ -30,6 +30,10 @@ struct CoreSnapshot {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+    var gitWorktrees: CoreProjectWorktrees? = nil
+    var gitWorktreesLoading: Bool = false
+    var gitWorktreesRemote: Bool = false
+    var worktreeRemoval: CoreWorktreeRemoval? = nil
 
     /// Rebuilds the snapshot with only the independently revisioned sections
     /// that arrived, so a delta carrying one of them leaves the rest alone.
@@ -50,7 +54,9 @@ struct CoreSnapshot {
             find: find,
             uiState: uiState,
             status: status,
-            pet: pet
+            pet: pet,
+            gitWorktrees: gitWorktrees, gitWorktreesLoading: gitWorktreesLoading,
+            gitWorktreesRemote: gitWorktreesRemote, worktreeRemoval: worktreeRemoval
         )
     }
 }
@@ -114,6 +120,10 @@ struct CoreRestSnapshot: Decodable {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+    var gitWorktrees: CoreProjectWorktrees? = nil
+    var gitWorktreesLoading: Bool = false
+    var gitWorktreesRemote: Bool = false
+    var worktreeRemoval: CoreWorktreeRemoval? = nil
 
     enum CodingKeys: String, CodingKey {
         case navigator
@@ -124,6 +134,10 @@ struct CoreRestSnapshot: Decodable {
         case uiState = "ui_state"
         case status
         case pet
+        case gitWorktrees = "git_worktrees"
+        case gitWorktreesLoading = "git_worktrees_loading"
+        case gitWorktreesRemote = "git_worktrees_remote"
+        case worktreeRemoval = "worktree_removal"
     }
 
     init(from decoder: Decoder) throws {
@@ -136,6 +150,10 @@ struct CoreRestSnapshot: Decodable {
         uiState = try container.decode(CoreUIStateSnapshot.self, forKey: .uiState)
         status = try container.decode(CoreStatusSnapshot.self, forKey: .status)
         pet = try container.decode(CorePetSnapshot.self, forKey: .pet)
+        gitWorktrees = try container.decodeIfPresent(CoreProjectWorktrees.self, forKey: .gitWorktrees)
+        gitWorktreesLoading = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesLoading) ?? false
+        gitWorktreesRemote = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesRemote) ?? false
+        worktreeRemoval = try container.decodeIfPresent(CoreWorktreeRemoval.self, forKey: .worktreeRemoval)
     }
 }
 
@@ -544,6 +562,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let label: String
     let path: String
     let branch: String?
+    var worktree: CoreGitWorktree? = nil
     let isWorktree: Bool
     let exists: Bool
     let temporary: Bool
@@ -578,6 +597,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         case label
         case path
         case branch
+        case worktree
         case isWorktree = "is_worktree"
         case exists
         case temporary
@@ -652,6 +672,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         label = try container.decode(String.self, forKey: .label)
         path = try container.decode(String.self, forKey: .path)
         branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        worktree = try container.decodeIfPresent(CoreGitWorktree.self, forKey: .worktree)
         isWorktree = try container.decodeIfPresent(Bool.self, forKey: .isWorktree) ?? false
         exists = try container.decodeIfPresent(Bool.self, forKey: .exists) ?? true
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
@@ -717,7 +738,7 @@ enum CorePullRequestBadge: String, Decodable, Equatable {
     case review
     case open
 
-    /// The two states a worktree may be removed from.
+    /// Settled pull requests dim their checkout row; deletion uses its own core gate.
     var isSettled: Bool { self == .merged || self == .closed }
 }
 
@@ -762,6 +783,8 @@ struct CoreGithubStatus: Decodable, Equatable {
     /// failure.
     let unavailableReason: String?
 
+    var failureCategory: String? = nil
+
     static let empty = CoreGithubStatus(
         available: false,
         loading: false,
@@ -771,6 +794,7 @@ struct CoreGithubStatus: Decodable, Equatable {
     )
 
     enum CodingKeys: String, CodingKey {
+        case failureCategory = "failure_category"
         case available
         case loading
         case stale
@@ -809,18 +833,14 @@ struct CoreCheckoutCard: Decodable, Equatable {
     let github: CoreGithubStatus
     let disk: CoreDiskUsage
     let diskMeasuring: Bool
-    let removeOffered: Bool
-    /// Why the offered button is disabled. `nil` with `removeOffered` means it
-    /// is enabled.
-    let removeBlockedReason: String?
+    let deletionGate: CoreWorktreeDeletionGate?
 
     static let empty = CoreCheckoutCard(
         checkoutID: nil,
         github: .empty,
         disk: .empty,
         diskMeasuring: false,
-        removeOffered: false,
-        removeBlockedReason: nil
+        deletionGate: nil
     )
 
     enum CodingKeys: String, CodingKey {
@@ -828,8 +848,7 @@ struct CoreCheckoutCard: Decodable, Equatable {
         case github
         case disk
         case diskMeasuring = "disk_measuring"
-        case removeOffered = "remove_offered"
-        case removeBlockedReason = "remove_blocked_reason"
+        case deletionGate = "deletion_gate"
     }
 
     init(
@@ -837,15 +856,13 @@ struct CoreCheckoutCard: Decodable, Equatable {
         github: CoreGithubStatus,
         disk: CoreDiskUsage,
         diskMeasuring: Bool,
-        removeOffered: Bool,
-        removeBlockedReason: String?
+        deletionGate: CoreWorktreeDeletionGate?
     ) {
         self.checkoutID = checkoutID
         self.github = github
         self.disk = disk
         self.diskMeasuring = diskMeasuring
-        self.removeOffered = removeOffered
-        self.removeBlockedReason = removeBlockedReason
+        self.deletionGate = deletionGate
     }
 
     init(from decoder: Decoder) throws {
@@ -854,8 +871,7 @@ struct CoreCheckoutCard: Decodable, Equatable {
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         disk = try container.decodeIfPresent(CoreDiskUsage.self, forKey: .disk) ?? .empty
         diskMeasuring = try container.decodeIfPresent(Bool.self, forKey: .diskMeasuring) ?? false
-        removeOffered = try container.decodeIfPresent(Bool.self, forKey: .removeOffered) ?? false
-        removeBlockedReason = try container.decodeIfPresent(String.self, forKey: .removeBlockedReason)
+        deletionGate = try container.decodeIfPresent(CoreWorktreeDeletionGate.self, forKey: .deletionGate)
     }
 }
 
@@ -909,6 +925,7 @@ struct CoreTabSnapshot: Decodable, Identifiable {
 
 struct CorePaneSnapshot: Decodable, Identifiable {
     let id: String
+    let content: CorePaneContent
     /// The three names a pane can be shown by. The core ships all three and
     /// `PaneHeaderPresentation` picks; see its ladder for the order.
     let herdrLabel: String?
@@ -929,6 +946,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case content
         case fork
         case ports
         case herdrLabel = "herdr_label"
@@ -943,6 +961,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
 
     init(
         id: String,
+        content: CorePaneContent = .terminal,
         herdrLabel: String? = nil,
         terminalTitle: String? = nil,
         workspaceLabel: String? = nil,
@@ -955,6 +974,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         ports: [UInt16] = []
     ) {
         self.id = id
+        self.content = content
         self.herdrLabel = herdrLabel
         self.terminalTitle = terminalTitle
         self.workspaceLabel = workspaceLabel
@@ -967,14 +987,14 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.ports = ports
     }
 
-    /// `fork` and `ports` are the two sections this shell can render without,
-    /// so their absence
-    /// defaults rather than failing the whole snapshot decode. Every other
+    /// Terminal is the default content when no native content is specified.
+    /// `fork` and `ports` are optional capabilities. Every other
     /// field describes the pane itself, and a pane missing one of those is a
     /// snapshot worth rejecting.
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        content = try container.decodeIfPresent(CorePaneContent.self, forKey: .content) ?? .terminal
         herdrLabel = try container.decodeIfPresent(String.self, forKey: .herdrLabel)
         terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
         workspaceLabel = try container.decodeIfPresent(String.self, forKey: .workspaceLabel)
@@ -1042,6 +1062,15 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let lastActivity: String
     let ambient: CoreAmbientSignal?
 
+    var lineageDepth: Int = 0
+    var lineageChildPaneIDs: [String] = []
+    var lineageRootCheckoutID: String? = nil
+    var lineageWorktreeBadge: String? = nil
+    var lineageOrphan: Bool = false
+    var lineageHint: String? = nil
+    var raisedHint: String? = nil
+    var lineageCollapsed: Bool = false
+
     /// Fixtures and tests build a row directly. Every derived value defaults
     /// to the quiet reading, so a fixture states only what it is exercising.
     init(
@@ -1084,6 +1113,36 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.ambient = ambient
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        workspaceLabel = try container.decode(String.self, forKey: .workspaceLabel)
+        checkoutLabel = try container.decodeIfPresent(String.self, forKey: .checkoutLabel)
+        agentKind = try container.decode(String.self, forKey: .agentKind)
+        demand = try container.decode(String.self, forKey: .demand)
+        activity = try container.decode(String.self, forKey: .activity)
+        unread = try container.decode(Bool.self, forKey: .unread)
+        blocked = try container.decode(Bool.self, forKey: .blocked)
+        group = try container.decode(String.self, forKey: .group)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        emphasized = try container.decode(Bool.self, forKey: .emphasized)
+        statusLabel = try container.decode(String.self, forKey: .statusLabel)
+        requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
+        summary = try container.decode(String.self, forKey: .summary)
+        elapsed = try container.decode(String.self, forKey: .elapsed)
+        lastActivity = try container.decode(String.self, forKey: .lastActivity)
+        ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
+        lineageDepth = try container.decodeIfPresent(Int.self, forKey: .lineageDepth) ?? 0
+        lineageChildPaneIDs = try container.decodeIfPresent([String].self, forKey: .lineageChildPaneIDs) ?? []
+        lineageRootCheckoutID = try container.decodeIfPresent(String.self, forKey: .lineageRootCheckoutID)
+        lineageWorktreeBadge = try container.decodeIfPresent(String.self, forKey: .lineageWorktreeBadge)
+        lineageOrphan = try container.decodeIfPresent(Bool.self, forKey: .lineageOrphan) ?? false
+        lineageHint = try container.decodeIfPresent(String.self, forKey: .lineageHint)
+        raisedHint = try container.decodeIfPresent(String.self, forKey: .raisedHint)
+        lineageCollapsed = try container.decodeIfPresent(Bool.self, forKey: .lineageCollapsed) ?? false
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case paneID = "pane_id"
@@ -1103,6 +1162,14 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case elapsed
         case lastActivity = "last_activity"
         case ambient
+        case lineageDepth = "lineage_depth"
+        case lineageChildPaneIDs = "lineage_child_pane_ids"
+        case lineageRootCheckoutID = "lineage_root_checkout_id"
+        case lineageWorktreeBadge = "lineage_worktree_badge"
+        case lineageOrphan = "lineage_orphan"
+        case lineageHint = "lineage_hint"
+        case raisedHint = "raised_hint"
+        case lineageCollapsed = "lineage_collapsed"
     }
 }
 
@@ -1136,12 +1203,34 @@ struct CoreTerminalChunk: Decodable {
     let paneID: String
     let sequence: UInt64
     let bytesBase64: String
+    let frame: CoreTerminalFrame?
+    let inputSent: CoreTerminalInputSent?
 
     enum CodingKeys: String, CodingKey {
+        case frame
+        case inputSent = "input_sent"
         case paneID = "pane_id"
         case sequence
         case bytesBase64 = "bytes_base64"
     }
+}
+
+struct CoreTerminalFrame: Decodable {
+    let width: Int
+    let height: Int
+    let full: Bool
+}
+
+struct CoreTerminalInputSent: Decodable {
+    let id: UInt64
+    let milliseconds: Double
+    let outcome: String
+}
+
+struct TerminalDelivery {
+    let bytes: [UInt8]
+    let frame: CoreTerminalFrame?
+    let inputSent: CoreTerminalInputSent?
 }
 
 struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
@@ -1152,6 +1241,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
     let transportState: String
     let transportMessage: String?
     let transportGeneration: UInt64
+    let transportLastAttemptAtUnixMS: UInt64?
     let transportAttempt: UInt64
     let transportExitCategory: String?
     let transportRetryDecision: String
@@ -1163,6 +1253,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
         case transportState = "transport_state"
         case transportMessage = "transport_message"
         case transportGeneration = "transport_generation"
+        case transportLastAttemptAtUnixMS = "transport_last_attempt_at_unix_ms"
         case transportAttempt = "transport_attempt"
         case transportExitCategory = "transport_exit_category"
         case transportRetryDecision = "transport_retry_decision"
@@ -1177,6 +1268,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
         transportMessage = try container.decodeIfPresent(String.self, forKey: .transportMessage)
         transportGeneration = try container.decodeIfPresent(UInt64.self, forKey: .transportGeneration) ?? 0
         transportAttempt = try container.decodeIfPresent(UInt64.self, forKey: .transportAttempt) ?? 0
+        transportLastAttemptAtUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .transportLastAttemptAtUnixMS)
         transportExitCategory = try container.decodeIfPresent(String.self, forKey: .transportExitCategory)
         transportRetryDecision = try container.decodeIfPresent(
             String.self,
@@ -1271,10 +1363,15 @@ struct CoreUIStateSnapshot: Decodable {
     let lastAgentBypass: Bool
     let scratchExpanded: Bool
 
+    var collapsedAgentPaneIDs: [String] = []
+    var projectBaseBranches: [String: String] = [:]
+
     enum CodingKeys: String, CodingKey {
         case lastAgentKind = "last_agent_kind"
         case lastAgentBypass = "last_agent_bypass"
         case scratchExpanded = "scratch_expanded"
+        case collapsedAgentPaneIDs = "collapsed_agent_pane_ids"
+        case projectBaseBranches = "project_base_branches"
         case leftSidebarVisible = "left_sidebar_visible"
         case rightPanelVisible = "right_panel_visible"
         case rightPanelSection = "right_panel_section"
@@ -1295,6 +1392,8 @@ struct CoreUIStateSnapshot: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        collapsedAgentPaneIDs = try container.decodeIfPresent([String].self, forKey: .collapsedAgentPaneIDs) ?? []
+        projectBaseBranches = try container.decodeIfPresent([String: String].self, forKey: .projectBaseBranches) ?? [:]
         leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
         rightPanelVisible = try container.decodeIfPresent(Bool.self, forKey: .rightPanelVisible) ?? true
         rightPanelSection = try container.decodeIfPresent(
@@ -1372,11 +1471,12 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-/// The right panel's two sections. The core owns which one is showing, so the
+/// The right panel's three sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
     case explorer
     case changes
+    case git
 
     var id: String { rawValue }
 
@@ -1384,6 +1484,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         switch self {
         case .explorer: "Explorer"
         case .changes: "Changes"
+        case .git: "Git"
         }
     }
 
@@ -1391,6 +1492,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         switch self {
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
+        case .git: HideTheme.gitSectionIcon
         }
     }
 }
@@ -1768,7 +1870,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var lastLoggedSnapshotRevision: UInt64?
     private var lastTerminalSequence: UInt64 = 0
     private var haveRevision: UInt64 = 0
-    private var pendingTerminalBytes = PendingTerminalBuffer()
+    private var pendingTerminalBytes = PendingTerminalBuffer<TerminalDelivery>()
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
     private var pendingFileSave: Task<Void, Never>?
@@ -1785,7 +1887,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     private struct TerminalRegistration {
         let id: UUID
-        let receive: ([UInt8]) -> Void
+        let receive: (TerminalDelivery) -> Void
         let focus: () -> Void
     }
 
@@ -2003,10 +2105,19 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         // Input goes to the pane the terminal is attached to; the loopback
         // pane only exists for the verification fixture.
         let target = paneID ?? snapshot?.terminal.paneID ?? "local-loopback"
-        dispatch(kind: "key", payload: [
-            "pane_id": target,
-            "bytes_base64": Data(bytes).base64EncodedString(),
+        var payload: [String: Any] = ["pane_id": target, "bytes_base64": Data(bytes).base64EncodedString()]
+        if let trace = TerminalLatency.takeInput(paneID: target) { payload["input_trace"] = trace }
+        dispatch(kind: "key", payload: payload)
+    }
+
+    func clickTerminal(paneID: String, column: Int, row: Int, modifiers: Int) {
+        dispatch(kind: "terminal_click", payload: [
+            "pane_id": paneID, "column": column, "row": row, "modifiers": modifiers,
         ])
+    }
+
+    func reportTerminalViewport(paneID: String, cols: Int, rows: Int, newView: Bool) {
+        dispatch(kind: "terminal_viewport", payload: ["pane_id": paneID, "cols": cols, "rows": rows, "new_view": newView])
     }
 
     func resizeTerminal(paneID: String, cols: Int, rows: Int) {
@@ -2017,23 +2128,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    /// Asks for the frame a freshly built view has nothing to draw without.
-    ///
-    /// A pane keeps its session while its canvas is rebuilt, so the view that
-    /// comes back is empty and Herdr, having already sent the attach frame to
-    /// the view before it, sends nothing more until the pane produces output.
-    /// The core turns this into the one same-size resize it does not swallow.
-    func repaintTerminal(paneID: String) {
-        dispatch(kind: "terminal_repaint", payload: ["pane_id": paneID])
-    }
-
     /// Herdr owns the pane's history, so the wheel is forwarded to it rather
     /// than moving a local buffer that the rendered stream never fills.
-    func scrollTerminal(paneID: String, direction: String, lines: Int) {
+    func scrollTerminal(paneID: String, direction: String, lines: Int, column: Int, row: Int, modifiers: Int) {
         dispatch(kind: "terminal_scroll", payload: [
             "pane_id": paneID,
             "direction": direction,
             "lines": lines,
+            "column": column, "row": row, "modifiers": modifiers,
         ])
     }
 
@@ -2136,6 +2238,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func focusTab(workspaceID: String, checkoutID: String, tabID: String) {
+        if let paneID = snapshot?.paneLayouts.first(where: { $0.tabID == tabID })?.focusedPaneID {
+            TerminalLatency.end(.tabToDraw, paneID: paneID, outcome: "superseded")
+            TerminalLatency.begin(.tabToDraw, paneID: paneID)
+        }
         dispatch(kind: "focus_tab", payload: [
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
@@ -2288,7 +2394,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     @discardableResult
     func registerTerminal(
         paneID: String,
-        receive: @escaping ([UInt8]) -> Void,
+        receive: @escaping (TerminalDelivery) -> Void,
         focus: @escaping () -> Void
     ) -> UUID {
         let registrationID = UUID()
@@ -2644,12 +2750,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "card_measure_disk", payload: [:])
     }
 
-    /// Tells the core a worktree folder is gone, so the worktree list is read
-    /// again and the row disappears with it.
-    func worktreeRemoved() {
-        dispatch(kind: "worktree_removed", payload: [:])
-    }
-
     func dispatch(kind: String, payload: [String: Any]) {
         if CoreDispatchRoutingPolicy.blocks(
             kind: kind,
@@ -2763,7 +2863,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     find: decoded.find,
                     uiState: rest.uiState,
                     status: rest.status,
-                    pet: rest.pet
+                    pet: rest.pet,
+                    gitWorktrees: rest.gitWorktrees, gitWorktreesLoading: rest.gitWorktreesLoading,
+                    gitWorktreesRemote: rest.gitWorktreesRemote, worktreeRemoval: rest.worktreeRemoval
                 ))
             } else if decoded.editor != nil
                 || decoded.changes != nil
@@ -2793,7 +2895,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     bridgeError = "terminal.invalid_base64: sequence \(chunk.sequence)"
                     continue
                 }
-                let dropped = pendingTerminalBytes.append([UInt8](data), for: chunk.paneID)
+                let dropped = pendingTerminalBytes.append(TerminalDelivery(bytes: [UInt8](data), frame: chunk.frame, inputSent: chunk.inputSent), for: chunk.paneID)
                 if dropped > 0 {
                     HideLaunchTrace.mark(
                         "terminal.buffer.dropped",
@@ -2902,11 +3004,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         guard let registration = terminalRegistrations[paneID],
               let pending = pendingTerminalBytes.take(paneID)
         else { return }
-        for bytes in pending {
-            registration.receive(bytes)
+        for delivery in pending {
+            let bytes = delivery.bytes
+            registration.receive(delivery)
             // The launch is over when a terminal first has a frame to draw.
-            // The core writes `ESC c` itself to clear the grid the instant it
-            // asks Herdr for a session (`start_terminal_session`), so that
+            // The core writes `ESC c` immediately before a matching full
+            // frame to reset the parser, so that
             // chunk marks the request, not the frame. Bytes held for a pane
             // with no view yet are not the moment either, which is why this
             // is here and not where the snapshot is decoded.
@@ -3022,10 +3125,4 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             .path
     }
 
-    /// Compatibility entry point for existing callers. Runtime selection
-    /// uses the live-socket/install/bundle chain; child tools use the
-    /// login-shell PATH separately.
-    static func resolveHerdrBinaryPath() -> String? {
-        HerdrRuntimeResolver.resolve()?.path
-    }
 }

@@ -2512,29 +2512,18 @@ extension TerminalView {
         pendingDisplay = false
     }
     
-    //
-    // The code below is intended to not repaint too often, which can produce flicker, for example
-    // when the user refreshes the display, and this repains the screen, as dispatch delivers data
-    // in blocks of 1024 bytes, which is not enough to cover the whole screen, so this delays
-    // the update for a 1/600th of a second.
-    //
-    // It is also cheap, so should be called when new data has been posted or received.
+    /// Parsing marks damage; the view's display link paints it once per refresh.
     func queuePendingDisplay ()
     {
-        if terminal.synchronizedOutputActive {
-            return
-        }
-        // throttle
+        if terminal.synchronizedOutputActive { return }
+#if os(macOS)
+        pendingDisplay = true
+#else
         if !pendingDisplay {
-            let fps60 = 16670000
-            // let fps30 = 16670000*2
-            let fpsDelay = fps60
             pendingDisplay = true
-            DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
-                execute: updateDisplay)
-        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60, execute: updateDisplay)
         }
+#endif
     }
 
 #if canImport(MetalKit)
@@ -2754,13 +2743,16 @@ extension TerminalView {
     func feedFinish ()
     {
         suspendDisplayUpdates ()
+#if !os(macOS)
         if shouldDisplayImmediatelyAfterUserInput() {
             displayImmediately()
             return
         }
+#endif
         queuePendingDisplay()
     }
 
+#if !os(macOS)
     private func shouldDisplayImmediatelyAfterUserInput() -> Bool {
         guard !terminal.synchronizedOutputActive else { return false }
         let last = loadLastUserInputUptimeNs()
@@ -2805,6 +2797,7 @@ extension TerminalView {
         }
     }
 
+#endif
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (byteArray: ArraySlice<UInt8>)
     {
@@ -2878,7 +2871,9 @@ extension TerminalView {
         // which is unreliable under Swift Concurrency's main-actor executor.
         assert(Thread.isMainThread, "TerminalView.send(data:) must be called on the main thread")
         #endif
+#if !os(macOS)
         recordUserInput()
+#endif
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {

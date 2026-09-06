@@ -11,8 +11,11 @@
 //! otherwise be a second of coordinator latency for every Herdr pane event.
 
 use std::collections::HashMap;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -24,21 +27,7 @@ use crate::model::{
 };
 use crate::reader::BackgroundRead;
 
-/// How often a repository's pull requests are re-read on their own.
-///
-/// A pull request is opened, reviewed, and merged by other people on their
-/// schedule, so there is nothing local to key off. Five minutes is the
-/// interview's decision: often enough that a merge shows up while the operator
-/// is still working, rare enough that a dozen projects cost a dozen `gh` calls
-/// an hour rather than a minute.
-const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
-
-/// The least time between two reads of the same project list when a trigger
-/// keeps firing. A project with a dozen agents in it sees one leave `working`
-/// every few seconds, and each would otherwise be two `gh` subprocesses; at
-/// this spacing the worst case is three reads a minute, and a trigger inside
-/// the wait is served by the read that starts when the wait ends.
-const TRIGGER_SPACING: Duration = Duration::from_secs(20);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Every pull request `gh` will return in one call. Past this, older pull
 /// requests are simply absent and their branches read as having none; the
@@ -49,11 +38,8 @@ const PULL_REQUEST_LIMIT: &str = "200";
 pub struct GithubProjectRequest {
     /// A path inside the repository.
     pub root: PathBuf,
-    /// Bumped by the card's refresh button and by an agent leaving `working`
-    /// in one of this project's checkouts. Both are "read this project again
-    /// now", and both coalesce into one read because they move the same
-    /// counter. Another project's counter does not move it, so an agent
-    /// finishing elsewhere costs this project nothing.
+    /// Bumped on Git section opening and explicit header refresh.
+    /// Each repository's generation coalesces repeated requests independently.
     pub generation: u64,
 }
 
@@ -63,13 +49,12 @@ pub struct GithubRequest {
 }
 
 /// Why one project is read on this pass, stated in the read log so "did the
-/// refresh button / the agent finishing / the five-minute window actually
+/// refresh button / section opening actually
 /// re-read?" is answered afterwards without a debugger (G5).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReadReason {
     First,
     Generation,
-    Interval,
 }
 
 impl ReadReason {
@@ -77,27 +62,24 @@ impl ReadReason {
         match self {
             Self::First => "first",
             Self::Generation => "generation",
-            Self::Interval => "interval",
         }
     }
 }
 
 /// Whether a project must be read again, given what the reader last answered
-/// for it: nothing yet, an answer for an older request, or an answer that has
-/// outlived the window. A fresh answer for the same request is reused, which
+/// for it: nothing yet or an answer for an older request. An answer for the
+/// same request is reused indefinitely, which
 /// is what keeps one project's trigger from re-reading every other project.
-fn read_reason(cached: Option<(u64, Duration)>, generation: u64) -> Option<ReadReason> {
+fn read_reason(cached: Option<u64>, generation: u64) -> Option<ReadReason> {
     match cached {
         None => Some(ReadReason::First),
-        Some((read_generation, _)) if read_generation != generation => Some(ReadReason::Generation),
-        Some((_, age)) if age >= REFRESH_INTERVAL => Some(ReadReason::Interval),
+        Some(read_generation) if read_generation != generation => Some(ReadReason::Generation),
         Some(_) => None,
     }
 }
 
 struct CachedProject {
     generation: u64,
-    read_at: Instant,
     answer: GithubProjectSnapshot,
 }
 
@@ -115,9 +97,7 @@ impl GithubReader {
     pub fn new() -> Self {
         let cache: Cache = Arc::default();
         Self {
-            inner: BackgroundRead::new(REFRESH_INTERVAL, TRIGGER_SPACING, move |request| {
-                read(&cache, request)
-            }),
+            inner: BackgroundRead::on_change(Duration::ZERO, move |request| read(&cache, request)),
         }
     }
 
@@ -137,23 +117,18 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
     // runs at a time; the lock exists so the closure can be shared with it.
     let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
     cache.retain(|root, _| request.projects.iter().any(|project| &project.root == root));
-    let now = Instant::now();
     let due: Vec<(&GithubProjectRequest, ReadReason)> = request
         .projects
         .iter()
         .filter_map(|project| {
-            let cached = cache
-                .get(&project.root)
-                .map(|cached| (cached.generation, now.duration_since(cached.read_at)));
+            let cached = cache.get(&project.root).map(|cached| cached.generation);
             read_reason(cached, project.generation).map(|reason| (project, reason))
         })
         .collect();
     if !due.is_empty() {
         // One line per pass naming each project read and why, with the
         // generation that asked for it.
-        eprintln!(
-            "{}",
-            serde_json::json!({
+        crate::diagnostic!(serde_json::json!({
                 "component": "github",
                 "kind": "pull_requests.read",
                 "projects": due
@@ -176,7 +151,6 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
                 project.root.clone(),
                 CachedProject {
                     generation: project.generation,
-                    read_at: now,
                     answer,
                 },
             );
@@ -203,7 +177,7 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
 /// One repository's answer, or an empty `root_path` when the path is not
 /// inside a git repository at all and so has nothing to report.
 fn read_root(
-    authentication: &Result<(), String>,
+    authentication: &Result<(), GhFailure>,
     root: &Path,
     generation: u64,
 ) -> GithubProjectSnapshot {
@@ -216,7 +190,8 @@ fn read_root(
             root_path,
             status: GithubStatusSnapshot {
                 available: false,
-                unavailable_reason: Some(reason.clone()),
+                unavailable_reason: Some(reason.reason.clone()),
+                failure_category: Some(reason.category.to_owned()),
                 ..GithubStatusSnapshot::default()
             },
             ..GithubProjectSnapshot::default()
@@ -225,9 +200,7 @@ fn read_root(
     };
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
-    eprintln!(
-        "{}",
-        serde_json::json!({
+    crate::diagnostic!(serde_json::json!({
             "component": "github",
             "kind": if project.status.unavailable_reason.is_some() {
                 "pull_requests.failed"
@@ -246,44 +219,14 @@ fn read_root(
     project
 }
 
-/// Whether `gh` is usable at all, as the one sentence the card may show.
-fn authentication() -> Result<(), String> {
-    match Command::new("gh").args(["auth", "status"]).output() {
-        Err(_) => {
-            Err("gh is not installed. Install the GitHub CLI to see pull requests.".to_owned())
-        }
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(_) => Err("gh is not logged in. Run `gh auth login` to see pull requests.".to_owned()),
-    }
+/// Authentication is read-only and uses the same bounded subprocess as PR listing.
+fn authentication() -> Result<(), GhFailure> {
+    gh(None, &["auth", "status"]).map(|_| ())
 }
 
 fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
-    let default_branch = match gh(
-        root,
-        &[
-            "repo",
-            "view",
-            "--json",
-            "defaultBranchRef",
-            "--jq",
-            ".defaultBranchRef.name",
-        ],
-    ) {
-        Ok(output) => {
-            let branch = output.trim().to_owned();
-            (!branch.is_empty()).then_some(branch)
-        }
-        Err(reason) => {
-            return GithubProjectSnapshot {
-                root_path,
-                status: failed(reason),
-                ..GithubProjectSnapshot::default()
-            };
-        }
-    };
-
     let listed = match gh(
-        root,
+        Some(root),
         &[
             "pr",
             "list",
@@ -300,7 +243,6 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
             return GithubProjectSnapshot {
                 root_path,
                 status: failed(reason),
-                default_branch,
                 ..GithubProjectSnapshot::default()
             };
         }
@@ -315,8 +257,8 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
                 stale: false,
                 last_success_at_unix_ms: Some(now_unix_ms()),
                 unavailable_reason: None,
+                failure_category: None,
             },
-            default_branch,
             pull_requests,
         },
         // A response shape Hide cannot read is a failure with a reason, never
@@ -324,20 +266,20 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
         // must not be manufactured out of a parse error.
         Err(reason) => GithubProjectSnapshot {
             root_path,
-            status: failed(reason),
-            default_branch,
+            status: failed(GhFailure::network(reason)),
             ..GithubProjectSnapshot::default()
         },
     }
 }
 
-fn failed(reason: String) -> GithubStatusSnapshot {
+fn failed(reason: GhFailure) -> GithubStatusSnapshot {
     GithubStatusSnapshot {
         available: true,
         loading: false,
         stale: true,
         last_success_at_unix_ms: None,
-        unavailable_reason: Some(reason),
+        unavailable_reason: Some(reason.reason),
+        failure_category: Some(reason.category.to_owned()),
     }
 }
 
@@ -496,46 +438,286 @@ fn main_worktree(path: &Path) -> Option<PathBuf> {
     PathBuf::from(common).parent().map(Path::to_path_buf)
 }
 
-fn gh(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
-    // `gh` has no `-C`: it finds the repository from the working directory,
-    // so the directory is set on the child rather than passed as a flag. The
-    // git-shaped spelling was accepted by the compiler and rejected by `gh`
-    // at runtime with "unknown shorthand flag: 'C'".
-    let output = Command::new("gh")
-        .current_dir(cwd)
-        .args(arguments)
-        .output()
-        .map_err(|error| format!("gh could not be run: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if stderr.is_empty() {
-            format!(
-                "gh {} {} exited with {}",
-                arguments[0], arguments[1], output.status
-            )
-        } else {
-            format!("gh {} {}: {stderr}", arguments[0], arguments[1])
-        });
+#[derive(Clone, Debug)]
+struct GhFailure {
+    category: &'static str,
+    reason: String,
+}
+
+impl GhFailure {
+    fn network(reason: String) -> Self {
+        Self {
+            category: "network or rate limit",
+            reason,
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// gh exposes these failures only as human-readable stderr. Keep the classifier
+// at this external boundary and preserve unknown errors verbatim as network failures.
+fn classify_failure(reason: String, exit_code: Option<i32>) -> GhFailure {
+    let lower = reason.to_ascii_lowercase();
+    let category = if exit_code == Some(4)
+        || lower.contains("not logged")
+        || lower.contains("gh auth login")
+        || lower.contains("token") && lower.contains("invalid")
+    {
+        "not logged in"
+    } else if lower.contains("no git remotes")
+        || lower.contains("none of the git remotes")
+        || lower.contains("not a github repository")
+        || lower.contains("no github remote")
+    {
+        "no GitHub remote"
+    } else {
+        "network or rate limit"
+    };
+    GhFailure { category, reason }
+}
+
+fn gh(cwd: Option<&Path>, arguments: &[&str]) -> Result<String, GhFailure> {
+    run_gh(Path::new("gh"), cwd, arguments, COMMAND_TIMEOUT)
+}
+
+fn run_gh(
+    binary: &Path,
+    cwd: Option<&Path>,
+    arguments: &[&str],
+    timeout: Duration,
+) -> Result<String, GhFailure> {
+    if !(arguments.starts_with(&["auth", "status"]) || arguments.starts_with(&["pr", "list"])) {
+        return Err(GhFailure::network(
+            "Unsupported read-only gh command".to_owned(),
+        ));
+    }
+    let mut command = Command::new(binary);
+    command
+        .args(arguments)
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PAGER", "cat")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|error| GhFailure {
+        category: if error.kind() == std::io::ErrorKind::NotFound {
+            "not installed"
+        } else {
+            "network or rate limit"
+        },
+        reason: format!("gh could not be run: {error}"),
+    })?;
+    // Drain both pipes while waiting, otherwise a large PR list fills stdout
+    // and the child cannot exit before the timeout.
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            outcome => {
+                let reason = match outcome {
+                    Err(error) => format!("gh wait failed: {error}"),
+                    _ => format!("gh timed out after {} ms", timeout.as_millis()),
+                };
+                // Kill only the group this invocation created, including helpers
+                // retaining the pipe handles, so draining cannot outlive the deadline.
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(GhFailure::network(reason));
+            }
+        }
+    };
+    let stdout = out
+        .join()
+        .map_err(|_| GhFailure::network("gh stdout reader failed".to_owned()))?
+        .map_err(|error| GhFailure::network(format!("gh stdout: {error}")))?;
+    let stderr = err
+        .join()
+        .map_err(|_| GhFailure::network("gh stderr reader failed".to_owned()))?
+        .map_err(|error| GhFailure::network(format!("gh stderr: {error}")))?;
+    let status = status?;
+    if !status.success() {
+        let reason = String::from_utf8_lossy(&stderr).trim().to_owned();
+        return Err(classify_failure(
+            if reason.is_empty() {
+                format!("gh exited with {status}")
+            } else {
+                reason
+            },
+            status.code(),
+        ));
+    }
+    String::from_utf8(stdout)
+        .map_err(|error| GhFailure::network(format!("gh output was not UTF-8: {error}")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    struct GhFixture {
+        root: PathBuf,
+        binary: PathBuf,
+    }
+    #[cfg(unix)]
+    impl GhFixture {
+        fn new(body: &str) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            let root = std::env::temp_dir().join(format!(
+                "hide-gh-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            let binary = root.join("gh");
+            std::fs::write(&binary, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Self { root, binary }
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for GhFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     #[test]
-    fn a_project_is_read_first_then_only_when_its_own_request_moves_or_ages() {
+    #[cfg(unix)]
+    fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
+        let fixture = GhFixture::new(
+            r#"
+[ "$GH_PROMPT_DISABLED" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 90
+case "$1 $2" in
+  "pr list") printf '[]';;
+  "auth status") printf 'not logged into any GitHub hosts' >&2; exit 1;;
+  *) touch forbidden; exit 91;;
+esac"#,
+        );
+        assert_eq!(
+            run_gh(
+                &fixture.binary,
+                Some(&fixture.root),
+                &["pr", "list"],
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            "[]"
+        );
+        let failure = run_gh(
+            &fixture.binary,
+            Some(&fixture.root),
+            &["auth", "status"],
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(failure.category, "not logged in");
+        assert_eq!(failure.reason, "not logged into any GitHub hosts");
+        assert!(
+            run_gh(
+                &fixture.binary,
+                Some(&fixture.root),
+                &["auth", "login"],
+                Duration::from_secs(1)
+            )
+            .is_err()
+        );
+        assert!(!fixture.root.join("forbidden").exists());
+        assert_eq!(
+            std::fs::read_dir(&fixture.root).unwrap().count(),
+            1,
+            "no token or configuration was written"
+        );
+        assert_eq!(
+            run_gh(
+                &fixture.root.join("missing"),
+                None,
+                &["pr", "list"],
+                Duration::from_secs(1)
+            )
+            .unwrap_err()
+            .category,
+            "not installed"
+        );
+        for (stderr, expected) in [
+            (
+                "none of the git remotes configured for this repository point to a known GitHub host",
+                "no GitHub remote",
+            ),
+            ("HTTP 429 rate limit exceeded", "network or rate limit"),
+        ] {
+            let fixture = GhFixture::new(&format!("printf '%s' '{stderr}' >&2; exit 1"));
+            let failure = run_gh(
+                &fixture.binary,
+                None,
+                &["pr", "list"],
+                Duration::from_secs(1),
+            )
+            .unwrap_err();
+            assert_eq!(failure.category, expected);
+            assert_eq!(failure.reason, stderr);
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn timed_out_gh_and_its_pipe_holding_helper_are_terminated() {
+        let fixture = GhFixture::new("echo $$ > pid; sleep 5; touch survived");
+        let started = Instant::now();
+        let failure = run_gh(
+            &fixture.binary,
+            Some(&fixture.root),
+            &["pr", "list"],
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(failure.category, "network or rate limit");
+        assert!(failure.reason.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let pid: i32 = std::fs::read_to_string(fixture.root.join("pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "the gh child has been reaped"
+        );
+        assert!(!fixture.root.join("survived").exists());
+    }
+
+    #[test]
+    fn a_project_is_read_first_then_only_when_its_generation_moves() {
         assert_eq!(read_reason(None, 0), Some(ReadReason::First));
-        assert_eq!(
-            read_reason(Some((0, Duration::from_secs(1))), 1),
-            Some(ReadReason::Generation)
-        );
-        assert_eq!(
-            read_reason(Some((1, REFRESH_INTERVAL)), 1),
-            Some(ReadReason::Interval)
-        );
-        assert_eq!(read_reason(Some((1, Duration::from_secs(1))), 1), None);
+        assert_eq!(read_reason(Some(0), 1), Some(ReadReason::Generation));
+        assert_eq!(read_reason(Some(1), 1), None);
+        assert_eq!(read_reason(Some(1), 1), None);
     }
 
     fn listed(

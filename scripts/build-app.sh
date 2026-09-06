@@ -65,6 +65,12 @@ install -m 644 \
 # must carry the same resource tree as the development app.
 /usr/bin/ditto "$project_root/assets/pet-theme" "$temporary_bundle/Contents/Resources/pet-theme"
 
+mkdir -p "$temporary_bundle/Contents/Resources/browser-pane"
+for browser_resource in browser-pane.mjs environment.mjs herdr-plugin.toml; do
+  install -m 644 "$project_root/plugins/browser/$browser_resource" \
+    "$temporary_bundle/Contents/Resources/browser-pane/$browser_resource"
+done
+
 for resource_bundle in "$macos_root"/.build/arm64-apple-macosx/release/*.bundle; do
   if [[ -d "$resource_bundle" ]]; then
     /usr/bin/ditto "$resource_bundle" "$temporary_bundle/Contents/Resources/$(basename "$resource_bundle")"

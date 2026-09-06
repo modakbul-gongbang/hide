@@ -25,6 +25,10 @@ struct StoredUiState {
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
+    #[serde(default)]
+    project_base_branches: BTreeMap<String, String>,
+    #[serde(default)]
+    collapsed_agent_pane_ids: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
     #[serde(default)]
@@ -100,13 +104,11 @@ pub type PaneTerminalSizes = BTreeMap<String, (u16, u16)>;
 pub fn load(path: &Path) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition) {
     match fs::read(path) {
         Ok(bytes) => decode(&bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            (
-                UiStateSnapshot::default(),
-                PaneTerminalSizes::new(),
-                LoadDisposition::Missing,
-            )
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (
+            UiStateSnapshot::default(),
+            PaneTerminalSizes::new(),
+            LoadDisposition::Missing,
+        ),
         Err(_) => (
             UiStateSnapshot::default(),
             PaneTerminalSizes::new(),
@@ -137,6 +139,8 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             right_panel_section: stored.right_panel_section,
             expanded_paths: stored.expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
+            project_base_branches: stored.project_base_branches,
+            collapsed_agent_pane_ids: stored.collapsed_agent_pane_ids,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
@@ -179,6 +183,8 @@ pub fn save(
         right_panel_section: state.right_panel_section,
         expanded_paths: state.expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
+        project_base_branches: state.project_base_branches.clone(),
+        collapsed_agent_pane_ids: state.collapsed_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),
@@ -266,7 +272,8 @@ mod tests {
     /// treated as read.
     #[test]
     fn read_records_load_empty_from_a_corrupt_store() {
-        let (state, _sizes, disposition) = decode(b"{\"schema_version\":1,\"pane_read_records\":\"not-a-map\"}");
+        let (state, _sizes, disposition) =
+            decode(b"{\"schema_version\":1,\"pane_read_records\":\"not-a-map\"}");
         assert_eq!(disposition, LoadDisposition::Corrupt);
         assert!(
             state.pane_read_records.is_empty(),
@@ -438,7 +445,8 @@ mod tests {
             ..UiStateSnapshot::default()
         };
 
-        save(&path, &state, &PaneTerminalSizes::new()).expect("persist independent expansion state");
+        save(&path, &state, &PaneTerminalSizes::new())
+            .expect("persist independent expansion state");
         let (restored, _sizes, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
@@ -446,7 +454,8 @@ mod tests {
         assert_eq!(restored.collapsed_workspace_ids, ["workspace:alpha"]);
 
         state.expanded_paths.push("/repo/tests".to_owned());
-        save(&path, &state, &PaneTerminalSizes::new()).expect("persist file tree expansion independently");
+        save(&path, &state, &PaneTerminalSizes::new())
+            .expect("persist file tree expansion independently");
         let restored_again = load(&path).0;
         assert_eq!(restored_again.expanded_paths, ["/repo/src", "/repo/tests"]);
         assert_eq!(restored_again.collapsed_workspace_ids, ["workspace:alpha"]);

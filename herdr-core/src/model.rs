@@ -42,6 +42,10 @@ pub struct Snapshot {
     pub editor: EditorSnapshot,
     pub changes: ChangesSnapshot,
     pub card: CheckoutCardSnapshot,
+    pub git_worktrees: Option<ProjectWorktreesSnapshot>,
+    pub git_worktrees_loading: bool,
+    pub git_worktrees_remote: bool,
+    pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -272,18 +276,30 @@ pub struct SidebarAgentSnapshot {
     pub last_activity: String,
     /// Herdr's own state change sequence, one of the three inputs to a pane's
     /// read record.
+    #[serde(skip_serializing)]
     pub state_change_seq: Option<u64>,
     pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
     /// because neither agent's fork command takes one.
+    #[serde(skip_serializing)]
     pub session_id: Option<String>,
     /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
     /// The chat title the composer wrote onto this agent's pane, read back
     /// from Herdr's pane metadata token. Absent for an agent Hide did not
     /// start through the composer, which falls back to its tab label.
     pub chat_title: Option<String>,
+    /// Tree-only presentation. The canonical agent list and its read axes stay flat.
+    pub lineage_depth: usize,
+    pub lineage_child_pane_ids: Vec<String>,
+    pub lineage_root_checkout_id: Option<String>,
+    pub lineage_worktree_badge: Option<String>,
+    pub lineage_orphan: bool,
+    pub lineage_hint: Option<String>,
+    pub raised_hint: Option<String>,
+    pub lineage_collapsed: bool,
 }
 
 /// The only three values this client ever reads out of a pane's optional
@@ -343,6 +359,9 @@ pub struct CheckoutSnapshot {
     /// This branch's pull request, absent when it has none or when `gh` could
     /// not say. `GithubStatusSnapshot` on the card is what tells those apart.
     pub pull_request: Option<PullRequestSnapshot>,
+    /// The complete worktree row backing the card and both removal menus.
+    /// All three surfaces therefore consume one core-owned policy result.
+    pub worktree: Option<WorktreeSnapshot>,
     pub tabs: Vec<TabSnapshot>,
     /// The tab Herdr reports as active in this checkout, or `None` when the
     /// workspace's active tab lives in a sibling checkout. A checkout never
@@ -501,6 +520,7 @@ pub struct TabSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
     pub id: String,
+    pub content: crate::pane_content::PaneContent,
     /// The three names a pane can be shown by, in the order the header prefers
     /// them. The core ships the ingredients rather than a chosen title so the
     /// local and remote projections cannot disagree about the ladder, and so
@@ -650,6 +670,30 @@ pub struct TerminalChunk {
     pub pane_id: String,
     pub sequence: u64,
     pub bytes_base64: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<TerminalFrame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_sent: Option<TerminalInputSent>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+pub struct TerminalInputTrace {
+    pub id: u64,
+    pub started_ns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalInputSent {
+    pub id: u64,
+    pub milliseconds: f64,
+    pub outcome: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TerminalFrame {
+    pub width: u16,
+    pub height: u16,
+    pub full: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -661,6 +705,7 @@ pub struct TerminalPaneSnapshot {
     pub transport_message: Option<String>,
     pub transport_generation: u64,
     pub transport_attempt: u64,
+    pub transport_last_attempt_at_unix_ms: Option<u64>,
     pub transport_exit_category: Option<String>,
     pub transport_retry_decision: String,
 }
@@ -693,14 +738,14 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's two sections. The set is closed: a third section is a
-/// product decision, not a value a caller may invent.
+/// The right panel's three persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
     Explorer,
     Changes,
+    Git,
 }
 
 impl RightPanelSection {
@@ -708,6 +753,7 @@ impl RightPanelSection {
         match value {
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
+            "git" => Some(Self::Git),
             _ => None,
         }
     }
@@ -727,6 +773,10 @@ pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
+    #[serde(default)]
+    pub project_base_branches: BTreeMap<String, String>,
+    #[serde(default)]
+    pub collapsed_agent_pane_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
@@ -775,7 +825,8 @@ pub struct UiStateSnapshot {
     /// record is what keeps them separate. It rides the existing store rather
     /// than a second file (engineering rule 7), and a store written before it
     /// existed loads with an empty record, which reads as everything unread.
-    #[serde(default)]
+    // The store owns persistence; the shell only reads the derived unread axis.
+    #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
     /// The agent the composer offers next time, which is the one the operator
     /// last started. Written on submission only, so it costs the revisioned
@@ -844,6 +895,8 @@ impl Default for UiStateSnapshot {
             right_panel_section: RightPanelSection::default(),
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
+            project_base_branches: BTreeMap::new(),
+            collapsed_agent_pane_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),
@@ -1073,6 +1126,7 @@ pub struct PullRequestSnapshot {
 /// inferred from an empty list.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct GithubStatusSnapshot {
+    pub failure_category: Option<String>,
     /// `gh` is installed and logged in.
     pub available: bool,
     /// No lookup has completed yet for this repository.
@@ -1091,9 +1145,6 @@ pub struct GithubProjectSnapshot {
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,
     pub status: GithubStatusSnapshot,
-    /// The repository default branch, used as the comparison base for a
-    /// branch that has no pull request.
-    pub default_branch: Option<String>,
     /// One entry per branch that has a pull request.
     pub pull_requests: Vec<PullRequestSnapshot>,
 }
@@ -1125,6 +1176,21 @@ pub struct UnpushedSnapshot {
 /// counts the row badge and the card show.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
+    pub head_sha: Option<String>,
+    pub last_commit_unix_seconds: Option<u64>,
+    pub nested: bool,
+    pub merged: Option<bool>,
+    pub upstream_state: String,
+    pub unavailable_reason: Option<String>,
+    pub last_fetch_at_unix_ms: Option<u64>,
+    pub measured_at_unix_ms: Option<u64>,
+    pub pane_count: usize,
+    pub running_agent_count: usize,
+    pub disk: DiskUsageSnapshot,
+    pub pull_request: Option<PullRequestSnapshot>,
+    pub github: GithubStatusSnapshot,
+    pub deletion_gate: WorktreeDeletionGateSnapshot,
+    pub open_error: Option<String>,
     pub path: String,
     pub branch: Option<String>,
     /// Git lists the worktree but its path is not on disk.
@@ -1146,9 +1212,36 @@ pub struct WorktreeSnapshot {
     pub unpushed: Option<UnpushedSnapshot>,
 }
 
+/// One policy shared by all worktree deletion surfaces.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorktreeDeletionGateSnapshot {
+    pub blocked_reason: Option<String>,
+    pub warnings: Vec<String>,
+    pub button_label: String,
+    pub can_delete_branch: bool,
+}
+
+/// Shell authorization issued only after Herdr confirms every pane is gone.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WorktreeRemovalSnapshot {
+    pub id: u64,
+    pub repository_root: String,
+    pub checkout_path: String,
+    pub expected_head_sha: Option<String>,
+    pub expected_branch: Option<String>,
+    pub protected_base_branch: Option<String>,
+    pub branch: Option<String>,
+    pub delete_branch: bool,
+    pub phase: String,
+    pub message: Option<String>,
+}
+
 /// One repository's worktrees.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectWorktreesSnapshot {
+    pub base_branch: Option<String>,
+    pub base_source: String,
+    pub base_branch_fallback: Option<String>,
     pub root_path: String,
     pub default_branch: Option<String>,
     pub worktrees: Vec<WorktreeSnapshot>,
@@ -1174,6 +1267,7 @@ impl WorktreeCatalogSnapshot {
 /// the biggest share of it.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct DiskUsageSnapshot {
+    pub measured_at_unix_ms: Option<u64>,
     /// The checkout this measurement describes. A card whose selection has
     /// moved on compares this against its own path and shows `measuring`
     /// rather than the previous checkout's size.
@@ -1200,12 +1294,7 @@ pub struct CheckoutCardSnapshot {
     pub disk: DiskUsageSnapshot,
     /// True while the selected checkout's size is still being measured.
     pub disk_measuring: bool,
-    /// The card offers a Remove worktree button only for a settled pull
-    /// request on a linked worktree.
-    pub remove_offered: bool,
-    /// Why the offered button is disabled. `None` with `remove_offered` means
-    /// it is enabled.
-    pub remove_blocked_reason: Option<String>,
+    pub deletion_gate: Option<WorktreeDeletionGateSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1425,6 +1514,10 @@ impl Snapshot {
             },
             changes: ChangesSnapshot::default(),
             card: CheckoutCardSnapshot::default(),
+            git_worktrees: None,
+            git_worktrees_loading: true,
+            git_worktrees_remote: false,
+            worktree_removal: None,
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -1499,6 +1592,10 @@ impl PetSnapshot {
 pub struct RestSections {
     pub navigator: NavigatorSnapshot,
     pub card: CheckoutCardSnapshot,
+    pub git_worktrees: Option<ProjectWorktreesSnapshot>,
+    pub git_worktrees_loading: bool,
+    pub git_worktrees_remote: bool,
+    pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -1520,6 +1617,10 @@ impl RestSections {
         Self {
             navigator: snapshot.navigator.clone(),
             card: snapshot.card.clone(),
+            git_worktrees: snapshot.git_worktrees.clone(),
+            git_worktrees_loading: snapshot.git_worktrees_loading,
+            git_worktrees_remote: snapshot.git_worktrees_remote,
+            worktree_removal: snapshot.worktree_removal.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -1542,6 +1643,10 @@ impl RestSections {
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
         self.navigator == snapshot.navigator
             && self.card == snapshot.card
+            && self.git_worktrees == snapshot.git_worktrees
+            && self.git_worktrees_loading == snapshot.git_worktrees_loading
+            && self.git_worktrees_remote == snapshot.git_worktrees_remote
+            && self.worktree_removal == snapshot.worktree_removal
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -1628,6 +1733,10 @@ impl<'a> SnapshotDeltaWire<'a> {
 pub struct RestWire<'a> {
     pub navigator: &'a NavigatorSnapshot,
     pub card: &'a CheckoutCardSnapshot,
+    pub git_worktrees: &'a Option<ProjectWorktreesSnapshot>,
+    pub git_worktrees_loading: bool,
+    pub git_worktrees_remote: bool,
+    pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -1646,6 +1755,10 @@ impl<'a> RestWire<'a> {
         Self {
             navigator: &rest.navigator,
             card: &rest.card,
+            git_worktrees: &rest.git_worktrees,
+            git_worktrees_loading: rest.git_worktrees_loading,
+            git_worktrees_remote: rest.git_worktrees_remote,
+            worktree_removal: &rest.worktree_removal,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

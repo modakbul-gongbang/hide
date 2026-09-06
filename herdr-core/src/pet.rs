@@ -276,7 +276,12 @@ mod tests {
             checkout_label: None,
             agent_kind: "codex".to_owned(),
             demand: demand.to_owned(),
-            activity: if group == "working" { "working" } else { "stopped" }.to_owned(),
+            activity: if group == "working" {
+                "working"
+            } else {
+                "stopped"
+            }
+            .to_owned(),
             unread: group != "seen",
             blocked: false,
             group: group.to_owned(),
@@ -292,6 +297,14 @@ mod tests {
             session_id: None,
             spawned_from_pane_id: None,
             chat_title: None,
+            lineage_depth: 0,
+            lineage_child_pane_ids: Vec::new(),
+            lineage_root_checkout_id: None,
+            lineage_worktree_badge: None,
+            lineage_orphan: false,
+            lineage_hint: None,
+            raised_hint: None,
+            lineage_collapsed: false,
         }
     }
 

@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 /// that must not accept a stale one - the disk measurement, keyed by path -
 /// can tell.
 pub struct BackgroundRead<Q, A> {
-    interval: Duration,
+    interval: Option<Duration>,
     spacing: Duration,
     read: Arc<dyn Fn(&Q) -> A + Send + Sync>,
     inflight: Option<(Q, Receiver<A>)>,
@@ -58,12 +58,19 @@ where
         read: impl Fn(&Q) -> A + Send + Sync + 'static,
     ) -> Self {
         Self {
-            interval,
+            interval: Some(interval),
             spacing,
             read: Arc::new(read),
             inflight: None,
             settled: None,
         }
+    }
+
+    /// A reader with no wall-clock expiry. Only changed inputs request work.
+    pub fn on_change(spacing: Duration, read: impl Fn(&Q) -> A + Send + Sync + 'static) -> Self {
+        let mut reader = Self::new(Duration::ZERO, spacing, read);
+        reader.interval = None;
+        reader
     }
 
     /// Returns an answer on the wake a worker's result arrives. `None` covers
@@ -90,7 +97,8 @@ where
         let due = match self.settled.as_ref() {
             Some((settled_request, settled_at)) => {
                 let since = settled_at.elapsed();
-                (*settled_request != request && since >= self.spacing) || since >= self.interval
+                (*settled_request != request && since >= self.spacing)
+                    || self.interval.is_some_and(|interval| since >= interval)
             }
             None => true,
         };
@@ -111,9 +119,7 @@ where
                 Ok(_) => self.inflight = Some((request, receiver)),
                 // A thread the OS refused is a real failure, not an empty
                 // answer: it is stated once here and the next wake retries.
-                Err(error) => eprintln!(
-                    "{}",
-                    serde_json::json!({
+                Err(error) => crate::diagnostic!(serde_json::json!({
                         "component": "reader",
                         "kind": "worker.spawn_failed",
                         "message": error.to_string(),

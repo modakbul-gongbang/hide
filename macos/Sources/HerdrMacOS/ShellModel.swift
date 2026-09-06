@@ -270,7 +270,9 @@ final class ShellModel: ObservableObject {
     @Published private(set) var agentSwitcherCycle: AgentSwitcherCycle?
     @Published private(set) var tabSwitcherCycle: TabSwitcherCycle?
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
-    @Published var worktreeToDelete: CoreCheckoutSnapshot?
+    @Published var worktreeToDelete: CoreGitWorktree?
+    @Published var deleteWorktreeBranch = false
+    private var handledRemovalIDs: Set<UInt64> = []
     @Published var interactionNotice: String?
     /// When the last reported fork failure happened, so one failure is raised
     /// once rather than on every snapshot that still carries it.
@@ -335,6 +337,7 @@ final class ShellModel: ObservableObject {
         observeTabFocus()
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
+            self.observeWorktreeRemoval(in: snapshot)
             self.observeForkFailure(in: snapshot)
             self.observeAgentFocus(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
@@ -655,7 +658,11 @@ final class ShellModel: ObservableObject {
     }
 
     func paneTransportMessage(for paneID: String) -> String? {
-        core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID })?.transportMessage
+        guard let pane = core.snapshot?.terminal.panes.first(where: { $0.paneID == paneID }),
+              let message = pane.transportMessage else { return nil }
+        guard let timestamp = pane.transportLastAttemptAtUnixMS else { return message }
+        let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        return "\(message) Last attempt: \(date.formatted(date: .omitted, time: .standard))."
     }
 
     var petDashboard: PetDashboardProjection {
@@ -960,13 +967,13 @@ final class ShellModel: ObservableObject {
 
     /// ⌃1…⌃9 select the nth agent in the same order the sidebar lists them.
     /// The agents ⌃1-⌃9 reach, in the order the visible sidebar view lists
-    /// them: the whole agent list in the Agents view, the selected checkout's
-    /// agents in the Projects view.
+    /// them: the whole agent list in the Agents view, the raised rows and expanded
+    /// lineage trees in the Projects view.
     var shortcutAgents: [SidebarAgent] {
         AgentShortcutNumbering.candidates(
             for: sidebarContent,
             agents: agents,
-            focusedCheckout: focusedCheckout
+            visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id)
         )
     }
 
@@ -1169,55 +1176,57 @@ final class ShellModel: ObservableObject {
         interactionNotice = "Workspace removed from Hide. Its folder, repository, and worktrees were not changed."
     }
 
-    /// What the confirmation says will happen: the path, how much disk it
-    /// frees, and that the branch survives.
-    ///
-    /// Stating the consequence is the point (design 6): the previous wording
-    /// described the git command rather than the outcome, and said nothing
-    /// about the branch, which is the thing a person is most afraid of losing.
-    func worktreeDeletionConsequence(_ checkout: CoreCheckoutSnapshot) -> String {
-        var parts = ["Deletes the folder at \(checkout.path)"]
-        // The size is measured when this dialog opens, so it is only absent
-        // for the moment before that read lands.
-        if !card.diskMeasuring, let bytes = card.disk.totalBytes,
-           card.disk.path == checkout.path {
-            parts.append("freeing \(CheckoutCardPresentation.formattedBytes(bytes))")
-        }
-        return parts.joined(separator: ", ")
-            + ". The local branch \(checkout.branch ?? checkout.label) is not deleted, and running panes are not stopped."
+    func worktree(for path: String) -> CoreGitWorktree? {
+        core.snapshot?.gitWorktrees?.worktrees.first { $0.path == path }
     }
 
-    /// Opens the delete confirmation, which states the size it is about to
-    /// delete - so the size is measured now rather than shown from whenever
-    /// the card last looked (R8, G6).
     func requestDeleteWorktree(_ checkout: CoreCheckoutSnapshot) {
-        guard checkout.isWorktree else {
-            interactionNotice = "Only linked worktree checkouts can be deleted from this menu."
+        guard let worktree = checkout.worktree ?? worktree(for: checkout.path) else {
+            interactionNotice = "Worktree status is not available yet. Refresh Git and try again."
             return
         }
-        worktreeToDelete = checkout
-        core.measureCheckoutDisk()
+        requestDeleteWorktree(worktree)
+    }
+
+    func requestDeleteWorktree(_ worktree: CoreGitWorktree) {
+        guard worktree.deletionGate.blockedReason == nil else {
+            interactionNotice = worktree.deletionGate.blockedReason
+            return
+        }
+        deleteWorktreeBranch = false
+        worktreeToDelete = worktree
     }
 
     func confirmDeleteWorktree() {
-        guard let checkout = worktreeToDelete else { return }
+        guard let worktree = worktreeToDelete else { return }
+        core.dispatch(kind: "remove_worktree", payload: [
+            "checkout_path": worktree.path,
+            "delete_branch": deleteWorktreeBranch && worktree.deletionGate.canDeleteBranch,
+        ])
         worktreeToDelete = nil
-        let path = checkout.path
+    }
+
+    private func observeWorktreeRemoval(in snapshot: CoreSnapshot?) {
+        guard let removal = snapshot?.worktreeRemoval else { return }
+        if removal.phase == "failed", !handledRemovalIDs.contains(removal.id) {
+            handledRemovalIDs.insert(removal.id)
+            interactionNotice = removal.message ?? "Worktree removal failed."
+        }
+        guard removal.phase == "ready", handledRemovalIDs.insert(removal.id).inserted else { return }
         Task { @MainActor [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                GitWorktreeRemover.remove(path: path)
+                GitWorktreeRemover.remove(repositoryRoot: removal.repositoryRoot,
+                    path: removal.checkoutPath,
+                    expectedHeadSHA: removal.expectedHeadSHA,
+                    expectedBranch: removal.expectedBranch,
+                    protectedBaseBranch: removal.protectedBaseBranch,
+                    branch: removal.deleteBranch ? removal.branch : nil)
             }.value
             guard let self else { return }
-            if result.succeeded {
-                // The row and its counts come from git, so the way to remove
-                // them is to read git again rather than to edit the catalog
-                // here. A removal that half-succeeded then shows what git
-                // actually reports (G7).
-                core.worktreeRemoved()
-                interactionNotice = "Deleted the worktree at \(path). Its local branch was not deleted."
-            } else {
-                interactionNotice = result.message
-            }
+            core.dispatch(kind: "worktree_removal_finished", payload: [
+                "id": removal.id, "removed": result.succeeded, "message": result.message,
+            ])
+            interactionNotice = result.message
         }
     }
 
@@ -1882,25 +1891,7 @@ final class ShellModel: ObservableObject {
         } else {
             target = .local(tabID: tabID)
         }
-        let paneIDs = Set(tab.panes.map(\.id))
-        let affectedAgents = agents.filter { paneIDs.contains($0.paneID) }
-        let destructiveTargets = affectedAgents.isEmpty
-            ? [DestructiveTarget(
-                id: tabID,
-                label: tab.label ?? tabID,
-                statusLabel: "Idle",
-                requiresCloseConfirmation: false,
-                summary: "No working or attention state is reported for this tab."
-            )]
-            : affectedAgents.map {
-                DestructiveTarget(
-                    id: $0.paneID,
-                    label: $0.workspaceLabel,
-                    statusLabel: $0.statusLabel,
-                    requiresCloseConfirmation: $0.requiresCloseConfirmation,
-                    summary: $0.summary
-                )
-            }
+        let destructiveTargets = tab.panes.map { destructiveTarget(for: $0) }
         let notice = ConsequencePolicy.notice(kind: .tab, targets: destructiveTargets)
         consequenceResult = nil
         if notice.requiresConfirmation {
@@ -1968,20 +1959,26 @@ final class ShellModel: ObservableObject {
         core.forkPane(paneID)
     }
 
+    private func destructiveTarget(for pane: CorePaneSnapshot) -> DestructiveTarget {
+        let agent = agents.first { $0.paneID == pane.id }
+        let contentConsequence = pane.content.closeConsequence
+        return DestructiveTarget(
+            id: pane.id,
+            label: pane.herdrLabel ?? pane.id,
+            statusLabel: agent?.statusLabel ?? "Idle",
+            requiresCloseConfirmation: contentConsequence != nil || (agent?.requiresCloseConfirmation ?? false),
+            summary: contentConsequence ?? agent?.summary ?? "No working or attention state is reported for this pane.",
+            contentConsequence: contentConsequence
+        )
+    }
+
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
         let paneID = closeTarget.paneID
-        guard paneMetadata(for: paneID) != nil else {
-            consequenceResult = "Select a terminal pane before closing."
+        guard let pane = paneMetadata(for: paneID) else {
+            consequenceResult = "Select a pane before closing."
             return
         }
-        let agent = agents.first { $0.paneID == paneID }
-        let target = DestructiveTarget(
-            id: paneID,
-            label: paneID,
-            statusLabel: agent?.statusLabel ?? "Idle",
-            requiresCloseConfirmation: agent?.requiresCloseConfirmation ?? false,
-            summary: agent?.summary ?? "No working or attention state is reported for this pane."
-        )
+        let target = destructiveTarget(for: pane)
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
         consequenceResult = nil
         if notice.requiresConfirmation {

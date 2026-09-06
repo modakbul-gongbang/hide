@@ -1,11 +1,5 @@
-//! How much disk the selected checkout occupies, and which of its top-level
-//! folders is most of it.
-//!
-//! Exactly one checkout is measured: the selected one. A worktree carrying
-//! `node_modules` or `target` takes seconds to walk, so measuring every row
-//! would cost minutes of disk for a number nobody is looking at. That is also
-//! why this runs on a worker thread and the card shows `measuring` until the
-//! answer arrives, rather than the coordinator stalling behind `du`.
+//! Worktree disk usage, measured sequentially on the existing background worker.
+//! Requests come only from opening or explicitly refreshing the Git section.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,33 +8,26 @@ use std::time::Duration;
 use crate::model::DiskUsageSnapshot;
 use crate::reader::BackgroundRead;
 
-/// A checkout's size changes as builds run, but nobody watches the number
-/// change. Re-measuring is driven by selecting a checkout or opening the
-/// delete confirmation, both of which change the request; this window only
-/// bounds how stale a card left open all afternoon may get.
-const REFRESH_INTERVAL: Duration = Duration::from_secs(120);
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DiskRequest {
-    /// The one checkout to measure, or `None` when nothing local is selected.
-    pub path: Option<PathBuf>,
-    /// Bumped when the same checkout must be measured again - re-selecting it
-    /// and opening the delete confirmation both do.
+    /// Worktrees to measure, empty while the Git section is hidden.
+    pub paths: Vec<PathBuf>,
+    /// Bumped on section opening and explicit refresh.
     pub generation: u64,
 }
 
 pub struct DiskReader {
-    inner: BackgroundRead<DiskRequest, DiskUsageSnapshot>,
+    inner: BackgroundRead<DiskRequest, Vec<DiskUsageSnapshot>>,
 }
 
 impl DiskReader {
     pub fn new() -> Self {
         Self {
-            inner: BackgroundRead::new(REFRESH_INTERVAL, Duration::ZERO, read),
+            inner: BackgroundRead::on_change(Duration::ZERO, read),
         }
     }
 
-    pub fn read_if_due(&mut self, request: DiskRequest) -> Option<DiskUsageSnapshot> {
+    pub fn read_if_due(&mut self, request: DiskRequest) -> Option<Vec<DiskUsageSnapshot>> {
         self.inner.poll(request)
     }
 }
@@ -51,10 +38,22 @@ impl Default for DiskReader {
     }
 }
 
-fn read(request: &DiskRequest) -> DiskUsageSnapshot {
-    let Some(path) = request.path.as_deref() else {
-        return DiskUsageSnapshot::default();
-    };
+fn read(request: &DiskRequest) -> Vec<DiskUsageSnapshot> {
+    request
+        .paths
+        .iter()
+        .map(|path| {
+            let mut measured = measure(path);
+            measured.measured_at_unix_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|time| time.as_millis() as u64);
+            measured
+        })
+        .collect()
+}
+
+fn measure(path: &Path) -> DiskUsageSnapshot {
     let path_text = path.to_string_lossy().into_owned();
     if !path.is_dir() {
         return DiskUsageSnapshot {
@@ -83,15 +82,11 @@ fn read(request: &DiskRequest) -> DiskUsageSnapshot {
             };
         }
     };
-    // `du` reports permission failures on stderr and still totals what it
-    // could read, so a nonzero status with usable output is a partial answer
-    // rather than nothing.
+    // A failed walk is not a complete size, even when du emitted a partial total.
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     let measured = parse_du(&text, path);
-    if measured.total_bytes.is_none() {
-        eprintln!(
-            "{}",
-            serde_json::json!({
+    if !output.status.success() || measured.total_bytes.is_none() {
+        crate::diagnostic!(serde_json::json!({
                 "component": "disk",
                 "kind": "measure.failed",
                 "path": path_text,
@@ -101,7 +96,7 @@ fn read(request: &DiskRequest) -> DiskUsageSnapshot {
         return DiskUsageSnapshot {
             path: Some(path_text),
             unavailable_reason: Some(format!(
-                "du reported nothing readable: {}",
+                "du measurement failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             )),
             ..DiskUsageSnapshot::default()
@@ -152,6 +147,7 @@ pub fn parse_du(output: &str, root: &Path) -> DiskUsageSnapshot {
         largest_child_name: largest.as_ref().map(|(name, _)| name.clone()),
         largest_child_bytes: largest.map(|(_, bytes)| bytes),
         unavailable_reason: None,
+        measured_at_unix_ms: None,
     }
 }
 
@@ -212,9 +208,18 @@ mod tests {
         std::fs::write(small.join("payload"), vec![0_u8; 4 * 1024]).expect("small file");
 
         let measured = read(&DiskRequest {
-            path: Some(root.clone()),
+            paths: vec![root.clone(), small.clone()],
             generation: 0,
         });
+        assert_eq!(measured.len(), 2);
+        assert_eq!(
+            measured[1].path.as_deref(),
+            Some(small.to_string_lossy().as_ref())
+        );
+        assert!(measured[1].total_bytes.unwrap() >= 4 * 1024);
+        assert!(measured[1].measured_at_unix_ms >= measured[0].measured_at_unix_ms);
+        let measured = &measured[0];
+        assert!(measured.measured_at_unix_ms.is_some());
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(
@@ -233,15 +238,16 @@ mod tests {
     #[test]
     fn an_unreadable_request_measures_nothing() {
         let measured = read(&DiskRequest {
-            path: Some(PathBuf::from("/definitely/not/here/hide-test")),
+            paths: vec![PathBuf::from("/definitely/not/here/hide-test")],
             generation: 0,
         });
+        let measured = &measured[0];
         assert_eq!(measured.total_bytes, None);
         assert!(measured.unavailable_reason.is_some());
     }
 
     #[test]
     fn no_selection_measures_nothing_at_all() {
-        assert_eq!(read(&DiskRequest::default()), DiskUsageSnapshot::default());
+        assert!(read(&DiskRequest::default()).is_empty());
     }
 }

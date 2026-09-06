@@ -64,6 +64,7 @@ protocol HideTerminalPointerRouting: AnyObject {
     func forwardMouseDown(_ event: NSEvent, selectingLocally: Bool)
     func forwardMouseDragged(_ event: NSEvent, selectingLocally: Bool)
     func forwardMouseUp(_ event: NSEvent, selectingLocally: Bool)
+    func replayOrdinaryClick(_ event: NSEvent)
 }
 
 extension HideTerminalPointerRouting {
@@ -108,8 +109,7 @@ extension HideTerminalPointerRouting {
             guard !pointerRouting.activatedLink,
                   let pressEvent = pointerRouting.pressEvent
             else { return }
-            forwardMouseDown(pressEvent, selectingLocally: false)
-            forwardMouseUp(event, selectingLocally: false)
+            replayOrdinaryClick(pressEvent)
         case nil:
             forwardMouseUp(event, selectingLocally: false)
         }

@@ -183,7 +183,10 @@ mod tests {
     #[test]
     fn a_claude_fork_resumes_the_parent_session_as_a_new_one() {
         let arguments = fork_arguments(&request(ForkableAgent::Claude));
-        let separator = arguments.iter().position(|argument| argument == "--").unwrap();
+        let separator = arguments
+            .iter()
+            .position(|argument| argument == "--")
+            .unwrap();
         assert_eq!(
             &arguments[separator + 1..],
             [
@@ -197,7 +200,10 @@ mod tests {
     #[test]
     fn a_codex_fork_uses_that_agents_own_fork_subcommand() {
         let arguments = fork_arguments(&request(ForkableAgent::Codex));
-        let separator = arguments.iter().position(|argument| argument == "--").unwrap();
+        let separator = arguments
+            .iter()
+            .position(|argument| argument == "--")
+            .unwrap();
         assert_eq!(
             &arguments[separator + 1..],
             ["fork", "3f2b1c00-0000-4000-8000-000000000001"]
@@ -223,7 +229,11 @@ mod tests {
     fn a_blank_working_directory_is_left_to_herdr_rather_than_passed_empty() {
         let mut blank = request(ForkableAgent::Claude);
         blank.cwd = Some("   ".to_owned());
-        assert!(!fork_arguments(&blank).iter().any(|argument| argument == "--cwd"));
+        assert!(
+            !fork_arguments(&blank)
+                .iter()
+                .any(|argument| argument == "--cwd")
+        );
     }
 
     #[test]
@@ -288,13 +298,20 @@ mod tests {
         let long_pane = "workspace-with-a-very-long-name:pane-42";
         let first = fork_name(long_pane, "17-1788624371518");
         let second = fork_name(long_pane, "18-1788624371518");
-        let other_pane = fork_name("workspace-with-a-very-long-name:pane-43", "17-1788624371518");
+        let other_pane = fork_name(
+            "workspace-with-a-very-long-name:pane-43",
+            "17-1788624371518",
+        );
 
         for name in [&first, &second, &other_pane] {
             assert!(herdr_accepts(name), "Herdr would refuse {name:?}");
         }
         assert_ne!(first, second, "two forks of one parent share a name");
         assert_ne!(first, other_pane, "forks of two parents share a name");
-        assert_eq!(fork_name(long_pane, "17-1788624371518"), first, "the name is not stable");
+        assert_eq!(
+            fork_name(long_pane, "17-1788624371518"),
+            first,
+            "the name is not stable"
+        );
     }
 }

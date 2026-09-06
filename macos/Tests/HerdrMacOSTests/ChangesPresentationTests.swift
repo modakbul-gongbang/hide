@@ -4,13 +4,13 @@ import Testing
 
 /// The right panel's section set and the changes view's reading of what the
 /// core sends. Every case here is one the operator reported or one the PRD
-/// names: a panel with exactly two sections, an empty list that must not read
+/// names: a panel with exactly three sections, an empty list that must not read
 /// as "no changes" when it has a reason, and the four statuses.
 @Suite("Changes presentation")
 struct ChangesPresentationTests {
-    @Test func theRightPanelOffersExactlyTheExplorerAndTheChangesView() {
-        #expect(RightPanelSection.allCases == [.explorer, .changes])
-        #expect(RightPanelSection.allCases.map(\.title) == ["Explorer", "Changes"])
+    @Test func theRightPanelOffersExplorerChangesAndGit() {
+        #expect(RightPanelSection.allCases == [.explorer, .changes, .git])
+        #expect(RightPanelSection.allCases.map(\.title) == ["Explorer", "Changes", "Git"])
     }
 
     @Test func aChangesPayloadDecodesItsEntriesStatusesAndDiff() throws {

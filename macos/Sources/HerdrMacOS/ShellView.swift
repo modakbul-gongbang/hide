@@ -281,6 +281,7 @@ struct HideTerminalGrid<Content: View>: View {
                 ForEach(items, id: \.paneID) { item in
                     let frame = item.visualFrame
                     content(item)
+                        .environment(\.hideTerminalPaneVisible, item.isVisible)
                         .padding(HideTheme.spacingXS)
                         .frame(
                             width: geometry.size.width * CGFloat(frame.width),
@@ -648,6 +649,8 @@ enum PaneHeaderPresentation {
 /// keeps a remote pane from becoming a separate visual mode.
 struct HideTerminalPaneCard<Content: View>: View {
     let paneID: String
+    let kind: String
+    let closeHelp: String
     let title: String
     let status: String
     let statusMessage: String?
@@ -674,6 +677,8 @@ struct HideTerminalPaneCard<Content: View>: View {
 
     init(
         paneID: String,
+        kind: String = "terminal",
+        closeHelp: String = "Close this pane",
         title: String,
         status: String,
         statusMessage: String? = nil,
@@ -692,6 +697,8 @@ struct HideTerminalPaneCard<Content: View>: View {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.paneID = paneID
+        self.kind = kind
+        self.closeHelp = closeHelp
         self.title = title
         self.status = status
         self.statusMessage = statusMessage
@@ -723,7 +730,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Focus terminal pane \(title) (\(paneID))")
+                .accessibilityLabel("Focus \(kind) pane \(title) (\(paneID))")
 
                 if isZoomed {
                     // A zoomed pane looks like a one-pane tab, so the state
@@ -786,7 +793,7 @@ struct HideTerminalPaneCard<Content: View>: View {
 
                 PaneHeaderButton(
                     systemImage: "xmark",
-                    help: "Close this pane",
+                    help: closeHelp,
                     accessibilityLabel: "Close pane \(paneID)",
                     action: onClose
                 )
@@ -823,7 +830,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: status == "observing" ? "lock.fill" : "exclamationmark.triangle.fill")
                     Text(transportNotice)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: HideTheme.spacingSM)
                     Button("Reconnect", action: onReconnect)
                         .buttonStyle(.borderless)
@@ -851,13 +858,21 @@ struct HideTerminalPaneCard<Content: View>: View {
                     lineWidth: HideTheme.Layout.hairlineWidth
                 )
         }
-        .accessibilityIdentifier("terminal-pane-\(paneID)")
+        .accessibilityIdentifier("\(kind)-pane-\(paneID)")
     }
 
     private var transportNotice: String? {
         switch status {
         case "observing":
             statusMessage ?? "Another client owns terminal control."
+        case "waiting_size":
+            statusMessage ?? "Waiting for the pane view to report its size."
+        case "released":
+            statusMessage ?? "Terminal connection released. Reconnecting when shown."
+        case "starting":
+            statusMessage ?? "Starting terminal connection."
+        case "controlling":
+            statusMessage
         case "unavailable", "ended", "closed":
             statusMessage ?? "Terminal transport is unavailable."
         default:

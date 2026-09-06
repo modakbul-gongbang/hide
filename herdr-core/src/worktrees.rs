@@ -14,14 +14,10 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::model::{
-    ProjectWorktreesSnapshot, UnpushedSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot,
+    ProjectWorktreesSnapshot, UnpushedSnapshot, WorktreeCatalogSnapshot,
+    WorktreeDeletionGateSnapshot, WorktreeSnapshot,
 };
 use crate::reader::BackgroundRead;
-
-/// How stale the worktree list may be. A worktree is added, committed to, or
-/// removed at human pace, so this is far slower than the changes view's
-/// window and far cheaper than the per-tick fork it replaces.
-const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
 /// What to describe: one entry per project the navigator is showing.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -42,21 +38,133 @@ pub struct WorktreeProjectRequest {
     /// lookup has already named one. A branch missing here falls back to the
     /// repository default branch.
     pub bases: BTreeMap<String, String>,
+    pub base_override: Option<String>,
 }
 
+type FileStamps = Vec<(PathBuf, Option<std::time::SystemTime>, u64)>;
+type ObservedRequest = (WorktreeRequest, FileStamps, u64);
+
+const FILE_STATS_PER_WAKE: usize = 32;
+
 pub struct WorktreeReader {
-    inner: BackgroundRead<WorktreeRequest, WorktreeCatalogSnapshot>,
+    inner: BackgroundRead<ObservedRequest, (WorktreeCatalogSnapshot, Vec<PathBuf>)>,
+    known_paths: Vec<PathBuf>,
+    known_stamps: BTreeMap<PathBuf, (Option<std::time::SystemTime>, u64)>,
+    scan_cursor: usize,
+    content_generation: u64,
 }
 
 impl WorktreeReader {
     pub fn new() -> Self {
         Self {
-            inner: BackgroundRead::new(REFRESH_INTERVAL, Duration::ZERO, read),
+            inner: BackgroundRead::on_change(Duration::ZERO, |request: &ObservedRequest| {
+                let mut catalog = read(&request.0);
+                let mut paths = Vec::new();
+                for row in catalog.projects.iter_mut().flat_map(|p| &mut p.worktrees) {
+                    let root = PathBuf::from(&row.path);
+                    paths.push(root.clone());
+                    if !row.missing {
+                        match git(
+                            &root,
+                            &[
+                                "ls-files",
+                                "-z",
+                                "--cached",
+                                "--others",
+                                "--exclude-standard",
+                            ],
+                        ) {
+                            Ok(files) => {
+                                for file in files.split('\0').filter(|f| !f.is_empty()) {
+                                    let path = root.join(file);
+                                    for parent in
+                                        path.ancestors().take_while(|p| p.starts_with(&root))
+                                    {
+                                        paths.push(parent.to_owned());
+                                    }
+                                }
+                            }
+                            Err(reason) => row.unavailable_reason = Some(reason),
+                        }
+                    }
+                }
+                paths.sort();
+                paths.dedup();
+                (catalog, paths)
+            }),
+            known_paths: Vec::new(),
+            known_stamps: BTreeMap::new(),
+            scan_cursor: 0,
+            content_generation: 0,
         }
     }
 
     pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeCatalogSnapshot> {
-        self.inner.poll(request)
+        let mut signature = Vec::new();
+        for project in &request.projects {
+            let dotgit = project.root_path.join(".git");
+            let gitdir = if dotgit.is_file() {
+                std::fs::read_to_string(&dotgit).ok().and_then(|text| {
+                    text.strip_prefix("gitdir: ")
+                        .map(|p| project.root_path.join(p.trim()))
+                })
+            } else {
+                Some(dotgit)
+            };
+            if let Some(gitdir) = gitdir {
+                let common = std::fs::read_to_string(gitdir.join("commondir"))
+                    .ok()
+                    .map(|p| gitdir.join(p.trim()))
+                    .unwrap_or_else(|| gitdir.clone());
+                for base in [gitdir, common] {
+                    for name in [
+                        "HEAD",
+                        "index",
+                        "packed-refs",
+                        "refs",
+                        "worktrees",
+                        "FETCH_HEAD",
+                    ] {
+                        stat_tree(&base.join(name), &mut signature);
+                    }
+                }
+            }
+        }
+        // Sample a bounded slice of the paths discovered by the worker. A
+        // complete scan is spread across wakes, so content-only edits are
+        // eventually observed without making coordinator latency grow with
+        // repository size and without spawning a subprocess.
+        let sample_count = FILE_STATS_PER_WAKE.min(self.known_paths.len());
+        for offset in 0..sample_count {
+            let index = (self.scan_cursor + offset) % self.known_paths.len();
+            let path = self.known_paths[index].clone();
+            let stamp = stamp(&path);
+            match self.known_stamps.get_mut(&path) {
+                Some(previous) if *previous != stamp => {
+                    *previous = stamp;
+                    self.content_generation = self.content_generation.wrapping_add(1);
+                }
+                Some(_) => {}
+                None => {
+                    self.known_stamps.insert(path, stamp);
+                }
+            }
+        }
+        if !self.known_paths.is_empty() {
+            self.scan_cursor = (self.scan_cursor + sample_count) % self.known_paths.len();
+        }
+        let answer = self
+            .inner
+            .poll((request, signature, self.content_generation));
+        answer.map(|(catalog, paths)| {
+            if self.known_paths != paths {
+                self.known_paths = paths;
+                self.known_stamps.clear();
+                self.scan_cursor = 0;
+                self.content_generation = self.content_generation.wrapping_add(1);
+            }
+            catalog
+        })
     }
 }
 
@@ -66,9 +174,100 @@ impl Default for WorktreeReader {
     }
 }
 
+fn stat_one(path: &Path, stamps: &mut Vec<(PathBuf, Option<std::time::SystemTime>, u64)>) {
+    let (modified, len) = stamp(path);
+    stamps.push((path.to_owned(), modified, len));
+}
+
+fn stamp(path: &Path) -> (Option<std::time::SystemTime>, u64) {
+    let meta = std::fs::metadata(path).ok();
+    (
+        meta.as_ref().and_then(|m| m.modified().ok()),
+        meta.map_or(0, |m| m.len()),
+    )
+}
+
+fn stat_tree(path: &Path, stamps: &mut Vec<(PathBuf, Option<std::time::SystemTime>, u64)>) {
+    stat_one(path, stamps);
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(path) {
+        let mut paths: Vec<_> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        paths.sort();
+        for child in paths {
+            stat_tree(&child, stamps);
+        }
+    }
+}
+
+/// The sole deletion policy, consumed by all three presentation surfaces.
+pub fn deletion_gate(
+    worktree: &WorktreeSnapshot,
+    is_base: bool,
+    remote: bool,
+    pane_count: usize,
+    running_agent_count: usize,
+) -> WorktreeDeletionGateSnapshot {
+    let blocked_reason = if remote {
+        Some("Worktree deletion is available for local repositories only")
+    } else if worktree.is_main {
+        Some("The main worktree cannot be deleted")
+    } else if is_base {
+        Some("The current base branch worktree cannot be deleted")
+    } else if worktree.dirty {
+        Some("Commit or discard uncommitted changes first")
+    } else if worktree.nested {
+        Some("Delete nested worktrees first")
+    } else if worktree.unavailable_reason.is_some() && !worktree.missing {
+        Some("Git status is unavailable")
+    } else {
+        None
+    }
+    .map(str::to_owned);
+    let mut warnings = Vec::new();
+    if !worktree.missing {
+        if worktree.merged != Some(true) {
+            warnings.push(format!("ahead {} unmerged", worktree.ahead));
+        }
+        if worktree.upstream_state != "pushed" {
+            warnings.push("not pushed".to_owned());
+        }
+    }
+    if running_agent_count > 0 {
+        warnings.push(format!("{running_agent_count} running agents"));
+    }
+    WorktreeDeletionGateSnapshot {
+        blocked_reason,
+        warnings,
+        button_label: if pane_count > 0 {
+            format!("Close {pane_count} panes and delete")
+        } else {
+            "Delete worktree…".to_owned()
+        },
+        can_delete_branch: !worktree.missing
+            && worktree.branch.is_some()
+            && worktree.merged == Some(true),
+    }
+}
+
 fn read(request: &WorktreeRequest) -> WorktreeCatalogSnapshot {
     let mut projects: Vec<ProjectWorktreesSnapshot> = Vec::new();
     for project in &request.projects {
+        if !project.root_path.exists() {
+            projects.push(ProjectWorktreesSnapshot {
+                root_path: project.root_path.to_string_lossy().into_owned(),
+                unavailable_reason: Some(format!(
+                    "Repository unavailable: {}",
+                    project.root_path.display()
+                )),
+                ..ProjectWorktreesSnapshot::default()
+            });
+            continue;
+        }
         let Some(root) = main_worktree(&project.root_path) else {
             // A folder that is not a repository has no worktrees and is not a
             // failure; the card and the tree both present it as a plain
@@ -82,7 +281,12 @@ fn read(request: &WorktreeRequest) -> WorktreeCatalogSnapshot {
         {
             continue;
         }
-        projects.push(read_project(&root, root_path, &project.bases));
+        projects.push(read_project(
+            &root,
+            root_path,
+            &project.bases,
+            project.base_override.as_deref(),
+        ));
     }
     WorktreeCatalogSnapshot { projects }
 }
@@ -91,14 +295,26 @@ fn read_project(
     root: &Path,
     root_path: String,
     bases: &BTreeMap<String, String>,
+    base_override: Option<&str>,
 ) -> ProjectWorktreesSnapshot {
     let default_branch = default_branch(root);
+    let valid_override = base_override.filter(|base| resolvable_base(root, base).is_some());
+    let base_branch = valid_override
+        .map(str::to_owned)
+        .or_else(|| default_branch.clone());
+    let base_branch_fallback = base_override
+        .filter(|_| valid_override.is_none())
+        .map(|base| format!("Base branch {base} is unavailable; using repository default"));
+    let base_source = if valid_override.is_some() {
+        "specified"
+    } else {
+        "default"
+    }
+    .to_owned();
     let listed = match git(root, &["worktree", "list", "--porcelain"]) {
         Ok(output) => output,
         Err(reason) => {
-            eprintln!(
-                "{}",
-                serde_json::json!({
+            crate::diagnostic!(serde_json::json!({
                     "component": "worktrees",
                     "kind": "worktree_list.failed",
                     "project": root_path,
@@ -110,14 +326,40 @@ fn read_project(
                 default_branch,
                 worktrees: Vec::new(),
                 unavailable_reason: Some(reason),
+                ..ProjectWorktreesSnapshot::default()
             };
         }
     };
 
     let mut worktrees: Vec<WorktreeSnapshot> = parse_worktree_list(&listed, root)
         .into_iter()
-        .map(|listed| describe(listed, bases, default_branch.as_deref()))
+        .filter(|listed| !listed.bare)
+        .map(|listed| {
+            describe(
+                listed,
+                bases,
+                base_branch.as_deref(),
+                if base_override.is_some() {
+                    base_branch.as_deref()
+                } else {
+                    None
+                },
+            )
+        })
         .collect();
+    let paths: Vec<PathBuf> = worktrees.iter().map(|w| PathBuf::from(&w.path)).collect();
+    for worktree in &mut worktrees {
+        worktree.nested = paths
+            .iter()
+            .any(|p| p != Path::new(&worktree.path) && p.starts_with(&worktree.path));
+        worktree.deletion_gate = deletion_gate(
+            worktree,
+            worktree.branch == base_branch && base_branch.is_some(),
+            false,
+            0,
+            0,
+        );
+    }
     // The main worktree leads so the project path and the first row agree.
     if let Some(index) = worktrees.iter().position(|worktree| worktree.is_main)
         && index != 0
@@ -130,6 +372,9 @@ fn read_project(
         default_branch,
         worktrees,
         unavailable_reason: None,
+        base_branch,
+        base_branch_fallback,
+        base_source,
     }
 }
 
@@ -139,6 +384,8 @@ pub struct ListedWorktree {
     pub path: PathBuf,
     pub branch: Option<String>,
     pub is_main: bool,
+    pub bare: bool,
+    pub head_sha: Option<String>,
 }
 
 /// Splits porcelain worktree records. Records are separated by a blank line
@@ -148,46 +395,39 @@ pub struct ListedWorktree {
 /// The first record is the main worktree, which is git's documented order and
 /// what tells a linked worktree apart without a second `rev-parse`.
 pub fn parse_worktree_list(output: &str, _root: &Path) -> Vec<ListedWorktree> {
-    let mut listed = Vec::new();
-    let mut path: Option<PathBuf> = None;
-    let mut branch: Option<String> = None;
-
-    let flush = |path: &mut Option<PathBuf>,
-                 branch: &mut Option<String>,
-                 listed: &mut Vec<ListedWorktree>| {
-        if let Some(path) = path.take() {
-            let is_main = listed.is_empty();
-            listed.push(ListedWorktree {
-                path,
-                branch: branch.take(),
-                is_main,
-            });
-        } else {
-            *branch = None;
-        }
-    };
-
-    for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("worktree ") {
-            flush(&mut path, &mut branch, &mut listed);
-            path = Some(PathBuf::from(rest.trim()));
-        } else if let Some(rest) = line.strip_prefix("branch ") {
-            branch = Some(
-                rest.trim()
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(rest.trim())
-                    .to_owned(),
-            );
-        }
-    }
-    flush(&mut path, &mut branch, &mut listed);
-    listed
+    output
+        .split("\n\n")
+        .filter_map(|record| {
+            let path = record
+                .lines()
+                .find_map(|line| line.strip_prefix("worktree "))?;
+            Some(ListedWorktree {
+                path: PathBuf::from(path),
+                branch: record
+                    .lines()
+                    .find_map(|line| line.strip_prefix("branch refs/heads/"))
+                    .map(str::to_owned),
+                head_sha: record
+                    .lines()
+                    .find_map(|line| line.strip_prefix("HEAD "))
+                    .map(str::to_owned),
+                bare: record.lines().any(|line| line == "bare"),
+                is_main: false,
+            })
+        })
+        .enumerate()
+        .map(|(index, mut row)| {
+            row.is_main = index == 0;
+            row
+        })
+        .collect()
 }
 
 fn describe(
     listed: ListedWorktree,
     bases: &BTreeMap<String, String>,
     default_branch: Option<&str>,
+    base_override: Option<&str>,
 ) -> WorktreeSnapshot {
     let path = listed.path.to_string_lossy().into_owned();
     if !listed.path.exists() {
@@ -199,21 +439,64 @@ fn describe(
             branch: listed.branch,
             missing: true,
             is_main: listed.is_main,
+            head_sha: listed.head_sha,
             ..WorktreeSnapshot::default()
         };
     }
 
-    let (dirty, changed_file_count) = working_tree_state(&listed.path);
-    let base_branch = resolve_base(listed.branch.as_deref(), bases, default_branch);
+    let mut unavailable_reason = None;
+    let (dirty, changed_file_count) = record_failure(
+        working_tree_state(&listed.path),
+        &mut unavailable_reason,
+        (false, 0),
+    );
+    let base_branch = base_override
+        .map(str::to_owned)
+        .or_else(|| resolve_base(listed.branch.as_deref(), bases, default_branch));
     let (ahead, behind) = base_branch
         .as_deref()
         .map(|base| ahead_behind(&listed.path, base))
+        .map(|result| record_failure(result, &mut unavailable_reason, (0, 0)))
         .unwrap_or((0, 0));
     let (added_lines, removed_lines) = base_branch
         .as_deref()
         .map(|base| committed_line_delta(&listed.path, base))
+        .map(|result| record_failure(result, &mut unavailable_reason, (0, 0)))
         .unwrap_or((0, 0));
 
+    let merged = base_branch
+        .as_deref()
+        .and_then(|base| resolvable_base(&listed.path, base))
+        .and_then(|base| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&listed.path)
+                .args(["merge-base", "--is-ancestor", "HEAD", &base])
+                .output()
+                .ok()?;
+            match output.status.code() {
+                Some(0) => Some(true),
+                Some(1) => Some(false),
+                _ => None,
+            }
+        });
+    let (upstream_state, unpushed) = record_failure(
+        upstream(&listed.path, listed.branch.as_deref()),
+        &mut unavailable_reason,
+        ("unavailable".into(), None),
+    );
+    let last_commit_unix_seconds = git(&listed.path, &["log", "-1", "--format=%ct"])
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    let last_fetch_at_unix_ms = git(
+        &listed.path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .and_then(|s| std::fs::metadata(Path::new(s.trim()).join("FETCH_HEAD")).ok())
+    .and_then(|m| m.modified().ok())
+    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|d| d.as_millis() as u64);
     WorktreeSnapshot {
         path,
         branch: listed.branch,
@@ -226,7 +509,34 @@ fn describe(
         behind,
         added_lines,
         removed_lines,
-        unpushed: unpushed(&listed.path),
+        unpushed,
+        upstream_state,
+        merged,
+        head_sha: listed.head_sha,
+        last_commit_unix_seconds,
+        last_fetch_at_unix_ms,
+        measured_at_unix_ms: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        ),
+        unavailable_reason,
+        ..WorktreeSnapshot::default()
+    }
+}
+
+fn record_failure<T>(
+    result: Result<T, String>,
+    unavailable_reason: &mut Option<String>,
+    default: T,
+) -> T {
+    match result {
+        Ok(value) => value,
+        Err(reason) => {
+            *unavailable_reason = Some(reason);
+            default
+        }
     }
 }
 
@@ -248,8 +558,8 @@ pub fn resolve_base(
 }
 
 /// Whether anything is uncommitted, and how many files that is.
-fn working_tree_state(path: &Path) -> (bool, u32) {
-    let Ok(output) = git(
+fn working_tree_state(path: &Path) -> Result<(bool, u32), String> {
+    let output = git(
         path,
         &[
             "status",
@@ -258,26 +568,23 @@ fn working_tree_state(path: &Path) -> (bool, u32) {
             "--no-renames",
             "--untracked-files=all",
         ],
-    ) else {
-        return (false, 0);
-    };
+    )?;
     let count = output
         .split('\0')
         .filter(|record| record.len() > 3)
         .count()
         .try_into()
         .unwrap_or(u32::MAX);
-    (count > 0, count)
+    Ok((count > 0, count))
 }
 
 /// Commits on this branch since the base, and commits on the base this branch
 /// does not have. `base...HEAD` is the merge-base comparison the card's
 /// `↑A ↓B` states, not a raw two-dot range.
-fn ahead_behind(path: &Path, base: &str) -> (u32, u32) {
-    let Some(base_ref) = resolvable_base(path, base) else {
-        return (0, 0);
-    };
-    let Ok(output) = git(
+fn ahead_behind(path: &Path, base: &str) -> Result<(u32, u32), String> {
+    let base_ref =
+        resolvable_base(path, base).ok_or_else(|| format!("Base branch {base} is unavailable"))?;
+    let output = git(
         path,
         &[
             "rev-list",
@@ -285,10 +592,8 @@ fn ahead_behind(path: &Path, base: &str) -> (u32, u32) {
             "--count",
             &format!("{base_ref}...HEAD"),
         ],
-    ) else {
-        return (0, 0);
-    };
-    parse_ahead_behind(&output)
+    )?;
+    Ok(parse_ahead_behind(&output))
 }
 
 /// `--left-right --count` prints `<behind>\t<ahead>`: the left side is the
@@ -306,17 +611,14 @@ pub fn parse_ahead_behind(output: &str) -> (u32, u32) {
     (ahead, behind)
 }
 
-fn committed_line_delta(path: &Path, base: &str) -> (u32, u32) {
-    let Some(base_ref) = resolvable_base(path, base) else {
-        return (0, 0);
-    };
-    let Ok(output) = git(
+fn committed_line_delta(path: &Path, base: &str) -> Result<(u32, u32), String> {
+    let base_ref =
+        resolvable_base(path, base).ok_or_else(|| format!("Base branch {base} is unavailable"))?;
+    let output = git(
         path,
         &["diff", "--shortstat", &format!("{base_ref}...HEAD")],
-    ) else {
-        return (0, 0);
-    };
-    parse_shortstat(&output)
+    )?;
+    Ok(parse_shortstat(&output))
 }
 
 /// `git diff --shortstat` prints, for example,
@@ -373,27 +675,44 @@ fn resolvable_base(path: &Path, base: &str) -> Option<String> {
 /// A branch with no upstream returns `None`: it has nowhere to push, which the
 /// card states by omitting the row rather than by showing a zero that would
 /// read as "fully pushed".
-fn unpushed(path: &Path) -> Option<UnpushedSnapshot> {
-    let upstream = git(
+fn upstream(
+    path: &Path,
+    branch: Option<&str>,
+) -> Result<(String, Option<UnpushedSnapshot>), String> {
+    let Some(branch) = branch else {
+        return Ok(("no_upstream".into(), None));
+    };
+    let configured = git(
         path,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-    )
-    .ok()?
-    .trim()
-    .to_owned();
-    if upstream.is_empty() {
-        return None;
+        &[
+            "for-each-ref",
+            "--format=%(upstream)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    if configured.trim().is_empty() {
+        return Ok(("no_upstream".into(), None));
     }
-    let remote = upstream
-        .split_once('/')
-        .map(|(remote, _)| remote.to_owned())
-        .unwrap_or(upstream);
+    if git(path, &["rev-parse", "--verify", "@{u}"]).is_err() {
+        return Ok(("gone".into(), None));
+    }
     let count = git(path, &["rev-list", "--count", "@{u}..HEAD"])
-        .ok()?
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok());
+    let Some(count) = count else {
+        return Err("git rev-list could not determine upstream commit count".into());
+    };
+    let remote = configured
         .trim()
-        .parse()
-        .unwrap_or(0);
-    Some(UnpushedSnapshot { remote, count })
+        .trim_start_matches("refs/remotes/")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    Ok((
+        if count == 0 { "pushed" } else { "unpushed" }.into(),
+        Some(UnpushedSnapshot { remote, count }),
+    ))
 }
 
 /// The repository's default branch: what `origin/HEAD` points at when the
@@ -432,6 +751,7 @@ fn main_worktree(path: &Path) -> Option<PathBuf> {
 
 fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
+        .arg("--no-optional-locks")
         .arg("-C")
         .arg(cwd)
         .args(arguments)
@@ -547,9 +867,12 @@ mod tests {
                 path: PathBuf::from("/definitely/not/here/hide-test"),
                 branch: Some("gone".to_owned()),
                 is_main: false,
+                bare: false,
+                head_sha: None,
             },
             &BTreeMap::new(),
             Some("main"),
+            None,
         );
         assert!(described.missing);
         assert!(!described.dirty);
@@ -558,3 +881,7 @@ mod tests {
         assert_eq!(described.unpushed, None);
     }
 }
+
+#[cfg(test)]
+#[path = "worktree_behavior_tests.rs"]
+mod behavior_tests;

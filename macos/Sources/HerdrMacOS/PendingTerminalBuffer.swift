@@ -8,18 +8,18 @@ import Foundation
 /// still send: it only grows for the life of the process. The buffer is
 /// emptied when the pane's session is released or the pane goes away, because
 /// the next visit redraws from Herdr's own full frame.
-struct PendingTerminalBuffer {
+struct PendingTerminalBuffer<Chunk> {
     /// The same bound the core keeps its retained chunks at
     /// (`RETAINED_TERMINAL_CHUNKS`). Holding more here would buffer frames the
     /// core has already forgotten.
-    static let chunkLimit = 512
+    static var chunkLimit: Int { 512 }
 
-    private var chunks: [String: [[UInt8]]] = [:]
+    private var chunks: [String: [Chunk]] = [:]
 
     /// Appends one chunk and reports how many of the pane's oldest chunks were
     /// dropped to stay inside the bound.
     @discardableResult
-    mutating func append(_ bytes: [UInt8], for paneID: String) -> Int {
+    mutating func append(_ bytes: Chunk, for paneID: String) -> Int {
         var held = chunks[paneID] ?? []
         held.append(bytes)
         let dropped = max(0, held.count - Self.chunkLimit)
@@ -31,7 +31,7 @@ struct PendingTerminalBuffer {
     }
 
     /// Removes and returns a pane's held chunks, oldest first.
-    mutating func take(_ paneID: String) -> [[UInt8]]? {
+    mutating func take(_ paneID: String) -> [Chunk]? {
         chunks.removeValue(forKey: paneID)
     }
 

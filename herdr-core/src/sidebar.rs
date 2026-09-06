@@ -3,9 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{
-    AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot,
-};
+use crate::model::{AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
@@ -127,6 +125,8 @@ pub struct SessionAgentSessionPayload {
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionPanePayload {
     pub pane_id: String,
+    #[serde(default)]
+    pub tokens: BTreeMap<String, Value>,
     #[serde(default)]
     pub cwd: Option<String>,
     /// The name the user gave this pane in Herdr, when they gave it one.
@@ -275,8 +275,7 @@ fn agent_status_label(demand: AgentDemand, activity: AgentActivity, unread: bool
 /// Closing this pane would interrupt running work or throw away a result the
 /// operator has not read yet.
 fn agent_requires_close_confirmation(activity: AgentActivity, group: AgentGroup) -> bool {
-    activity == AgentActivity::Working
-        || matches!(group, AgentGroup::NeedsYou | AgentGroup::Done)
+    activity == AgentActivity::Working || matches!(group, AgentGroup::NeedsYou | AgentGroup::Done)
 }
 
 /// One agent that could not be read out of an otherwise valid snapshot.
@@ -325,6 +324,132 @@ pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
         derive_from_axes(agent);
     }
     AgentProjection { agents, excluded }
+}
+
+/// Adds a tree view without reordering, duplicating, or changing the axes of
+/// the canonical agent list. Child ordering belongs to this view alone.
+/// Missing and cyclic parent references are visible orphan roots, so malformed
+/// external lineage cannot hide an agent or recurse forever.
+pub fn apply_lineage(
+    agents: &mut [SidebarAgentSnapshot],
+    workspaces: &[crate::model::WorkspaceSnapshot],
+    collapsed: &[String],
+) {
+    let by_pane = agents
+        .iter()
+        .enumerate()
+        .map(|(index, agent)| (agent.pane_id.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let checkouts = workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .flat_map(|checkout| {
+            checkout
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.panes)
+                .map(move |pane| {
+                    (
+                        pane.id.as_str(),
+                        (checkout.id.clone(), checkout.label.clone()),
+                    )
+                })
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut parents = agents
+        .iter()
+        .map(|agent| {
+            agent
+                .spawned_from_pane_id
+                .as_ref()
+                .and_then(|pane| by_pane.get(pane))
+                .copied()
+        })
+        .collect::<Vec<_>>();
+    // Walk parent chains iteratively: depth is data, never a recursion limit.
+    let original_parents = parents.clone();
+    for index in 0..agents.len() {
+        let mut visited = std::collections::BTreeSet::new();
+        let mut cursor = Some(index);
+        while let Some(node) = cursor {
+            if !visited.insert(node) {
+                // Break only cycle members; descendants retain valid nesting.
+                let mut cycle = node;
+                loop {
+                    parents[cycle] = None;
+                    cycle = original_parents[cycle].expect("cycle has a parent");
+                    if cycle == node {
+                        break;
+                    }
+                }
+                break;
+            }
+            cursor = original_parents[node];
+        }
+    }
+    let mut children = vec![Vec::new(); agents.len()];
+    for (index, parent) in parents.iter().enumerate() {
+        if let Some(parent) = parent {
+            children[*parent].push(index);
+        }
+    }
+    for list in &mut children {
+        list.sort_by(|left, right| {
+            agents[*right]
+                .last_activity
+                .cmp(&agents[*left].last_activity)
+        });
+    }
+    for index in 0..agents.len() {
+        let mut root = index;
+        let mut depth = 0;
+        while let Some(parent) = parents[root] {
+            root = parent;
+            depth += 1;
+        }
+        let hint = agents[index].spawned_from_pane_id.as_ref().map(|pane| {
+            let name = by_pane
+                .get(pane)
+                .map(|parent| agents[*parent].id.as_str())
+                .unwrap_or(pane.as_str());
+            format!("↳ from {name}")
+        });
+        let orphan = agents[index].spawned_from_pane_id.is_some() && parents[index].is_none();
+        let own_checkout = checkouts.get(agents[index].pane_id.as_str());
+        let parent_checkout =
+            parents[index].and_then(|parent| checkouts.get(agents[parent].pane_id.as_str()));
+        let badge = own_checkout
+            .filter(|own| parent_checkout.is_some_and(|parent| own.0 != parent.0))
+            .map(|(_, label)| label.clone());
+        let root_checkout = checkouts
+            .get(agents[root].pane_id.as_str())
+            .map(|(id, _)| id.clone());
+        let child_ids = children[index]
+            .iter()
+            .map(|child| agents[*child].pane_id.clone())
+            .collect();
+        let agent = &mut agents[index];
+        agent.lineage_depth = depth;
+        agent.lineage_child_pane_ids = child_ids;
+        agent.lineage_root_checkout_id = root_checkout;
+        agent.lineage_worktree_badge = badge;
+        agent.lineage_orphan = orphan;
+        agent.lineage_hint = orphan.then(|| hint.clone()).flatten();
+        agent.raised_hint = hint;
+        agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
+    }
+}
+
+/// Collapse state belongs to pane existence, not whether it currently has
+/// children. A fresh scoped agent list may evict it; a stale list may not.
+pub fn prune_lineage_collapse(
+    collapsed: &mut Vec<String>,
+    agents: &[SidebarAgentSnapshot],
+    scope: ReadRecordScope<'_>,
+) -> bool {
+    let before = collapsed.len();
+    collapsed.retain(|pane| !scope.owns(pane) || agents.iter().any(|agent| &agent.pane_id == pane));
+    before != collapsed.len()
 }
 
 /// The one ordering every agent surface reads: the two sidebar views, the pet
@@ -464,9 +589,16 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .filter(|session| session.kind == "id")
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
-        spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
-            .map(str::to_owned),
+        spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         chat_title,
+        lineage_depth: 0,
+        lineage_child_pane_ids: Vec::new(),
+        lineage_root_checkout_id: None,
+        lineage_worktree_badge: None,
+        lineage_orphan: false,
+        lineage_hint: None,
+        raised_hint: None,
+        lineage_collapsed: false,
     })
 }
 
@@ -749,15 +881,50 @@ mod tests {
     #[test]
     fn axes_classify_every_token_form_and_lifecycle() {
         let cases = [
-            (json!({"status_question_new": "?"}), "question", "unknown", "?"),
+            (
+                json!({"status_question_new": "?"}),
+                "question",
+                "unknown",
+                "?",
+            ),
             (json!({"status_question": "?"}), "question", "unknown", "?"),
-            (json!({"status_approval_new": "!"}), "approval", "unknown", "!"),
+            (
+                json!({"status_approval_new": "!"}),
+                "approval",
+                "unknown",
+                "!",
+            ),
             (json!({"status_approval": "!"}), "approval", "unknown", "!"),
-            (json!({"status_error_new": "\u{d7}"}), "error", "unknown", "\u{d7}"),
-            (json!({"status_error": "\u{d7}"}), "error", "unknown", "\u{d7}"),
-            (json!({"status_working": "\u{25cf}"}), "none", "working", "\u{25cf}"),
-            (json!({"status_done_new": "\u{25cf}"}), "none", "stopped", "\u{25cf}"),
-            (json!({"status_idle": "\u{25cb}"}), "none", "stopped", "\u{25cf}"),
+            (
+                json!({"status_error_new": "\u{d7}"}),
+                "error",
+                "unknown",
+                "\u{d7}",
+            ),
+            (
+                json!({"status_error": "\u{d7}"}),
+                "error",
+                "unknown",
+                "\u{d7}",
+            ),
+            (
+                json!({"status_working": "\u{25cf}"}),
+                "none",
+                "working",
+                "\u{25cf}",
+            ),
+            (
+                json!({"status_done_new": "\u{25cf}"}),
+                "none",
+                "stopped",
+                "\u{25cf}",
+            ),
+            (
+                json!({"status_idle": "\u{25cb}"}),
+                "none",
+                "stopped",
+                "\u{25cf}",
+            ),
             (json!({"status_unknown": "~"}), "none", "unknown", "~"),
         ];
         let agents = cases
@@ -848,13 +1015,49 @@ mod tests {
     #[test]
     fn axes_require_close_confirmation_for_working_needs_you_and_done() {
         let cases = [
-            (AgentDemand::None, AgentActivity::Working, false, false, true),
-            (AgentDemand::Question, AgentActivity::Stopped, true, false, true),
-            (AgentDemand::Approval, AgentActivity::Unknown, false, true, true),
+            (
+                AgentDemand::None,
+                AgentActivity::Working,
+                false,
+                false,
+                true,
+            ),
+            (
+                AgentDemand::Question,
+                AgentActivity::Stopped,
+                true,
+                false,
+                true,
+            ),
+            (
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                false,
+                true,
+                true,
+            ),
             (AgentDemand::None, AgentActivity::Stopped, true, false, true),
-            (AgentDemand::None, AgentActivity::Stopped, false, false, false),
-            (AgentDemand::Question, AgentActivity::Stopped, false, false, false),
-            (AgentDemand::None, AgentActivity::Unknown, true, false, false),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                false,
+                false,
+                false,
+            ),
+            (
+                AgentDemand::Question,
+                AgentActivity::Stopped,
+                false,
+                false,
+                false,
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Unknown,
+                true,
+                false,
+                false,
+            ),
         ];
         for (demand, activity, unread, blocked, expected) in cases {
             let group = agent_group(demand, activity, unread, blocked);
@@ -896,7 +1099,10 @@ mod tests {
             scanned += 1;
             let text = std::fs::read_to_string(&entry).expect("readable source");
             if text.contains("unseen_completion") {
-                offenders.push(format!("{}: the retired unseen_completion state", entry.display()));
+                offenders.push(format!(
+                    "{}: the retired unseen_completion state",
+                    entry.display()
+                ));
             }
             let mut rest = text.as_str();
             while let Some(open) = rest.find('[') {
@@ -921,8 +1127,18 @@ mod tests {
     #[test]
     fn axes_status_labels_are_short_human_words() {
         let labels = [
-            (AgentDemand::Question, AgentActivity::Unknown, true, "Question"),
-            (AgentDemand::Approval, AgentActivity::Unknown, true, "Approval"),
+            (
+                AgentDemand::Question,
+                AgentActivity::Unknown,
+                true,
+                "Question",
+            ),
+            (
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                true,
+                "Approval",
+            ),
             (AgentDemand::Error, AgentActivity::Unknown, true, "Error"),
             (AgentDemand::None, AgentActivity::Working, true, "Working"),
             (AgentDemand::None, AgentActivity::Stopped, true, "Done"),
@@ -1034,7 +1250,10 @@ mod tests {
             ["good", "also-good"]
         );
         assert_eq!(projection.excluded.len(), 2);
-        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("bad-activity"));
+        assert_eq!(
+            projection.excluded[0].pane_id.as_deref(),
+            Some("bad-activity")
+        );
         assert!(projection.excluded[0].reason.contains("invalid activity"));
         assert_eq!(projection.excluded[1].pane_id, None);
         assert!(projection.excluded[1].reason.contains("pane id"));
@@ -1083,12 +1302,18 @@ mod tests {
     /// pane-level record instead of reading Herdr's tab-scoped seen.
     #[test]
     fn read_record_clears_one_pane_of_a_finished_tab() {
-        let mut agents = projected(json!([finished("a", 1), finished("b", 2), finished("c", 3)]));
+        let mut agents = projected(json!([
+            finished("a", 1),
+            finished("b", 2),
+            finished("c", 3)
+        ]));
         let mut records = BTreeMap::new();
 
         apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
         assert!(
-            agents.iter().all(|agent| agent.unread && agent.group == "done"),
+            agents
+                .iter()
+                .all(|agent| agent.unread && agent.group == "done"),
             "nothing is read before the operator focuses anything"
         );
 
@@ -1137,7 +1362,12 @@ mod tests {
         let mut records = BTreeMap::new();
 
         let mut watched = projected(asking.clone());
-        apply_read_state(&mut watched, &mut records, Some("a"), ReadRecordScope::Local);
+        apply_read_state(
+            &mut watched,
+            &mut records,
+            Some("a"),
+            ReadRecordScope::Local,
+        );
         assert!(!watched[0].unread, "a question on the focused pane is read");
         assert_eq!(watched[0].group, "seen");
 
@@ -1146,7 +1376,12 @@ mod tests {
             "tokens":{"status_question_new":"?","activity":"0000000000003"}
         }]);
         let mut later = projected(moved_on);
-        apply_read_state(&mut later, &mut records, Some("elsewhere"), ReadRecordScope::Local);
+        apply_read_state(
+            &mut later,
+            &mut records,
+            Some("elsewhere"),
+            ReadRecordScope::Local,
+        );
         assert!(later[0].unread, "a new question raised elsewhere is unread");
         assert_eq!(later[0].group, "needs_you");
     }
@@ -1160,7 +1395,12 @@ mod tests {
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut working, &mut records, Some("a"), ReadRecordScope::Local);
+        apply_read_state(
+            &mut working,
+            &mut records,
+            Some("a"),
+            ReadRecordScope::Local,
+        );
         assert!(!working[0].unread);
 
         let mut asking = projected(json!([{
@@ -1168,7 +1408,10 @@ mod tests {
             "tokens":{"status_question_new":"?","status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
         apply_read_state(&mut asking, &mut records, None, ReadRecordScope::Local);
-        assert!(asking[0].unread, "a new demand is unread even at the same sequence");
+        assert!(
+            asking[0].unread,
+            "a new demand is unread even at the same sequence"
+        );
     }
 
     /// AC4. Records for panes Herdr no longer reports are dropped, but only
@@ -1180,7 +1423,10 @@ mod tests {
         let mut records = BTreeMap::new();
         apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local);
         let after_first = records.clone();
-        assert!(apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local).is_empty());
+        assert!(
+            apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local)
+                .is_empty()
+        );
         assert_eq!(records, after_first, "a repeated apply changes nothing");
 
         let mut none: Vec<SidebarAgentSnapshot> = Vec::new();
@@ -1190,7 +1436,10 @@ mod tests {
             "an empty list from before the first sync must not wipe the record"
         );
         apply_read_state(&mut none, &mut records, None, ReadRecordScope::Local);
-        assert!(records.is_empty(), "a pane Herdr stopped reporting is dropped");
+        assert!(
+            records.is_empty(),
+            "a pane Herdr stopped reporting is dropped"
+        );
     }
 
     /// The ordering key falls back to Herdr's own sequence, zero padded to the

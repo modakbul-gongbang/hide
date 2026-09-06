@@ -106,24 +106,23 @@ extension SidebarAgent {
 ///
 /// The Agents view numbers the runtime's whole agent projection. The Projects
 /// view numbers the Needs You and Done rows it raises to the top first, then
-/// the agents left in the selected checkout, which is exactly the order those
+/// the expanded project lineage rows, which is exactly the order those
 /// rows appear in.
 enum AgentShortcutNumbering {
     static func candidates(
         for content: SidebarContent,
         agents: [SidebarAgent],
-        focusedCheckout: CoreCheckoutSnapshot?
+        visibleCheckoutIDs: [String]
     ) -> [SidebarAgent] {
         switch content {
         case .agents:
             return agents
         case .projects:
             let raised = SidebarGrouping.raised(agents).flatMap(\.agents)
-            guard let focusedCheckout else { return raised }
             let raisedIDs = Set(raised.map(\.id))
-            return raised + SidebarGrouping
-                .agents(agents, in: focusedCheckout)
-                .filter { !raisedIDs.contains($0.id) }
+            return raised + visibleCheckoutIDs.flatMap {
+                SidebarGrouping.tree(agents, checkoutID: $0, excluding: raisedIDs)
+            }
         }
     }
 

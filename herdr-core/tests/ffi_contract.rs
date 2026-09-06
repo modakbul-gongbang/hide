@@ -14,11 +14,19 @@ use herdr_core::{
 use serde_json::{Value, json};
 
 static HERDR_SOCKET_ENV_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_FIXTURE_STATE: AtomicUsize = AtomicUsize::new(1);
+
+fn temporary_state_path() -> PathBuf {
+    std::env::temp_dir()
+        .join(format!("herdr-core-contract-{}", std::process::id()))
+        .join(format!(
+            "{}.json",
+            NEXT_FIXTURE_STATE.fetch_add(1, Ordering::Relaxed)
+        ))
+}
 
 fn options() -> Vec<u8> {
-    let missing_state =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/missing-ui-state.json");
-    options_with_state(&missing_state)
+    options_with_state(&temporary_state_path())
 }
 
 fn options_with_state(state_path: &std::path::Path) -> Vec<u8> {
@@ -63,8 +71,7 @@ fn create_with_socket_override_hidden(options: &[u8]) -> *mut HerdrCore {
 
 #[test]
 fn live_key_without_control_session_surfaces_an_explicit_error() {
-    let missing_state =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/missing-ui-state.json");
+    let missing_state = temporary_state_path();
     let options = serde_json::to_vec(&json!({
         "schema_version": 2,
         "herdr_socket_path": "/tmp/herdr-core-ffi-test-missing.sock",
@@ -222,6 +229,9 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "editor",
             "find",
             "focused",
+            "git_worktrees",
+            "git_worktrees_loading",
+            "git_worktrees_remote",
             "ime",
             "input_generation",
             "navigator",
@@ -233,6 +243,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "tab",
             "terminal",
             "ui_state",
+            "worktree_removal",
             "zoomed",
         ]
     );
@@ -653,7 +664,11 @@ fn session_sync_cannot_retarget_an_explicit_pane_to_an_unrelated_workspace() {
         .expect("pane_layouts is an array");
     assert_eq!(layouts.len(), 1);
     assert_eq!(layouts[0]["tab_id"], "user:t1");
-    assert!(!layouts.iter().any(|layout| layout["focused_pane_id"] == "fixture:p1"));
+    assert!(
+        !layouts
+            .iter()
+            .any(|layout| layout["focused_pane_id"] == "fixture:p1")
+    );
     assert!(
         snapshot["terminal"]["panes"]
             .as_array()
@@ -905,6 +920,13 @@ fn multi_pane_terminal_session_destroy_releases_and_reaps_children() {
             "payload": {
                 "focused_pane_id": "w-lifecycle:p1",
                 "agents": [],
+                "workspaces": [{"workspace_id": "w-lifecycle", "label": "Lifecycle", "active_tab_id": "w-lifecycle:t1"}],
+                "tabs": [{"workspace_id": "w-lifecycle", "tab_id": "w-lifecycle:t1", "label": "1"}],
+                "panes": [
+                    {"pane_id": "w-lifecycle:p1", "cwd": root},
+                    {"pane_id": "w-lifecycle:p2", "cwd": root},
+                    {"pane_id": "w-lifecycle:p3", "cwd": root}
+                ],
                 "layouts": [{
                     "workspace_id": "w-lifecycle",
                     "tab_id": "w-lifecycle:t1",
@@ -1300,8 +1322,13 @@ fn file_tabs_deduplicate_and_closing_active_restores_the_previous_file() {
 
 #[test]
 fn corrupt_ui_state_falls_back_to_defaults_with_structured_status() {
-    let corrupt_state =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corrupt-ui-state.json");
+    let corrupt_state = temporary_state_path();
+    fs::create_dir_all(corrupt_state.parent().unwrap()).unwrap();
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corrupt-ui-state.json"),
+        &corrupt_state,
+    )
+    .unwrap();
     let options = options_with_state(&corrupt_state);
     let core = herdr_core_create(options.as_ptr(), options.len());
     assert!(!core.is_null());
@@ -1486,6 +1513,18 @@ fn only_a_detected_agent_with_a_forkable_session_offers_a_fork() {
         }),
     );
 
+    // Core-only inputs stay out of both snapshot wires. Fork availability
+    // and unread are projected values, while restart persistence is tested
+    // through the store rather than exposing its records to the shell.
+    for wire in [snapshot(core), snapshot_delta(core, 0, 0)["rest"].clone()] {
+        assert!(wire["ui_state"].get("pane_read_records").is_none());
+        for agent in wire["navigator"]["agents"].as_array().unwrap() {
+            for private in ["state_change_seq", "session_id", "spawned_from_pane_id"] {
+                assert!(agent.get(private).is_none(), "wire leaked {private}");
+            }
+        }
+    }
+
     // A pane with no agent at all never reaches the worker.
     dispatch(
         core,
@@ -1629,9 +1668,8 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
         "the attach must carry the size the view reported: {argv}"
     );
 
-    // The view reporting the size the pane is already running at is the
-    // ordinary case right after an attach. Passing it on would make Herdr
-    // answer with a second full frame for a size that never changed.
+    // R2 now requires one settled-size resize after attach. Once the first
+    // matching full frame arrives, a repeated same-size report adds no write.
     dispatch(
         core,
         json!({
@@ -1643,8 +1681,8 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
     std::thread::sleep(Duration::from_millis(200));
     let control_lines = fs::read_to_string(root.join("w-attach:p1.stdin")).unwrap_or_default();
     assert!(
-        !control_lines.contains("resize"),
-        "a size the pane already has must not be sent on: {control_lines}"
+        control_lines.lines().count() == 1,
+        "attach sends one settled resize; a matching report must not repeat it: {control_lines}"
     );
     assert_eq!(
         fs::read_to_string(&argv_path)
@@ -1683,6 +1721,7 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
                 "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":152,\"height\":44,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
                 "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "  done\n",
@@ -1782,8 +1821,8 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
     std::thread::sleep(Duration::from_millis(200));
     let control_lines = fs::read_to_string(root.join("w-warm:p1.stdin")).unwrap_or_default();
     assert!(
-        !control_lines.contains("resize"),
-        "the view confirming the size it attached at must send nothing: {control_lines}"
+        control_lines.lines().count() == 1,
+        "warm attach sends one settled resize; the view must not repeat it: {control_lines}"
     );
     assert_eq!(
         fs::read_to_string(&argv_path)

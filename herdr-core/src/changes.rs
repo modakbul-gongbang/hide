@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::model::{ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot};
+use crate::model::{
+    ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot,
+};
 
 /// How stale the list may be while the view is open. Short enough that an edit
 /// made in a terminal pane shows up by the time the operator looks over, long
@@ -156,7 +158,11 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
 fn read_committed(toplevel: &Path, base: &str) -> Option<Vec<ChangedFileSnapshot>> {
     let base_ref = resolvable_base(toplevel, base)?;
     let range = format!("{base_ref}...HEAD");
-    let statuses = git_text(toplevel, &["diff", "--name-status", "-z", "--no-renames", &range]).ok()?;
+    let statuses = git_text(
+        toplevel,
+        &["diff", "--name-status", "-z", "--no-renames", &range],
+    )
+    .ok()?;
     let mut entries = parse_name_status(&statuses, toplevel);
     if let Ok(numstat) = git_numstat(toplevel, &["diff", "--numstat", "-z", &range]) {
         apply_line_counts(&mut entries, &numstat);
@@ -171,7 +177,12 @@ fn resolvable_base(toplevel: &Path, base: &str) -> Option<String> {
     for candidate in [base.to_owned(), format!("origin/{base}")] {
         if git_text(
             toplevel,
-            &["rev-parse", "--verify", "--quiet", &format!("{candidate}^{{commit}}")],
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{candidate}^{{commit}}"),
+            ],
         )
         .is_ok()
         {
@@ -218,10 +229,7 @@ pub fn parse_numstat(output: &str) -> Vec<(String, Option<u32>, Option<u32>)> {
 
 fn apply_line_counts(entries: &mut [ChangedFileSnapshot], counts: &str) {
     for (path, added, removed) in parse_numstat(counts) {
-        if let Some(entry) = entries
-            .iter_mut()
-            .find(|entry| entry.relative_path == path)
-        {
+        if let Some(entry) = entries.iter_mut().find(|entry| entry.relative_path == path) {
             entry.added_lines = added;
             entry.removed_lines = removed;
         }
@@ -438,9 +446,18 @@ mod tests {
 
     #[test]
     fn a_staged_delete_reads_as_deleted_even_with_a_worktree_column() {
-        assert_eq!(ChangedFileStatus::from_porcelain("AD"), ChangedFileStatus::Deleted);
-        assert_eq!(ChangedFileStatus::from_porcelain("MM"), ChangedFileStatus::Modified);
-        assert_eq!(ChangedFileStatus::from_porcelain("R "), ChangedFileStatus::Modified);
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("AD"),
+            ChangedFileStatus::Deleted
+        );
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("MM"),
+            ChangedFileStatus::Modified
+        );
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("R "),
+            ChangedFileStatus::Modified
+        );
     }
 
     #[test]
@@ -473,11 +490,17 @@ mod tests {
     fn numstat_counts_land_on_the_file_they_describe() {
         let mut entries = parse_name_status("M\0src/lib.rs\0M\0src/other.rs\0", Path::new("/c"));
         apply_line_counts(&mut entries, "12\t3\tsrc/lib.rs\0-\t-\tsrc/other.rs\0");
-        let lib = &entries.iter().find(|e| e.relative_path == "src/lib.rs").unwrap();
+        let lib = &entries
+            .iter()
+            .find(|e| e.relative_path == "src/lib.rs")
+            .unwrap();
         assert_eq!((lib.added_lines, lib.removed_lines), (Some(12), Some(3)));
         // A binary file counts no lines, so it shows no numbers rather than
         // claiming it changed none.
-        let other = &entries.iter().find(|e| e.relative_path == "src/other.rs").unwrap();
+        let other = &entries
+            .iter()
+            .find(|e| e.relative_path == "src/other.rs")
+            .unwrap();
         assert_eq!((other.added_lines, other.removed_lines), (None, None));
     }
 

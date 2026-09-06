@@ -370,7 +370,15 @@ enum PaneMenuPolicy {
 }
 
 enum PaneScrollPolicy {
-    static func routesToLocalScroll(_ event: NSEvent) -> Bool {
+    /// Herdr's documented terminal.scroll modifiers use crossterm's bitset.
+    static func modifiers(_ flags: NSEvent.ModifierFlags) -> Int {
+        (flags.contains(.shift) ? 1 : 0)
+            | (flags.contains(.control) ? 2 : 0)
+            | (flags.contains(.option) ? 4 : 0)
+            | (flags.contains(.command) ? 8 : 0)
+    }
+
+    static func routesToHerdrScroll(_ event: NSEvent) -> Bool {
         event.type == .scrollWheel
             && !event.modifierFlags
                 .intersection(.deviceIndependentFlagsMask)
@@ -422,15 +430,17 @@ final class PaneCommandWindow: NSWindow {
             super.sendEvent(event)
             return
         }
-        if PaneScrollPolicy.routesToLocalScroll(event),
+        if event.type == .keyDown, let terminal = firstResponder as? ImeTerminalView,
+           let paneID = terminal.hidePaneID {
+            TerminalLatency.end(.keyToSend, paneID: paneID, outcome: "consumed")
+            TerminalLatency.begin(.keyToSend, paneID: paneID)
+        }
+        if PaneScrollPolicy.routesToHerdrScroll(event),
            let terminal = terminalView(at: event.locationInWindow),
-           let paneID = (terminal as? any HideTerminalPointerRouting)?.hidePaneID,
+           let terminal = terminal as? ImeTerminalView,
+           let paneID = terminal.hidePaneID,
            let model = paneCommandModel
         {
-            // Herdr renders this pane and keeps its history, so no row ever
-            // scrolls off the local grid and a local scrollback stays empty.
-            // Forward the wheel instead and let Herdr answer with a frame,
-            // which is the path its own TUI takes.
             let rows = PaneScrollPolicy.rows(
                 forDelta: event.scrollingDeltaY,
                 precise: event.hasPreciseScrollingDeltas,
@@ -438,10 +448,12 @@ final class PaneCommandWindow: NSWindow {
                 accumulator: &scrollAccumulator
             )
             if rows != 0 {
+                TerminalLatency.begin(.wheelToDraw, paneID: paneID)
+                let cell = terminal.mouseCell(with: event)
                 model.core.scrollTerminal(
-                    paneID: paneID,
-                    direction: rows > 0 ? "up" : "down",
-                    lines: abs(rows)
+                    paneID: paneID, direction: rows > 0 ? "up" : "down", lines: abs(rows),
+                    column: cell.column, row: cell.row,
+                    modifiers: PaneScrollPolicy.modifiers(event.modifierFlags)
                 )
             }
             return

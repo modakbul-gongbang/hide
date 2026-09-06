@@ -174,10 +174,10 @@ pub fn root_index(spaces: &[SessionSpace]) -> RootIndex {
     index
 }
 
-/// How many times the current thread has run git. A test that asserts a code
-/// path never shells out reads it before and after; the runtime lock is held
-/// through some of those paths, and a fork there is a stall for every thread.
-/// Per thread, because the test runner runs other tests' git alongside.
+// How many times the current thread has run git. A test that asserts a code
+// path never shells out reads it before and after; the runtime lock is held
+// through some of those paths, and a fork there is a stall for every thread.
+// Per thread, because the test runner runs other tests' git alongside.
 #[cfg(test)]
 thread_local! {
     static GIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -218,9 +218,9 @@ pub fn build_catalog(
     // so the row survives Herdr closing that workspace.
     for registration in registrations {
         let comparison = normalized_for_comparison(&project_root(Path::new(&registration.path)));
-        let occupied = result
-            .iter()
-            .position(|workspace| normalized_for_comparison(Path::new(&workspace.path)) == comparison);
+        let occupied = result.iter().position(|workspace| {
+            normalized_for_comparison(Path::new(&workspace.path)) == comparison
+        });
         match occupied {
             // A second registration for a repository that already carries
             // one is not a second row, and it must not rename the first.
@@ -311,10 +311,9 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         let project_comparison = normalized_for_comparison(&project_path);
         let root_comparison = normalized_for_comparison(&root);
         let workspace_id = workspace_id_for_path(&project_path);
-        let index = match projects
-            .iter()
-            .position(|project| normalized_for_comparison(Path::new(&project.path)) == project_comparison)
-        {
+        let index = match projects.iter().position(|project| {
+            normalized_for_comparison(Path::new(&project.path)) == project_comparison
+        }) {
             Some(index) => index,
             None => {
                 let name = project_path
@@ -389,7 +388,10 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
 /// a pane keeps its identity and only gains the counts. The reader has not
 /// answered for a project until it appears in the catalog, and a project with
 /// no answer keeps exactly the rows it already had rather than losing them.
-fn apply_worktrees(project: &mut WorkspaceSnapshot, worktrees: &WorktreeCatalogSnapshot) {
+pub(crate) fn apply_worktrees(
+    project: &mut WorkspaceSnapshot,
+    worktrees: &WorktreeCatalogSnapshot,
+) {
     let project_comparison = normalized_for_comparison(Path::new(&project.path));
     let Some(listed) = worktrees.projects.iter().find(|listed| {
         normalized_for_comparison(Path::new(&listed.root_path)) == project_comparison
@@ -438,6 +440,7 @@ fn apply_worktrees(project: &mut WorkspaceSnapshot, worktrees: &WorktreeCatalogS
         row.added_lines = worktree.added_lines;
         row.removed_lines = worktree.removed_lines;
         row.unpushed = worktree.unpushed.clone();
+        row.worktree = Some(worktree.clone());
         if row.branch.is_none() {
             row.branch = worktree.branch.clone();
         }
@@ -860,7 +863,11 @@ mod tests {
         let catalog = build_catalog(&registrations, &[space], &no_worktrees());
 
         assert_eq!(unregistered.len(), 2);
-        assert!(unregistered.iter().all(|project| project.label != "hide main"));
+        assert!(
+            unregistered
+                .iter()
+                .all(|project| project.label != "hide main")
+        );
         assert_eq!(catalog.len(), 2);
         let labels = catalog.iter().map(|p| p.label.as_str()).collect::<Vec<_>>();
         assert_eq!(labels, vec!["First", "Second"]);
@@ -897,8 +904,16 @@ mod tests {
         let root = temp_dir("shared-root");
         let cwd = root.to_string_lossy().into_owned();
         let spaces = [
-            SessionSpace { id: "w1".to_owned(), label: "first".to_owned(), cwds: vec![cwd.clone()] },
-            SessionSpace { id: "w2".to_owned(), label: "second".to_owned(), cwds: vec![cwd] },
+            SessionSpace {
+                id: "w1".to_owned(),
+                label: "first".to_owned(),
+                cwds: vec![cwd.clone()],
+            },
+            SessionSpace {
+                id: "w2".to_owned(),
+                label: "second".to_owned(),
+                cwds: vec![cwd],
+            },
         ];
 
         let catalog = build_catalog(&[], &spaces, &no_worktrees());
@@ -963,6 +978,7 @@ mod tests {
                     listed_worktree(second.to_str().unwrap(), "second", false),
                 ],
                 unavailable_reason: None,
+                ..ProjectWorktreesSnapshot::default()
             }],
         };
 
@@ -1002,7 +1018,10 @@ mod tests {
         let idle_row = rows.iter().find(|row| row.label == "idle").expect("idle");
         assert!(idle_row.is_worktree, "a linked worktree is marked as one");
         assert!(idle_row.exists);
-        assert!(idle_row.tabs.is_empty(), "it has no pane, and that is the point");
+        assert!(
+            idle_row.tabs.is_empty(),
+            "it has no pane, and that is the point"
+        );
         assert!(rows.iter().any(|row| row.label == "second"));
         // Every row is keyed under the project, so a persisted selection on a
         // worktree with no pane still resolves.
@@ -1032,6 +1051,7 @@ mod tests {
                     },
                 ],
                 unavailable_reason: None,
+                ..ProjectWorktreesSnapshot::default()
             }],
         };
 
@@ -1073,7 +1093,6 @@ mod tests {
 
     #[test]
     fn a_registration_no_space_occupies_stays_listed() {
-
         let root = temp_dir("unopened");
         let registration = registration(root.to_str().unwrap(), "Unopened", LOCAL_DEVICE_ID)
             .expect("registration");
