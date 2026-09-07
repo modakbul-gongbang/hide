@@ -129,6 +129,7 @@ Keep these invariants during implementation:
 - Send the first wheel immediately and coalesce only while a response is pending; preserve Herdr routing, real geometry, and direct keyboard delivery.
 - Parse immediately, settle geometry on display ticks, and submit pending damage once per tick; never reject an AppKit backing-store repair because it already drew that tick.
 - Retain only visible rows' latest prepared render state; leave hidden panes undrawn and release unused attaches.
+  Keep row preparation behind `preparedRow`; `scripts/check-terminal-row-cache.sh` enforces that the draw loop never bypasses the cache.
 - Announce once per burst and clear the notifier before taking the snapshot lock.
 - Native verification uses exactly one identified app and an isolated Herdr server, including remote-connection checks; never manipulate the operator's panes or server.
 

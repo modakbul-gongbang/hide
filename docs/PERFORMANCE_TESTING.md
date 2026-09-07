@@ -18,6 +18,8 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 
 Swift renderer tests can instantiate AppKit views and compare pixels without launching and driving the complete app.
 That is useful automated rendering coverage, but it does not exercise the physical display, live Herdr transport, foreground focus, or actual agent TUI interaction end to end.
+The required `check-terminal-row-cache.sh` structural gate additionally checks that the draw loop reaches expensive text preparation through the cache, not through a direct call on every repaint.
+It protects that source-level cost boundary; it does not measure frame latency or replace the bitmap and retention tests.
 The latency summarizer's Python tests, browser-host Node tests, and fixture/replay commands do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
 
