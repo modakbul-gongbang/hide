@@ -2,6 +2,7 @@
 
 The single biggest time sink so far is verifying a change against the wrong
 process. Read this before running or screenshotting the app.
+For responsiveness, rendering, CPU, or memory checks, also read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) in full.
 
 ## One instance, always
 
@@ -25,8 +26,9 @@ Before any visual check:
 pgrep -fl HerdrMacOS   # must list exactly one process
 ```
 
-If more than one is listed, kill all of them and start exactly the instance
-you intend to verify.
+If more than one is listed, identify each exact PID and bundle before proceeding.
+Quit only test instances you own; coordinate with the operator before normally quitting their app, and record its bundle path for restoration.
+Never kill all matching processes or stop the operator's Herdr server to obtain a clean screenshot.
 
 ## Verify against the assembled bundle, not `swift run`
 
@@ -51,11 +53,12 @@ repository checkout instead, and the URL scheme is not registered at all.
 
 ## Pet state survives your edit
 
-The pet persists its position, visibility, and global shortcut through
-herdr-core's UI state file (`--state-path`, default
-`/tmp/herdr-ide-verify-ui-state.json`). The file is rewritten whenever the
-pet moves or is toggled, so editing it while the app runs is pointless.
-Kill the process first, then reset the file, then relaunch.
+The pet persists its position, visibility, and global shortcut through herdr-core's UI state file, which `--state-path` can override.
+The release bundle defaults to `hide/state.json` under the user's Application Support directory; other bundle identifiers use `hide/instances/<bundle-id>/state.json` there.
+`/tmp/herdr-ide-verify-ui-state.json` is only the default for `--verification-ui-fixture`, not a normal launch.
+The file is rewritten whenever the pet moves or is toggled, so editing it while the app runs is pointless.
+For an owned fixture, quit its exact process before resetting its private state and relaunching.
+Do not reset the operator's state file for QA; supply a separate `--state-path` and follow the performance guide's server-isolation procedure.
 
 See [pet-window-macos.md](pet-window-macos.md) for the off-screen guards; a
 saved position outside every connected screen is clamped back into view
