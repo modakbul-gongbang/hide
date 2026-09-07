@@ -125,12 +125,14 @@ struct RightPanelPresentationTests {
                 "checkout_id": "c",
                 "path": "/repo/README.md",
                 "label": "README.md",
+                "kind": "file",
+                "diff_committed": null,
                 "dirty": true
             }],
             "active_tab_id": "file:w:c:/repo/README.md",
             "document": {
                 "path": "/repo/README.md",
-                "language": "md",
+                "language": "markdown",
                 "contents_utf8": "draft",
                 "opened_modified_at_unix_ms": 1,
                 "dirty": true,

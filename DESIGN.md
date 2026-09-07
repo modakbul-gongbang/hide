@@ -939,6 +939,10 @@ The selected provider card uses an elevated fill and stronger neutral border; it
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
 The right panel's Explorer and Changes sections use the same panel and text ladder.
+Changes is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
+Diff tabs use the editor's monospaced content scale, fixed old and new line-number columns, semantic added and removed tints, and horizontal scrolling for long lines.
+Text file tabs use a fixed line-number ruler and preserve source whitespace through non-wrapping horizontal scrolling.
+Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.
 Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
 Content and accessibility identifiers are unchanged; only the visual hierarchy changes.

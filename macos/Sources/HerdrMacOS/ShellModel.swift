@@ -115,7 +115,7 @@ enum CloseShortcutPolicy {
 
 enum ShellTabKind {
     case herdr(CoreTabSnapshot)
-    case file(CoreFileTabSnapshot)
+    case editor(CoreEditorTabSnapshot)
 }
 
 struct ShellTabItem: Identifiable {
@@ -136,7 +136,7 @@ enum ShellTabStrip {
     static func items(
         strip: [CoreStripTabSnapshot],
         herdrTabs: [CoreTabSnapshot],
-        fileTabs: [CoreFileTabSnapshot],
+        editorTabs: [CoreEditorTabSnapshot],
         activeHerdrTabID: String?,
         activeFileTabID: String?
     ) -> [ShellTabItem] {
@@ -155,14 +155,24 @@ enum ShellTabStrip {
                     kind: .herdr(tab)
                 )
             case .file:
-                guard let tab = fileTabs.first(where: { $0.id == entry.sourceID })
+                guard let tab = editorTabs.first(where: { $0.id == entry.sourceID })
                 else { return nil }
                 return ShellTabItem(
                     id: entry.id,
                     label: entry.label,
                     dirty: tab.dirty,
                     active: entry.sourceID == activeFileTabID,
-                    kind: .file(tab)
+                    kind: .editor(tab)
+                )
+            case .diff:
+                guard let tab = editorTabs.first(where: { $0.id == entry.sourceID })
+                else { return nil }
+                return ShellTabItem(
+                    id: entry.id,
+                    label: entry.label,
+                    dirty: false,
+                    active: entry.sourceID == activeFileTabID,
+                    kind: .editor(tab)
                 )
             }
         }
@@ -494,7 +504,7 @@ final class ShellModel: ObservableObject {
         return ShellTabStrip.items(
             strip: checkout.strip,
             herdrTabs: checkout.tabs,
-            fileTabs: core.snapshot?.editor.tabs ?? [],
+            editorTabs: core.snapshot?.editor.tabs ?? [],
             activeHerdrTabID: focusedTab?.id,
             activeFileTabID: activeFileID
         )
@@ -1310,7 +1320,7 @@ final class ShellModel: ObservableObject {
         interactionNotice = nil
     }
 
-    func focusFileTab(_ tab: CoreFileTabSnapshot) {
+    func focusEditorTab(_ tab: CoreEditorTabSnapshot) {
         guard !isRemoteContext else {
             interactionNotice = "Remote file tabs are not available in the current read-only contract."
             return
@@ -1318,7 +1328,7 @@ final class ShellModel: ObservableObject {
         core.focusFileTab(tab.id)
     }
 
-    func closeFileTab(_ tab: CoreFileTabSnapshot) {
+    func closeEditorTab(_ tab: CoreEditorTabSnapshot) {
         core.closeFileTab(tab.id)
     }
 
@@ -1789,7 +1799,7 @@ final class ShellModel: ObservableObject {
                 return
             }
             HideLaunchTrace.mark("tab.close_shortcut.file", detail: tab.id)
-            closeFileTab(tab)
+            closeEditorTab(tab)
         case .closeHerdr:
             guard let tab = focusedTab, let tabID = tab.id else {
                 interactionNotice = "The active Herdr tab could not be resolved. Nothing was closed."
@@ -1820,7 +1830,7 @@ final class ShellModel: ObservableObject {
         guard !item.active else { return }
         switch item.kind {
         case .herdr(let tab): focusTab(tab)
-        case .file(let tab): focusFileTab(tab)
+        case .editor(let tab): focusEditorTab(tab)
         }
     }
 
@@ -1868,7 +1878,7 @@ final class ShellModel: ObservableObject {
     func closeUnifiedTab(_ item: ShellTabItem) {
         switch item.kind {
         case .herdr(let tab): requestTabClose(tab)
-        case .file(let tab): closeFileTab(tab)
+        case .editor(let tab): closeEditorTab(tab)
         }
     }
 

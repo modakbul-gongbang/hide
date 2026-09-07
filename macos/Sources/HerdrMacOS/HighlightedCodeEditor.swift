@@ -19,8 +19,13 @@ struct HighlightedCodeEditor: NSViewRepresentable {
 
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
-        let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = true
+        let container = NSTextContainer(
+            size: NSSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        )
+        container.widthTracksTextView = false
         layoutManager.addTextContainer(container)
 
         let textView = NSTextView(frame: .zero, textContainer: container)
@@ -34,7 +39,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
+        textView.isHorizontallyResizable = true
         textView.autoresizingMask = [NSView.AutoresizingMask.width]
         textView.delegate = context.coordinator
         textView.font = NSFont.monospacedSystemFont(
@@ -47,19 +52,35 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isContinuousSpellCheckingEnabled = false
         textView.isEditable = isEditable
-        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.textContainerInset = NSSize(
+            width: HideTheme.Editor.contentInset,
+            height: HideTheme.Editor.contentInset
+        )
+        textView.drawsBackground = true
+        textView.backgroundColor = HideTheme.Native.background
+        textView.textColor = HideTheme.Native.primary
+        textView.insertionPointColor = HideTheme.Native.primary
         Self.enableFindBar(on: textView)
         storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        // The container tracks the text view's width, so lines wrap and there
-        // is never anything to scroll horizontally. The scroller was inert.
-        scrollView.hasHorizontalScroller = false
+        scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = HideTheme.Native.background
         scrollView.documentView = textView
+        let ruler = CodeLineNumberRulerView(
+            textView: textView,
+            scrollView: scrollView,
+            fontSize: HideTheme.editorBaseFontSize * textScale
+        )
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = true
+        scrollView.verticalRulerView = ruler
         context.coordinator.textView = textView
+        context.coordinator.lineNumberRuler = ruler
         return scrollView
     }
 
@@ -104,6 +125,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         let size = HideTheme.editorBaseFontSize * textScale
         if textView.font?.pointSize != size {
             textView.font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
+            context.coordinator.lineNumberRuler?.fontSize = size
+            context.coordinator.lineNumberRuler?.needsDisplay = true
         }
         if let storage = textView.textStorage as? CodeAttributedString {
             storage.language = language
@@ -120,11 +143,13 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             length: 0
         ))
         context.coordinator.isApplyingSnapshot = false
+        context.coordinator.lineNumberRuler?.needsDisplay = true
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
         weak var textView: NSTextView?
+        weak var lineNumberRuler: CodeLineNumberRulerView?
         var isApplyingSnapshot = false
         var isForwardingChange = false
 
@@ -137,6 +162,97 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             isForwardingChange = true
             text = textView.string
             isForwardingChange = false
+            lineNumberRuler?.needsDisplay = true
         }
+    }
+}
+
+final class CodeLineNumberRulerView: NSRulerView {
+    private weak var textView: NSTextView?
+    var fontSize: CGFloat
+
+    init(textView: NSTextView, scrollView: NSScrollView, fontSize: CGFloat) {
+        self.textView = textView
+        self.fontSize = fontSize
+        super.init(scrollView: scrollView, orientation: .verticalRuler)
+        ruleThickness = HideTheme.Editor.lineNumberColumnWidth
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(viewportChanged),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func viewportChanged() {
+        needsDisplay = true
+    }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        HideTheme.Native.panel.setFill()
+        rect.fill()
+        guard let textView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              let scrollView
+        else { return }
+
+        HideTheme.Native.divider.setFill()
+        NSRect(
+            x: bounds.maxX - HideTheme.Layout.hairlineWidth,
+            y: bounds.minY,
+            width: HideTheme.Layout.hairlineWidth,
+            height: bounds.height
+        ).fill()
+
+        let visibleRect = scrollView.contentView.bounds
+        let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
+        let characterRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        let content = textView.string as NSString
+        var lineRange = content.lineRange(for: NSRange(location: characterRange.location, length: 0))
+        var lineNumber = CodeLineNumbers.number(at: lineRange.location, in: content)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular),
+            .foregroundColor: HideTheme.Native.muted,
+        ]
+
+        while lineRange.location < NSMaxRange(characterRange), lineRange.location < content.length {
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: lineRange.location)
+            let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            let label = "\(lineNumber)" as NSString
+            let size = label.size(withAttributes: attributes)
+            let y = fragment.minY + textView.textContainerOrigin.y - visibleRect.minY
+                + (fragment.height - size.height) / 2
+            label.draw(
+                at: NSPoint(
+                    x: ruleThickness - HideTheme.spacingSM - size.width,
+                    y: y
+                ),
+                withAttributes: attributes
+            )
+            let next = NSMaxRange(lineRange)
+            if next <= lineRange.location { break }
+            lineRange = content.lineRange(for: NSRange(location: next, length: 0))
+            lineNumber += 1
+        }
+    }
+}
+
+enum CodeLineNumbers {
+    static func number(at utf16Location: Int, in text: NSString) -> Int {
+        guard utf16Location > 0 else { return 1 }
+        return text
+            .substring(to: min(utf16Location, text.length))
+            .reduce(1) { count, character in character == "\n" ? count + 1 : count }
     }
 }

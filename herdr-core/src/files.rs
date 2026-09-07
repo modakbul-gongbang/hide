@@ -139,9 +139,37 @@ fn modified_milliseconds(metadata: &fs::Metadata) -> Result<u64, String> {
 }
 
 fn language_for(path: &Path) -> Option<String> {
-    path.extension()
+    let name = path.file_name()?.to_str()?;
+    let whole_name = match name.to_ascii_lowercase().as_str() {
+        ".gitignore" | ".gitattributes" | ".dockerignore" | ".npmignore" => Some("bash"),
+        ".env" | ".editorconfig" => Some("ini"),
+        "makefile" | "gnumakefile" => Some("makefile"),
+        "dockerfile" => Some("dockerfile"),
+        "gemfile" | "rakefile" => Some("ruby"),
+        "cmakelists.txt" => Some("cmake"),
+        _ => None,
+    };
+    if let Some(language) = whole_name {
+        return Some(language.to_owned());
+    }
+    let extension = path
+        .extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
+        .map(|extension| extension.to_ascii_lowercase())?;
+    let language = match extension.as_str() {
+        "rs" => "rust",
+        "js" | "mjs" | "cjs" | "jsx" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "json" | "jsonc" | "jsonl" => "json",
+        "md" | "markdown" => "markdown",
+        "sh" | "bash" | "zsh" | "fish" => "bash",
+        "toml" | "ini" | "cfg" => "ini",
+        "py" | "pyw" => "python",
+        "htm" => "html",
+        "scss" | "sass" | "less" => "css",
+        _ => extension.as_str(),
+    };
+    Some(language.to_owned())
 }
 
 #[cfg(test)]
@@ -162,5 +190,14 @@ mod tests {
         update_draft(&mut editor, "new".to_owned()).unwrap();
         assert!(editor.dirty);
         assert_eq!(editor.contents_utf8.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn viewer_languages_cover_extensionless_configuration_and_json() {
+        assert_eq!(language_for(Path::new(".gitignore")).as_deref(), Some("bash"));
+        assert_eq!(language_for(Path::new("Makefile")).as_deref(), Some("makefile"));
+        assert_eq!(language_for(Path::new("settings.jsonc")).as_deref(), Some("json"));
+        assert_eq!(language_for(Path::new("manifest.json")).as_deref(), Some("json"));
+        assert_eq!(language_for(Path::new("LICENSE")), None);
     }
 }

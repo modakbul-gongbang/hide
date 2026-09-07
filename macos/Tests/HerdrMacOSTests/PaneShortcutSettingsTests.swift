@@ -237,7 +237,7 @@ struct PaneShortcutSettingsTests {
                 stripHerdrTab(id: "w1:t1", label: "Tab 1"),
                 stripHerdrTab(id: "w1:t2", label: "Review"),
             ],
-            fileTabs: [stripFileTab(id: "f1", label: "notes.md", dirty: true)],
+            editorTabs: [stripFileTab(id: "f1", label: "notes.md", dirty: true)],
             activeHerdrTabID: "w1:t2",
             activeFileTabID: nil
         )
@@ -263,12 +263,42 @@ struct PaneShortcutSettingsTests {
                 ),
             ],
             herdrTabs: [stripHerdrTab(id: "w1:t1", label: "Tab 1")],
-            fileTabs: [stripFileTab(id: "f1", label: "notes.md", dirty: false)],
+            editorTabs: [stripFileTab(id: "f1", label: "notes.md", dirty: false)],
             activeHerdrTabID: "w1:t1",
             activeFileTabID: "f1"
         )
 
         #expect(items.filter(\.active).map(\.id) == ["file:f1"])
+    }
+
+    @Test func aDiffEntryUsesTheEditorTabAndBecomesTheOnlyActiveTab() {
+        let diff = CoreEditorTabSnapshot(
+            id: "d1",
+            workspaceID: "w1",
+            checkoutID: "c1",
+            path: "/tmp/manifest.json",
+            label: "manifest.json (working diff)",
+            kind: .diff,
+            diffCommitted: false,
+            dirty: false
+        )
+        let items = ShellTabStrip.items(
+            strip: [
+                CoreStripTabSnapshot(
+                    id: "herdr:w1:t1", kind: .herdr, sourceID: "w1:t1", label: "Tab 1"
+                ),
+                CoreStripTabSnapshot(
+                    id: "diff:d1", kind: .diff, sourceID: "d1", label: diff.label
+                ),
+            ],
+            herdrTabs: [stripHerdrTab(id: "w1:t1", label: "Tab 1")],
+            editorTabs: [diff],
+            activeHerdrTabID: "w1:t1",
+            activeFileTabID: "d1"
+        )
+
+        #expect(items.filter(\.active).map(\.id) == ["diff:d1"])
+        #expect(items.last?.dirty == false)
     }
 
     private func stripHerdrTab(id: String, label: String) -> CoreTabSnapshot {
@@ -282,13 +312,15 @@ struct PaneShortcutSettingsTests {
         )
     }
 
-    private func stripFileTab(id: String, label: String, dirty: Bool) -> CoreFileTabSnapshot {
-        CoreFileTabSnapshot(
+    private func stripFileTab(id: String, label: String, dirty: Bool) -> CoreEditorTabSnapshot {
+        CoreEditorTabSnapshot(
             id: id,
             workspaceID: "w1",
             checkoutID: "c1",
             path: "/tmp/\(label)",
             label: label,
+            kind: .file,
+            diffCommitted: nil,
             dirty: dirty
         )
     }

@@ -18,7 +18,8 @@ use crate::model::CheckoutSnapshot;
 use crate::model::SidebarAgentSnapshot;
 use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
-    FileTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneForkSnapshot,
+    EditorTabKind, EditorTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
+    PaneForkSnapshot,
     PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
     RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
     SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
@@ -1451,46 +1452,82 @@ impl Runtime {
         format!("file:{workspace_id}:{checkout_id}:{path}")
     }
 
-    fn activate_file_tab(&mut self, tab_id: &str) -> Result<(), String> {
-        if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
-            return Err(format!("File tab {tab_id} is not open"));
-        }
+    fn activate_editor_tab(&mut self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .cloned()
+            .ok_or_else(|| format!("Editor tab {tab_id} is not open"))?;
+        let document = match tab.kind {
+            EditorTabKind::File => Some(
+                self.editor_documents
+                    .get(tab_id)
+                    .cloned()
+                    .ok_or_else(|| format!("File tab {tab_id} has no document state"))?,
+            ),
+            EditorTabKind::Diff => {
+                if tab.diff_committed.is_none() {
+                    return Err(format!("Diff tab {tab_id} has no comparison scope"));
+                }
+                None
+            }
+        };
         if let Some(active_id) = self.snapshot.editor.active_tab_id.as_deref()
             && active_id != tab_id
         {
             self.editor_tab_history.retain(|known| known != active_id);
             self.editor_tab_history.push(active_id.to_owned());
         }
-        let document = self
-            .editor_documents
-            .get(tab_id)
-            .cloned()
-            .ok_or_else(|| format!("File tab {tab_id} has no document state"))?;
         self.snapshot.editor.active_tab_id = Some(tab_id.to_owned());
-        self.snapshot.editor.document = Some(document);
+        match tab.kind {
+            EditorTabKind::File => {
+                self.snapshot.editor.document = document;
+                self.snapshot.ui_state.selected_path = Some(tab.path);
+            }
+            EditorTabKind::Diff => {
+                let committed = tab.diff_committed.expect("validated above");
+                if self.snapshot.changes.selected_path.as_deref() != Some(tab.path.as_str())
+                    || self.snapshot.changes.selected_committed != committed
+                {
+                    self.snapshot.changes.diff = None;
+                }
+                self.snapshot.changes.selected_path = Some(tab.path);
+                self.snapshot.changes.selected_committed = committed;
+                self.snapshot.editor.document = None;
+                self.snapshot.ui_state.selected_path = None;
+            }
+        }
         Ok(())
     }
 
-    fn deactivate_file_tab(&mut self) {
+    fn deactivate_editor_tab(&mut self) {
         self.snapshot.editor.active_tab_id = None;
         self.snapshot.editor.document = None;
         self.editor_tab_history.clear();
     }
 
-    fn file_tab_matches_focused_context(&self, tab: &FileTabSnapshot) -> bool {
+    fn editor_tab_matches_focused_context(&self, tab: &EditorTabSnapshot) -> bool {
         self.snapshot.navigator.focused_workspace_id.as_deref() == Some(tab.workspace_id.as_str())
             && self.snapshot.navigator.focused_checkout_id.as_deref()
                 == Some(tab.checkout_id.as_str())
     }
 
     fn sync_active_editor_document(&mut self) {
-        self.snapshot.editor.document = self
-            .snapshot
-            .editor
-            .active_tab_id
-            .as_deref()
-            .and_then(|tab_id| self.editor_documents.get(tab_id))
-            .cloned();
+        self.snapshot.editor.document = self.snapshot.editor.active_tab_id.as_deref().and_then(
+            |tab_id| {
+                self.editor_documents.get(tab_id).and_then(|document| {
+                    self.snapshot
+                        .editor
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::File)
+                        .map(|_| document.clone())
+                })
+            },
+        );
     }
 
     fn sync_file_tab_dirty(&mut self, tab_id: &str) {
@@ -2885,13 +2922,13 @@ impl Runtime {
         true
     }
 
-    /// Rewrites every local checkout's tab strip from the Herdr tabs and file
+    /// Rewrites every local checkout's tab strip from the Herdr and editor
     /// tabs it currently holds.
     ///
     /// A remote checkout keeps the strip its own projection built: the remote
     /// context browses Herdr's tabs and has no file tabs to mix in.
     fn rebuild_tab_strips(&mut self) {
-        let file_tabs = &self.snapshot.editor.tabs;
+        let editor_tabs = &self.snapshot.editor.tabs;
         let order = &mut self.checkout_tab_order;
         let pending = &mut self.pending_tab_move;
         // Which Herdr workspace each tab belongs to, so a strip slot is
@@ -2916,12 +2953,19 @@ impl Runtime {
             for checkout in &mut workspace.checkouts {
                 live_checkouts.insert(checkout.id.clone());
                 let herdr = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
-                let files = file_tabs
+                let editor = editor_tabs
                     .iter()
                     .filter(|tab| {
                         tab.workspace_id == checkout.workspace_id && tab.checkout_id == checkout.id
                     })
-                    .map(|tab| StripTabSnapshot::file(tab.id.clone(), tab.label.clone()))
+                    .map(|tab| match tab.kind {
+                        EditorTabKind::File => {
+                            StripTabSnapshot::file(tab.id.clone(), tab.label.clone())
+                        }
+                        EditorTabKind::Diff => {
+                            StripTabSnapshot::diff(tab.id.clone(), tab.label.clone())
+                        }
+                    })
                     .collect::<Vec<_>>();
                 let stored = order.entry(checkout.id.clone()).or_default();
                 // A held reorder lands the moment Herdr reports the order it
@@ -2949,7 +2993,7 @@ impl Runtime {
                         pending.remove(&checkout.id);
                     }
                 }
-                checkout.strip = ordered_strip(stored, &herdr, &files, owners);
+                checkout.strip = ordered_strip(stored, &herdr, &editor, owners);
                 *stored = checkout
                     .strip
                     .iter()
@@ -4106,19 +4150,33 @@ impl Runtime {
     /// the runtime mutex. The two fixed rows are revisioned with the rest
     /// snapshot, so an unchanged refresh produces no shell work.
     /// What the changes reader should describe right now, or `None` when the
-    /// changes view is not showing and nothing should be read at all. This is
-    /// the whole reason the reader never forks `git` on a per-tick path.
+    /// changes view and no diff tab are showing and nothing should be read at
+    /// all. This is the whole reason the reader never forks `git` on a
+    /// per-tick path.
     pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
-        if !self.snapshot.ui_state.right_panel_visible
-            || self.snapshot.ui_state.right_panel_section != RightPanelSection::Changes
-        {
+        let changes_list_visible = self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
+        let active_diff = self.snapshot.editor.active_tab_id.as_deref().and_then(|tab_id| {
+            self.snapshot
+                .editor
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
+        });
+        if !changes_list_visible && active_diff.is_none() {
             return None;
         }
         let root_path = self.snapshot.navigator.root_path.as_ref()?;
+        let selected_path = active_diff
+            .map(|tab| tab.path.clone())
+            .or_else(|| self.snapshot.changes.selected_path.clone());
+        let selected_committed = active_diff
+            .and_then(|tab| tab.diff_committed)
+            .unwrap_or(self.snapshot.changes.selected_committed);
         Some(crate::changes::ChangesRequest {
             root_path: PathBuf::from(root_path),
-            selected_path: self.snapshot.changes.selected_path.clone(),
-            selected_committed: self.snapshot.changes.selected_committed,
+            selected_path,
+            selected_committed,
             // The base comes from the checkout row, so the committed group and
             // the card's `↑A ↓B` are measured against the same branch.
             base_branch: self
@@ -5990,7 +6048,7 @@ impl Runtime {
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.focused.pane_id = Some(pane_id.clone());
                 self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
-                self.deactivate_file_tab();
+                self.deactivate_editor_tab();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "scratch.tab.ready",
@@ -6062,7 +6120,7 @@ impl Runtime {
                         self.pending_tab_focus =
                             Some(PendingViewFocus::new(checkout_id, tab_id.clone()));
                     }
-                    self.deactivate_file_tab();
+                    self.deactivate_editor_tab();
                     self.persist_current_ui_state();
                 }
                 self.push_diagnostic(
@@ -6874,7 +6932,10 @@ impl Runtime {
         path: &str,
     ) -> Result<PreparedFileTab, String> {
         if let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
-            (tab.workspace_id == workspace_id && tab.checkout_id == checkout_id && tab.path == path)
+            (tab.kind == EditorTabKind::File
+                && tab.workspace_id == workspace_id
+                && tab.checkout_id == checkout_id
+                && tab.path == path)
                 .then(|| tab.id.clone())
         }) {
             return Ok(PreparedFileTab::Open(tab_id));
@@ -6897,7 +6958,7 @@ impl Runtime {
             PreparedFileTab::Open(tab_id) => tab_id,
             PreparedFileTab::Read { tab_id, document } => {
                 self.editor_documents.insert(tab_id.clone(), document);
-                self.snapshot.editor.tabs.push(FileTabSnapshot {
+                self.snapshot.editor.tabs.push(EditorTabSnapshot {
                     id: tab_id.clone(),
                     workspace_id: workspace_id.to_owned(),
                     checkout_id: checkout_id.to_owned(),
@@ -6908,6 +6969,8 @@ impl Runtime {
                         .filter(|name| !name.is_empty())
                         .unwrap_or(path)
                         .to_owned(),
+                    kind: EditorTabKind::File,
+                    diff_committed: None,
                     dirty: false,
                 });
                 // A new file tab takes a slot at the end of the strip.
@@ -6915,7 +6978,7 @@ impl Runtime {
                 tab_id
             }
         };
-        if let Err(message) = self.activate_file_tab(&tab_id) {
+        if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("file.focus_failed", message, false);
         }
         self.snapshot.ui_state.selected_path = Some(path.to_owned());
@@ -6925,6 +6988,52 @@ impl Runtime {
         match self.prepare_file_tab(workspace_id, checkout_id, path) {
             Ok(prepared) => self.show_file_tab(prepared, workspace_id, checkout_id, path),
             Err(message) => self.set_error("file.open_failed", message, true),
+        }
+    }
+
+    fn diff_tab_id(
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        committed: bool,
+    ) -> String {
+        let scope = if committed { "committed" } else { "working" };
+        format!("diff:{workspace_id}:{checkout_id}:{scope}:{path}")
+    }
+
+    /// Opens one Changes row in the central editor strip.
+    ///
+    /// The right panel remains the list and the tab owns the reading surface,
+    /// so closing the panel cannot make an open diff disappear.
+    fn show_diff_tab(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        committed: bool,
+    ) {
+        let tab_id = Self::diff_tab_id(workspace_id, checkout_id, path, committed);
+        if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+            let name = Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(path);
+            let scope = if committed { "branch diff" } else { "working diff" };
+            self.snapshot.editor.tabs.push(EditorTabSnapshot {
+                id: tab_id.clone(),
+                workspace_id: workspace_id.to_owned(),
+                checkout_id: checkout_id.to_owned(),
+                path: path.to_owned(),
+                label: format!("{name} ({scope})"),
+                kind: EditorTabKind::Diff,
+                diff_committed: Some(committed),
+                dirty: false,
+            });
+            self.rebuild_tab_strips();
+        }
+        if let Err(message) = self.activate_editor_tab(&tab_id) {
+            self.set_error("diff.focus_failed", message, false);
         }
     }
 
@@ -7094,7 +7203,7 @@ impl Runtime {
         // that one frame cleared a question nobody had read.
         self.operator_focused_pane_id = None;
         self.refresh_pane_read_state();
-        self.deactivate_file_tab();
+        self.deactivate_editor_tab();
         if !has_herdr_tab
             && let Some(file_tab_id) = self
                 .snapshot
@@ -7104,7 +7213,7 @@ impl Runtime {
                 .rev()
                 .find(|tab| tab.workspace_id == workspace_id && tab.checkout_id == checkout_id)
                 .map(|tab| tab.id.clone())
-            && let Err(message) = self.activate_file_tab(&file_tab_id)
+            && let Err(message) = self.activate_editor_tab(&file_tab_id)
         {
             self.set_error("file.focus_failed", message, false);
         }
@@ -7547,7 +7656,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
                 self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 self.snapshot.navigator.root_path = Some(cwd.clone());
-                self.deactivate_file_tab();
+                self.deactivate_editor_tab();
                 self.persist_current_ui_state();
                 let action = RemoteControlAction::CreateTab {
                     workspace_id: session_workspace_id,
@@ -7639,7 +7748,7 @@ impl Runtime {
                 // while nobody was looking at it.
                 self.operator_focused_pane_id = next_pane_id;
                 self.refresh_pane_read_state();
-                self.deactivate_file_tab();
+                self.deactivate_editor_tab();
                 self.persist_current_ui_state();
                 // A first visit attaches the tab's panes now. Waiting for the
                 // next session update to do it left the canvas empty until
@@ -7712,7 +7821,7 @@ impl Runtime {
                     return true;
                 }
                 self.snapshot.navigator.focused_device_id = Some(payload.device_id);
-                self.deactivate_file_tab();
+                self.deactivate_editor_tab();
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
                 true
@@ -8172,24 +8281,16 @@ impl Runtime {
                     );
                     return true;
                 };
-                if !self.file_tab_matches_focused_context(tab) {
+                if !self.editor_tab_matches_focused_context(tab) {
                     self.set_error(
-                        "file.invalid_context",
-                        "A file tab can only be focused in its workspace and checkout",
+                        "editor.invalid_context",
+                        "An editor tab can only be focused in its workspace and checkout",
                         false,
                     );
                     return true;
                 }
-                match self.activate_file_tab(&payload.tab_id) {
-                    Ok(()) => {
-                        self.snapshot.ui_state.selected_path = self
-                            .snapshot
-                            .editor
-                            .document
-                            .as_ref()
-                            .map(|document| document.path.clone());
-                    }
-                    Err(message) => self.set_error("file.focus_failed", message, false),
+                if let Err(message) = self.activate_editor_tab(&payload.tab_id) {
+                    self.set_error("editor.focus_failed", message, false);
                 }
                 self.persist_current_ui_state();
                 true
@@ -8211,7 +8312,7 @@ impl Runtime {
                 };
                 let was_active =
                     self.snapshot.editor.active_tab_id.as_deref() == Some(payload.tab_id.as_str());
-                self.snapshot.editor.tabs.remove(index);
+                let closed_tab = self.snapshot.editor.tabs.remove(index);
                 self.rebuild_tab_strips();
                 self.editor_documents.remove(&payload.tab_id);
                 self.editor_tab_history
@@ -8219,6 +8320,10 @@ impl Runtime {
                 if was_active {
                     self.snapshot.editor.active_tab_id = None;
                     self.snapshot.editor.document = None;
+                    if closed_tab.kind == EditorTabKind::Diff {
+                        self.snapshot.changes.selected_path = None;
+                        self.snapshot.changes.diff = None;
+                    }
                     while let Some(previous_id) = self.editor_tab_history.pop() {
                         if self
                             .snapshot
@@ -8227,19 +8332,13 @@ impl Runtime {
                             .iter()
                             .any(|tab| tab.id == previous_id)
                         {
-                            if let Err(message) = self.activate_file_tab(&previous_id) {
-                                self.set_error("file.focus_failed", message, false);
+                            if let Err(message) = self.activate_editor_tab(&previous_id) {
+                                self.set_error("editor.focus_failed", message, false);
                             }
                             break;
                         }
                     }
                 }
-                self.snapshot.ui_state.selected_path = self
-                    .snapshot
-                    .editor
-                    .document
-                    .as_ref()
-                    .map(|document| document.path.clone());
                 self.persist_current_ui_state();
                 true
             }
@@ -8637,17 +8736,56 @@ impl Runtime {
                 true
             }
             ValidatedEvent::ChangesSelect(payload) => {
-                if self.snapshot.changes.selected_path == payload.path
-                    && self.snapshot.changes.selected_committed == payload.committed
-                {
+                let Some(path) = payload.path else {
+                    if self.snapshot.changes.selected_path.is_none() {
+                        return false;
+                    }
+                    self.snapshot.changes.selected_path = None;
+                    self.snapshot.changes.diff = None;
+                    return true;
+                };
+                let entries = if payload.committed {
+                    &self.snapshot.changes.committed
+                } else {
+                    &self.snapshot.changes.entries
+                };
+                if !entries.iter().any(|entry| entry.path == path) {
+                    self.set_error(
+                        "diff.selection_unavailable",
+                        format!("{path} is no longer in the selected Changes group"),
+                        false,
+                    );
+                    return true;
+                }
+                let Some(workspace_id) = self.snapshot.navigator.focused_workspace_id.clone()
+                else {
+                    self.set_error(
+                        "diff.invalid_context",
+                        "A diff tab requires the selected workspace and checkout",
+                        false,
+                    );
+                    return true;
+                };
+                let Some(checkout_id) = self.snapshot.navigator.focused_checkout_id.clone()
+                else {
+                    self.set_error(
+                        "diff.invalid_context",
+                        "A diff tab requires the selected workspace and checkout",
+                        false,
+                    );
+                    return true;
+                };
+                let tab_id = Self::diff_tab_id(
+                    &workspace_id,
+                    &checkout_id,
+                    &path,
+                    payload.committed,
+                );
+                if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {
                     return false;
                 }
-                self.snapshot.changes.selected_path = payload.path;
-                self.snapshot.changes.selected_committed = payload.committed;
-                // The previous file's diff is dropped now rather than left
-                // showing under the newly selected file's name until the
-                // reader catches up.
-                self.snapshot.changes.diff = None;
+                self.show_diff_tab(&workspace_id, &checkout_id, &path, payload.committed);
+                self.persist_current_ui_state();
                 true
             }
             ValidatedEvent::AgentTreeToggle(payload) => {
@@ -17599,6 +17737,63 @@ mod tests {
             .clone();
         assert_eq!(pane.transport_state, "ended");
         assert!(pane.transport_message.is_some());
+    }
+
+    #[test]
+    fn selecting_a_change_opens_one_diff_tab_and_keeps_its_reader_alive() {
+        let (mut runtime, root, checkout_id, _second, _second_id) = reveal_runtime();
+        let path = root.join("tracked.json");
+        runtime.snapshot.changes.root_path = Some(root.to_string_lossy().into_owned());
+        runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
+            path: path.to_string_lossy().into_owned(),
+            relative_path: "tracked.json".to_owned(),
+            status: crate::model::ChangedFileStatus::Modified,
+            added_lines: Some(2),
+            removed_lines: Some(1),
+        }];
+        let event = || {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "changes_select",
+                "payload": {"path": path, "committed": false}
+            }))
+            .expect("changes event")
+        };
+
+        assert!(runtime.dispatch_json(&event()));
+        assert!(
+            !runtime.dispatch_json(&event()),
+            "opening the active diff publishes no duplicate state"
+        );
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.editor.tabs.len(), 1);
+        let tab = &snapshot.editor.tabs[0];
+        assert_eq!(tab.kind, EditorTabKind::Diff);
+        assert_eq!(tab.checkout_id, checkout_id);
+        assert_eq!(tab.diff_committed, Some(false));
+        assert_eq!(snapshot.editor.active_tab_id.as_deref(), Some(tab.id.as_str()));
+        assert!(snapshot.editor.document.is_none());
+        assert!(!snapshot.ui_state.right_panel_visible);
+        let request = runtime
+            .changes_request()
+            .expect("an active diff keeps its Changes reader alive");
+        assert_eq!(request.selected_path.as_deref(), Some(path.to_string_lossy().as_ref()));
+
+        std::fs::write(&path, "{}\n").expect("file fixture");
+        runtime.open_file_tab("workspace:0", &checkout_id, path.to_string_lossy().as_ref());
+        assert_eq!(runtime.snapshot().editor.tabs.len(), 2);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .editor
+                .tabs
+                .iter()
+                .map(|tab| tab.kind)
+                .collect::<Vec<_>>(),
+            vec![EditorTabKind::Diff, EditorTabKind::File],
+            "opening the source does not reuse its diff tab"
+        );
     }
     include!("runtime_lineage_tests.rs");
 }

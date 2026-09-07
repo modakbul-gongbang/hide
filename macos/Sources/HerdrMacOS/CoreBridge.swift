@@ -700,6 +700,7 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
     enum Kind: String, Decodable {
         case herdr
         case file
+        case diff
     }
 
     let id: String
@@ -1278,7 +1279,7 @@ struct CoreTerminalPaneSnapshot: Decodable, Identifiable {
 }
 
 struct CoreEditorSnapshot: Decodable {
-    let tabs: [CoreFileTabSnapshot]
+    let tabs: [CoreEditorTabSnapshot]
     let activeTabID: String?
     let document: CoreEditorDocumentSnapshot?
 
@@ -1297,12 +1298,19 @@ struct CoreEditorSnapshot: Decodable {
     }
 }
 
-struct CoreFileTabSnapshot: Decodable, Identifiable, Equatable {
+enum CoreEditorTabKind: String, Decodable, Equatable {
+    case file
+    case diff
+}
+
+struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
     let id: String
     let workspaceID: String
     let checkoutID: String
     let path: String
     let label: String
+    let kind: CoreEditorTabKind
+    let diffCommitted: Bool?
     let dirty: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -1311,6 +1319,8 @@ struct CoreFileTabSnapshot: Decodable, Identifiable, Equatable {
         case checkoutID = "checkout_id"
         case path
         case label
+        case kind
+        case diffCommitted = "diff_committed"
         case dirty
     }
 }

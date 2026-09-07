@@ -221,13 +221,15 @@ private func presentationAgent(
             label: "Tab \(index)",
             dirty: false,
             active: index == 1,
-            kind: .file(
-                CoreFileTabSnapshot(
+            kind: .editor(
+                CoreEditorTabSnapshot(
                     id: "file-\(index)",
                     workspaceID: "w1",
                     checkoutID: "c1",
                     path: "/tmp/file-\(index)",
                     label: "Tab \(index)",
+                    kind: .file,
+                    diffCommitted: nil,
                     dirty: false
                 )
             )

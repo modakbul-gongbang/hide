@@ -71,6 +71,27 @@ struct ChangesPresentationTests {
         #expect(DiffLineKind.of("diff --git a/a.rs b/a.rs") == .hunk)
     }
 
+    @Test func diffRowsCarryTheOldAndNewLineNumbersTheOperatorReads() {
+        let rows = DiffLinePresentation.rows(in: """
+        diff --git a/a.rs b/a.rs
+        @@ -8,3 +12,4 @@
+         shared
+        -old
+        +new
+        +another
+        """)
+
+        #expect(rows.map(\.oldNumber) == [nil, nil, 8, 9, nil, nil])
+        #expect(rows.map(\.newNumber) == [nil, nil, 12, nil, 13, 14])
+    }
+
+    @Test func editorLineNumbersFollowUTF16LocationsAcrossNewlines() {
+        let text: NSString = "첫째\nsecond\nthird"
+        #expect(CodeLineNumbers.number(at: 0, in: text) == 1)
+        #expect(CodeLineNumbers.number(at: 3, in: text) == 2)
+        #expect(CodeLineNumbers.number(at: text.length, in: text) == 3)
+    }
+
     @Test func aStoredSectionSurvivesTheUIStateRoundTripAndDefaultsToTheExplorer() throws {
         let stored = """
         {
