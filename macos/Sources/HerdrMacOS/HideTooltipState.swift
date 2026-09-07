@@ -55,9 +55,23 @@ final class HideTooltipController: ObservableObject {
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
 
+    /// Mutating a struct stored in @Published emits even when its mutating
+    /// method does nothing. Commit only actual transitions so wheel dismissal
+    /// and anchor retention cannot invalidate every tooltip-bearing control.
+    @discardableResult
+    private func transition(_ update: (inout HideTooltipState) -> Void) -> Bool {
+        var next = state
+        update(&next)
+        guard next != state else { return false }
+        state = next
+        return true
+    }
+
     func hover(_ id: String, inside: Bool) {
-        if inside { state.enter(id, at: ProcessInfo.processInfo.systemUptime) }
-        else { state.leave(id) }
+        guard transition({ next in
+            if inside { next.enter(id, at: ProcessInfo.processInfo.systemUptime) }
+            else { next.leave(id) }
+        }) else { return }
         timer?.cancel()
         guard let deadline = state.deadline else { return }
         timer = Task { [weak self] in
@@ -65,12 +79,20 @@ final class HideTooltipController: ObservableObject {
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             catch { return }
             guard let self, !Task.isCancelled else { return }
-            self.state.advance(to: ProcessInfo.processInfo.systemUptime)
+            self.transition { $0.advance(to: ProcessInfo.processInfo.systemUptime) }
         }
     }
-    func remove(_ id: String) { state.leave(id) }
-    func retain(_ ids: Set<String>) { state.retain(ids) }
-    func dismiss() { timer?.cancel(); timer = nil; state.dismiss() }
+    func remove(_ id: String) {
+        if state.hoveredID == id { dismiss() }
+    }
+    func retain(_ ids: Set<String>) {
+        if let hoveredID = state.hoveredID, !ids.contains(hoveredID) { dismiss() }
+    }
+    func dismiss() {
+        timer?.cancel()
+        timer = nil
+        transition { $0.dismiss() }
+    }
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown]) { [weak self] event in

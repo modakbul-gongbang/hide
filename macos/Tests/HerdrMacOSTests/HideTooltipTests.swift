@@ -1,9 +1,34 @@
 import AppKit
+import Combine
 import Testing
 @testable import HerdrMacOS
 
 @Suite("Hide tooltip contract")
 struct HideTooltipTests {
+    @Test @MainActor func repeatedDismissalAndUnrelatedAnchorsPublishNoChanges() {
+        let controller = HideTooltipController()
+        var changes = 0
+        let subscription = controller.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel(); controller.stop() }
+        for _ in 0..<100 {
+            controller.dismiss()
+            controller.hover("unrelated", inside: false)
+            controller.remove("unrelated")
+            controller.retain(["present"])
+        }
+        #expect(changes == 0)
+        controller.hover("present", inside: true)
+        #expect(changes == 1)
+        controller.retain(["present"])
+        controller.remove("unrelated")
+        controller.hover("present", inside: true)
+        #expect(changes == 1)
+        controller.dismiss()
+        #expect(changes == 2)
+        controller.dismiss()
+        #expect(changes == 2)
+    }
+
     @Test @MainActor func controllerRevealsAndClearsOnWindowResignation() async throws {
         let controller = HideTooltipController()
         controller.start()
