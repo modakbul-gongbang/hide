@@ -458,37 +458,12 @@ final class PaneCommandWindow: NSWindow {
 
     func terminalView(at windowPoint: NSPoint) -> TerminalView? {
         guard let contentView else { return nil }
-        // Most wheel events in this window belong to a sidebar or another
-        // native scroller. Reject those by the terminal frames before asking
-        // SwiftUI to hit-test its entire responder tree. AppKit will perform
-        // that hit test once when `super.sendEvent` routes the event; doing it
-        // here first made every non-terminal wheel pay for the same traversal
-        // twice.
-        guard let terminalBelowPoint = Self.frontmostTerminalView(
-            in: contentView,
-            containing: windowPoint
-        ) else { return nil }
+        return Self.frontmostTerminalView(in: contentView, containing: windowPoint)
+    }
 
-        // NSEvent.locationInWindow is already expressed in the window content
-        // coordinate system. Converting it from nil applies another window-base
-        // transform and can make a visible terminal miss hit testing.
-        var candidate = contentView.hitTest(windowPoint)
-        while let view = candidate {
-            if let terminal = view as? TerminalView { return terminal }
-            // A view that scrolls on its own keeps the wheel before any
-            // terminal beneath it does. The explorer tree and the file viewer
-            // are both NSScrollView-backed and cover the pane canvas.
-            if view is NSScrollView { return nil }
-            candidate = view.superview
-        }
-        // `hitTest` landed on something that neither scrolls nor belongs to a
-        // terminal: a resize strip, a status chip, any decoration that takes
-        // clicks. Walking up from one can never reach the terminal, because a
-        // decoration is the terminal's sibling and not its child, so the wheel
-        // died wherever one was layered. Ask which terminal actually covers the
-        // point instead, which keeps every future decoration transparent to
-        // scrolling without each one having to opt in.
-        return terminalBelowPoint
+    private enum WheelTarget {
+        case terminal(TerminalView)
+        case nativeScroller
     }
 
     /// Frames are compared in window coordinates because that is what
@@ -498,16 +473,33 @@ final class PaneCommandWindow: NSWindow {
         in root: NSView,
         containing windowPoint: NSPoint
     ) -> TerminalView? {
+        switch frontmostWheelTarget(in: root, containing: windowPoint) {
+        case .terminal(let terminal): terminal
+        case .nativeScroller, nil: nil
+        }
+    }
+
+    /// Resolves only the two native view classes that can own a wheel here.
+    /// This follows draw order and geometry without asking SwiftUI to walk its
+    /// responder graph. A native scroller wins over a retained terminal below
+    /// it, while an ordinary decoration remains transparent to terminal
+    /// scrolling.
+    private static func frontmostWheelTarget(
+        in root: NSView,
+        containing windowPoint: NSPoint
+    ) -> WheelTarget? {
         // Later siblings draw on top of earlier ones, so look front to back.
         for subview in root.subviews.reversed() {
             guard !subview.isHidden, subview.alphaValue > 0 else { continue }
-            if let nested = frontmostTerminalView(in: subview, containing: windowPoint) {
+            // NSEvent.locationInWindow and a rect converted to nil are both in
+            // window coordinates. Pruning here also excludes descendants of a
+            // retained canvas whose visible/clipped ancestor is elsewhere.
+            guard subview.convert(subview.bounds, to: nil).contains(windowPoint) else { continue }
+            if let nested = frontmostWheelTarget(in: subview, containing: windowPoint) {
                 return nested
             }
-            guard let terminal = subview as? TerminalView else { continue }
-            if terminal.convert(terminal.bounds, to: nil).contains(windowPoint) {
-                return terminal
-            }
+            if subview is NSScrollView { return .nativeScroller }
+            if let terminal = subview as? TerminalView { return .terminal(terminal) }
         }
         return nil
     }

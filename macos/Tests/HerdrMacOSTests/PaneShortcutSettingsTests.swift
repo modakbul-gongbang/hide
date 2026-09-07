@@ -531,7 +531,7 @@ struct PaneShortcutSettingsTests {
     /// A wheel over the SwiftUI sidebar must not pay for SwiftUI's full
     /// responder-tree hit test just to discover that no terminal is there.
     @MainActor
-    @Test func aPointOutsideEveryTerminalSkipsTheWindowHitTest() {
+    @Test func aNativeScrollerAboveARetainedTerminalSkipsTheWindowHitTest() {
         let window = PaneCommandWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
             styleMask: .borderless,
@@ -540,10 +540,14 @@ struct PaneShortcutSettingsTests {
         )
         let content = HitTestCountingView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         let terminal = ImeTerminalView(
-            frame: NSRect(x: 320, y: 0, width: 320, height: 480),
+            // Retained SwiftUI canvases can leave a terminal frame below a
+            // sidebar. The native scroller above it still owns the wheel.
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
             font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         )
+        let sidebarScroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
         content.addSubview(terminal)
+        content.addSubview(sidebarScroller)
         window.contentView = content
 
         #expect(window.terminalView(at: NSPoint(x: 160, y: 240)) == nil)
