@@ -219,6 +219,7 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
 - Tooltip dismissal, hover exit, and anchor retention publish only actual state changes.
   Mutating a struct held in `@Published` can emit even when its method returns without changing a field; compute the next value before assigning it.
   Exercise repeated dismissal with no visible tooltip, because wheel events must not invalidate all tooltip-bearing controls.
+  The balloon overlay contains only visible tooltips or exposed hints, resolves hint exposure once per update, and skips target projection while hints are hidden.
 - Keep subprocesses, blocking I/O, and large serialization outside `Mutex<Runtime>`.
   `snapshot_delta_payload` takes owned data under the lock; `serialize_snapshot_delta` serializes without a runtime to lock.
   Extend `PrecomputedCatalog`, `CatalogCache`, and `RootIndex` rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
