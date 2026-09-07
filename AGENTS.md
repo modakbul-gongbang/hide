@@ -120,17 +120,19 @@ The weekly `herdr-update.yml` workflow continues to propose upstream stable rele
 Before diagnosing, changing, reviewing, or verifying terminal responsiveness, rendering, scrolling, selection, resize, tab switching, CPU, memory, snapshots, or attach behavior, read [docs/PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md) in full.
 That guide owns the reproduction procedure, isolation checklist, measurement boundaries, commands, regression coverage, and cleanup/verdict requirements.
 Historical run measurements are not acceptance thresholds; compare matched builds and workloads and keep evidence under `agents/runs/<slug>/`.
+Report idle and driven measurements separately, with the load and workload recorded for each.
 
 Keep these invariants during implementation:
 
 - No subprocesses, blocking I/O, or large serialization under `Mutex<Runtime>`; precompute outside and keep serialization separate from the locked payload read.
+  `snapshot_delta_payload` takes owned data under the lock; `serialize_snapshot_delta` serializes it outside the lock.
 - No per-tick/per-tab git forks; reuse `PrecomputedCatalog`, `CatalogCache`, and `RootIndex`.
 - Snapshot traffic follows changes, not total retained state; use stream cursors and do not dirty revisioned `rest` with idle timestamps.
 - Send the first wheel immediately and coalesce only while a response is pending; preserve Herdr routing, real geometry, and direct keyboard delivery.
 - Parse immediately, settle geometry on display ticks, and submit pending damage once per tick; never reject an AppKit backing-store repair because it already drew that tick.
 - Retain only visible rows' latest prepared render state; leave hidden panes undrawn and release unused attaches.
   Keep row preparation behind `preparedRow`; `scripts/check-terminal-row-cache.sh` enforces that the draw loop never bypasses the cache.
-- Announce once per burst and clear the notifier before taking the snapshot lock.
+- `ChangeNotifier` announces once per burst; clear its latch before taking the snapshot lock.
 - Native verification uses exactly one identified app and an isolated Herdr server, including remote-connection checks; never manipulate the operator's panes or server.
 
 <!-- harness:agents-namespace:start -->
