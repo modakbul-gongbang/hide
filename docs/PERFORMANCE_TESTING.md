@@ -63,6 +63,7 @@ An asynchronous task still costs work and can accumulate a queue; it is not a pe
 | --- | --- | --- |
 | No-op publication and cancelled tooltip reveal | `HideTooltipTests` | Physical wheel monitor delivery and compositor latency |
 | Stationary native-scroll routing and pointer crossing | `PaneShortcutSettingsTests` | Complete SwiftUI sidebar frame cost and physical trackpad behavior |
+| Native sidebar row ownership and scrolling | `SidebarListTests` | System event-monitor cost and physical input-to-presentation latency |
 | First/subsequent wheel delivery and keyboard order | `live.rs` writer tests | Transport-to-visible-scroll latency |
 | Render repair and prepared row retention | Swift renderer tests and `check-terminal-row-cache.sh` | Live output and display presentation |
 | Counts, exclusions, unknown refresh rates, retained stalls | `scripts/tests/test_terminal_latency.py` | Causal pairing of an input with its requested content change |
@@ -253,6 +254,10 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
 
 ## 6. Preserve the architecture while fixing the cause
 
+- Keep the sidebar in `SidebarList`, backed by the platform table, with existing row actions and styling.
+  A custom window wheel cache cannot protect earlier system event observers: cursor processing can hit-test the hosting tree before `PaneCommandWindow.sendEvent` runs.
+  Compare that full call path when investigating scroll delay, rather than measuring only the app's wheel handler.
+  Replacing the native list with a `ScrollView` containing nested SwiftUI rows reintroduces whole-document responder traversal; `SidebarListTests` guards this native ownership boundary, not a universal latency threshold.
 - Tooltip dismissal, hover exit, and anchor retention publish only actual state changes.
   Mutating a struct held in `@Published` can emit even when its method returns without changing a field; compute the next value before assigning it.
   Exercise repeated dismissal with no visible tooltip, because wheel events must not invalidate all tooltip-bearing controls.
