@@ -528,10 +528,10 @@ struct PaneShortcutSettingsTests {
         #expect(window.terminalView(at: NSPoint(x: 320, y: 240)) === terminal)
     }
 
-    /// A wheel over the SwiftUI sidebar must not pay for SwiftUI's full
-    /// responder-tree hit test just to discover that no terminal is there.
+    /// A continuous wheel over the SwiftUI sidebar resolves its real native
+    /// scroller once rather than repeating the full responder-tree hit test.
     @MainActor
-    @Test func aNativeScrollerAboveARetainedTerminalSkipsTheWindowHitTest() {
+    @Test func aNativeScrollerAboveARetainedTerminalCachesOneWindowHitTestPerGesture() {
         let window = PaneCommandWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
             styleMask: .borderless,
@@ -550,8 +550,14 @@ struct PaneShortcutSettingsTests {
         content.addSubview(sidebarScroller)
         window.contentView = content
 
-        #expect(window.terminalView(at: NSPoint(x: 160, y: 240)) == nil)
-        #expect(content.hitTestCount == 0)
+        let point = NSPoint(x: 160, y: 240)
+        #expect(window.terminalView(forWheelAt: point, timestamp: 1) == nil)
+        #expect(window.terminalView(forWheelAt: point, timestamp: 1.01) == nil)
+        #expect(content.hitTestCount == 1)
+
+        sidebarScroller.removeFromSuperview()
+        #expect(window.terminalView(forWheelAt: point, timestamp: 1.2) === terminal)
+        #expect(content.hitTestCount == 2)
     }
 
     private func keyEvent(

@@ -223,7 +223,7 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
 - Send every whole-row wheel promptly; combine signed rows only from consecutive requests already waiting in the writer queue, send no cancelling sum, and never wait for a terminal frame or timer.
   Preserve actual pointer cell/modifiers and Herdr-owned mouse/history routing; do not invent fallback geometry, reconstruct history from viewport frames, or append a same-size resize to force repaint.
-  Reject points outside every terminal by terminal geometry before the window asks SwiftUI for a responder-tree hit test, so a sidebar wheel incurs only AppKit's normal routing pass.
+  Resolve the first wheel at its real AppKit target, then reuse that route only while events stay consecutive and stationary, so a sidebar gesture does not repeat SwiftUI's responder-tree hit test on every tick.
   A missing view size emits its diagnostic once and sends no wheel.
   The accepted matching-pane Claude policy sends SGR press/release without Enter and records its detection basis; other or unknown panes retain local selection.
 - Parse immediately, settle geometry over two stable display ticks, and submit pending damage once per display tick.

@@ -129,7 +129,7 @@ Keep these invariants during implementation:
 - No per-tick/per-tab git forks; reuse `PrecomputedCatalog`, `CatalogCache`, and `RootIndex`.
 - Snapshot traffic follows changes, not total retained state; use stream cursors and do not dirty revisioned `rest` with idle timestamps.
 - Send every whole-row wheel promptly and coalesce only consecutive requests already waiting in the writer queue; never wait for a terminal frame or timer, and preserve Herdr routing, real geometry, and direct keyboard delivery.
-- Reject wheel points outside every terminal by terminal geometry before invoking SwiftUI hit testing; non-terminal scrollers must pay only AppKit's normal event-routing pass.
+- Resolve the first wheel at its real AppKit target, then reuse that route only while events stay consecutive and stationary; a non-terminal scroll gesture must not repeat SwiftUI hit testing on every tick.
 - Parse immediately, settle geometry on display ticks, and submit pending damage once per tick; never reject an AppKit backing-store repair because it already drew that tick.
 - Retain only visible rows' latest prepared render state; leave hidden panes undrawn and release unused attaches.
   Keep row preparation behind `preparedRow`; `scripts/check-terminal-row-cache.sh` enforces that the draw loop never bypasses the cache.
