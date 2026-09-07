@@ -412,6 +412,13 @@ final class PaneCommandWindow: NSWindow {
     /// Pixel remainder carried between precise scroll events, so a slow
     /// trackpad drag still adds up to whole rows instead of being discarded.
     private var scrollAccumulator: CGFloat = 0
+    private enum WheelRoute { case terminal, appKit }
+    private var wheelRoute: WheelRoute?
+    private weak var wheelRouteTerminal: TerminalView?
+    private var wheelRoutePoint: NSPoint?
+    private var wheelRouteTimestamp: TimeInterval?
+    private static let wheelRouteReuseInterval: TimeInterval = 0.1
+    private static let wheelRoutePointTolerance: CGFloat = 1
 
     /// One terminal row in points, measured from the grid the view is showing.
     private func rowHeight(of terminal: TerminalView) -> CGFloat {
@@ -431,7 +438,10 @@ final class PaneCommandWindow: NSWindow {
             TerminalLatency.begin(.keyToSend, paneID: paneID)
         }
         if PaneScrollPolicy.routesToHerdrScroll(event),
-           let terminal = terminalView(at: event.locationInWindow),
+           let terminal = terminalView(
+               forWheelAt: event.locationInWindow,
+               timestamp: event.timestamp
+           ),
            let terminal = terminal as? ImeTerminalView,
            let paneID = terminal.hidePaneID,
            let model = paneCommandModel
@@ -454,6 +464,41 @@ final class PaneCommandWindow: NSWindow {
             return
         }
         super.sendEvent(event)
+    }
+
+    /// A trackpad gesture delivers many wheel events to the same point. The
+    /// first event resolves the real AppKit target; later events reuse that
+    /// result while they remain consecutive and stationary. This preserves
+    /// exact overlay/scroller ownership but avoids asking SwiftUI to walk the
+    /// same responder graph twice for every tick (once here, then again in
+    /// `super.sendEvent`).
+    func terminalView(
+        forWheelAt windowPoint: NSPoint,
+        timestamp: TimeInterval
+    ) -> TerminalView? {
+        if let previousPoint = wheelRoutePoint,
+           let previousTimestamp = wheelRouteTimestamp,
+           timestamp >= previousTimestamp,
+           timestamp - previousTimestamp <= Self.wheelRouteReuseInterval,
+           abs(windowPoint.x - previousPoint.x) <= Self.wheelRoutePointTolerance,
+           abs(windowPoint.y - previousPoint.y) <= Self.wheelRoutePointTolerance,
+           let wheelRoute
+        {
+            self.wheelRouteTimestamp = timestamp
+            switch wheelRoute {
+            case .appKit:
+                return nil
+            case .terminal:
+                if let wheelRouteTerminal { return wheelRouteTerminal }
+            }
+        }
+
+        let terminal = terminalView(at: windowPoint)
+        wheelRoutePoint = windowPoint
+        wheelRouteTimestamp = timestamp
+        wheelRouteTerminal = terminal
+        wheelRoute = terminal == nil ? .appKit : .terminal
+        return terminal
     }
 
     func terminalView(at windowPoint: NSPoint) -> TerminalView? {

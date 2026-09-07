@@ -58,15 +58,24 @@ private struct HideOverlayLayer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var exposed: Set<HideHintTarget> {
-        HideHintTarget.exposed(among: anchors.values.filter { $0.allowsHint }.map(\.target), state: model.shortcutHintState,
+        guard model.shortcutHintState.revealed else { return [] }
+        return HideHintTarget.exposed(among: anchors.values.filter { $0.allowsHint }.map(\.target), state: model.shortcutHintState,
             bindings: model.paneShortcuts, focusedPaneID: model.focusedPaneID,
             activeTabID: model.unifiedTabs.first(where: \.active)?.id)
     }
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(anchors.keys.sorted(), id: \.self) { id in
+        let exposed = self.exposed
+        let visibleID = tooltips.state.visibleID
+        // The overlay hosts only balloons being shown, not an empty child for
+        // every control. Resolve the hint set once, outside the per-anchor body.
+        let displayedIDs = anchors.keys.filter { id in
+            guard let anchor = anchors[id] else { return false }
+            return id == visibleID || (!anchor.inline && exposed.contains(anchor.target))
+        }.sorted()
+        return ZStack(alignment: .topLeading) {
+            ForEach(displayedIDs, id: \.self) { id in
                 if let anchor = anchors[id] {
-                    if tooltips.state.visibleID == id {
+                    if visibleID == id {
                         PositionedHideBalloon(command: anchor.target.command, label: anchor.label, mode: .tooltip,
                             anchor: geometry[anchor.bounds], window: geometry.size)
                     } else if !anchor.inline && exposed.contains(anchor.target) {

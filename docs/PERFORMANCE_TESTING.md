@@ -216,13 +216,18 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
 
 ## 6. Preserve the architecture while fixing the cause
 
+- Tooltip dismissal, hover exit, and anchor retention publish only actual state changes.
+  Mutating a struct held in `@Published` can emit even when its method returns without changing a field; compute the next value before assigning it.
+  Exercise repeated dismissal with no visible tooltip, because wheel events must not invalidate all tooltip-bearing controls.
+  The balloon overlay contains only visible tooltips or exposed hints, resolves hint exposure once per update, and skips target projection while hints are hidden.
 - Keep subprocesses, blocking I/O, and large serialization outside `Mutex<Runtime>`.
   `snapshot_delta_payload` takes owned data under the lock; `serialize_snapshot_delta` serializes without a runtime to lock.
   Extend `PrecomputedCatalog`, `CatalogCache`, and `RootIndex` rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
-- Send the first wheel immediately; `PendingScroll` accumulates signed rows only while a response is pending, sends no cancelling sum, and releases on a frame or its 100 ms timeout.
+- Send every whole-row wheel promptly; combine signed rows only from consecutive requests already waiting in the writer queue, send no cancelling sum, and never wait for a terminal frame or timer.
   Preserve actual pointer cell/modifiers and Herdr-owned mouse/history routing; do not invent fallback geometry, reconstruct history from viewport frames, or append a same-size resize to force repaint.
+  Resolve the first wheel at its real AppKit target, then reuse that route only while events stay consecutive and stationary, so a sidebar gesture does not repeat SwiftUI's responder-tree hit test on every tick.
   A missing view size emits its diagnostic once and sends no wheel.
   The accepted matching-pane Claude policy sends SGR press/release without Enter and records its detection basis; other or unknown panes retain local selection.
 - Parse immediately, settle geometry over two stable display ticks, and submit pending damage once per display tick.

@@ -3041,7 +3041,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let hit = calculateMouseHit(at: point).grid
             selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
         }
-        setNeedsDisplay(bounds)
+        queuePendingDisplay()
     }
     
     private func shiftBypassesMouseReporting(for event: NSEvent) -> Bool {
@@ -3233,7 +3233,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         } else {
             stopSelectionAutoScrollTimer()
         }
-        setNeedsDisplay(bounds)
+        queuePendingDisplay()
     }
     
     func tryUrlFont () -> NSFont

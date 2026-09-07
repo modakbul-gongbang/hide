@@ -482,7 +482,7 @@ private struct HideSidebar: View {
             SidebarCommandBar()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
+                LazyVStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                     switch model.sidebarContent {
                     case .projects:
                         projectsContent
