@@ -43,6 +43,29 @@ class TerminalLatencySummaryTests(unittest.TestCase):
         self.assertEqual(interval["count"], 1)
         self.assertEqual(interval["p95_ms"], 3.0)
 
+    def test_exclusions_and_unknown_refresh_rate_cannot_become_fast_samples(self):
+        records = [
+            "hide_latency interval=wheel_to_draw pane=visible milliseconds=8.0 hz=0.0 outcome=completed",
+            "hide_latency interval=wheel_to_draw pane=hidden milliseconds=0.0 hz=120.0 outcome=hidden",
+            "hide_latency interval=wheel_to_draw pane=released milliseconds=0.0 hz=120.0 outcome=released",
+        ]
+        summary = latency.summarize(records)
+        self.assertEqual(summary["refresh_rates_hz"], [])
+        self.assertEqual(summary["panes"], ["visible"])
+        self.assertEqual(summary["intervals"]["wheel_to_draw"], {
+            "count": 1, "p50_ms": 8.0, "p95_ms": 8.0, "max_ms": 8.0,
+            "excluded": {"hidden": 1, "released": 1},
+        })
+
+    def test_long_stall_is_retained_instead_of_trimmed_as_an_outlier(self):
+        records = [f"hide_latency interval=wheel_to_draw pane=fixture milliseconds={ms}.0 hz=120.0 outcome=completed"
+                   for ms in [1] * 19 + [8000]]
+        interval = latency.summarize(records)["intervals"]["wheel_to_draw"]
+        self.assertEqual(interval["count"], 20)
+        self.assertEqual(interval["p95_ms"], 1.0)
+        self.assertEqual(interval["max_ms"], 8000.0)
+        self.assertEqual(interval["excluded"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

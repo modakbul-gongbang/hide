@@ -95,8 +95,11 @@ The pet dashboard's count tiles read the same four groups, plus the rows whose s
 
 ## Ambient signals (subagents, background tasks)
 
-A pane's card can also show small optional badges for active subagents and
-background tasks, sourced from a Herdr server's optional `ambient` snapshot
-field. See [docs/ambient-signals.md](ambient-signals.md) for the client
-behavior, the privacy boundary, and the scope boundary between this repo
-(client projection) and the separately bundled Herdr runtime.
+A record may carry optional `ambient` counts: `subagents_active`, `background_running`, and `background_failed`.
+`sidebar.rs::parse_ambient` treats absent or null data as no signal and missing keys as zero; present counts must be nonnegative integers fitting `u32`.
+Unknown keys are discarded, so task names, prompts, commands, output, and paths never enter this count projection.
+A malformed ambient object excludes that agent with a diagnostic while other valid records continue to project.
+`pet.rs::ambient_totals` sums with saturation and returns no counts while disconnected; `PetBadgeRow` renders positive counts only.
+This client does not own upstream transcript scanning, authorization, or server restart policy.
+
+Regression owners are `ambient_counts_parse_and_unknown_keys_never_survive`, `a_malformed_ambient_record_excludes_only_that_agent`, and `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected`.

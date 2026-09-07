@@ -79,5 +79,9 @@ an explicit "Pet art unavailable" state - never as an empty window.
 ## Adding art
 
 Add the manifest-referenced asset under `assets/`, then add or repoint its entry in `states`.
-[pet-assets.md](pet-assets.md) has the slot-by-slot artwork guide.
-The retired static-slime prompts are not the contract for the animated theme.
+Use the bundled campfire artwork as the style reference and inspect `theme.json` for current filenames rather than maintaining a second slot table.
+Keep a shared ground line and facing direction across sprite frames, and verify real alpha rather than a painted checkerboard background.
+The native renderer plays frames on a `.common`-mode timer; there is no webview animation loop.
+A PNG/WebP pair is not required by the loader.
+Rebuild the resource-complete bundle after changing assets.
+A second theme needs all required poses; the currently selected theme is `default`, so adding a directory alone does not add a theme selector.

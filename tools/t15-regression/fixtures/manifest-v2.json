@@ -104,8 +104,8 @@
       "required": true,
       "can_block": true,
       "status": "BLOCKED",
-      "reason": "fresh post-T14 process-tree performance/bundle evidence is not rerun; T1 800MB proof remains historical evidence",
-      "evidence_paths": ["docs/research/t1-native-architecture-matrix.md"]
+      "reason": "legacy profile has no current native performance/bundle evidence; retired architecture research is not acceptance evidence",
+      "evidence_paths": []
     }
   ]
 }

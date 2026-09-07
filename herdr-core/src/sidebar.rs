@@ -747,7 +747,7 @@ fn derive_read_state(
 /// `null` means the server sent nothing for this pane. Any other unreadable
 /// shape excludes the whole record rather than partially extracting it, and
 /// unknown keys are dropped so nothing but the three counts can ever reach
-/// app state (see docs/ambient-signals.md).
+/// app state (see docs/status-model.md, Ambient signals).
 fn parse_ambient(raw: &Value) -> Result<Option<AmbientSignal>, String> {
     if raw.is_null() {
         return Ok(None);

@@ -84,6 +84,15 @@ The pet's own global shortcut does not go through the URL scheme at all, so a
 broken deep link and a broken shortcut are separate failures with separate
 checks.
 
+## Bundled artwork ownership
+
+The production identity is `hide` (`me.grab.hide`).
+The app bundles `macos/Resources/hide.icns`; `macos/scripts/generate_app_icon.sh` defaults to `docs/assets/hide-icon-candidates/hide-icon-02.png` as its source.
+Other icon candidates are reference artwork, not runtime alternatives.
+Provider artwork lives in `macos/Sources/HerdrMacOS/Resources/` as `agent-claude.png` and `agent-codex.png`.
+Keep packaging aligned with `macos/Resources/THIRD_PARTY_NOTICES/`; bundled artwork is not a grant of trademark permission.
+Use [theme-contract.md](theme-contract.md) for pet artwork and [DESIGN.md](../DESIGN.md) for shell appearance.
+
 ## Driving pet states without real agents
 
 Use [verification-fixtures.md](verification-fixtures.md) for the scripted pet server and machine-readable receipt.

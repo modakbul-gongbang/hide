@@ -481,16 +481,13 @@ private struct HideSidebar: View {
             SidebarContentPicker()
             SidebarCommandBar()
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: HideTheme.spacingNone) {
-                    switch model.sidebarContent {
-                    case .projects:
-                        projectsContent
-                    case .agents:
-                        agentsContent
-                    }
+            SidebarList {
+                switch model.sidebarContent {
+                case .projects:
+                    projectsContent
+                case .agents:
+                    agentsContent
                 }
-                .padding(.bottom, HideTheme.spacingLG)
             }
 
             SidebarUtilityBar(

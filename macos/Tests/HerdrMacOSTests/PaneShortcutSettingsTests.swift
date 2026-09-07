@@ -584,12 +584,30 @@ struct PaneShortcutSettingsTests {
 
         let point = NSPoint(x: 160, y: 240)
         #expect(window.terminalView(forWheelAt: point, timestamp: 1) == nil)
-        #expect(window.terminalView(forWheelAt: point, timestamp: 1.01) == nil)
+        for tick in 1...400 {
+            #expect(window.terminalView(forWheelAt: point, timestamp: 1 + Double(tick) / 120) == nil)
+        }
         #expect(content.hitTestCount == 1)
 
         sidebarScroller.removeFromSuperview()
-        #expect(window.terminalView(forWheelAt: point, timestamp: 1.2) === terminal)
+        #expect(window.terminalView(forWheelAt: point, timestamp: 5) === terminal)
         #expect(content.hitTestCount == 2)
+    }
+
+    @MainActor
+    @Test func continuousWheelChangesOwnerWhenPointerCrossesTheSidebarBoundary() {
+        let window = PaneCommandWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+                                       styleMask: .borderless, backing: .buffered, defer: false)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+        let terminal = ImeTerminalView(frame: content.bounds,
+                                      font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular))
+        content.addSubview(terminal)
+        content.addSubview(NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 480)))
+        window.contentView = content
+
+        #expect(window.terminalView(forWheelAt: NSPoint(x: 318, y: 240), timestamp: 1) == nil)
+        #expect(window.terminalView(forWheelAt: NSPoint(x: 322, y: 240), timestamp: 1.01) === terminal)
+        #expect(window.terminalView(forWheelAt: NSPoint(x: 318, y: 240), timestamp: 1.02) == nil)
     }
 
     private func keyEvent(
