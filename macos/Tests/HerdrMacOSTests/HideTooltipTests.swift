@@ -10,7 +10,15 @@ struct HideTooltipTests {
         defer { controller.stop() }
         controller.hover("new-agent", inside: true)
         #expect(controller.state.visibleID == nil)
-        try await Task.sleep(for: .milliseconds(450))
+        // Other AppKit tests can occupy the main actor past both deadlines.
+        // A fixed sleep can resume before the already-due reveal task runs.
+        // Assert eventual delivery here; delayAndDismissalEvents checks the
+        // exact 400 ms threshold without depending on scheduler timing.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while controller.state.visibleID == nil && clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(controller.state.visibleID == "new-agent")
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: nil)
         #expect(controller.state.visibleID == nil)

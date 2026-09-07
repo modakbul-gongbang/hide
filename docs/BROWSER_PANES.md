@@ -11,7 +11,7 @@ It does not transplant a Chrome window, create a second browser engine, or copy 
 
 ## Open from an agent terminal
 
-Requirements: Node.js 22 or newer, Herdr 0.8.2, and chromux on the process PATH.
+Requirements: Node.js 22 or newer, the Herdr runtime pinned in [herdr-bundle.json](../macos/Sources/HerdrMacOS/Resources/herdr-bundle.json), and chromux on the process PATH.
 Select an existing managed chromux profile explicitly.
 `live` and `external-*` profiles are not accepted by this host.
 The profile must use chromux's unpaused default mode and a loopback TCP daemon.

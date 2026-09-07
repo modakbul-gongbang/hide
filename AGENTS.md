@@ -1,9 +1,16 @@
 # Agent Notes
 
+## Documentation Routing
+
+Read [docs/README.md](docs/README.md) before choosing supporting documents.
+It identifies current contracts and procedures, their code/test owners, and historical/reference-only material.
+Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
+Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
+
 ## Repository Layout
 
 - `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
-- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. All authority (pane layout, focus, zoom, persisted state) lives here.
+- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. It projects Herdr-owned pane topology and owns Hide's UI state; the Swift shell owns neither. See Runtime Architecture for the exact ownership split.
 - `src/` - removed retired Rust-native shell. The SSH/mini runtime is owned by `herdr-core/`; nothing links a root `src/` crate into the application.
 - `spikes/swift-shell-pivot/` - the Stage 0 spike source and its `VERDICTS.md`. A frozen record; do not edit it to reflect later changes. Its evidence output is no longer kept in the repository (see `Evidence Belongs Outside The Repository`).
 
@@ -110,88 +117,23 @@ The weekly `herdr-update.yml` workflow continues to propose upstream stable rele
 
 ## Performance Guide
 
-These rules exist because each one was violated and diagnosed in a real incident.
+Before diagnosing, changing, reviewing, or verifying terminal responsiveness, rendering, scrolling, selection, resize, tab switching, CPU, memory, snapshots, or attach behavior, read [docs/PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md) in full.
+That guide owns the reproduction procedure, isolation checklist, measurement boundaries, commands, regression coverage, and cleanup/verdict requirements.
+Historical run measurements are not acceptance thresholds; compare matched builds and workloads and keep evidence under `agents/runs/<slug>/`.
+Report idle and driven measurements separately, with the load and workload recorded for each.
 
-The figure to measure against is not one number.
-On 2026-09-04, on the assembled dev bundle against a live server with 26 panes and 12 agents, the main thread spent 0.28% of its samples waiting on the runtime mutex while idle at load 4.9, and 1.52% while driven at load 11.4.
-The same measurements read 0.89% idle before any of that day's work and 4.31% driven at `fc80f6c`, before the notifier and the delta boundary changed.
-Quote a mutex-wait figure with the load and the drive it was taken under or it means nothing; the 47% an earlier note carried was measured while typing, on a build three rounds of work ago, and comparing anything to it is a mistake.
+Keep these invariants during implementation:
 
-- Never hold the runtime mutex across a subprocess, blocking I/O, or a large serialization.
-  Every shell snapshot read and every attach thread blocks on that mutex; whatever you hold it through becomes UI latency.
-  Precompute outside the lock and pass results in (see `PrecomputedCatalog` in `session_sync.rs`).
-  The snapshot delta is the worked example: `Runtime::snapshot_delta_payload` takes an owned payload under the lock and the free `runtime::serialize_snapshot_delta` writes the bytes outside it.
-  The signature is the enforcement, because the serializing half has no runtime in scope to lock; keep it that way rather than adding a convenience method that does both.
-- Never fork subprocesses (git especially) in a per-tick or per-event path.
-  The workspace catalog caches by input equality plus a refresh window (`CatalogCache` in `session_sync.rs`); extend that cache rather than adding a new per-tick invocation.
-  The catalog was not the only fork: placing each tab into a checkout resolved the pane directory's repository root with `git rev-parse` inside `reconcile_session_catalog`, once per tab per publish, under the runtime mutex.
-  On 2026-09-06 with 18 agents and load 7 to 11 that held the mutex for 60% of a five-second window; the main thread waited on it for 33% of its samples and every attach reader for 25% to 35%, which is what "everything is slower than the herdr TUI" felt like.
-  The roots now ride the precomputed catalog (`RootIndex`), a stale precomputation keeps the last accepted catalog instead of rebuilding under the lock, and `reconciling_with_a_precomputed_catalog_runs_no_git` counts the forks.
-- The snapshot wire is sized by what changed, not by total state.
-  Terminal chunks ride a sequence cursor; do not re-send retained state wholesale.
-  When adding a snapshot field, decide its channel: rarely-changing sections belong in the revisioned `rest`, per-event scalars ride top-level, high-volume streams need their own cursor.
-  A field on the revisioned `rest` section that no reader reads still costs a full-state re-send on every tick that writes it.
-  Two `last_checked_at_unix_ms` fields nobody decoded restamped `rest` on every session heartbeat, which re-sent the whole navigator, ui state, status and pet about once a second; deleting them took an idle twenty-second window from 38 snapshot reads to one.
-- Send the first wheel immediately and coalesce only while a response is pending.
-  The old fixed 16 ms window delayed even one wheel before the server round trip.
-  `PendingScroll` now writes the first movement immediately and sums later signed rows until a frame arrives; a cancelling sum writes nothing.
-  The stream has no request acknowledgement, so the next frame releases the accumulated movement.
-  A 100 ms response timeout prevents a boundary or an ignored wheel from holding the next movement forever; it never delays the first wheel or keyboard input.
-  Herdr 0.8.2 routes `terminal.scroll` between application mouse input and host history, so include the actual zero-based pointer cell and modifiers.
-  Rendered frames do not carry the application's mouse-tracking mode.
-  Ordinary clicks use the explicitly accepted matching-pane `agent_kind == claude` policy, record the detection basis, and send an SGR press/release without Enter; other or undetected panes retain local selection.
-  Do not recreate local scrollback from viewport frames: rows can disappear between server renders, and application mouse state is unavailable in this contract.
-  A scroll response already publishes a frame, so do not append a same-size resize to force a repaint.
-  A wheel without a reported view size writes nothing and emits its diagnostic once; never invent fallback geometry.
-- Settle geometry and pace rendering with the view's display link.
-  Two stable display ticks publish the final grid; transient reports only update the frame guard.
-  Attach sends the current settled size, and only matching full frames replace a held canvas after a geometry or control transition.
-  Parse incoming data immediately, draw each visible pane at most once per display tick, and leave hidden panes undrawn.
-  Keyboard bytes go directly from the main-actor delegate to the core writer; do not add an asynchronous main-actor hop.
-- Announce changes once per burst, not once per change.
-  `ChangeNotifier` latches on the false-to-true flip and `herdr_core_snapshot` clears the latch before it takes the lock.
-  Clear-then-read costs at most one read for nothing; read-then-clear loses a change that lands during the read.
-- A per-frame path costs what changed, never what is on screen.
-  `drawTerminalContents` called `buildAttributedString` for every visible row on every draw, and only segments of eight UTF-16 units or fewer reached the CTLine cache, so one changed cell relaid out the whole viewport and re-interned its attribute dictionaries into a process-wide weak table.
-  On 2026-09-06, on the installed release bundle against a live session with two attached panes at load 3.5, a ten-second window with no interaction at all spent 15.3% of the sampled main thread under `_NSViewDrawRect`, which was 63% of everything the main thread did while idle; frame-receive-to-draw was p50 7.62 ms and p95 20.85 ms at 120 Hz against a recorded p95 of 6.26 ms.
-  Rows are now prepared once per change behind `preparedRow`, and `scripts/check-terminal-row-cache.sh` is what notices when the draw loop reaches text building without it.
-  Full-viewport invalidation itself is not the thing to fix: AppKit delivers full expose rects whatever you invalidate, which is why the per-row dirty check in that loop is `#if false`. Make the repaint cheap instead of trying to make it smaller.
-  A cost property fails no test when it is deleted, so every one of them needs a gate of its own; `reconciling_with_a_precomputed_catalog_runs_no_git` counts forks for the same reason.
-- Verify performance claims with `/usr/bin/sample <pid>` on the running app and `herdr server`, not by reading code.
-  Before sampling, confirm exactly one app instance is running and know whether it is the dev build or an installed bundle (rule FACT-dev-runtime-instances).
-  Ambient load (Screen Sharing, WindowServer, a stale second instance) routinely masquerades as app slowness; rule it out first.
-  Above roughly load 14 this machine stops symbolicating a `sample` window longer than about five seconds and returns every frame as `???`, which a summing script reads as zero time rather than as no answer.
-  Take the observation as several short windows and check how many failed to symbolicate before believing any ratio.
-  A latency claim about the operator's own input cannot come from a synthetic keystroke: the `osascript` call alone costs about 123 ms before the app is involved, so read the interval between the shell's own trace marks instead.
-
-Run native verification against an isolated Herdr server when the operator's instance is running.
-A shared server also shares focus, so a separate app state file and fixture-only intent do not stop Hide from following the operator into a protected workspace.
-Use the documented `HERDR_SESSION` and `HERDR_SOCKET_PATH` routing, a separate `HERDR_CONFIG_PATH`, and private `XDG_CONFIG_HOME` and `XDG_STATE_HOME` roots.
-In Herdr 0.8.2, session data is under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; `HERDR_CONFIG_PATH` alone changes only the config file.
-The client socket is derived from the API socket by inserting `-client` before `.sock`, so use a short absolute socket path that fits the platform limit.
-Pass the same environment to the server, dev bundle, CLI and reference TUI, and clear inherited pane, workspace and tab identifiers.
-Before creating fixtures, prove that the private server has zero workspaces and that the operator server gained no connection; keep the socket and process evidence in the run directory.
-After verification, stop only that private server and remove only its recorded state directory and sockets.
-The machine still carries the operator's load; record shared agent count separately from private fixture count.
-References: [named sessions](https://herdr.dev/docs/persistence-remote/#named-sessions), [CLI environment](https://herdr.dev/docs/cli-reference/#environment-variables), and the pinned [path implementation](https://github.com/herdrdev/herdr/blob/v0.8.2/src/config/io.rs).
-
-On 2026-09-06, the isolated 120 Hz verification retained ten attached panes with one private and 22 to 23 shared agents.
-The final plain-shell painted-wheel result was p50 30.83 ms and p95 38.06 ms, 1.98 ms above the same-pane Herdr TUI p95; Claude was p50 43.54 ms and p95 53.75 ms, 9.55 ms below its TUI p95.
-Key-to-transport-flush p95 was 0.62 ms and frame-receive-to-draw p95 was 6.26 ms.
-Across 11 one-minute RSS samples, the baseline p50 was 148000 KiB, two fresh changed-build p50 values were 133904 and 127680 KiB, and a later final-source warm-window p50 was 135360 KiB; keep the raw ranges, endpoints, load and pane count with any comparison because macOS memory pressure moved individual endpoints across the baseline.
-
-Capture terminal intervals from the exact app PID with `/usr/bin/log stream --process <pid> --level debug --style ndjson --predicate 'subsystem == "me.grab.hide" AND category == "TerminalLatency"'`, redirecting to the run's evidence directory.
-Run `python3 scripts/summarize-terminal-latency.py <trace> --started-after <unix-seconds>` to report nearest-rank p50, p95, maximum and sample count for key-to-send, receive-to-draw, wheel-to-draw and tab-to-first-draw.
-The debug mirror contains the same end values as the signposts and works without Instruments.
-Key-to-send ends at the actual transport flush; receive-to-draw starts at delivery to the registered view and ends after software drawing.
-Hidden, released, consumed, capacity-limited and pre-window intervals are reported separately, never as zero latency.
-The display link records its measured refresh rate, with zero treated as unknown.
-The wheel signpost ends at the next draw, which can be unrelated output; use a content-region change and the same window-server display timestamp method in both clients for a causal wheel comparison.
-Record each PID and bundle, selected pane, terminal grid, attached-child count, shared agent count, refresh rate, load and foreground interruptions.
-For RSS, record eleven one-minute samples across ten minutes and retain the process lists; memory pressure and occlusion can change RSS without an allocation improvement.
-Build an archived baseline with an isolated target directory.
-Sharing a release output directory can leave a fresh package fingerprint beside another checkout's `libherdr_core.a`; verify the linked archive hash and expected runtime diagnostics before treating a bundle as current.
-Core diagnostics are also mirrored as identical JSON lines in the state directory's `Logs/core.jsonl`, with one previous 1 MiB file, bounded queued writes and I/O outside the runtime lock.
+- No subprocesses, blocking I/O, or large serialization under `Mutex<Runtime>`; precompute outside and keep serialization separate from the locked payload read.
+  `snapshot_delta_payload` takes owned data under the lock; `serialize_snapshot_delta` serializes it outside the lock.
+- No per-tick/per-tab git forks; reuse `PrecomputedCatalog`, `CatalogCache`, and `RootIndex`.
+- Snapshot traffic follows changes, not total retained state; use stream cursors and do not dirty revisioned `rest` with idle timestamps.
+- Send the first wheel immediately and coalesce only while a response is pending; preserve Herdr routing, real geometry, and direct keyboard delivery.
+- Parse immediately, settle geometry on display ticks, and submit pending damage once per tick; never reject an AppKit backing-store repair because it already drew that tick.
+- Retain only visible rows' latest prepared render state; leave hidden panes undrawn and release unused attaches.
+  Keep row preparation behind `preparedRow`; `scripts/check-terminal-row-cache.sh` enforces that the draw loop never bypasses the cache.
+- `ChangeNotifier` announces once per burst; clear its latch before taking the snapshot lock.
+- Native verification uses exactly one identified app and an isolated Herdr server, including remote-connection checks; never manipulate the operator's panes or server.
 
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)
@@ -226,7 +168,7 @@ It is the design source of truth for the macOS shell.
 The system is a single dark mode with a four-step surface ladder, hairline 1px borders and no drop shadows, Inter with the `ss03` stylistic set, a radius scale running from 6px keycaps to 16px containers, and a spacing system the layout follows.
 Saturated accent colors belong to category illustration, never to chrome.
 
-`HideTheme` in `macos/Sources/HerdrMacOS/HideUI.swift` carries those tokens into the shell, so a new color, radius, or spacing value is added there and used from there rather than written inline.
+`HideTheme` in `macos/Sources/HerdrMacOS/HideTheme.swift` carries those tokens into the shell, so a new color, radius, or spacing value is added there and used from there rather than written inline.
 When the existing system does not cover a case, say so and propose the addition; do not settle it with a one-off value in a view.
 
 `DESIGN.md` also records the Raycast public design references and their MIT attribution context.

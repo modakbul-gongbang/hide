@@ -1,6 +1,11 @@
 # ADR-0001: Native Surface Ownership and Dependency Freeze
 
-Status: Accepted for the T1 architecture foundation after the mandatory integrated release spike passed.
+Status: SUPERSEDED by the SwiftUI/AppKit shell.
+
+This is a decision-history record for the retired Rust/WGPU/CEF approach, not the current implementation contract.
+Do not apply its dependency pins, source paths, budgets, or historical acceptance verdicts to the current application.
+Start with [the documentation map](../README.md) and [current runtime ownership](../../AGENTS.md#runtime-architecture).
+The dated body below preserves what was decided for that earlier revision.
 
 Decision date: 2026-08-27.
 

@@ -79,7 +79,7 @@ The last valid agent list is retained so counts do not blink to empty, but every
 
 ## Badges
 
-The pet's badge row counts the same four groups the sidebar draws, in the same order:
+The pet's badge row counts three of the sidebar's groups, in the same order; Seen has no badge:
 
 | Order | Color | Group |
 | --- | --- | --- |
@@ -88,7 +88,6 @@ The pet's badge row counts the same four groups the sidebar draws, in the same o
 | 3 | blue | Working |
 
 A count of zero hides that badge.
-Do Not Disturb hides all of them.
 
 The pet's "act now" number is the whole Needs You count and its done number is the whole Done count, so a badge can never disagree with the section it stands for.
 `herdr-core/src/pet.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
@@ -100,4 +99,4 @@ A pane's card can also show small optional badges for active subagents and
 background tasks, sourced from a Herdr server's optional `ambient` snapshot
 field. See [docs/ambient-signals.md](ambient-signals.md) for the client
 behavior, the privacy boundary, and the scope boundary between this repo
-(client only) and the Herdr server (not in this repo).
+(client projection) and the separately bundled Herdr runtime.

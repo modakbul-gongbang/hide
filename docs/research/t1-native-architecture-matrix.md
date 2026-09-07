@@ -1,5 +1,10 @@
 # T1 Native Architecture Research Matrix
 
+Status: HISTORICAL RESEARCH for the superseded Rust/WGPU/CEF design, not current dependency or performance guidance.
+Legacy regression manifests still cite this record, so its path is retained.
+Upstream versions, maintenance assessments, and budgets below describe the research date only.
+For current work, start with [the documentation map](../README.md).
+
 Research date: 2026-08-27.
 
 This document compares product references and implementation candidates for the T1 architecture preflight.
