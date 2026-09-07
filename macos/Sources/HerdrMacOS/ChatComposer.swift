@@ -1,10 +1,10 @@
 import Foundation
 
-/// Where a chat starts.
+/// Where the composer routes a chat.
 ///
-/// The two destinations differ only in the directory and the Herdr workspace
-/// the first tab is made in; everything after that is the same four steps.
-/// Keeping them one type is what makes that true rather than aspirational.
+/// Scratch is routed to the core, which owns its folder, workspace, and tab.
+/// Checkout chat tab creation remains shell-owned because the checkout and
+/// its Herdr workspace already exist in the shell snapshot.
 enum ChatDestination: Equatable, Sendable {
     /// The fixed non-project folder. The core decides where it is and puts it
     /// on the snapshot; the composer never computes the path itself.
@@ -38,6 +38,16 @@ enum ChatDestination: Equatable, Sendable {
         case .checkout(let id, _, _): id
         }
     }
+}
+
+/// The only destination the Swift chat launcher may create a tab for.
+///
+/// Keeping Scratch out of this type makes its creation ownership a compile-
+/// time boundary rather than a convention at the call site.
+struct CheckoutChatDestination: Equatable, Sendable {
+    let id: String
+    let path: String
+    let workspaceID: String?
 }
 
 /// The four steps a submission takes, in order.
@@ -159,13 +169,23 @@ enum HerdrErrorEnvelope {
 
 /// The Herdr arguments for the message step.
 enum AgentPromptArguments {
+    /// A prompt write is not delivery. Without `--wait`, Herdr only confirms
+    /// that it wrote bytes into the terminal and can report success while the
+    /// agent stays idle with an empty prompt. Waiting requires an observed
+    /// lifecycle change before a settled state can complete the command.
+    static let deliveryTimeoutMilliseconds = 120_000
+
     /// The pane id is the target. It is unique per launch, while the agent
     /// name Hide starts every agent under is not: two chats would both answer
     /// to `hide-claude` and the prompt would reach whichever Herdr resolved
     /// first. The pinned server resolves a pane id as a target - a pane with
     /// no agent is refused as `not_agent_backed` rather than `agent_not_found`.
     static func build(paneID: String, message: String) -> [String] {
-        ["agent", "prompt", paneID, message]
+        [
+            "agent", "prompt", paneID, message,
+            "--wait",
+            "--timeout", String(deliveryTimeoutMilliseconds),
+        ]
     }
 }
 
@@ -187,7 +207,7 @@ enum PaneTitleTokenArguments {
 /// is ready" a test rather than a reading of the launcher.
 enum ChatLaunchPlan {
     /// The one step that runs before there is a pane to name.
-    static func createTab(destination: ChatDestination, provider: AgentProvider) -> [String] {
+    static func createTab(destination: CheckoutChatDestination, provider: AgentProvider) -> [String] {
         AgentRootPaneArguments.build(
             workspaceID: destination.workspaceID,
             cwd: destination.path,
@@ -227,7 +247,7 @@ enum ChatLaunchPlan {
     /// The whole plan, in order, composed from the two halves the launcher
     /// runs. This is the statement of the order the tests read.
     static func steps(
-        destination: ChatDestination,
+        destination: CheckoutChatDestination,
         provider: AgentProvider,
         message: String,
         bypassWarnings: Bool,

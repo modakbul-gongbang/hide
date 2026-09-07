@@ -34,6 +34,7 @@ struct CoreSnapshot {
     var gitWorktreesLoading: Bool = false
     var gitWorktreesRemote: Bool = false
     var worktreeRemoval: CoreWorktreeRemoval? = nil
+    var taskOperation: CoreTaskOperation? = nil
 
     /// Rebuilds the snapshot with only the independently revisioned sections
     /// that arrived, so a delta carrying one of them leaves the rest alone.
@@ -56,7 +57,8 @@ struct CoreSnapshot {
             status: status,
             pet: pet,
             gitWorktrees: gitWorktrees, gitWorktreesLoading: gitWorktreesLoading,
-            gitWorktreesRemote: gitWorktreesRemote, worktreeRemoval: worktreeRemoval
+            gitWorktreesRemote: gitWorktreesRemote, worktreeRemoval: worktreeRemoval,
+            taskOperation: taskOperation
         )
     }
 }
@@ -124,6 +126,7 @@ struct CoreRestSnapshot: Decodable {
     var gitWorktreesLoading: Bool = false
     var gitWorktreesRemote: Bool = false
     var worktreeRemoval: CoreWorktreeRemoval? = nil
+    var taskOperation: CoreTaskOperation? = nil
 
     enum CodingKeys: String, CodingKey {
         case navigator
@@ -138,6 +141,7 @@ struct CoreRestSnapshot: Decodable {
         case gitWorktreesLoading = "git_worktrees_loading"
         case gitWorktreesRemote = "git_worktrees_remote"
         case worktreeRemoval = "worktree_removal"
+        case taskOperation = "task_operation"
     }
 
     init(from decoder: Decoder) throws {
@@ -154,6 +158,7 @@ struct CoreRestSnapshot: Decodable {
         gitWorktreesLoading = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesLoading) ?? false
         gitWorktreesRemote = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesRemote) ?? false
         worktreeRemoval = try container.decodeIfPresent(CoreWorktreeRemoval.self, forKey: .worktreeRemoval)
+        taskOperation = try container.decodeIfPresent(CoreTaskOperation.self, forKey: .taskOperation)
     }
 }
 
@@ -492,6 +497,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     let repoName: String
     let isGit: Bool
     let defaultBranch: String?
+    let branches: [String]
     let registered: Bool
     let temporary: Bool
     let checkouts: [CoreCheckoutSnapshot]
@@ -506,6 +512,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case repoName = "repo_name"
         case isGit = "is_git"
         case defaultBranch = "default_branch"
+        case branches
         case registered
         case temporary
         case checkouts
@@ -521,6 +528,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         repoName: String,
         isGit: Bool,
         defaultBranch: String?,
+        branches: [String] = [],
         registered: Bool,
         temporary: Bool,
         checkouts: [CoreCheckoutSnapshot]
@@ -534,6 +542,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         self.repoName = repoName
         self.isGit = isGit
         self.defaultBranch = defaultBranch
+        self.branches = branches
         self.registered = registered
         self.temporary = temporary
         self.checkouts = checkouts
@@ -550,6 +559,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         repoName = try container.decodeIfPresent(String.self, forKey: .repoName) ?? label
         isGit = try container.decodeIfPresent(Bool.self, forKey: .isGit) ?? false
         defaultBranch = try container.decodeIfPresent(String.self, forKey: .defaultBranch)
+        branches = try container.decodeIfPresent([String].self, forKey: .branches) ?? []
         registered = try container.decodeIfPresent(Bool.self, forKey: .registered) ?? true
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
         checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
@@ -2385,7 +2395,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     /// The completion is what unlocks the composer, so the sheet stays locked
     /// for exactly as long as the work takes.
     func startChat(
-        destination: ChatDestination,
+        destination: CheckoutChatDestination,
         provider: AgentProvider,
         message: String,
         bypassWarnings: Bool,
@@ -2430,9 +2440,45 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 // a shell prompt the operator can still use.
                 self.persistUIState(
                     selectedPaneID: paneID,
-                    focusedCheckoutID: destination.checkoutID
+                    focusedCheckoutID: destination.id
                 )
             }
+            completion(result)
+        }
+    }
+
+    func startAgentInCreatedPane(
+        paneID: String,
+        path: String,
+        provider: AgentProvider,
+        message: String?,
+        bypassWarnings: Bool,
+        completion: @escaping @MainActor (ChatLaunchResult) -> Void
+    ) {
+        guard let runtimeSelection else {
+            completion(ChatLaunchResult(
+                succeeded: false,
+                failedStep: .startAgent,
+                message: HideStartupDiagnostic.runtimeUnavailable,
+                paneID: paneID
+            ))
+            return
+        }
+        let herdrPath = runtimeSelection.path
+        Task { @MainActor in
+            let result = await Task.detached {
+                HerdrChatLauncher.startInPane(
+                    paneID: paneID,
+                    path: path,
+                    provider: provider,
+                    message: message,
+                    bypassWarnings: bypassWarnings,
+                    agentIsInstalled: AgentCLIAvailability.isUsable(provider.rawValue),
+                    run: { arguments in
+                        HerdrChatLauncher.run(herdrPath: herdrPath, arguments: arguments)
+                    }
+                )
+            }.value
             completion(result)
         }
     }
@@ -2925,7 +2971,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     status: rest.status,
                     pet: rest.pet,
                     gitWorktrees: rest.gitWorktrees, gitWorktreesLoading: rest.gitWorktreesLoading,
-                    gitWorktreesRemote: rest.gitWorktreesRemote, worktreeRemoval: rest.worktreeRemoval
+                    gitWorktreesRemote: rest.gitWorktreesRemote, worktreeRemoval: rest.worktreeRemoval,
+                    taskOperation: rest.taskOperation
                 ))
             } else if decoded.editor != nil
                 || decoded.changes != nil

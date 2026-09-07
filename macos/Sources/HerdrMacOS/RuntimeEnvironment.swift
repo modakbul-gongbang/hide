@@ -473,9 +473,69 @@ enum HerdrLiveWorkspaceIdentity {
 /// hide supplies non-secret routing arguments only; authentication stays with
 /// the selected CLI and the Herdr server.
 enum HerdrChatLauncher {
+    /// Starts only the agent-owned half after another owner has created the
+    /// pane. Scratch uses this entry point because Rust owns its folder,
+    /// workspace, and tab creation.
+    static func startInPane(
+        paneID: String,
+        path: String,
+        provider: AgentProvider,
+        message: String?,
+        bypassWarnings: Bool,
+        agentIsInstalled: Bool,
+        run: HerdrCommandRunner
+    ) -> ChatLaunchResult {
+        guard agentIsInstalled else {
+            return ChatLaunchResult(
+                succeeded: false,
+                failedStep: .startAgent,
+                message: "\(provider.rawValue) is not installed on this Mac. Install it, then try again.",
+                paneID: paneID
+            )
+        }
+        var remaining: [(step: ChatLaunchStep, arguments: [String])] = [
+            (.startAgent, AgentLaunchArguments.build(
+                provider: provider,
+                paneID: paneID,
+                bypassWarnings: bypassWarnings
+            ))
+        ]
+        if let message {
+            remaining += ChatLaunchPlan.stepsAfterTab(
+                provider: provider,
+                message: message,
+                bypassWarnings: bypassWarnings,
+                paneID: paneID
+            ).dropFirst()
+        }
+        for entry in remaining {
+            let result = run(entry.arguments)
+            let succeeded = result.status == 0
+            trace(step: entry.step, paneID: paneID, succeeded: succeeded)
+            guard succeeded else {
+                return ChatLaunchResult(
+                    succeeded: false,
+                    failedStep: entry.step,
+                    message: failureMessage(
+                        step: entry.step,
+                        detail: detail(from: result),
+                        fallback: "Herdr refused the \(entry.step.rawValue) step."
+                    ),
+                    paneID: paneID
+                )
+            }
+        }
+        return ChatLaunchResult(
+            succeeded: true,
+            failedStep: nil,
+            message: "Started \(provider.rawValue) in \(URL(fileURLWithPath: path).lastPathComponent).",
+            paneID: paneID
+        )
+    }
+
     static func start(
         herdrPath: String,
-        destination: ChatDestination,
+        destination: CheckoutChatDestination,
         provider: AgentProvider,
         message: String,
         bypassWarnings: Bool
@@ -491,7 +551,7 @@ enum HerdrChatLauncher {
     }
 
     static func start(
-        destination: ChatDestination,
+        destination: CheckoutChatDestination,
         provider: AgentProvider,
         message: String,
         bypassWarnings: Bool,
@@ -525,38 +585,14 @@ enum HerdrChatLauncher {
             )
         }
         trace(step: .createTab, paneID: paneID, succeeded: true)
-
-        let remaining = ChatLaunchPlan.stepsAfterTab(
+        return startInPane(
+            paneID: paneID,
+            path: destination.path,
             provider: provider,
             message: message,
             bypassWarnings: bypassWarnings,
-            paneID: paneID
-        )
-
-        for entry in remaining {
-            let result = run(entry.arguments)
-            let succeeded = result.status == 0
-            trace(step: entry.step, paneID: paneID, succeeded: succeeded)
-            guard succeeded else {
-                return ChatLaunchResult(
-                    succeeded: false,
-                    failedStep: entry.step,
-                    message: failureMessage(
-                        step: entry.step,
-                        detail: detail(from: result),
-                        fallback: "Herdr refused the \(entry.step.rawValue) step."
-                    ),
-                    // The tab is real and stays; the operator can type in it.
-                    paneID: paneID
-                )
-            }
-        }
-
-        return ChatLaunchResult(
-            succeeded: true,
-            failedStep: nil,
-            message: "Started \(provider.rawValue) in \(URL(fileURLWithPath: destination.path).lastPathComponent).",
-            paneID: paneID
+            agentIsInstalled: true,
+            run: run
         )
     }
 
@@ -597,7 +633,7 @@ enum HerdrChatLauncher {
             .flatMap { $0["pane_id"] as? String }
     }
 
-    private static func run(herdrPath: String, arguments: [String]) -> HerdrCommandResult {
+    static func run(herdrPath: String, arguments: [String]) -> HerdrCommandResult {
         let process = Process()
         let output = Pipe()
         let error = Pipe()

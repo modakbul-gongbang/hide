@@ -141,6 +141,30 @@ struct ShellView: View {
             PetDashboardView()
                 .environmentObject(model)
         }
+        .sheet(item: $model.worktreeWorkspace) { workspace in
+            WorktreeCreationSheet(workspace: workspace)
+                .environmentObject(model)
+        }
+        .sheet(item: $model.branchMigration) { request in
+            VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
+                Text("Move \(request.branch) out of the main worktree?")
+                    .hideFont(size: HideTheme.Typography.body, weight: .semibold)
+                Text(request.consequence)
+                    .hideFont(size: HideTheme.Typography.body)
+                    .foregroundStyle(HideTheme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { model.branchMigration = nil }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Move branch", action: model.confirmBranchMigration)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(HideTheme.spacingXL)
+            .frame(width: HideTheme.worktreeDialogWidth)
+            .background(HideTheme.panel)
+        }
         .alert(item: $model.workspaceToRemove) { workspace in
             Alert(
                 title: Text("Remove \(workspace.label) from Hide?"),
@@ -181,6 +205,76 @@ struct ShellView: View {
             Button("OK", action: model.clearInteractionNotice)
         } message: {
             Text(model.interactionNotice ?? "")
+        }
+    }
+}
+
+private struct WorktreeCreationSheet: View {
+    @EnvironmentObject private var model: ShellModel
+    let workspace: CoreWorkspaceSnapshot
+
+    private var working: Bool { model.core.snapshot?.taskOperation?.phase == "working" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
+            Text("New worktree")
+                .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
+            Text(workspace.label)
+                .hideFont(size: HideTheme.Typography.caption)
+                .foregroundStyle(HideTheme.secondary)
+            HideSettingsField(
+                placeholder: "Branch",
+                text: $model.worktreeDraft.branch,
+                width: HideTheme.worktreeDialogWidth - (HideTheme.spacingXL * 2)
+            )
+            .accessibilityIdentifier("worktree-branch")
+            .disabled(working)
+            HideFormPicker("Base", selection: $model.worktreeDraft.baseBranch) {
+                ForEach(model.worktreeBranches, id: \.self) { branch in
+                    Text(branch).tag(Optional(branch))
+                }
+                Text("Unknown").tag(String?.none)
+            }
+            .disabled(working)
+            HideFormPicker("Agent", selection: $model.worktreeDraft.agent) {
+                Text("Terminal only").tag(AgentProvider?.none)
+                ForEach(AgentProvider.allCases, id: \.rawValue) { provider in
+                    Text(provider.rawValue.capitalized).tag(Optional(provider))
+                }
+            }
+            .disabled(working)
+            if model.worktreeBranches.isEmpty {
+                Text("Create the repository's first branch before creating a worktree.")
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.warning)
+            }
+            if let error = model.worktreeError {
+                Text(error)
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.danger)
+                    .accessibilityIdentifier("worktree-error")
+            }
+            HStack {
+                Spacer()
+                if working {
+                    ProgressView("Creating…")
+                } else {
+                    Button("Cancel", action: model.cancelNewWorktree)
+                        .buttonStyle(HideTextButtonStyle(isProminent: false))
+                        .keyboardShortcut(.cancelAction)
+                    Button("Create", action: model.submitNewWorktree)
+                        .buttonStyle(HideTextButtonStyle(isProminent: true))
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!model.worktreeCanSubmit)
+                }
+            }
+        }
+        .padding(HideTheme.spacingXL)
+        .frame(width: HideTheme.worktreeDialogWidth)
+        .background(HideTheme.panel)
+        .interactiveDismissDisabled(working)
+        .onDisappear {
+            if !working { model.cancelNewWorktree() }
         }
     }
 }
@@ -1168,11 +1262,10 @@ private struct WorkspaceNavigatorRow: View {
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
-                    Button("New chat here") {
-                        model.openComposer(checkoutID: workspace.checkouts.first?.id)
-                    }
+                    Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
+                        .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
                     Divider()
-                    Button("Remove registration", role: .destructive) {
+                    Button(WorktreeMenuPolicy.removeRegistration, role: .destructive) {
                         model.requestRemoveWorkspace(workspace)
                     }
                 } label: {
@@ -1272,7 +1365,23 @@ private struct CheckoutNavigatorRow: View {
                 } else if checkout.temporary {
                     HideBadge(label: "temporary", color: HideTheme.warning)
                 } else if presentation.isPrimary {
-                    HideBadge(label: "main worktree", color: HideTheme.secondary)
+                    switch MainWorktreePresentation.state(
+                        branch: checkout.branch,
+                        base: model.baseBranch(for: workspace)
+                    ) {
+                    case .neutral(let branch):
+                        HideBadge(label: branch, color: HideTheme.secondary)
+                    case .warning(let branch, let base):
+                        Button {
+                            model.requestBranchMigration(workspace: workspace, checkout: checkout)
+                        } label: {
+                            HideBadge(label: "\(branch) ≠ \(base)", color: HideTheme.warning)
+                        }
+                        .buttonStyle(.plain)
+                        .hideTooltip("Move \(branch) to a worktree")
+                    case .unknown(let branch):
+                        HideBadge(label: branch.map { "\($0) • base unknown" } ?? "base unknown", color: HideTheme.muted)
+                    }
                 }
                 // The three things a row may say about a worktree, and no
                 // more: what its pull request is, that something is
@@ -1324,7 +1433,19 @@ private struct CheckoutNavigatorRow: View {
         )
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
         .contextMenu {
-            Button("Start agent here") { model.openComposer(checkoutID: checkout.id) }
+            if checkout.isWorktree {
+                Button(WorktreeMenuPolicy.startAgentHere) { model.openComposer(checkoutID: checkout.id) }
+            }
+            if let branch = checkout.branch {
+                Button(WorktreeMenuPolicy.setBaseBranch) { model.setBaseBranch(checkout, in: workspace) }
+                    .disabled(branch == model.baseBranch(for: workspace))
+            }
+            Divider()
+            Button(WorktreeMenuPolicy.copyPath) { model.copyCheckoutPath(checkout) }
+            Menu(WorktreeMenuPolicy.openIn) {
+                Button("Finder") { model.revealCheckout(checkout) }
+                Button("Default editor") { model.openCheckoutInDefaultEditor(checkout) }
+            }
             if checkout.isWorktree {
                 Divider()
                 Button(checkout.worktree?.deletionGate.buttonLabel ?? "Delete worktree…", role: .destructive) {

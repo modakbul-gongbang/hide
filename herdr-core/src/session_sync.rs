@@ -150,10 +150,9 @@ impl Drop for SessionSyncHandle {
             && worker.join().is_err()
         {
             crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "coordinator.join_failed",
-                })
-            );
+                "component": "session_sync",
+                "kind": "coordinator.join_failed",
+            }));
         }
     }
 }
@@ -177,11 +176,10 @@ impl ActiveSubscription {
             && worker.join().is_err()
         {
             crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "subscription_reader.join_failed",
-                    "generation": self.generation,
-                })
-            );
+                "component": "session_sync",
+                "kind": "subscription_reader.join_failed",
+                "generation": self.generation,
+            }));
         }
     }
 }
@@ -452,14 +450,13 @@ fn run_coordinator(
                         let event_gap = code == "event_gap" || code == "event_journal_unavailable";
                         let cursor = replica.as_ref().map(|current| current.cursor);
                         crate::diagnostic!(json!({
-                                "component": "session_sync",
-                                "kind": "subscription.error",
-                                "target": context.log_target(),
-                                "code": code,
-                                "sequence": cursor,
-                                "message": message,
-                            })
-                        );
+                            "component": "session_sync",
+                            "kind": "subscription.error",
+                            "target": context.log_target(),
+                            "code": code,
+                            "sequence": cursor,
+                            "message": message,
+                        }));
                         stop_subscription(&mut subscription);
                         needs_bootstrap = event_gap;
                         let error = SessionFetchError::Stale(format!(
@@ -708,14 +705,13 @@ fn publish_replica(
         };
         for exclusion in excluded {
             crate::diagnostic!(json!({
-                    "component": "remote_session",
-                    "kind": "agent.excluded",
-                    "target": target_id,
-                    "pane_id": exclusion.pane_id,
-                    "source_index": exclusion.source_index,
-                    "message": exclusion.reason,
-                })
-            );
+                "component": "remote_session",
+                "kind": "agent.excluded",
+                "target": target_id,
+                "pane_id": exclusion.pane_id,
+                "source_index": exclusion.source_index,
+                "message": exclusion.reason,
+            }));
         }
         let Some(runtime) = context.runtime.upgrade() else {
             return false;
@@ -1025,14 +1021,13 @@ fn log_sync_failure(
     error: &SessionFetchError,
 ) {
     crate::diagnostic!(json!({
-            "component": "session_sync",
-            "kind": kind,
-            "target": context.log_target(),
-            "state": error.state(),
-            "sequence": replica.map(|current| current.cursor),
-            "message": error.message(),
-        })
-    );
+        "component": "session_sync",
+        "kind": kind,
+        "target": context.log_target(),
+        "state": error.state(),
+        "sequence": replica.map(|current| current.cursor),
+        "message": error.message(),
+    }));
 }
 
 struct ConnectFailure {
@@ -1420,6 +1415,7 @@ impl SessionReplica {
                     repo_name,
                     is_git: workspace.worktree.is_some(),
                     default_branch: None,
+                    branches: Vec::new(),
                     registered: true,
                     temporary: false,
                     session_workspace_ids: vec![workspace.workspace_id.clone()],

@@ -46,6 +46,7 @@ pub struct Snapshot {
     pub git_worktrees_loading: bool,
     pub git_worktrees_remote: bool,
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
+    pub task_operation: Option<TaskOperationSnapshot>,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -145,8 +146,8 @@ pub struct ScratchSnapshot {
     /// the value the core sent rather than by a string it repeats.
     pub id: String,
     pub label: String,
-    /// The folder every Scratch pane runs in. The shell creates it on the
-    /// first submission; the core only decides where it is.
+    /// The folder every Scratch pane runs in. The core creates it as the
+    /// first step of the Scratch tab pipeline.
     pub path: String,
     /// Collapsed by default, so this is false until the operator opens it.
     pub expanded: bool,
@@ -323,6 +324,10 @@ pub struct WorkspaceSnapshot {
     pub repo_name: String,
     pub is_git: bool,
     pub default_branch: Option<String>,
+    /// Local branch refs available as a base for a new worktree. This is not
+    /// derived from checkout rows because a valid base need not be checked
+    /// out anywhere.
+    pub branches: Vec<String>,
     pub registered: bool,
     pub temporary: bool,
     /// The Herdr workspaces whose panes sit in this project, in Herdr order.
@@ -1256,6 +1261,25 @@ pub struct WorktreeRemovalSnapshot {
     pub message: Option<String>,
 }
 
+/// One user-initiated task whose blocking work runs outside the runtime mutex.
+///
+/// The shell observes this receipt to keep a sheet locked, focus a created
+/// pane, or show the exact failed step. A single slot also makes a repeated
+/// submission idempotent while an operation is in flight.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskOperationSnapshot {
+    pub id: u64,
+    pub kind: String,
+    pub phase: String,
+    pub repository_root: Option<String>,
+    pub branch: Option<String>,
+    pub base_branch: Option<String>,
+    pub path: Option<String>,
+    pub pane_id: Option<String>,
+    pub agent_kind: Option<String>,
+    pub message: Option<String>,
+}
+
 /// One repository's worktrees.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectWorktreesSnapshot {
@@ -1264,6 +1288,7 @@ pub struct ProjectWorktreesSnapshot {
     pub base_branch_fallback: Option<String>,
     pub root_path: String,
     pub default_branch: Option<String>,
+    pub branches: Vec<String>,
     pub worktrees: Vec<WorktreeSnapshot>,
     /// Why this repository has no worktree list. An empty list with no reason
     /// means the repository genuinely has none.
@@ -1538,6 +1563,7 @@ impl Snapshot {
             git_worktrees_loading: true,
             git_worktrees_remote: false,
             worktree_removal: None,
+            task_operation: None,
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -1616,6 +1642,7 @@ pub struct RestSections {
     pub git_worktrees_loading: bool,
     pub git_worktrees_remote: bool,
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
+    pub task_operation: Option<TaskOperationSnapshot>,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -1641,6 +1668,7 @@ impl RestSections {
             git_worktrees_loading: snapshot.git_worktrees_loading,
             git_worktrees_remote: snapshot.git_worktrees_remote,
             worktree_removal: snapshot.worktree_removal.clone(),
+            task_operation: snapshot.task_operation.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -1667,6 +1695,7 @@ impl RestSections {
             && self.git_worktrees_loading == snapshot.git_worktrees_loading
             && self.git_worktrees_remote == snapshot.git_worktrees_remote
             && self.worktree_removal == snapshot.worktree_removal
+            && self.task_operation == snapshot.task_operation
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -1757,6 +1786,7 @@ pub struct RestWire<'a> {
     pub git_worktrees_loading: bool,
     pub git_worktrees_remote: bool,
     pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
+    pub task_operation: &'a Option<TaskOperationSnapshot>,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -1779,6 +1809,7 @@ impl<'a> RestWire<'a> {
             git_worktrees_loading: rest.git_worktrees_loading,
             git_worktrees_remote: rest.git_worktrees_remote,
             worktree_removal: &rest.worktree_removal,
+            task_operation: &rest.task_operation,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

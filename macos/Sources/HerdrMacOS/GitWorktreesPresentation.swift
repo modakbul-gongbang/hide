@@ -30,6 +30,27 @@ struct CoreWorktreeRemoval: Decodable, Sendable {
     }
 }
 
+struct CoreTaskOperation: Decodable, Sendable {
+    let id: UInt64
+    let kind: String
+    let phase: String
+    let repositoryRoot: String?
+    let branch: String?
+    let baseBranch: String?
+    let path: String?
+    let paneID: String?
+    let agentKind: String?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, phase, branch, path, message
+        case repositoryRoot = "repository_root"
+        case baseBranch = "base_branch"
+        case paneID = "pane_id"
+        case agentKind = "agent_kind"
+    }
+}
+
 struct CoreProjectWorktrees: Decodable {
     let rootPath: String
     let defaultBranch: String?

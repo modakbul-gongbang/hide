@@ -269,7 +269,11 @@ macro_rules! record_conversions {
                     workspace_id: v.workspace_id,
                     tab_id: v.tab_id,
                     cwd: v.cwd,
-                    tokens: v.tokens.into_iter().map(|(k, v)| (k.into(), Value::String(v))).collect(),
+                    tokens: v
+                        .tokens
+                        .into_iter()
+                        .map(|(k, v)| (k.into(), Value::String(v)))
+                        .collect(),
                     label: v.label,
                     terminal_title: v.terminal_title,
                     terminal_title_stripped: v.terminal_title_stripped,
@@ -611,6 +615,35 @@ pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Resu
         env: Default::default(),
     })
 }
+pub(crate) fn worktree_create_params(
+    cwd: &str,
+    branch: &str,
+    base: Option<&str>,
+    focus: bool,
+) -> Result<Value, String> {
+    params(req::WorktreeCreateParams {
+        base: base.map(str::to_owned),
+        branch: Some(branch.to_owned()),
+        cwd: Some(cwd.to_owned()),
+        focus,
+        label: None,
+        // Herdr owns the default checkout location. Hide must never restate it.
+        path: None,
+        workspace_id: None,
+    })
+}
+pub(crate) fn worktree_list_params(cwd: &str) -> Result<Value, String> {
+    params(req::WorktreeListParams {
+        cwd: Some(cwd.to_owned()),
+        workspace_id: None,
+    })
+}
+pub(crate) fn worktree_remove_params(workspace_id: &str) -> Result<Value, String> {
+    params(req::WorktreeRemoveParams {
+        force: false,
+        workspace_id: workspace_id.to_owned(),
+    })
+}
 pub(crate) fn tab_move_params(tab: &str, index: usize) -> Result<Value, String> {
     params(req::TabMoveParams {
         tab_id: tab.into(),
@@ -717,6 +750,44 @@ pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
         _ => Err(tab_missing.into()),
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CreatedWorktree {
+    pub workspace_id: String,
+    pub pane_id: String,
+    pub path: String,
+    pub branch: Option<String>,
+}
+
+pub(crate) fn created_worktree(value: Value) -> Result<CreatedWorktree, String> {
+    let missing = "worktree.create response is missing its created worktree identity";
+    match response(value, missing)? {
+        res::ResponseResult::WorktreeCreated {
+            workspace,
+            root_pane,
+            worktree,
+            ..
+        } => Ok(CreatedWorktree {
+            workspace_id: nonempty_id(workspace.workspace_id, missing)?,
+            pane_id: nonempty_id(root_pane.pane_id, missing)?,
+            path: nonempty_id(worktree.path, missing)?,
+            branch: worktree.branch,
+        }),
+        _ => Err(missing.into()),
+    }
+}
+
+pub(crate) fn listed_worktree_path(value: Value, branch: &str) -> Result<Option<String>, String> {
+    let missing = "worktree.list response is malformed";
+    match response(value, missing)? {
+        res::ResponseResult::WorktreeList { worktrees, .. } => Ok(worktrees
+            .into_iter()
+            .find(|row| row.branch.as_deref() == Some(branch))
+            .map(|row| row.path)),
+        _ => Err(missing.into()),
+    }
+}
+
 pub(crate) fn moved_tabs(value: Value) -> Result<Vec<String>, String> {
     let missing = "tab.move response is missing tabs";
     let id_missing = "tab.move response has a tab without an id";
