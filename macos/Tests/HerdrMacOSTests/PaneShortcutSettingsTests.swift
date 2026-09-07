@@ -528,6 +528,28 @@ struct PaneShortcutSettingsTests {
         #expect(window.terminalView(at: NSPoint(x: 320, y: 240)) === terminal)
     }
 
+    /// A wheel over the SwiftUI sidebar must not pay for SwiftUI's full
+    /// responder-tree hit test just to discover that no terminal is there.
+    @MainActor
+    @Test func aPointOutsideEveryTerminalSkipsTheWindowHitTest() {
+        let window = PaneCommandWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let content = HitTestCountingView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+        let terminal = ImeTerminalView(
+            frame: NSRect(x: 320, y: 0, width: 320, height: 480),
+            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        )
+        content.addSubview(terminal)
+        window.contentView = content
+
+        #expect(window.terminalView(at: NSPoint(x: 160, y: 240)) == nil)
+        #expect(content.hitTestCount == 0)
+    }
+
     private func keyEvent(
         type: NSEvent.EventType = .keyDown,
         characters: String,
@@ -560,6 +582,15 @@ struct PaneShortcutSettingsTests {
             wheel2: 0,
             wheel3: 0
         )!.withFlags(modifiers).flatMap(NSEvent.init(cgEvent:))!
+    }
+}
+
+private final class HitTestCountingView: NSView {
+    private(set) var hitTestCount = 0
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        hitTestCount += 1
+        return super.hitTest(point)
     }
 }
 

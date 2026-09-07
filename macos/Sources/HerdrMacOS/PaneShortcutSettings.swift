@@ -458,6 +458,17 @@ final class PaneCommandWindow: NSWindow {
 
     func terminalView(at windowPoint: NSPoint) -> TerminalView? {
         guard let contentView else { return nil }
+        // Most wheel events in this window belong to a sidebar or another
+        // native scroller. Reject those by the terminal frames before asking
+        // SwiftUI to hit-test its entire responder tree. AppKit will perform
+        // that hit test once when `super.sendEvent` routes the event; doing it
+        // here first made every non-terminal wheel pay for the same traversal
+        // twice.
+        guard let terminalBelowPoint = Self.frontmostTerminalView(
+            in: contentView,
+            containing: windowPoint
+        ) else { return nil }
+
         // NSEvent.locationInWindow is already expressed in the window content
         // coordinate system. Converting it from nil applies another window-base
         // transform and can make a visible terminal miss hit testing.
@@ -477,7 +488,7 @@ final class PaneCommandWindow: NSWindow {
         // died wherever one was layered. Ask which terminal actually covers the
         // point instead, which keeps every future decoration transparent to
         // scrolling without each one having to opt in.
-        return Self.frontmostTerminalView(in: contentView, containing: windowPoint)
+        return terminalBelowPoint
     }
 
     /// Frames are compared in window coordinates because that is what
