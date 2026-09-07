@@ -1,59 +1,22 @@
-# 디자인 레퍼런스: orca
+# Orca visual references
 
-orca(stablyai/orca, MIT)의 실제 화면이다.
-herdr-ide의 시각·인터랙션 기준선으로 삼는다(D-09, D-59).
+Status: reference only, not a product contract or proof that Hide implements the pictured feature.
+These are the user-provided Orca screens recorded on 2026-08-26.
+Use them for density, grouping, layout, and interaction inspiration.
+[DESIGN.md: In-Product Components](../../DESIGN.md#in-product-components) governs Hide's current native UI.
 
-기능을 베끼는 것이 아니라 **밀도, 배치, 상태 표현 방식**을 따른다.
-스코프는 인터뷰가 정한 대로다. orca가 하는 일 중 diff 코멘트 배치(D-51)와 워크트리별 브라우저 다중화(D-18)는 따르지 않는다.
+## Reference images
 
-## orca-01-agent-editor-terminal.png
+- [Agent, editor, and terminal layout](orca-01-agent-editor-terminal.png): project hierarchy, compact agent rows, central tabs, split content, and a right-side file tree.
+- [Browser element feedback](orca-02-browser-grab.png): an explicit feedback mode, selected-element outline, anchored comment entry, and separate change/question intent.
+- [Status bar](orca-03-status-bar.png): grouped provider usage and system status without mixing them into the main content.
 
-3열 + 하단 분할. herdr-ide의 L1(D-16)과 같은 골격이다.
+The pictured feedback flow and usage meters are Orca observations, not a statement that Hide currently exposes those controls.
+Old interview decision numbers, proposed memory budgets, and proposed Herdr calls have been removed from this reference so they cannot override current scoped requirements.
+See [BROWSER_PANES.md](../BROWSER_PANES.md) for the browser behavior this repository actually implements.
 
-**왼쪽 사이드바** — 상단에 Tasks / Automations / Search, 그 아래 Projects.
-프로젝트 아래에 브랜치 항목이 오고, 각 항목은 `색 점 + 이름` 한 줄에 `브랜치명`을 흐린 두 번째 줄로 둔다.
-에이전트가 있는 항목은 `4 agents`로 접히고, 펼치면 에이전트마다 `프로바이더 아이콘 + 작업 요약 + 경과시간(12m, 1h, 2h, 3h) + 상태 글리프` 한 줄이다.
-**이 두 줄 구조가 herdr의 `[ui.sidebar.agents] rows`와 그대로 대응한다**(D-40, D-54). 첫 줄은 상태·아이콘·라벨·elapsed, 둘째 줄은 summary다.
+## Provenance
 
-**중앙** — 상단 탭 줄에 프로바이더 아이콘 + 잘린 제목.
-위는 에이전트 트랜스크립트, 아래는 에디터와 터미널이 좌우로 나뉘고 각자 자기 탭 줄과 `+`를 갖는다(D-17).
-
-**오른쪽** — 아이콘 툴바(파일, 검색, git, 체크리스트, 패널 토글) 아래 파일 트리.
-트리 위에 저장소 이름과 새로고침.
-
-**하단 상태바** — orca-03에서 자세히 본다.
-
-## orca-02-browser-grab.png
-
-**이것이 grab(D-11, D-43, D-57)의 실제 구현이다.** 연기해둔 인터랙션 상세의 기준선으로 쓴다.
-
-- 브라우저가 중앙 탭 하나로 열리고, 옆에 일반 파일 탭이 공존한다
-- URL 바 오른쪽에 **피드백 모드 토글 버튼**이 있고, 켜지면 상단에 `Add feedback for the selected element.` 배너가 뜬다. **모드 진입이 명시적이고 상태가 화면에 남는다**
-- 선택된 요소에 아웃라인이 그려진다
-- 팝오버가 요소 아래에 붙고 순서가 이렇다:
-  1. 대상 식별 — `input "94105"` 와 셀렉터 `input[name="postalCode"]`
-  2. 자유 입력 코멘트 — "Validate Canadian postal codes when country switches"
-  3. **Intent 선택 — `Change` / `Question`**
-  4. `Cancel` / `Add`
-
-3번이 특히 참고할 부분이다.
-요소만 보내는 게 아니라 **"고쳐달라"인지 "물어보는 것"인지를 사용자가 고른다.**
-herdr-ide는 이 페이로드를 herdr `agent.prompt` / `pane.send_text`로 보내고 스크린샷은 파일 경로로 붙인다(D-48).
-
-D-43에서 미결로 둔 항목 중 이 화면이 답을 주는 것: 모드 진입·종료(토글 버튼 + 배너), 선택 확정(Add), 취소(Cancel).
-여전히 미결인 것: 호버 아웃라인의 시각 형태, 중첩 요소 이동, 다중 선택.
-
-## orca-03-status-bar.png
-
-프로바이더별 사용량 미터가 왼쪽에 둘.
-`아이콘 + 진행 막대 + 58% 5h · 41% wk` 형태로 **5시간 창과 주간 창을 한 줄에** 보여준다.
-오른쪽에는 메모리 `1.2 GB`, 터미널 수, git 수, `SSH Connected` + 초록 점.
-
-메모리를 상태바에 상시 노출하는 것은 D-41(메모리 예산 400MB/900MB)과 직접 맞물린다.
-예산을 인수 조건으로만 두지 않고 **평소에 보이게** 하면 회귀를 늦게 발견하지 않는다.
-`SSH Connected`는 D-37의 원격 연결 상태 표시에 대응한다.
-
-## 출처
-
-2026-08-26에 사용자가 제공한 orca 실행 화면이다.
-orca는 MIT이나 스크린샷은 참조용이며, herdr-ide는 코드를 복사하지 않고 패턴만 따른다(D-09).
+The original reference identified Orca as `stablyai/orca` under MIT.
+The images are retained as visual references, not as application artwork or as a grant to copy another product's implementation.
+Keep any future licensing assessment tied to the exact material being reused and its current source.

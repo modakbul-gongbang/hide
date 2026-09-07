@@ -5,6 +5,39 @@ This is a repeatable verification procedure, not a record that any particular bu
 Keep raw evidence and the run verdict under `agents/runs/<slug>/`; never commit traces, recordings, profiles, transcripts, or screenshots.
 Use [CONTRIBUTING.md](../CONTRIBUTING.md) for delivery gates and [dev-runtime.md](dev-runtime.md) for bundle identity.
 
+## Verification layers and current CI coverage
+
+There are three complementary layers; none replaces the other two.
+This table describes the checked-in workflows, not a claim that a particular PR's remote run passed.
+
+| Layer | What it catches | Current execution |
+| --- | --- | --- |
+| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | Rust and Swift suites plus repository checks run on every PR and main push in `.github/workflows/pr.yml`; the native design workflow adds static design checks |
+| Native interaction QA | Actual focus, input, drag, scroll, resize, compositor-visible flicker, and bundle mistakes | Local, isolated, logged-in macOS session; not wired into CI |
+| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, and sustained RSS | Local matched baseline/candidate measurements; no checked-in scheduled or required native performance job |
+
+Swift renderer tests can instantiate AppKit views and compare pixels without launching and driving the complete app.
+That is useful automated rendering coverage, but it does not exercise the physical display, live Herdr transport, foreground focus, or actual agent TUI interaction end to end.
+The latency summarizer's Python tests, browser-host Node tests, and fixture/replay commands do not become CI gates merely because this guide lists them.
+Check the workflow before claiming any of them runs automatically.
+
+### Maintenance and review policy
+
+1. Every change runs the applicable CI regression gates; a rendering/performance bug gets a deterministic regression test when it can reproduce the observed failure economically.
+2. Changes to terminal drawing, selection, input/scroll routing, display pacing, geometry, focus, or attach lifecycle also require the affected native scenarios before being called verified.
+   Record the exact bundle and evidence; if the run is unavailable, mark native QA unrun and leave that acceptance claim open.
+3. Changes to caching, scheduling, snapshots, locking, dependencies, or claims of improved speed/memory require the affected controlled baseline/candidate measurements as well.
+   Apply the ten-minute RSS procedure only when making a memory claim; do not impose it on unrelated documentation changes.
+4. The change author records those results in the PR's existing Evidence section, and the reviewer checks coverage and exclusions as well as CI.
+   A green `verify` job cannot enforce the local native requirement by itself today.
+5. Keep the regression test beside its component, reusable measurement tools in `scripts/`, procedure and comparison policy here, and each run's raw evidence under `agents/runs/`.
+   Never turn a one-off trace or historical number into a hardcoded universal latency limit.
+
+For future unattended coverage, add an owned logged-in macOS QA runner only after app isolation, permissions, fixture setup, cleanup, and baseline identity are reproducible without an operator's desktop.
+Serialize native jobs on that desktop and keep API credentials and private transcripts out of untrusted PR jobs.
+Start with an explicitly triggered native smoke lane, then add scheduled measurements and reviewed thresholds after enough comparable runs exist.
+This is the proposed next automation step, not infrastructure this repository already has.
+
 ## 1. Define the claim before running anything
 
 Write the symptom, exact reproduction sequence, expected visible result, affected clients, and baseline/candidate revisions in the run record.

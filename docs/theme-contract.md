@@ -78,6 +78,6 @@ an explicit "Pet art unavailable" state - never as an empty window.
 
 ## Adding art
 
-Add the file pair under `assets/`, then add or repoint one line in `states`.
-`docs/asset-prompts.md` has the generation prompts, and
-[pet-assets.md](pet-assets.md) has the slot-by-slot guide.
+Add the manifest-referenced asset under `assets/`, then add or repoint its entry in `states`.
+[pet-assets.md](pet-assets.md) has the slot-by-slot artwork guide.
+The retired static-slime prompts are not the contract for the animated theme.

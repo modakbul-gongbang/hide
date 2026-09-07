@@ -110,7 +110,7 @@ Repository map:
 - `herdr-core/` - the platform-neutral Rust runtime and C ABI.
 - `assets/pet-theme/` - the bundled desktop pet theme.
 - `contracts/` - the pinned Herdr protocol contract.
-- `docs/` - architecture, runtime, installation, and verification notes.
+- `docs/` - [current documentation map](docs/README.md), with runtime guides separated from historical and visual references.
 
 Before visual verification, read [Which app is actually running](docs/dev-runtime.md) and confirm exactly one `HerdrMacOS` process is active.
 

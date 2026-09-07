@@ -1,108 +1,32 @@
-# Ambient Session Signals
+# Ambient session counts
 
-How the Pet card shows subagent and background-task counts, and what it
-never shows.
+This document describes the current client-side count boundary, not a server implementation proposal.
+The relevant code is [sidebar.rs](../herdr-core/src/sidebar.rs), [pet.rs](../herdr-core/src/pet.rs), and [PetView.swift](../macos/Sources/HerdrMacOS/PetView.swift).
 
-## What this is
+## Accepted data
 
-A Herdr server can attach an optional `ambient` object to a pane's snapshot:
+An agent record may carry an optional `ambient` object with three counts:
 
 ```json
-{ "subagents_active": 2, "background_running": 1, "background_failed": 0 }
+{"subagents_active": 2, "background_running": 1, "background_failed": 0}
 ```
 
-When present, the sidebar projection reads it into
-`SidebarAgentSnapshot.ambient`, `herdr_core::pet::ambient_totals` sums it
-across panes, and the pet renders small count badges - never task names,
-commands, prompts, output, or file paths. See
-`SidebarAgentSnapshot` and `AmbientSignal` in `herdr-core/src/model.rs`.
+`parse_ambient` accepts absent or null data as no ambient signal.
+Missing count keys become zero; present counts must be nonnegative integers that fit `u32`.
+Unknown keys are discarded and cannot enter the projected agent through this boundary.
+An unreadable ambient record rejects that agent record rather than retaining a partly parsed count or inventing a successful zero result.
+Other valid agent records continue to project; the caller records the exclusion diagnostic.
 
-## Scope boundary (read this before assuming more than this does)
+`ambient_totals` sums accepted counts with saturation and returns no counts while disconnected.
+`Runtime` puts those totals into the pet snapshot; `PetBadgeRow` renders only positive counts.
+The three count fields do not carry task names, prompts, commands, output, or paths.
 
-**Only the client side lives in this repository.** The Herdr server - the
-process that would actually read Claude/Codex session files - is a separate
-closed binary (`~/.local/bin/herdr`) whose source is not in `herdr-pet` or
-anywhere under this machine's `~/projects`. This repo cannot implement or
-verify:
+## Boundaries and regression tests
 
-- Reading Claude managed-background-task records or Codex `unified_exec`
-  lifecycle records from session files.
-- mtime-gated polling, 8 MiB bounded reconstruction, or startup rebuild.
-- The server-side authorization toggle and its restart requirement.
+The projection tests `ambient_counts_parse_and_unknown_keys_never_survive` and `a_malformed_ambient_record_excludes_only_that_agent` cover privacy and malformed-record behavior.
+The pet test `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected` covers aggregation and disconnection.
 
-Everything below the "Server contract" heading is a **specification for
-whoever implements that server-side reader**, not a description of code that
-exists in this repository. This repo only consumes the `ambient` field if
-and when a server sends it, and degrades safely when it doesn't.
-
-## Client behavior
-
-- **Per-target opt-in.** Settings has a toggle per target ("target" =
-  `TargetConfig.id`, i.e. a configured local/remote Herdr connection). Off by
-  default. Turning it on renders immediately from whatever `ambient` value
-  is already cached for that target's panes; if nothing is cached yet, badges
-  stay hidden until the next valid snapshot arrives. The toggle never calls
-  any server configuration or restart - this app has no such command.
-- **Hide on zero.** A badge only appears when its count is 1 or more.
-- **Last-valid-state on malformed records.** If a snapshot's `ambient` key is
-  present but its shape can't be parsed, the card keeps showing the last
-  successfully parsed value for that pane (kept in memory only, never on
-  disk) and Settings shows a neutral compatibility notice for that target.
-  The next valid record clears the notice automatically.
-- **Hidden, not warned, when absent.** If a target's snapshot never carries
-  an `ambient` key at all (legacy server, or server-side authorization off),
-  the card shows no ambient badges and no error - Settings shows "표시할
-  ambient 데이터 없음" for that target, since the client cannot tell those
-  two causes apart.
-- **재시도 (retry) in Settings** just re-fetches the current snapshot. It is
-  read-only by construction: there is no command in this app that changes a
-  server's configuration or restarts anything.
-
-## Privacy boundary
-
-The only values this client ever reads from `ambient` are three counts. Any
-other key in that object, or a value of the wrong type, is dropped during
-parsing and never reaches app state, the rendered UI, or logs - proven per
-surface:
-
-- Parsing and the serialized agent: `ambient_counts_parse_and_unknown_keys_never_survive`
-  in `herdr-core/src/sidebar.rs` asserts that a sentinel key present in the
-  wire object reaches neither `SidebarAgentSnapshot` nor its serialization.
-- A record whose shape cannot be read never partially survives: it excludes
-  only that agent, proven by `a_malformed_ambient_record_excludes_only_that_agent`.
-- Rendered UI: `PetBadgeRow` in `macos/Sources/HerdrMacOS/PetView.swift` is
-  handed three integers by `herdr_core::pet::ambient_totals`; no other
-  ambient field exists to render.
-
-This matches the product decision that ambient badges show counts only,
-never task names, commands, prompts, stdout/stderr, or paths.
-
-## Server contract (implementation note for the Herdr server, not built here)
-
-A Herdr server that wants to support this feature should:
-
-- Add an optional `ambient: { subagents_active, background_running,
-  background_failed }` object to each pane in `session.snapshot`. Omit the
-  key entirely (not `null`, not zeros) when authorization is off or the pane
-  isn't a supported agent kind - Pet treats "key absent" as the legacy/off
-  case.
-- Read only lifecycle metadata: identifiers, parent/child relationships,
-  managed-background markers, completion state, exit code. Never persist,
-  transmit, or log prompt text, conversation text, command contents,
-  stdout/stderr, task descriptions, or file paths.
-- Discover session directories only from each pane's actual Claude/Codex
-  process `HOME` - never scan an account home broadly.
-- Read no session file at all while server-side authorization is off,
-  including at startup.
-- Treat Claude managed background tasks and Codex `unified_exec` long-running
-  tasks as in scope; treat detached shell children (nohup, daemons) as
-  explicitly out of scope - their liveness isn't reliably recoverable from
-  session files.
-- Require a server restart to apply a change to the authorization setting.
-
-## Fallback and compatibility
-
-A Pet connected to a server that never sends `ambient` behaves exactly as it
-did before this feature: no badges, no warnings, no behavior change. This is
-enforced by treating `ambient` as fully optional at every layer -
-`AgentSnapshot.ambient: Option<AmbientSignal>` with `#[serde(default)]`.
+The old standalone-pet documentation described per-target Settings opt-in, retry controls, and a proposed server-side reader.
+Those are not contracts implemented by this client and must not be inferred from the optional count fields.
+This repository's client does not become the owner of upstream transcript scanning, authorization, or server restart policy.
+For the runtime actually shipped, follow the pin and official API contract in [AGENTS.md](../AGENTS.md#herdr-api-contract).

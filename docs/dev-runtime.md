@@ -85,19 +85,6 @@ checks.
 
 ## Driving pet states without real agents
 
-The pet's pose and badge row come from whatever the herdr server reports, and
-an unseen error cannot be produced on demand from a real agent.
-`macos/scripts/pet_scenario_server.py` serves the `session.snapshot`,
-`events.subscribe`, and `agent.list` boundaries over a Unix socket using the
-same protocol revision the real server speaks, so the app exercises its
-ordinary event-sync path:
-
-```sh
-macos/scripts/pet_scenario_server.py --socket /tmp/pet.sock --scenario scenario.json &
-HERDR_SOCKET_PATH=/tmp/pet.sock macos/build/assembled/hide.app/Contents/MacOS/HerdrMacOS
-```
-
-The scenario file is re-read on every snapshot or agent-list request, so
-editing it changes what the next one-second agent refresh sees.
-Stopping the server (or deleting the socket) is how the "herdr went away"
-case is produced; restarting it proves subscription and telemetry recovery.
+Use [verification-fixtures.md](verification-fixtures.md) for the scripted pet server and machine-readable receipt.
+That guide owns fixture setup; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) owns native isolation and cleanup.
+A scripted server must be checked against the current protocol before use and must never share the operator's state or socket.

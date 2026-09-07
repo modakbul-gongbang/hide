@@ -15,10 +15,8 @@ pose through the manifest, and a pose the manifest does not cover is a load
 error, not a blank pet. The manifest rules are in
 [theme-contract.md](theme-contract.md).
 
-Assets ship as a **png + webp pair with the same basename**. The native
-renderer reads whichever the manifest names; the pair is kept because the
-webp variants of the six status poses carry the animation frames while their
-png counterparts are single stills.
+The native renderer reads the file named by the manifest; a PNG/WebP pair is not a loader requirement.
+Some bundled poses retain a still PNG alongside an animated WebP as artwork source material.
 
 ## Asset slots
 
@@ -43,8 +41,7 @@ The bundled `default` theme is the campfire character.
 Which pose a given agent state produces is decided in
 `herdr_core::pet::pose`; see [status-model.md](status-model.md).
 
-Adding a new state image means adding the file pair and one line in
-`theme.json`.
+Adding a new state image means adding its asset and the corresponding entry in `theme.json`.
 
 The blue-slime set (`idle.png`, `working.png`, `attention-0..3.png`,
 `error.png`, `disconnected.png`, `sleeping.png`, `idle.svg`) is an alternate
@@ -95,7 +92,8 @@ reference images:
   only) rather than a global colour key, so the character's own light pixels
   survive.
 
-`docs/asset-prompts.md` holds the prompts the current set was generated from.
+Use the existing campfire artwork as the style reference.
+The removed standalone-pet prompts described static slime and escalation states that this manifest does not use.
 
 ## Adding a second theme
 

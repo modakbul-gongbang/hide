@@ -1,9 +1,16 @@
 # Agent Notes
 
+## Documentation Routing
+
+Read [docs/README.md](docs/README.md) before choosing supporting documents.
+It identifies current contracts and procedures, their code/test owners, and historical/reference-only material.
+Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
+Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
+
 ## Repository Layout
 
 - `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
-- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. All authority (pane layout, focus, zoom, persisted state) lives here.
+- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. It projects Herdr-owned pane topology and owns Hide's UI state; the Swift shell owns neither. See Runtime Architecture for the exact ownership split.
 - `src/` - removed retired Rust-native shell. The SSH/mini runtime is owned by `herdr-core/`; nothing links a root `src/` crate into the application.
 - `spikes/swift-shell-pivot/` - the Stage 0 spike source and its `VERDICTS.md`. A frozen record; do not edit it to reflect later changes. Its evidence output is no longer kept in the repository (see `Evidence Belongs Outside The Repository`).
 
@@ -158,7 +165,7 @@ It is the design source of truth for the macOS shell.
 The system is a single dark mode with a four-step surface ladder, hairline 1px borders and no drop shadows, Inter with the `ss03` stylistic set, a radius scale running from 6px keycaps to 16px containers, and a spacing system the layout follows.
 Saturated accent colors belong to category illustration, never to chrome.
 
-`HideTheme` in `macos/Sources/HerdrMacOS/HideUI.swift` carries those tokens into the shell, so a new color, radius, or spacing value is added there and used from there rather than written inline.
+`HideTheme` in `macos/Sources/HerdrMacOS/HideTheme.swift` carries those tokens into the shell, so a new color, radius, or spacing value is added there and used from there rather than written inline.
 When the existing system does not cover a case, say so and propose the addition; do not settle it with a one-off value in a view.
 
 `DESIGN.md` also records the Raycast public design references and their MIT attribution context.

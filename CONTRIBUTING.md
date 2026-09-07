@@ -4,11 +4,12 @@ hide is a macOS shell over the [Herdr](https://herdr.dev) runtime.
 The Rust core in `herdr-core/` owns every piece of state; the SwiftUI shell in `macos/` renders a snapshot of it and dispatches typed events back.
 `AGENTS.md` describes that architecture, the Herdr API contract, and the performance rules that came out of real incidents.
 Read it before changing anything under `herdr-core/` or `macos/`; `DESIGN.md` before changing anything a user looks at.
+Use [docs/README.md](docs/README.md) to find current guides and distinguish historical/reference-only material.
 
 ## Before you open a pull request
 
 Run the same three lanes CI runs.
-A green local run is a green `verify` check.
+These are the local equivalents; the remote `verify` result still depends on the actual CI run.
 
 ```sh
 cargo test --locked --manifest-path herdr-core/Cargo.toml
@@ -49,6 +50,15 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
 
 The gates that read a running Herdr server (the full `check-herdr-contract.sh` and the workbench evidence scripts under `macos/scripts/`) are local steps and are not required in CI.
+The separate `design-contract.yml` workflow runs `check-hide-theme-literals.sh` and `check-hide-components.sh`; it performs static checks, not desktop interaction.
+
+## Performance-sensitive changes
+
+Read [PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md#verification-layers-and-current-ci-coverage) for the three verification layers and review policy.
+The Rust/Swift suites include deterministic performance-related regression tests, including bitmap repaint and cache retention, but CI does not currently launch and drive Hide with a live Herdr server.
+Native typing, drag, wheel, focus, compositor, and controlled latency/RSS comparisons remain isolated local QA.
+The guide's maintenance policy requires affected native scenarios for input/rendering/lifecycle changes and matched measurements for performance claims; this is review-required evidence, not a branch-protection check today.
+Record completed and unrun checks in the PR's Evidence section; a green `verify` result alone does not prove native responsiveness.
 
 ## Evidence
 

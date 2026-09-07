@@ -71,7 +71,7 @@ cd hide
 The build must finish with these outputs:
 
 - `dist/hide.app`
-- `dist/hide-v0.1.0-macos-arm64.zip`, or the version supplied through `HIDE_VERSION`
+- `dist/hide-v<version>-macos-arm64.zip`, with the version derived from the Git tag or supplied through `HIDE_VERSION`
 - the matching `.zip.sha256` sidecar
 
 Install the app into the system Applications directory and launch the installed bundle:
@@ -98,6 +98,7 @@ pgrep -fl '/Applications/hide.app/Contents/MacOS/HerdrMacOS'
 ```
 
 Exactly one matching process should be active before checking the UI.
+Also run `pgrep -fl HerdrMacOS` to rule out a second dev or worktree instance; matching only the installed path cannot detect those.
 
 ## First launch
 
@@ -131,7 +132,9 @@ Delete that directory only when you deliberately want to reset hide's saved stat
 ### The app opens from the checkout but the installed app looks different
 
 A source fix is not visible to an app bundle that was built earlier.
-Quit every `HerdrMacOS` process, rebuild, reinstall, and launch the exact `/Applications/hide.app` bundle.
+Identify the exact PIDs and bundles first, and coordinate before normally quitting an app somebody is using.
+Quit only owned test instances, rebuild and reinstall when intended, then launch the exact `/Applications/hide.app` bundle.
+For QA, use the isolation and restoration procedure in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); do not stop the operator's Herdr server.
 
 <!-- herdr-provenance:start -->
 hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
