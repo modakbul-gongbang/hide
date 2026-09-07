@@ -62,7 +62,7 @@ for forbidden in 'buildAttributedString(' 'cachedCTLine(' 'CTLineCreateWithAttri
     fi
 done
 
-if ! printf '%s\n' "$body" | grep -qF 'preparedRow('; then
+if [[ "$body" != *'preparedRow('* ]]; then
     printf 'drawTerminalContents no longer calls `preparedRow`; the row cache is bypassed.\n' >&2
     exit 1
 fi
