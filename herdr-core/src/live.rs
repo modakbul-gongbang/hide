@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 #[cfg(test)]
 use std::sync::mpsc::Receiver;
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1394,45 +1394,8 @@ impl ScrollRequest {
     }
 }
 
-/// The stream has frames but no per-scroll acknowledgement. The next frame
-/// releases a pending movement. A wheel at a history edge, or an application
-/// that ignores the wheel, may produce no frame; this bound prevents a stuck
-/// pending request. It never delays the first wheel or any keyboard input.
-const SCROLL_RESPONSE_TIMEOUT: Duration = Duration::from_millis(100);
-
-#[derive(Default)]
-struct PendingScroll {
-    deadline: Option<Instant>,
-    queued: Option<ScrollRequest>,
-}
-
-impl PendingScroll {
-    fn wheel(&mut self, next: ScrollRequest, now: Instant) -> Option<ScrollRequest> {
-        if next.lines == 0 {
-            return None;
-        }
-        if self.deadline.is_none() {
-            self.deadline = Some(now + SCROLL_RESPONSE_TIMEOUT);
-            return Some(next);
-        }
-        let lines = self
-            .queued
-            .map_or(0, |held| held.lines)
-            .saturating_add(next.lines);
-        self.queued = (lines != 0).then_some(ScrollRequest { lines, ..next });
-        None
-    }
-
-    fn response(&mut self, now: Instant) -> Option<ScrollRequest> {
-        let next = self.queued.take();
-        self.deadline = next.map(|_| now + SCROLL_RESPONSE_TIMEOUT);
-        next
-    }
-}
-
 enum TerminalWriterCommand {
     Scroll(ScrollRequest),
-    FrameReceived,
     Resize {
         line: String,
     },
@@ -1478,7 +1441,6 @@ impl TerminalSession {
                 | TerminalWriterCommand::Input { line, .. } => Some(line),
                 TerminalWriterCommand::Release { line, .. } => Some(line),
                 TerminalWriterCommand::Scroll(request) => request.line().ok(),
-                TerminalWriterCommand::FrameReceived => None,
             })
             .collect()
     }
@@ -1642,7 +1604,6 @@ impl TerminalSession {
         let generation = self.generation;
         let reader_pane = self.pane_id.clone();
         let mode = self.mode;
-        let writer = self.writer.clone();
         thread::Builder::new()
             .name(format!(
                 "herdr-core-terminal-{}-{reader_pane}",
@@ -1671,9 +1632,6 @@ impl TerminalSession {
                                 full,
                                 ..
                             }) => {
-                                if let Some(writer) = &writer {
-                                    let _ = writer.send(TerminalWriterCommand::FrameReceived);
-                                }
                                 if !deliver_terminal_session_frame(
                                     &runtime,
                                     &notifier,
@@ -1810,47 +1768,63 @@ fn spawn_terminal_control_writer(
     thread::Builder::new()
         .name(format!("herdr-core-terminal-writer-{writer_pane}"))
         .spawn(move || {
-            let mut scroll = PendingScroll::default();
+            let mut carried = None;
             loop {
-                let command = if let Some(deadline) = scroll.deadline {
-                    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    {
-                        Ok(command) => command,
-                        Err(RecvTimeoutError::Timeout) => TerminalWriterCommand::FrameReceived,
-                        Err(RecvTimeoutError::Disconnected) => return,
-                    }
-                } else {
-                    match receiver.recv() {
+                let command = match carried.take() {
+                    Some(command) => command,
+                    None => match receiver.recv() {
                         Ok(command) => command,
                         Err(_) => return,
-                    }
+                    },
                 };
-                let request = match command {
-                    TerminalWriterCommand::Scroll(request) => scroll.wheel(request, Instant::now()),
-                    TerminalWriterCommand::FrameReceived => scroll.response(Instant::now()),
-                    // A later input/resize/release keeps its position after
-                    // earlier wheels. Flush the accumulated movement first.
-                    _ => scroll.response(Instant::now()),
-                };
-                let scroll_line = match request.map(ScrollRequest::line).transpose() {
-                    Ok(line) => line.unwrap_or_default(),
-                    Err(message) => {
-                        deliver_terminal_session_write_failure(
-                            &runtime,
-                            &notifier,
-                            &writer_pane,
-                            generation,
-                            message,
-                        );
-                        return;
-                    }
-                };
+
                 let (line, release_acknowledgement, is_release, trace) = match command {
-                    TerminalWriterCommand::Scroll(_) | TerminalWriterCommand::FrameReceived => {
-                        if scroll_line.is_empty() {
+                    TerminalWriterCommand::Scroll(mut request) => {
+                        // The shell has already converted precise trackpad
+                        // movement into whole rows. Combine only wheels that
+                        // are waiting in the channel right now. Never wait for
+                        // a terminal frame or a timer: neither is an
+                        // acknowledgement for this request.
+                        let mut disconnected = false;
+                        loop {
+                            match receiver.try_recv() {
+                                Ok(TerminalWriterCommand::Scroll(next)) => {
+                                    request = ScrollRequest {
+                                        lines: request.lines.saturating_add(next.lines),
+                                        ..next
+                                    };
+                                }
+                                Ok(command) => {
+                                    carried = Some(command);
+                                    break;
+                                }
+                                Err(TryRecvError::Empty) => break,
+                                Err(TryRecvError::Disconnected) => {
+                                    disconnected = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if request.lines == 0 {
+                            if disconnected {
+                                return;
+                            }
                             continue;
                         }
-                        (String::new(), None, false, None)
+                        let line = match request.line() {
+                            Ok(line) => line,
+                            Err(message) => {
+                                deliver_terminal_session_write_failure(
+                                    &runtime,
+                                    &notifier,
+                                    &writer_pane,
+                                    generation,
+                                    message,
+                                );
+                                return;
+                            }
+                        };
+                        (line, None, false, None)
                     }
                     TerminalWriterCommand::Resize { line } => (line, None, false, None),
                     TerminalWriterCommand::Input { line, trace } => (line, None, false, trace),
@@ -1859,8 +1833,7 @@ fn spawn_terminal_control_writer(
                     }
                 };
                 let result = stdin
-                    .write_all(scroll_line.as_bytes())
-                    .and_then(|()| stdin.write_all(line.as_bytes()))
+                    .write_all(line.as_bytes())
                     .and_then(|()| stdin.flush());
                 if let Some(trace) = trace {
                     // Stamp completion before waiting on Runtime to publish it.
@@ -2189,22 +2162,21 @@ mod tests {
     }
 
     #[test]
-    fn only_wheels_waiting_for_a_response_are_coalesced() {
+    fn next_wheel_reaches_the_pipe_without_waiting_for_a_terminal_frame() {
         let (writer, received) = scroll_writer();
         writer.send(wheel(3, 24)).unwrap();
         received.recv_timeout(Duration::from_secs(1)).unwrap();
-        writer.send(wheel(7, 25)).unwrap();
-        writer.send(wheel(-3, 26)).unwrap();
-        writer.send(wheel(2, 27)).unwrap();
-        writer.send(TerminalWriterCommand::FrameReceived).unwrap();
-        let lines = received.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0]["lines"], 6);
-        assert_eq!(lines[0]["column"], 27);
+
+        writer.send(wheel(2, 25)).unwrap();
+        let lines = received
+            .recv_timeout(Duration::from_millis(50))
+            .expect("a later wheel must not wait for an unrelated terminal frame");
+        assert_eq!(lines[0]["lines"], 2);
+        assert_eq!(lines[0]["column"], 25);
     }
 
     #[test]
-    fn keyboard_input_does_not_wait_for_a_scroll_response() {
+    fn keyboard_input_keeps_its_order_after_scroll_input() {
         let (writer, received) = scroll_writer();
         writer.send(wheel(3, 24)).unwrap();
         received.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -2215,20 +2187,10 @@ mod tests {
                 trace: None,
             })
             .unwrap();
-        let lines = received.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0]["type"], "terminal.scroll");
-        assert_eq!(lines[1]["type"], "terminal.input");
-    }
-
-    #[test]
-    fn an_ignored_wheel_does_not_hold_the_next_movement_forever() {
-        let (writer, received) = scroll_writer();
-        writer.send(wheel(3, 24)).unwrap();
-        received.recv_timeout(Duration::from_secs(1)).unwrap();
-        writer.send(wheel(2, 25)).unwrap();
-        let lines = received.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(lines[0]["lines"], 2);
+        let scroll = received.recv_timeout(Duration::from_secs(1)).unwrap();
+        let input = received.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(scroll[0]["type"], "terminal.scroll");
+        assert_eq!(input[0]["type"], "terminal.input");
     }
 
     #[test]

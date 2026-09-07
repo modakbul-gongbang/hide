@@ -221,7 +221,7 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
   Extend `PrecomputedCatalog`, `CatalogCache`, and `RootIndex` rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
-- Send the first wheel immediately; `PendingScroll` accumulates signed rows only while a response is pending, sends no cancelling sum, and releases on a frame or its 100 ms timeout.
+- Send every whole-row wheel promptly; combine signed rows only from consecutive requests already waiting in the writer queue, send no cancelling sum, and never wait for a terminal frame or timer.
   Preserve actual pointer cell/modifiers and Herdr-owned mouse/history routing; do not invent fallback geometry, reconstruct history from viewport frames, or append a same-size resize to force repaint.
   A missing view size emits its diagnostic once and sends no wheel.
   The accepted matching-pane Claude policy sends SGR press/release without Enter and records its detection basis; other or unknown panes retain local selection.
