@@ -53,6 +53,24 @@ struct HideTooltipTests {
         #expect(controller.state.visibleID == nil)
     }
 
+    @Test @MainActor func repeatedDismissalCancelsPendingRevealWithoutPublishingAgain() async throws {
+        let controller = HideTooltipController()
+        defer { controller.stop() }
+        controller.hover("pending", inside: true)
+        var changes = 0
+        let subscription = controller.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+
+        for _ in 0..<400 { controller.dismiss() }
+        #expect(changes == 1)
+        #expect(controller.state == HideTooltipState())
+        // Wait beyond the reveal deadline: a cancelled task must not resurrect
+        // the tooltip or broadcast another update after scrolling has stopped.
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(controller.state == HideTooltipState())
+        #expect(changes == 1)
+    }
+
     @Test func delayAndDismissalEvents() {
         var state = HideTooltipState()
         state.enter("new-agent", at: 0)

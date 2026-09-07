@@ -25,6 +25,7 @@ them locally.
 
 - Verified by:
 - Not verified (and why):
+- High-frequency path impact (or N/A): added work per input, affected consumers, scaling and queue bounds; regression that catches the old failure; native evidence and remaining gaps.
 
 ## Screenshots
 

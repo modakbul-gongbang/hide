@@ -20,7 +20,8 @@ Swift renderer tests can instantiate AppKit views and compare pixels without lau
 That is useful automated rendering coverage, but it does not exercise the physical display, live Herdr transport, foreground focus, or actual agent TUI interaction end to end.
 The required `check-terminal-row-cache.sh` structural gate additionally checks that the draw loop reaches expensive text preparation through the cache, not through a direct call on every repaint.
 It protects that source-level cost boundary; it does not measure frame latency or replace the bitmap and retention tests.
-The latency summarizer's Python tests, browser-host Node tests, and fixture/replay commands do not become CI gates merely because this guide lists them.
+The latency summarizer's Python tests run in the required repository-invariants lane.
+Browser-host Node tests and fixture/replay commands do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
 
 ### Maintenance and review policy
@@ -41,6 +42,40 @@ Start with an explicitly triggered native smoke lane, then add scheduled measure
 This is the proposed next automation step, not infrastructure this repository already has.
 
 ## 1. Define the claim before running anything
+
+### High-frequency action contracts
+
+Review the entire input dependency path, including shared observable state and overlays, even when the diff does not touch an event handler.
+State the cost per input, its notification fan-out, how it scales with total versus visible items, and what bounds pending work.
+An asynchronous task still costs work and can accumulate a queue; it is not a performance exemption.
+
+| Action | Required work | Work that must not follow every input |
+| --- | --- | --- |
+| Sidebar wheel | Resolve the actual target and deliver native scrolling | Project/catalog rebuild, unrelated state publication, disk/network I/O |
+| Tooltip dismissal / hover exit | Publish a real transition once and cancel obsolete reveal | Repeated no-op publication to every tooltip consumer |
+| Hidden shortcut hints | No target exposure projection while hidden | Per-control recomputation of the complete hint set |
+| Terminal wheel / typing | Prompt delivery preserving routing, ordering, and signed scroll quantity | Wait for an unrelated frame; drop intentional input as a duplicate |
+| Drag / repaint | Update affected geometry or damaged visible content | Per-event persistence or rebuilding unchanged rows |
+
+### Regression ownership and honest coverage
+
+| Boundary | Automated owner | What remains outside that test |
+| --- | --- | --- |
+| No-op publication and cancelled tooltip reveal | `HideTooltipTests` | Physical wheel monitor delivery and compositor latency |
+| Stationary native-scroll routing and pointer crossing | `PaneShortcutSettingsTests` | Complete SwiftUI sidebar frame cost and physical trackpad behavior |
+| First/subsequent wheel delivery and keyboard order | `live.rs` writer tests | Transport-to-visible-scroll latency |
+| Render repair and prepared row retention | Swift renderer tests and `check-terminal-row-cache.sh` | Live output and display presentation |
+| Counts, exclusions, unknown refresh rates, retained stalls | `scripts/tests/test_terminal_latency.py` | Causal pairing of an input with its requested content change |
+
+The Rust/Swift tests and latency-summary tests run in PR CI.
+Hidden-overlay projection cost and whole-sidebar isolation do not yet have an end-to-end automated guard; review the source and profile the affected native scenario rather than calling them covered by the tooltip tests.
+For a growth claim, hold the visible row count fixed, vary total retained items and input count independently, and compare work and pending-queue growth after warm-up.
+This controlled scaling run remains local QA, not an implemented CI benchmark.
+Assert stable observable boundaries rather than private helper call graphs; use a targeted structural gate only when the cost contract cannot be observed economically in component tests.
+Restore a realistic old defect temporarily and predict which regression will fail before running it; keep the mutation out of the final diff.
+Do not turn scheduler-sensitive elapsed time into a universal performance threshold.
+
+### Measurement claim
 
 Write the symptom, exact reproduction sequence, expected visible result, affected clients, and baseline/candidate revisions in the run record.
 Separate these questions: does the content render correctly, how long does an internal stage take, how long until the user sees the requested change, and does retained memory grow?

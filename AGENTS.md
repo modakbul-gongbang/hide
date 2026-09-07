@@ -117,6 +117,12 @@ The weekly `herdr-update.yml` workflow continues to propose upstream stable rele
 
 ## Performance Guide
 
+High-frequency input changes include their shared observable state, tooltips, overlays, and layout dependencies, not only event handlers.
+Explain added work per input, notification fan-out, scaling with retained versus visible data, and pending-work bounds before adding a feature to that path.
+Publish only actual state transitions; repeated input with no state change must not wake unrelated consumers.
+Preserve intentional input order and quantity; suppressing redundant state notifications is not permission to drop input.
+Use the action contracts and regression ownership table in the performance guide, with a test that fails when the original failure is restored.
+
 Before diagnosing, changing, reviewing, or verifying terminal responsiveness, rendering, scrolling, selection, resize, tab switching, CPU, memory, snapshots, or attach behavior, read [docs/PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md) in full.
 That guide owns the reproduction procedure, isolation checklist, measurement boundaries, commands, regression coverage, and cleanup/verdict requirements.
 Historical run measurements are not acceptance thresholds; compare matched builds and workloads and keep evidence under `agents/runs/<slug>/`.

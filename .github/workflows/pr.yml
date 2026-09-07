@@ -64,6 +64,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+      - name: Test performance measurement semantics
+        run: python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
       - name: Structural checks
         run: |
           bash scripts/check-harness-ignore-anchor.sh
