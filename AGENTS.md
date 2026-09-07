@@ -141,6 +141,7 @@ Keep these invariants during implementation:
   Keep row preparation behind `preparedRow`; `scripts/check-terminal-row-cache.sh` enforces that the draw loop never bypasses the cache.
 - `ChangeNotifier` announces once per burst; clear its latch before taking the snapshot lock.
 - Native verification uses exactly one identified app and an isolated Herdr server, including remote-connection checks; never manipulate the operator's panes or server.
+- A Browser plugin pane is only for QA of the browser-pane product surface. Never open one as a generic verification surface for the native shell, editor, Git diff, sidebar, build, or installed app.
 
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)

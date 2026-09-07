@@ -93,4 +93,6 @@ macos/scripts/build_dev_app.sh
 ```
 
 Native verification must use the running Hide build and screenshots, not just a Chrome screenshot or passing unit tests.
+A Browser plugin pane is only a verification surface when the browser-pane product itself is under test.
+For the native shell, editor, Git diff, sidebar, build, or installed app, verify one identified installed app instance with a real native capture and do not open or manipulate an operator Browser pane.
 Keep screenshots, profiles and run transcripts under local-only `agents/runs/`.
