@@ -9,6 +9,16 @@ The browser is a real Chromium page in an existing named chromux profile.
 Hide displays that exact target through CDP screencast and forwards pointer, keyboard and committed text input to it.
 It does not transplant a Chrome window, create a second browser engine, or copy profile storage.
 
+## Opening and completion checks
+
+Hide 내부 브라우저를 요청받으면 `browser-pane.mjs`를 통해 `hide.browser`를 사용한다.
+`official.browser`나 외부 Chrome 창으로 대체하지 않는다.
+실행 전 등록된 plugin 경로가 존재하고 사용할 설치본과 일치하는지 확인한다.
+기존 pane의 소유권을 확인하지 않고 연결을 교체하지 않는다.
+명령 성공이나 외부 Chrome의 페이지 로딩은 완료 증거가 아니다.
+실제 Hide 창에서 pane의 페이지 표시, 오류 안내, 글자 크기와 여백을 확인한다.
+재시도로 표시가 복구된 것과 최초 실행 오류를 수정한 것을 구분해서 보고한다.
+
 ## Open from an agent terminal
 
 Requirements: Node.js 22 or newer, the Herdr runtime pinned in [herdr-bundle.json](../macos/Sources/HerdrMacOS/Resources/herdr-bundle.json), and chromux on the process PATH.

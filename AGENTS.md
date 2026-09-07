@@ -6,6 +6,7 @@ Read [docs/README.md](docs/README.md) before choosing supporting documents.
 It identifies current contracts and procedures, their code/test owners, and historical/reference-only material.
 Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
+Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host entrypoint, installation ownership, and native display verification.
 
 ## Repository Layout
 
