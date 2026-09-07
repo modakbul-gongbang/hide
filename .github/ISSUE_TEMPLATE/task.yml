@@ -1,0 +1,109 @@
+name: Task
+description: Define a small, implementation-ready unit of work.
+title: "[Task] "
+labels:
+  - task
+projects:
+  - modakbul-gongbang/1
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep the task small enough for one focused pull request.
+        Record decisions here so an implementor can work without guessing.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What observable outcome should this task produce?
+      placeholder: After this task, a user can...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What is happening today, and why should it change?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What work belongs in this task?
+      placeholder: |
+        - Change...
+        - Add...
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What related work is deliberately excluded?
+      placeholder: This task does not...
+    validations:
+      required: true
+
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions and constraints
+      description: Record product decisions, technical constraints, and rules the implementor must preserve.
+      placeholder: |
+        - Decision: ...
+        - Constraint: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: List outcomes that a reviewer can verify from outside the implementation.
+      placeholder: |
+        - [ ] Given..., when..., then...
+        - [ ] Given..., when..., then...
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Explain how each acceptance criterion should be checked.
+      placeholder: |
+        - Automated: ...
+        - Manual: ...
+        - Native or visual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: After creating this issue, add blocking relationships in the issue sidebar. List relevant issue URLs here for convenience.
+      placeholder: |
+        - Blocked by: ...
+        - Blocks: ...
+
+  - type: textarea
+    id: open_questions
+    attributes:
+      label: Open questions
+      description: List decisions that still require a person. Leave empty when the task is ready to run.
+
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Readiness check
+      options:
+        - label: The acceptance criteria describe observable behavior.
+          required: true
+        - label: The task can be delivered as one focused pull request.
+          required: true
