@@ -1,11 +1,80 @@
 import Foundation
 import AppKit
 import Highlightr
+import SwiftUI
 import Testing
 @testable import HerdrMacOS
 
 @Suite("Right panel presentation")
 struct RightPanelPresentationTests {
+    @Test @MainActor func lineNumberRulerDoesNotPaintOverTheDocument() throws {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        let scrollView = NSScrollView(frame: textView.frame)
+        scrollView.documentView = textView
+        let ruler = CodeLineNumberRulerView(textView: textView, scrollView: scrollView, fontSize: 12)
+        ruler.frame = NSRect(x: 0, y: 0, width: HideTheme.Editor.lineNumberColumnWidth, height: 100)
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 300, pixelsHigh: 100,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: 300, height: 100).fill()
+        ruler.drawHashMarksAndLabels(in: NSRect(x: 0, y: 0, width: 300, height: 100))
+        let untouched = try #require(bitmap.colorAt(x: 150, y: 50)?.usingColorSpace(.deviceRGB))
+        #expect(untouched.redComponent > 0.99, "Ruler drawing must not cover the adjacent editor body")
+    }
+
+    @Test @MainActor func fileEditorDrawsMonospacedTextAfterInitialEmptyDraft() async throws {
+        let editor = HighlightedCodeEditor(
+            text: .constant(""),
+            language: nil,
+            isEditable: true,
+            textScale: 1
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+        host.layoutSubtreeIfNeeded()
+        host.rootView = HighlightedCodeEditor(
+            text: .constant("Notice text must be visible.\nSecond line.\n"),
+            language: nil,
+            isEditable: true,
+            textScale: 1
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        host.layoutSubtreeIfNeeded()
+        func descendants(_ view: NSView) -> [NSView] {
+            view.subviews.flatMap { [$0] + descendants($0) }
+        }
+        let textView = try #require(descendants(host).compactMap { $0 as? NSTextView }.first)
+        #expect(textView.font?.isFixedPitch == true, "Plain text must retain the editor's monospaced font after loading")
+        let manager = try #require(textView.layoutManager)
+        let container = try #require(textView.textContainer)
+        manager.ensureLayout(for: container)
+        let glyphBounds = manager.boundingRect(forGlyphRange: NSRange(location: 0, length: manager.numberOfGlyphs), in: container)
+        #expect(textView.bounds.width > 100)
+        #expect(textView.bounds.height >= glyphBounds.maxY)
+        #expect(textView.visibleRect.intersects(glyphBounds))
+        let bitmap = try #require(textView.bitmapImageRepForCachingDisplay(in: textView.bounds))
+        textView.cacheDisplay(in: textView.bounds, to: bitmap)
+        var brightPixels = 0
+        for y in 0..<min(bitmap.pixelsHigh, 100) {
+            for x in 0..<min(bitmap.pixelsWide, 500) {
+                if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                   color.redComponent > 0.5 { brightPixels += 1 }
+            }
+        }
+        #expect(brightPixels > 20, "The document body must draw visible glyphs, independent of its ruler")
+    }
+
+    @Test @MainActor func verificationNoRemoteArgumentDisablesRemoteTargetsOnlyForThatLaunch() {
+        #expect(CoreBridge.remoteTargets(arguments: ["hide"]).contains { $0["id"] == "mini" })
+        #expect(CoreBridge.remoteTargets(arguments: ["hide", "--verification-no-remote"]).isEmpty)
+    }
+
     @Test func directoryLoaderReadsOnlyTheRequestedLevelAndKeepsRepositoryDotfiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("hide-right-panel-\(UUID().uuidString)", isDirectory: true)
@@ -53,12 +122,26 @@ struct RightPanelPresentationTests {
         #expect(highlighter?.setTheme(to: "atom-one-dark") == true)
 
         let plainTextFallback = HighlightedCodeEditor.makeTextStorage(
+            text: "let value = 1",
             language: "swift",
             highlightr: nil
         )
         #expect(!(plainTextFallback is CodeAttributedString))
-        plainTextFallback.replaceCharacters(in: NSRange(location: 0, length: 0), with: "let value = 1")
         #expect(plainTextFallback.string == "let value = 1")
+        #expect(
+            plainTextFallback.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+                == HideTheme.Native.primary
+        )
+
+        let extensionlessText = HighlightedCodeEditor.makeTextStorage(
+            text: "This file has no extension.",
+            language: nil,
+            highlightr: highlighter
+        )
+        #expect(
+            extensionlessText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+                == HideTheme.Native.primary
+        )
 
         let macosRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -125,12 +208,14 @@ struct RightPanelPresentationTests {
                 "checkout_id": "c",
                 "path": "/repo/README.md",
                 "label": "README.md",
+                "kind": "file",
+                "diff_committed": null,
                 "dirty": true
             }],
             "active_tab_id": "file:w:c:/repo/README.md",
             "document": {
                 "path": "/repo/README.md",
-                "language": "md",
+                "language": "markdown",
                 "contents_utf8": "draft",
                 "opened_modified_at_unix_ms": 1,
                 "dirty": true,
@@ -168,6 +253,7 @@ struct RightPanelPresentationTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
+            "--verification-no-remote",
             "--workspace-root", root.path,
             "--state-path", stateURL.path,
         ])
@@ -235,6 +321,7 @@ struct RightPanelPresentationTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
+            "--verification-no-remote",
             "--workspace-root", macosRoot.path,
             "--state-path", stateURL.path,
         ])
@@ -289,6 +376,7 @@ struct RightPanelPresentationTests {
         var first: CoreBridge? = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
+            "--verification-no-remote",
             "--state-path", stateURL.path,
         ])
         try await Task.sleep(for: .milliseconds(50))
@@ -309,6 +397,7 @@ struct RightPanelPresentationTests {
         let restored = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
+            "--verification-no-remote",
             "--state-path", stateURL.path,
         ])
         let uiState = try #require(restored.snapshot?.uiState)

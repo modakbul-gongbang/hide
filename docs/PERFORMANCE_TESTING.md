@@ -100,12 +100,14 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Clear inherited identifiers before launching the fixture |
 | `HERDR_ENV` | Clear inherited nesting marker when starting the standalone reference TUI |
 | Hide `--state-path`, `--workspace-root` | Explicit run-owned app state file and disposable checkout |
+| Hide `--verification-no-remote` | Disable configured remote targets in the debug bundle while exercising a live private local server |
 
 Check the pinned runtime's path behavior when updating it.
 The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; changing `HERDR_CONFIG_PATH` alone does not isolate session data.
 The client socket inserts `-client` before `.sock`; allow room for that suffix in the platform's Unix socket path limit.
 Do not repurpose `HOME` or assume a private local socket disables SSH discovery.
 Inspect remote registrations, automatic SSH connection attempts, and remote client state too; an unexpected remote connection is an isolation failure to resolve before interacting.
+Pass `--verification-no-remote` to a debug bundle when the scenario does not exercise remote behavior; release builds ignore this verification-only argument.
 Do not edit the operator's SSH configuration or stop remote services to make a local fixture pass.
 
 Save process/socket ownership before launch, prove the private server has zero workspaces before creating fixtures, and verify that the operator server gained no QA connection.

@@ -1,17 +1,23 @@
 import AppKit
 import SwiftUI
 
-struct FileViewerOverlay: View {
+struct EditorViewerOverlay: View {
     @EnvironmentObject private var model: ShellModel
     @State private var draft = ""
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
+    private var activeTab: CoreEditorTabSnapshot? {
+        guard let activeID = editor?.activeTabID else { return nil }
+        return editor?.tabs.first(where: { $0.id == activeID })
+    }
     private var selectedURL: URL? { editor?.path.map(URL.init(fileURLWithPath:)) }
     private var readonlyReason: String? { editor?.readonlyReason }
 
     var body: some View {
         Group {
-            if let selectedURL {
+            if let activeTab, activeTab.kind == .diff {
+                diffViewer(tab: activeTab)
+            } else if let selectedURL {
                 VStack(spacing: HideTheme.spacingNone) {
                     editorContent(for: selectedURL)
                     if let conflict = editor?.conflict {
@@ -29,8 +35,8 @@ struct FileViewerOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
-        .accessibilityIdentifier("file-viewer-overlay")
-        .task(id: editor?.path) {
+        .accessibilityIdentifier("editor-viewer-overlay")
+        .task(id: editor?.activeTabID) {
             draft = editor?.contentsUTF8 ?? ""
         }
         .onChange(of: editor?.contentsUTF8) { _, contents in
@@ -50,7 +56,7 @@ struct FileViewerOverlay: View {
         } else if editor?.contentsUTF8 != nil {
             HighlightedCodeEditor(
                 text: $draft,
-                language: syntaxLanguage(for: url),
+                language: editor?.language,
                 isEditable: readonlyReason == nil,
                 textScale: model.editorTextScale
             )
@@ -59,6 +65,33 @@ struct FileViewerOverlay: View {
                 title: "Preview only",
                 message: editor?.readonlyReason ?? "This file type cannot be shown as text."
             )
+        }
+    }
+
+    @ViewBuilder
+    private func diffViewer(tab: CoreEditorTabSnapshot) -> some View {
+        let changes = model.changes
+        if let reason = changes.unavailableReason {
+            unavailable(title: "Diff unavailable", message: reason)
+        } else if changes.selectedPath != tab.path
+                    || changes.selectedCommitted != tab.diffCommitted {
+            unavailable(
+                title: "Diff unavailable",
+                message: "This file is no longer in the selected Changes group."
+            )
+        } else if let diff = changes.diff, diff.path == tab.path {
+            DiffText(diff: diff)
+        } else {
+            VStack(spacing: HideTheme.spacingSM) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(HideTheme.secondary)
+                Text("Reading the diff")
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.muted)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("changes-diff-loading")
         }
     }
 
@@ -115,20 +148,4 @@ struct FileViewerOverlay: View {
         ["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic", "avif"].contains(url.pathExtension.lowercased())
     }
 
-    private func syntaxLanguage(for url: URL) -> String? {
-        switch url.pathExtension.lowercased() {
-        case "swift": "swift"
-        case "rs": "rust"
-        case "js", "mjs", "cjs", "jsx": "javascript"
-        case "ts", "tsx": "typescript"
-        case "json", "jsonc", "jsonl": "json"
-        case "md", "markdown": "markdown"
-        case "sh", "bash", "zsh", "fish": "bash"
-        case "toml", "ini", "cfg": "ini"
-        case "py", "pyw": "python"
-        case "html", "htm": "html"
-        case "css", "scss", "sass", "less": "css"
-        default: nil
-        }
-    }
 }

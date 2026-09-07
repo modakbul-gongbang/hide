@@ -285,14 +285,14 @@ private struct TabSwitcherOverlay: View {
     private func icon(for tab: ShellTabItem) -> String {
         switch tab.kind {
         case .herdr: "terminal"
-        case .file: "doc.text"
+        case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
         }
     }
 
     private func detail(for tab: ShellTabItem) -> String {
         let kind = switch tab.kind {
         case .herdr: "Terminal"
-        case .file: "File"
+        case .editor(let tab): tab.kind == .diff ? "Diff" : "File"
         }
         guard let checkoutLabel, !checkoutLabel.isEmpty else { return kind }
         return "\(kind) · \(checkoutLabel)"
@@ -1409,7 +1409,7 @@ private struct HideMainView: View {
                 HideTerminalSurface()
                 if !model.isRemoteContext,
                    model.core.snapshot?.editor.activeTabID != nil {
-                    FileViewerOverlay()
+                    EditorViewerOverlay()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1655,7 +1655,7 @@ private struct HideTabStrip: View {
     private func tabIcon(_ tab: ShellTabItem) -> String {
         switch tab.kind {
         case .herdr: "rectangle.split.2x1"
-        case .file: "doc.text"
+        case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
         }
     }
 }

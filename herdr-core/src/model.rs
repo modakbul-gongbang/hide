@@ -390,18 +390,18 @@ pub struct StripTabSnapshot {
     /// Strip-wide identity, unique across kinds.
     pub id: String,
     pub kind: StripTabKind,
-    /// The Herdr tab id or the file tab id this entry stands for.
+    /// The Herdr tab id or editor tab id this entry stands for.
     pub source_id: String,
     pub label: String,
 }
 
-/// The kinds of tab a strip holds. Herdr tabs and file tabs are the two the
-/// product has; a kind is added when a surface that needs one is built.
+/// The kinds of tab a strip holds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StripTabKind {
     Herdr,
     File,
+    Diff,
 }
 
 impl StripTabSnapshot {
@@ -420,6 +420,16 @@ impl StripTabSnapshot {
         Self {
             id: format!("file:{source_id}"),
             kind: StripTabKind::File,
+            source_id,
+            label: label.into(),
+        }
+    }
+
+    pub fn diff(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("diff:{source_id}"),
+            kind: StripTabKind::Diff,
             source_id,
             label: label.into(),
         }
@@ -712,19 +722,29 @@ pub struct TerminalPaneSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorSnapshot {
-    pub tabs: Vec<FileTabSnapshot>,
+    pub tabs: Vec<EditorTabSnapshot>,
     pub active_tab_id: Option<String>,
     pub document: Option<EditorDocumentSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct FileTabSnapshot {
+pub struct EditorTabSnapshot {
     pub id: String,
     pub workspace_id: String,
     pub checkout_id: String,
     pub path: String,
     pub label: String,
+    pub kind: EditorTabKind,
+    /// Which Changes group a diff tab represents. Present only for diff tabs.
+    pub diff_committed: Option<bool>,
     pub dirty: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorTabKind {
+    File,
+    Diff,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

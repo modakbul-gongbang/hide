@@ -59,6 +59,7 @@ The release bundle defaults to `hide/state.json` under the user's Application Su
 The file is rewritten whenever the pet moves or is toggled, so editing it while the app runs is pointless.
 For an owned fixture, quit its exact process before resetting its private state and relaunching.
 Do not reset the operator's state file for QA; supply a separate `--state-path` and follow the performance guide's server-isolation procedure.
+When a debug-bundle scenario needs a live private local Herdr server but no remote devices, also pass `--verification-no-remote` so the verification launch makes no SSH connection attempts.
 
 See [pet-window-macos.md](pet-window-macos.md) for the off-screen guards; a
 saved position outside every connected screen is clamped back into view

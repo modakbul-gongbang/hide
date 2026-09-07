@@ -82,6 +82,12 @@ enum HideTheme {
         static let headline: CGFloat = 17
         static let display: CGFloat = 30
     }
+    enum Editor {
+        static let contentInset = spacingMD
+        static let lineNumberColumnWidth: CGFloat = 44
+        static let diffLineNumberColumnWidth: CGFloat = 40
+        static let minimumContentWidth: CGFloat = 720
+    }
     enum Hint {
         static let delay: TimeInterval = 0.150
         static let tooltipDelay: TimeInterval = 0.400
@@ -145,6 +151,7 @@ enum HideTheme {
         static let divider = NSColor(HideTheme.divider)
         static let primary = NSColor(HideTheme.primary)
         static let secondary = NSColor(HideTheme.secondary)
+        static let muted = NSColor(HideTheme.muted)
         static let searchMatchHighlight = NSColor(HideTheme.searchMatchHighlight)
     }
 

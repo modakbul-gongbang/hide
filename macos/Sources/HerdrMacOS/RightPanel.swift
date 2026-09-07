@@ -148,9 +148,9 @@ struct RightPanel: View {
     }
 }
 
-/// The right panel's changes section: the checkout's changed files, and the
-/// diff of whichever one is selected. Read-only by decision - staging and
-/// committing stay in the terminal for this round.
+/// The right panel's changes section is the checkout's changed-file list.
+/// Activating a row opens its read-only diff in the central editor strip;
+/// staging and committing stay in the terminal for this round.
 struct ChangesView: View {
     @EnvironmentObject private var model: ShellModel
     @State private var uncommittedExpanded = true
@@ -184,10 +184,7 @@ struct ChangesView: View {
                 message: "This checkout matches its last commit."
             )
         } else {
-            VSplitView {
-                changedFileList
-                diffPane
-            }
+            changedFileList
             .accessibilityIdentifier("changes-view")
         }
     }
@@ -240,36 +237,7 @@ struct ChangesView: View {
         let isSelected = entry.path == changes.selectedPath
             && changes.selectedCommitted == committed
         return ChangedFileRow(entry: entry, committed: committed, isSelected: isSelected) {
-            model.selectChangedFile(isSelected ? nil : entry.path, committed: committed)
-        }
-    }
-
-    @ViewBuilder
-    private var diffPane: some View {
-        if let selected = changes.selectedPath {
-            if let diff = changes.diff, diff.path == selected {
-                DiffText(diff: diff)
-            } else {
-                // The selection is applied at once and the diff arrives on the
-                // next read, so the wait says so rather than showing an empty
-                // pane that reads as "no difference".
-                VStack(spacing: HideTheme.spacingSM) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(HideTheme.secondary)
-                    Text("Reading the diff")
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(HideTheme.muted)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("changes-diff-loading")
-            }
-        } else {
-            Text("Select a file to see its diff.")
-                .hideFont(size: HideTheme.Typography.body)
-                .foregroundStyle(HideTheme.muted)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("changes-diff-empty")
+            model.selectChangedFile(entry.path, committed: committed)
         }
     }
 }
@@ -380,86 +348,6 @@ private struct ChangedFileRow: View {
             parts.append("\(added) lines added, \(removed) removed")
         }
         return parts.joined(separator: ", ")
-    }
-}
-
-/// A unified diff, tinted by line kind. Read-only text rather than the code
-/// editor: a diff is not one file's language, and the editor's highlighter
-/// would colour it as whatever the file happens to be.
-private struct DiffText: View {
-    let diff: CoreChangedFileDiff
-
-    var body: some View {
-        ScrollView([.vertical, .horizontal]) {
-            VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
-                if let reason = diff.notice {
-                    Text(reason)
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(HideTheme.warning)
-                        .padding(.horizontal, HideTheme.spacingMD)
-                        .padding(.vertical, HideTheme.spacingXS)
-                }
-                ForEach(Array(diff.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { line in
-                    DiffLine(text: String(line.element))
-                }
-            }
-            .padding(.vertical, HideTheme.spacingXS)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .accessibilityIdentifier("changes-diff-text")
-    }
-}
-
-private struct DiffLine: View {
-    let text: String
-
-    var body: some View {
-        Text(text.isEmpty ? " " : text)
-            .font(.system(size: HideTheme.editorBaseFontSize, design: .monospaced))
-            .foregroundStyle(foreground)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, HideTheme.spacingMD)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background)
-    }
-
-    /// Header lines (`+++`, `---`) are not additions or removals and are
-    /// checked before the single-character prefixes.
-    private var kind: DiffLineKind { DiffLineKind.of(text) }
-
-    private var foreground: Color {
-        switch kind {
-        case .added: HideTheme.diffAdded
-        case .removed: HideTheme.diffRemoved
-        case .hunk: HideTheme.secondary
-        case .context: HideTheme.primary
-        }
-    }
-
-    private var background: Color {
-        switch kind {
-        case .added: HideTheme.diffAddedBackground
-        case .removed: HideTheme.diffRemovedBackground
-        case .hunk, .context: Color.clear
-        }
-    }
-}
-
-enum DiffLineKind {
-    case added
-    case removed
-    case hunk
-    case context
-
-    static func of(_ line: String) -> DiffLineKind {
-        if line.hasPrefix("+++") || line.hasPrefix("---") { return .hunk }
-        if line.hasPrefix("@@") || line.hasPrefix("diff ") || line.hasPrefix("index ") {
-            return .hunk
-        }
-        if line.hasPrefix("+") { return .added }
-        if line.hasPrefix("-") { return .removed }
-        return .context
     }
 }
 
