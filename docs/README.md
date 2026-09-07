@@ -16,12 +16,12 @@ A document's location or an old PRD citation does not make it current authority.
 | Performance and rendering verification | [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) | Regression tests, measurement tools, native run evidence |
 | Browser pane use and ownership | [BROWSER_PANES.md](BROWSER_PANES.md) | `plugins/browser/`, native browser viewer |
 | Agent status and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `pet.rs`, status tests |
-| Optional ambient counts and privacy | [ambient-signals.md](ambient-signals.md) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
+| Optional ambient counts and privacy | [status-model.md](status-model.md#ambient-signals-subagents-background-tasks) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
 | Native pet window and gestures | [pet-window-macos.md](pet-window-macos.md) | `PetWindow.swift`, `PetIntegrationTests.swift` |
 | Pet theme format | [theme-contract.md](theme-contract.md) | `PetTheme.swift`, each `theme.json`, theme tests |
-| Pet artwork workflow | [pet-assets.md](pet-assets.md) | Bundled manifest and artwork; theme contract governs format |
+| Pet artwork workflow | [theme-contract.md](theme-contract.md#adding-art) | Bundled manifest and artwork |
 | Deterministic QA fixtures | [verification-fixtures.md](verification-fixtures.md) | Fixture/test code; performance guide governs native isolation |
-| App icon and bundled marks | [brand-guidelines.md](brand-guidelines.md) | Resource files, icon generation script, third-party notices |
+| App icon and bundled marks | [dev-runtime.md](dev-runtime.md#bundled-artwork-ownership) | Resource files, icon generation script, third-party notices |
 
 The Herdr pin lives in `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`; the matching schema lives in `contracts/herdr-api.schema.json`.
 Documentation must point to those files rather than inventing another version or protocol authority.
@@ -34,8 +34,6 @@ When code, tests, and a current contract disagree, investigate and update the re
 | --- | --- | --- |
 | [Orca visual references](design-reference/README.md) and its three images | Layout and interaction inspiration | Read on demand; `DESIGN.md` wins on current UI requirements |
 | `assets/hide-icon-candidates/` | Artwork candidates, including the icon script's default source | Source/reference art, not screenshots proving the app rendered |
-| [Superseded native ownership ADR](architecture/adr-0001-native-surface-ownership.md) | Decision history for the retired Rust/WGPU/CEF approach | Do not apply its dependency pins, budgets, paths, or acceptance results to the Swift shell |
-| [T1 research matrix](research/t1-native-architecture-matrix.md) | Historical research, still cited by legacy regression manifests | Do not treat historical upstream status or versions as current; not a performance baseline |
 | `fixtures/` | Small deterministic terminal input files | Inputs for owned fixtures, not test results or an alternate architecture contract |
 
 The frozen `spikes/swift-shell-pivot/` record remains outside `docs/` and must not be rewritten to describe later changes.
@@ -44,7 +42,7 @@ Screenshots, traces, profiles, recordings, and per-run verdicts belong in ignore
 
 ## Retired documents
 
-The porting checklist, copied legacy SSH implementation/config, T2/T3/T4 milestone reports, and old static-slime generation prompts have been removed.
+The retired Rust/WGPU/CEF ADR and research matrix, porting checklist, copied legacy SSH implementation/config, milestone reports, and static-slime prompts live only in Git history.
 They described completed migration work or contradicted the current shell, runtime pin, and animated theme contract.
 Use Git history for a historical investigation; do not restore them as active instructions.
 Old PRDs may name those removed inputs because they record the original work rather than current setup steps.
@@ -52,6 +50,7 @@ Old PRDs may name those removed inputs because they record the original work rat
 ## Keeping the map reliable
 
 - Give each new document one responsibility and add it to this map with its code/test owner.
+- Add a section to an existing owner before creating a new guide; delete a guide when its unique contract has moved or its implementation has retired.
 - Update the owning document in the same change as a behavior, build command, schema, or workflow change.
 - Delete replaced instructions and fix their active references in the same change; retain history only when it has a named reader or decision-history purpose, with a superseded notice at the top.
 - Keep procedures in their owning guide; AGENTS.md should route readers and retain critical invariants rather than copying long runbooks.
