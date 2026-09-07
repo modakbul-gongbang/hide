@@ -220,11 +220,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
     private var displayClock: TerminalDisplayClock?
-    private var frameGate = TerminalFrameGate()
     public var terminalDisplayTick: ((Double) -> Void)?
 
     func displayFrame(period: Double) {
-        frameGate.tick()
         guard !isHiddenOrHasHiddenAncestor, window != nil else { return }
         terminalDisplayTick?(period)
         guard pendingDisplay, !terminal.synchronizedOutputActive else { return }
@@ -338,10 +336,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 
-    // Per-row render state, keyed by everything the row is drawn from, so a
-    // draw rebuilds only the rows that changed. Cleared wherever the inputs
-    // the key does not name change: fonts and colors.
-    var preparedRowCache: [PreparedRowKey: PreparedRow] = [:]
+    // The latest render state of each visible row. Each entry validates all
+    // its shaping inputs; fonts and colors invalidate the whole viewport.
+    var preparedRowCache: [Int: CachedPreparedRow] = [:]
 
     // Cache for the colors in the 0..255 range
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
@@ -1305,10 +1302,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var terminalContentsDidDraw: (() -> Void)?
 
     override public func draw (_ dirtyRect: NSRect) {
-        guard frameGate.draw(visible: !isHiddenOrHasHiddenAncestor && window != nil) else {
-            pendingDisplay = true
-            return
-        }
+        // A draw callback owns a freshly invalidated backing store. Returning
+        // without painting publishes an empty layer, even if this view drew
+        // earlier in the same display-link interval. Pace damage submission in
+        // displayFrame, never AppKit's requests to repair exposed pixels.
+        guard !isHiddenOrHasHiddenAncestor, window != nil else { return }
 #if canImport(MetalKit)
         if metalView != nil {
             return

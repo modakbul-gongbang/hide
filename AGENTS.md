@@ -146,7 +146,9 @@ Quote a mutex-wait figure with the load and the drive it was taken under or it m
 - Settle geometry and pace rendering with the view's display link.
   Two stable display ticks publish the final grid; transient reports only update the frame guard.
   Attach sends the current settled size, and only matching full frames replace a held canvas after a geometry or control transition.
-  Parse incoming data immediately, draw each visible pane at most once per display tick, and leave hidden panes undrawn.
+  Parse incoming data immediately, submit pending terminal damage once per display tick, and leave hidden panes undrawn.
+  Never reject an AppKit draw callback because the view already painted in that tick: the callback repairs an invalidated backing store, and skipping it can publish an empty layer during typing or selection.
+  Keep only each visible row's latest prepared render state, not every past generation or selection until a global cache flush; destroying thousands of old CoreText objects in one draw creates a periodic frame stall.
   Keyboard bytes go directly from the main-actor delegate to the core writer; do not add an asynchronous main-actor hop.
 - Announce changes once per burst, not once per change.
   `ChangeNotifier` latches on the false-to-true flip and `herdr_core_snapshot` clears the latch before it takes the lock.

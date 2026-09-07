@@ -267,10 +267,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 
-    // Per-row render state, keyed by everything the row is drawn from, so a
-    // draw rebuilds only the rows that changed. Cleared wherever the inputs
-    // the key does not name change: fonts and colors.
-    var preparedRowCache: [PreparedRowKey: PreparedRow] = [:]
+    // The latest render state of each visible row. Each entry validates all
+    // its shaping inputs; fonts and colors invalidate the whole viewport.
+    var preparedRowCache: [Int: CachedPreparedRow] = [:]
 
     // Timer to display the terminal buffer
     var link: CADisplayLink!

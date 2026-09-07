@@ -4,8 +4,8 @@ import Testing
 
 @Suite("Terminal display frames")
 @MainActor
-struct TerminalFrameGateTests {
-    @Test func streamingFramesPaintOnceAndHiddenFramesAreStillParsed() throws {
+struct TerminalDisplayClockTests {
+    @Test func hiddenFramesAreParsedAndPaintTheLatestContentWhenShown() throws {
         let bounds = NSRect(x: 0, y: 0, width: 480, height: 240)
         let window = NSWindow(contentRect: bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -29,7 +29,10 @@ struct TerminalFrameGateTests {
             }
             let before = draws
             view.displayFrame(period: 1.0 / 120)
-            for _ in 0..<20 { view.draw(bounds) }
+            // This offscreen window has no AppKit display cycle. Deliver its
+            // paint callback explicitly; a hidden view must still refuse it.
+            // Repeated visible callbacks are covered by TerminalRepaintTests.
+            view.draw(bounds)
             #expect(draws - before == (frame < 60 ? 1 : 0))
         }
         #expect(draws == 60)

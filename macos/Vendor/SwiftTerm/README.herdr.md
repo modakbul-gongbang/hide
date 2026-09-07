@@ -7,7 +7,9 @@ Local changes, each covered by a test in `HerdrMacOSTests`:
 
 - The IME marked-text overlay (`SwiftTermImeOverlayTests.swift`).
 - Implicit link detection in `Terminal.swift`: a path ends at whitespace, a bare slash command is not a path, and rows a transcript hard-wraps are joined back into one link when the upper row is full or ends at a separator that the lower row's first unit could not have followed (`TerminalImplicitLinkSpanTests.swift`).
-- Display pacing: `Mac/TerminalDisplayClock.swift` draws each view once per display-link tick through `TerminalFrameGate`, and the AppKit view reports `terminalContentsDidDraw` and `terminalDisplayTick` to its delegate (`TerminalFrameGateTests.swift`).
+- Display pacing: `Mac/TerminalDisplayClock.swift` schedules pending damage on display-link ticks, while every visible AppKit draw callback repairs its backing store, including repeated callbacks within one tick (`TerminalDisplayClockTests.swift`, `TerminalRepaintTests.swift`).
+  The AppKit view reports `terminalContentsDidDraw` and `terminalDisplayTick` to its delegate.
+- Prepared row rendering retains only each visible row's latest glyphs and validates content, selection, link and blink inputs; old screen generations cannot accumulate until a bulk eviction (`TerminalRepaintTests.swift`).
 - `mouseCell(with:)` on the AppKit view, so the application can route a click by its cell.
 - The package's macOS floor is raised from 11 to 14 for the view display link; the other platform floors are upstream's.
 The upstream MIT license is preserved in `LICENSE`.

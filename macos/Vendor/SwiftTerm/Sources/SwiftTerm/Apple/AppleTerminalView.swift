@@ -228,6 +228,14 @@ struct PreparedRow {
     let segments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [PreparedRun])]
 }
 
+struct CachedPreparedRow {
+    // Keep the identity alive until eviction: a recycled object address must
+    // not make a different BufferLine with the same generation a cache hit.
+    let line: BufferLine
+    let key: PreparedRowKey
+    let prepared: PreparedRow
+}
+
 // Holds the information used to render a line
 struct ViewLineInfo {
     // Contains the generated segments for this line
@@ -1155,18 +1163,14 @@ extension TerminalView {
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
             blinkVisible: textBlinkVisible)
-        if let cached = preparedRowCache[key] {
-            return cached
+        if let cached = preparedRowCache[row], cached.key == key {
+            return cached.prepared
         }
-        // A row keeps one entry per distinct key, so a viewport that is
-        // scrolling or selecting accumulates them. The bound is generous
-        // enough that a still viewport never evicts, and small enough that a
-        // long session cannot grow without limit.
-        if preparedRowCache.count >= 4096 {
-            preparedRowCache.removeAll(keepingCapacity: true)
-        }
+        // Replace this row's previous state immediately. Keeping every past
+        // generation/selection until a global capacity flush retained whole
+        // screens of CoreText objects and destroyed thousands in one frame.
         let prepared = build()
-        preparedRowCache[key] = prepared
+        preparedRowCache[row] = CachedPreparedRow(line: line, key: key, prepared: prepared)
         return prepared
     }
 
@@ -1905,13 +1909,21 @@ extension TerminalView {
         let cellHeight = cellDimension.height
         let firstRow = Int(contentOffset.y / cellHeight)
         let lastRow = firstRow + Int(ceil(bounds.height / cellHeight))
+        let visibleRows = firstRow...lastRow
         #else
         // On Mac, we are drawing the terminal buffer
         let cellHeight = cellDimension.height
         let boundsMaxY = bounds.maxY
         let firstRow = displayBuffer.yDisp+Int ((boundsMaxY-dirtyRect.maxY)/cellHeight)
         let lastRow = displayBuffer.yDisp+Int((boundsMaxY-dirtyRect.minY)/cellHeight)
+        let visibleRows = displayBuffer.yDisp...(displayBuffer.yDisp + terminal.rows)
         #endif
+
+        // Retain the viewport, not just this draw's dirty rows. Moving through
+        // scrollback and resizing must also release rows that left the screen.
+        for row in preparedRowCache.keys where !visibleRows.contains(row) {
+            preparedRowCache.removeValue(forKey: row)
+        }
 
         let isAltBuffer = terminal.isCurrentBufferAlternate
         var virtualPlacementsByImageId: [UInt32: [KittyPlacementRecord]] = [:]
