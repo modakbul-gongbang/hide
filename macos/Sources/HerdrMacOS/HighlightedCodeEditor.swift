@@ -15,7 +15,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let storage = Self.makeTextStorage(language: language)
+        let storage = Self.makeTextStorage(text: text, language: language)
 
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
@@ -61,8 +61,6 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         textView.textColor = HideTheme.Native.primary
         textView.insertionPointColor = HideTheme.Native.primary
         Self.enableFindBar(on: textView)
-        storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
-
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -94,6 +92,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     }
 
     static func makeTextStorage(
+        text: String = "",
         language: String?,
         highlightr: Highlightr? = Highlightr()
     ) -> NSTextStorage {
@@ -110,26 +109,50 @@ struct HighlightedCodeEditor: NSViewRepresentable {
                 line.append("\n")
                 FileHandle.standardError.write(Data(line.utf8))
             }
-            return NSTextStorage()
+            return plainTextStorage(text)
         }
 
         let storage = CodeAttributedString(highlightr: highlightr)
         storage.language = language
         _ = highlightr.setTheme(to: "atom-one-dark")
+        storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
+        if language == nil {
+            applyPlainTextColor(to: storage)
+        }
         return storage
+    }
+
+    private static func plainTextStorage(_ text: String) -> NSTextStorage {
+        NSTextStorage(
+            string: text,
+            attributes: [.foregroundColor: HideTheme.Native.primary]
+        )
+    }
+
+    private static func applyPlainTextColor(to storage: NSTextStorage) {
+        guard storage.length > 0 else { return }
+        storage.addAttribute(
+            .foregroundColor,
+            value: HideTheme.Native.primary,
+            range: NSRange(location: 0, length: storage.length)
+        )
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         textView.isEditable = isEditable
         let size = HideTheme.editorBaseFontSize * textScale
+        let font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
         if textView.font?.pointSize != size {
-            textView.font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
+            textView.font = font
             context.coordinator.lineNumberRuler?.fontSize = size
             context.coordinator.lineNumberRuler?.needsDisplay = true
         }
         if let storage = textView.textStorage as? CodeAttributedString {
             storage.language = language
+            if language == nil {
+                Self.applyPlainTextColor(to: storage)
+            }
         }
         guard textView.string != text, !context.coordinator.isForwardingChange else { return }
         let selection = textView.selectedRange()
@@ -138,6 +161,13 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             in: NSRange(location: 0, length: textView.string.utf16.count),
             with: text
         )
+        // Snapshot replacement bypasses NSTextView's typing attributes. In
+        // an initially empty editor AppKit otherwise inserts Helvetica even
+        // though the text view was configured with a monospaced font.
+        textView.font = font
+        if language == nil, let storage = textView.textStorage {
+            Self.applyPlainTextColor(to: storage)
+        }
         textView.setSelectedRange(NSRange(
             location: min(selection.location, text.utf16.count),
             length: 0
@@ -199,8 +229,14 @@ final class CodeLineNumberRulerView: NSRulerView {
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        // Ruler callbacks can carry a dirty rectangle larger than the
+        // ruler. Constrain this shared drawing context before painting the
+        // background, or it can cover the adjacent document and tab strip.
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        bounds.clip()
         HideTheme.Native.panel.setFill()
-        rect.fill()
+        bounds.intersection(rect).fill()
         guard let textView,
               let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer,

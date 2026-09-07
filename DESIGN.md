@@ -939,9 +939,13 @@ The selected provider card uses an elevated fill and stronger neutral border; it
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
 The right panel's Explorer and Changes sections use the same panel and text ladder.
+The checkout card shows an initial pull-request spinner only while the visible Git section requests a lookup.
+Explorer and Changes do not start GitHub queries, so an absent answer there is not a loading state; an existing answer remains visible.
 Changes is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
 Diff tabs use the editor's monospaced content scale, fixed old and new line-number columns, semantic added and removed tints, and horizontal scrolling for long lines.
+Their scroll canvas fills the editor viewport, with short diffs anchored at the top left and long diffs growing beyond it for scrolling.
 Text file tabs use a fixed line-number ruler and preserve source whitespace through non-wrapping horizontal scrolling.
+The ruler clips all drawing to its own bounds, and text loaded into an initially empty editor retains the editor's monospaced content font.
 Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.
 Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.

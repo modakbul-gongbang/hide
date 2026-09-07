@@ -5,21 +5,30 @@ struct DiffText: View {
     let diff: CoreChangedFileDiff
 
     var body: some View {
-        ScrollView([.vertical, .horizontal]) {
-            LazyVStack(alignment: .leading, spacing: HideTheme.spacingNone) {
-                if let reason = diff.notice {
-                    Text(reason)
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(HideTheme.warning)
-                        .padding(.horizontal, HideTheme.spacingMD)
-                        .padding(.vertical, HideTheme.spacingXS)
+        GeometryReader { viewport in
+            ScrollView([.vertical, .horizontal]) {
+                LazyVStack(alignment: .leading, spacing: HideTheme.spacingNone) {
+                    if let reason = diff.notice {
+                        Text(reason)
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.warning)
+                            .padding(.horizontal, HideTheme.spacingMD)
+                            .padding(.vertical, HideTheme.spacingXS)
+                    }
+                    ForEach(DiffLinePresentation.rows(in: diff.text)) { line in
+                        DiffLine(line: line)
+                    }
                 }
-                ForEach(DiffLinePresentation.rows(in: diff.text)) { line in
-                    DiffLine(line: line)
-                }
+                .padding(.vertical, HideTheme.spacingXS)
+                // AppKit centers an undersized two-axis scroll document.
+                // Give it the viewport as a minimum canvas and anchor the
+                // rows at its top; long diffs still grow and scroll normally.
+                .frame(
+                    minWidth: max(HideTheme.Editor.minimumContentWidth, viewport.size.width),
+                    minHeight: viewport.size.height,
+                    alignment: .topLeading
+                )
             }
-            .padding(.vertical, HideTheme.spacingXS)
-            .frame(minWidth: HideTheme.Editor.minimumContentWidth, alignment: .leading)
         }
         .accessibilityIdentifier("changes-diff-text")
     }

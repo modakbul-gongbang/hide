@@ -1892,6 +1892,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var pendingFileSave: Task<Void, Never>?
     private var commandDevice = CommandDevice.local
     private var routingError: String?
+    private let remoteTargets: [[String: String]]
 
     private struct CommandDevice {
         let id: String
@@ -1910,6 +1911,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     init(arguments: [String] = CommandLine.arguments) {
         let initStarted = Date()
         HideLaunchTrace.mark("core_bridge.init.begin")
+        remoteTargets = Self.remoteTargets(arguments: arguments)
         isRemoteWorkspace = arguments.contains("--remote-workspace")
         workspaceRoot = LaunchArguments.value("--workspace-root", in: arguments)
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -2066,18 +2068,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private static func createCore(
         herdrBinaryPath: String?,
         fixtureMode: Bool,
-        statePath: String
+        statePath: String,
+        remoteTargets: [[String: String]]
     ) -> OpaquePointer? {
         let options: [String: Any] = [
             "schema_version": coreSchemaVersion,
             "herdr_socket_path": fixtureMode ? NSNull() : HideRuntimeEnvironment.herdrSocketPath() as Any,
             "herdr_bin_path": herdrBinaryPath.map { $0 as Any } ?? NSNull(),
-            "remote_targets": [[
-                "id": "mini",
-                "label": "Mac mini",
-                "ssh_alias": "mini",
-                "herdr_socket_path": "/Users/example/.config/herdr/herdr.sock",
-            ]],
+            "remote_targets": remoteTargets,
             "app_state_path": statePath,
         ]
         guard
@@ -2097,7 +2095,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         guard let created = Self.createCore(
             herdrBinaryPath: herdrBinaryPath,
             fixtureMode: fixtureMode,
-            statePath: statePath
+            statePath: statePath,
+            remoteTargets: remoteTargets
         ) else {
             bridgeError = "herdr_core_create returned null"
             return false
@@ -2111,6 +2110,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         startupDiagnostic = nil
         refreshSnapshot()
         return true
+    }
+
+    static func remoteTargets(arguments: [String]) -> [[String: String]] {
+        #if DEBUG
+        if arguments.contains("--verification-no-remote") {
+            return []
+        }
+        #endif
+        return [[
+            "id": "mini",
+            "label": "Mac mini",
+            "ssh_alias": "mini",
+            "herdr_socket_path": "/Users/example/.config/herdr/herdr.sock",
+        ]]
     }
 
     private func setStartupDiagnostic(_ message: String?) {

@@ -4388,9 +4388,7 @@ impl Runtime {
     /// Which repositories to look pull requests up for. Remote projects are
     /// out of scope, and a plain folder has no repository to ask about.
     pub fn github_request(&self) -> crate::github::GithubRequest {
-        if !self.snapshot.ui_state.right_panel_visible
-            || self.snapshot.ui_state.right_panel_section != RightPanelSection::Git
-        {
+        if !self.github_lookup_requested() {
             return crate::github::GithubRequest::default();
         }
         crate::github::GithubRequest {
@@ -4410,6 +4408,11 @@ impl Runtime {
                 })
                 .collect(),
         }
+    }
+
+    fn github_lookup_requested(&self) -> bool {
+        self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Git
     }
 
     pub fn ingest_github(&mut self, github: crate::model::GithubSnapshot) -> bool {
@@ -4863,10 +4866,11 @@ impl Runtime {
             self.github
                 .project(&workspace.path)
                 .map(|project| project.status.clone())
-                // No entry yet means the first lookup has not finished. That
-                // is a spinner, not an absence of pull requests.
+                // An absent answer is loading only while the Git section
+                // requests it. Explorer also renders this card but starts
+                // no lookup, so absence there must not imply work in flight.
                 .unwrap_or(crate::model::GithubStatusSnapshot {
-                    loading: true,
+                    loading: self.github_lookup_requested(),
                     ..crate::model::GithubStatusSnapshot::default()
                 })
         } else {
@@ -8910,6 +8914,9 @@ impl Runtime {
                     self.refresh_worktrees();
                     self.remeasure_disk();
                 }
+                if git_is_visible != git_was_visible {
+                    self.refresh_card();
+                }
                 // Session sync owns session-derived temporary workspaces.
                 // UI-state persistence must not rebuild from an empty session
                 // and erase the catalog that the user is currently viewing.
@@ -10122,6 +10129,7 @@ mod tests {
             vec![settled_worktree(crate::model::PullRequestBadge::Open)],
         );
         hide.is_git = true;
+        runtime.snapshot.navigator.focused_checkout_id = Some(hide.checkouts[0].id.clone());
         let mut other = workspace("workspace-2", "other", "/tmp/other", Vec::new());
         other.is_git = true;
         runtime.snapshot.navigator.workspaces = vec![hide, other];
@@ -10139,8 +10147,10 @@ mod tests {
                 .collect()
         };
         assert!(generations(&runtime).is_empty());
+        assert!(!runtime.projected_card().github.loading);
         runtime.snapshot.ui_state.right_panel_visible = true;
         runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Git;
+        assert!(runtime.projected_card().github.loading);
         assert_eq!(
             generations(&runtime),
             vec![("/tmp/hide".to_owned(), 0), ("/tmp/other".to_owned(), 0)]
@@ -10150,6 +10160,23 @@ mod tests {
             generations(&runtime),
             vec![("/tmp/hide".to_owned(), 1), ("/tmp/other".to_owned(), 0)]
         );
+        runtime.refresh_card();
+        assert!(runtime.snapshot.card.github.loading);
+        let leave_git = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "right_panel_section": "explorer",
+                "focused_checkout_id": runtime.snapshot.navigator.focused_checkout_id,
+            }
+        }))
+        .expect("leave Git event");
+        assert!(runtime.dispatch_json(&leave_git));
+        assert!(!runtime.snapshot.card.github.loading);
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Git;
+        runtime.snapshot.ui_state.right_panel_visible = false;
+        assert!(!runtime.projected_card().github.loading);
     }
 
     /// The card consumes the same deletion gate as the sidebar and Git list.
