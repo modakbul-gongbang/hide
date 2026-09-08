@@ -1325,10 +1325,13 @@ private struct WorkspaceNavigatorRow: View {
                 workspace: workspace,
                 checkout: checkout,
                 presentation: checkoutPresentation,
-                isFocused: isFocused
+                isFocused: isFocused,
+                hasAgents: !visibleAgents.isEmpty
             )
-            ForEach(visibleAgents) { agent in
-                AgentNavigatorRow(agent: agent, showsWorkspace: false)
+            if model.isCheckoutExpanded(checkout) {
+                ForEach(visibleAgents) { agent in
+                    AgentNavigatorRow(agent: agent, showsWorkspace: false)
+                }
             }
         }
         .background(
@@ -1352,6 +1355,7 @@ private struct CheckoutNavigatorRow: View {
     let checkout: CoreCheckoutSnapshot
     let presentation: SidebarCheckoutPresentation
     let isFocused: Bool
+    let hasAgents: Bool
 
     private var activityColor: Color {
         switch presentation.activity {
@@ -1364,80 +1368,102 @@ private struct CheckoutNavigatorRow: View {
     }
 
     var body: some View {
-        Button {
-            model.selectCheckout(checkout)
-        } label: {
-            HStack(spacing: HideTheme.spacingSM) {
-                Circle()
-                    .fill(activityColor)
-                    .frame(width: HideTheme.checkoutStatusSize, height: HideTheme.checkoutStatusSize)
-                Image(systemName: checkout.branch == nil ? "point.topleft.down.to.point.bottomright.curvepath" : "arrow.triangle.branch")
+        HStack(spacing: HideTheme.spacingNone) {
+            Button {
+                model.toggleCheckoutExpansion(checkout)
+            } label: {
+                Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
-                    .frame(width: HideTheme.checkoutIconWidth)
-                Text(checkout.label)
-                    .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
-                    .foregroundStyle(HideTheme.primary)
-                    .lineLimit(1)
-                if !checkout.exists {
-                    HideBadge(label: "missing", color: HideTheme.danger)
-                } else if checkout.temporary {
-                    HideBadge(label: "temporary", color: HideTheme.warning)
-                }
-                if presentation.isPrimary {
-                    HideBadge(label: "primary", color: HideTheme.secondary)
-                    if case .warning(let branch, _) = MainWorktreePresentation.state(
-                        branch: checkout.branch, base: model.baseBranch(for: workspace)
-                    ) {
-                        Button {
-                            model.requestBranchMigration(workspace: workspace, checkout: checkout)
-                        } label: {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(HideTheme.warning)
-                        }
-                        .buttonStyle(.plain)
-                        .hideTooltip("Move \(branch) to a worktree")
-                        .accessibilityLabel("Move \(branch) to a worktree")
-                    }
-                }
-                if let pullRequest = checkout.pullRequest {
-                    HideBadge(
-                        label: CheckoutCardPresentation.badgeLabel(
-                            pullRequest.badge,
-                            review: pullRequest.review
-                        ),
-                        color: CheckoutCardPresentation.badgeColor(
-                            pullRequest.badge,
-                            review: pullRequest.review
-                        )
-                    )
-                }
-                if checkout.dirty {
-                    Circle()
-                        .fill(HideTheme.warning)
-                        .frame(width: 5, height: 5)
-                        .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
-                }
-                Spacer(minLength: 0)
+                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.checkoutRowHeight)
+                    .contentShape(Rectangle())
             }
-            .padding(.leading, HideTheme.spacingXL)
-            .padding(.trailing, HideTheme.spacingSM)
-            .frame(minHeight: HideTheme.checkoutRowHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .hideTooltip(checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path)
-        .accessibilityIdentifier("hide-checkout-\(checkout.id)")
-        // The row is deliberately almost wordless, so everything the colours,
-        // dots, and badges carry is said here in words (G1, design 7).
-        .accessibilityLabel(
-            CheckoutCardPresentation.rowAccessibilityLabel(
-                repoName: workspace.repoName,
-                checkout: checkout,
-                agentCount: presentation.agentCount
+            .buttonStyle(.plain)
+            .hideTooltip("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
+            .accessibilityLabel("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
+            .accessibilityIdentifier("hide-checkout-disclosure-\(checkout.id)")
+            .opacity(hasAgents ? 1 : 0)
+            .disabled(!hasAgents)
+            .accessibilityHidden(!hasAgents)
+            Button {
+                model.selectCheckout(checkout)
+            } label: {
+                HStack(spacing: HideTheme.spacingSM) {
+                    Circle()
+                        .fill(activityColor)
+                        .frame(width: HideTheme.checkoutStatusSize, height: HideTheme.checkoutStatusSize)
+                    Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                        .foregroundStyle(HideTheme.secondary)
+                        .frame(width: HideTheme.checkoutIconWidth)
+                    Text(checkout.label)
+                        .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
+                        .foregroundStyle(HideTheme.primary)
+                        .lineLimit(1)
+                    if presentation.isDetached {
+                        HideBadge(label: "detached", color: HideTheme.secondary)
+                            .hideTooltip(presentation.detailTooltip)
+                    }
+                    if !checkout.exists {
+                        HideBadge(label: "missing", color: HideTheme.danger)
+                    } else if checkout.temporary {
+                        HideBadge(label: "temporary", color: HideTheme.warning)
+                    }
+                    if presentation.isPrimary {
+                        HideBadge(label: "primary", color: HideTheme.secondary)
+                        if case .warning(let branch, _) = MainWorktreePresentation.state(
+                            branch: checkout.branch, base: model.baseBranch(for: workspace)
+                        ) {
+                            Button {
+                                model.requestBranchMigration(workspace: workspace, checkout: checkout)
+                            } label: {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .foregroundStyle(HideTheme.warning)
+                            }
+                            .buttonStyle(.plain)
+                            .hideTooltip("Move \(branch) to a worktree")
+                            .accessibilityLabel("Move \(branch) to a worktree")
+                        }
+                    }
+                    if let pullRequest = checkout.pullRequest {
+                        HideBadge(
+                            label: CheckoutCardPresentation.badgeLabel(
+                                pullRequest.badge,
+                                review: pullRequest.review
+                            ),
+                            color: CheckoutCardPresentation.badgeColor(
+                                pullRequest.badge,
+                                review: pullRequest.review
+                            )
+                        )
+                    }
+                    if checkout.dirty {
+                        Circle()
+                            .fill(HideTheme.warning)
+                            .frame(width: 5, height: 5)
+                            .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.trailing, HideTheme.spacingSM)
+                .frame(minHeight: HideTheme.checkoutRowHeight)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hideTooltip(presentation.detailTooltip)
+            .accessibilityIdentifier("hide-checkout-\(checkout.id)")
+            // The row is deliberately almost wordless, so everything the colours,
+            // dots, and badges carry is said here in words (G1, design 7).
+            .accessibilityLabel(
+                CheckoutCardPresentation.rowAccessibilityLabel(
+                    repoName: workspace.repoName,
+                    checkout: checkout,
+                    agentCount: presentation.agentCount
+                )
             )
-        )
-        .accessibilityValue(isFocused ? "Selected" : "Not selected")
+            .accessibilityValue(isFocused ? "Selected" : "Not selected")
+        }
+        .padding(.leading, HideTheme.spacingSM)
         .contextMenu {
             Button(WorktreeMenuPolicy.newWorktree, systemImage: "plus") { model.requestNewWorktree(workspace) }
             if checkout.isWorktree {

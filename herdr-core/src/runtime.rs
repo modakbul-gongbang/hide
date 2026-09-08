@@ -842,6 +842,8 @@ struct UiStateUpdatePayload {
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
+    collapsed_checkout_ids: Option<Vec<String>>,
+    #[serde(default)]
     collapsed_agent_pane_ids: Option<Vec<String>>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
@@ -9091,6 +9093,9 @@ impl Runtime {
                         .unwrap_or(current.right_panel_section),
                     expanded_paths: payload.expanded_paths,
                     collapsed_workspace_ids: payload.collapsed_workspace_ids,
+                    collapsed_checkout_ids: payload
+                        .collapsed_checkout_ids
+                        .unwrap_or(current.collapsed_checkout_ids),
                     project_base_branches: current.project_base_branches,
                     collapsed_agent_pane_ids: payload
                         .collapsed_agent_pane_ids
@@ -12177,6 +12182,7 @@ mod tests {
             "payload": {
                 "expanded_paths": [],
                 "collapsed_workspace_ids": ["workspace-a"],
+                "collapsed_checkout_ids": ["checkout-a"],
                 "selected_path": null,
                 "selected_pane_id": null,
                 "shortcut_bindings": {}
@@ -12186,6 +12192,7 @@ mod tests {
 
         assert!(runtime.dispatch_json(&collapse));
         assert!(!runtime.snapshot().navigator.workspaces[0].expanded);
+        assert_eq!(runtime.snapshot().ui_state.collapsed_checkout_ids, ["checkout-a"]);
 
         let expand = serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION,
@@ -12202,6 +12209,20 @@ mod tests {
 
         assert!(runtime.dispatch_json(&expand));
         assert!(runtime.snapshot().navigator.workspaces[0].expanded);
+        // An unrelated UI save must not reopen a collapsed checkout.
+        assert_eq!(runtime.snapshot().ui_state.collapsed_checkout_ids, ["checkout-a"]);
+        let reopen = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_checkout_ids": [],
+                "selected_path": null,
+                "selected_pane_id": null
+            }
+        })).unwrap();
+        assert!(runtime.dispatch_json(&reopen));
+        assert!(runtime.snapshot().ui_state.collapsed_checkout_ids.is_empty());
     }
 
     #[test]

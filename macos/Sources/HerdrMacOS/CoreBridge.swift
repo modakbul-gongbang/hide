@@ -1361,6 +1361,7 @@ struct CoreUIStateSnapshot: Decodable {
     let rightPanelSection: RightPanelSection
     let expandedPaths: [String]
     let collapsedWorkspaceIDs: [String]
+    let collapsedCheckoutIDs: [String]
     let selectedPath: String?
     let selectedPaneID: String?
     let shortcutBindings: [String: String]
@@ -1397,6 +1398,7 @@ struct CoreUIStateSnapshot: Decodable {
         case rightPanelSection = "right_panel_section"
         case expandedPaths = "expanded_paths"
         case collapsedWorkspaceIDs = "collapsed_workspace_ids"
+        case collapsedCheckoutIDs = "collapsed_checkout_ids"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
         case shortcutBindings = "shortcut_bindings"
@@ -1424,6 +1426,10 @@ struct CoreUIStateSnapshot: Decodable {
         collapsedWorkspaceIDs = try container.decodeIfPresent(
             [String].self,
             forKey: .collapsedWorkspaceIDs
+        ) ?? []
+        collapsedCheckoutIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .collapsedCheckoutIDs
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
@@ -2762,6 +2768,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         rightPanelSection: RightPanelSection? = nil,
         expandedPaths: [String]? = nil,
         collapsedWorkspaceIDs: [String]? = nil,
+        collapsedCheckoutIDs: [String]? = nil,
         selectedPath: String? = nil,
         selectedPaneID: String? = nil,
         focusedCheckoutID: String? = nil,
@@ -2791,6 +2798,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         // Registration events own durable workspace/device lists. A generic
         // UI-state save must not replay a stale snapshot and erase the
         // session-derived temporary catalog.
+        if let collapsedCheckoutIDs {
+            payload["collapsed_checkout_ids"] = collapsedCheckoutIDs
+        }
         if let focusedCheckoutID {
             // This is the one explicit local-selection anchor used after a
             // terminal launcher returns. It never asks Herdr to change focus.

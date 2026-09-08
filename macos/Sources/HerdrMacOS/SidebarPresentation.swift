@@ -14,6 +14,8 @@ struct SidebarCheckoutPresentation: Equatable {
     let agentCount: Int
     let isPrimary: Bool
     let activity: SidebarCheckoutActivity
+    let isDetached: Bool
+    let detailTooltip: String
 
     var activityLabel: String? {
         if agentCount > 0 {
@@ -34,6 +36,13 @@ struct SidebarCheckoutPresentation: Equatable {
         paneCount = checkout.tabs.reduce(0) { $0 + $1.panes.count }
         agentCount = checkoutAgents.count
         isPrimary = !checkout.isWorktree && checkout.path == workspace.path
+        isDetached = checkout.worktree.map { $0.branch == nil } ?? false
+        if isDetached {
+            let commit = checkout.worktree?.headSHA.map { " at \($0)" } ?? ""
+            detailTooltip = "Detached HEAD\(commit)\n\(checkout.path)"
+        } else {
+            detailTooltip = checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path
+        }
 
         if !checkout.exists {
             activity = .missing
@@ -64,7 +73,7 @@ struct SidebarWorkspacePresentation: Equatable {
         if agentCount > 0 {
             return agentCount == 1 ? "1 agent" : "\(agentCount) agents"
         }
-        return checkoutCount == 1 ? "1 checkout" : "\(checkoutCount) checkouts"
+        return checkoutCount == 1 ? "1 workspace" : "\(checkoutCount) workspaces"
     }
 
     init(workspace: CoreWorkspaceSnapshot, agents: [SidebarAgent]) {
@@ -112,7 +121,8 @@ enum AgentShortcutNumbering {
     static func candidates(
         for content: SidebarContent,
         agents: [SidebarAgent],
-        visibleCheckoutIDs: [String]
+        visibleCheckoutIDs: [String],
+        collapsedCheckoutIDs: Set<String> = []
     ) -> [SidebarAgent] {
         switch content {
         case .agents:
@@ -120,7 +130,7 @@ enum AgentShortcutNumbering {
         case .projects:
             let raised = SidebarGrouping.raised(agents).flatMap(\.agents)
             let raisedIDs = Set(raised.map(\.id))
-            let visible = raised + visibleCheckoutIDs.flatMap {
+            let visible = raised + visibleCheckoutIDs.filter { !collapsedCheckoutIDs.contains($0) }.flatMap {
                 SidebarGrouping.tree(agents, checkoutID: $0, excluding: raisedIDs)
             }
             var numberedPanes = Set<String>()

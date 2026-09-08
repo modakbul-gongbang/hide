@@ -798,6 +798,9 @@ pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
+    /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
+    #[serde(default)]
+    pub collapsed_checkout_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
     #[serde(default)]
@@ -920,6 +923,7 @@ impl Default for UiStateSnapshot {
             right_panel_section: RightPanelSection::default(),
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
+            collapsed_checkout_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
             collapsed_agent_pane_ids: Vec::new(),
             selected_path: None,

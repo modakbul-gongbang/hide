@@ -190,6 +190,16 @@ private func presentationAgent(
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-3", in: projectsView) == 1)
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: projectsView) == nil)
     #expect(noCheckout.isEmpty)
+    let collapsed = AgentShortcutNumbering.candidates(
+        for: .projects, agents: agents, visibleCheckoutIDs: [checkout.id],
+        collapsedCheckoutIDs: [checkout.id]
+    )
+    #expect(collapsed.isEmpty)
+    let agentsWithCollapsedWorkspace = AgentShortcutNumbering.candidates(
+        for: .agents, agents: agents, visibleCheckoutIDs: [checkout.id],
+        collapsedCheckoutIDs: [checkout.id]
+    )
+    #expect(agentsWithCollapsedWorkspace.map(\.paneID) == agentsView.map(\.paneID))
 }
 
 @Test func agentContextLabelNamesTheProjectAndItsCheckout() {

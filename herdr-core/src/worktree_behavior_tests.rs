@@ -96,7 +96,7 @@ fn worktree_creation_blocked_without_branches() {
 #[test]
 fn main_worktree_row_label() {
     assert_eq!(
-        crate::workspace::worktree_row_label(Some("topic"), Some("abcdef")),
+        crate::workspace::checkout_row_label(Some("topic"), Path::new("/repo")),
         "topic"
     );
 }
@@ -104,8 +104,8 @@ fn main_worktree_row_label() {
 #[test]
 fn detached_worktree_row_label() {
     assert_eq!(
-        crate::workspace::worktree_row_label(None, Some("0123456789abcdef")),
-        "Detached HEAD · 01234567"
+        crate::workspace::checkout_row_label(None, Path::new("/worktrees/review")),
+        "review"
     );
 }
 

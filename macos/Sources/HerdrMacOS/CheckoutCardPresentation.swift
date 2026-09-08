@@ -57,6 +57,9 @@ enum CheckoutCardPresentation {
         agentCount: Int
     ) -> String {
         var parts = [repoName, checkout.label]
+        if let worktree = checkout.worktree, worktree.branch == nil {
+            parts.append("detached HEAD")
+        }
         if !checkout.exists {
             parts.append("missing")
         }

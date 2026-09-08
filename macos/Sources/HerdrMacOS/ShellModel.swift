@@ -1016,7 +1016,8 @@ final class ShellModel: ObservableObject {
         AgentShortcutNumbering.candidates(
             for: sidebarContent,
             agents: agents,
-            visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id)
+            visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id),
+            collapsedCheckoutIDs: Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? [])
         )
     }
 
@@ -1198,6 +1199,18 @@ final class ShellModel: ObservableObject {
             collapsed.remove(workspace.id)
         }
         core.persistUIState(collapsedWorkspaceIDs: collapsed.sorted())
+    }
+
+    func isCheckoutExpanded(_ checkout: CoreCheckoutSnapshot) -> Bool {
+        !(core.snapshot?.uiState.collapsedCheckoutIDs.contains(checkout.id) ?? false)
+    }
+
+    func toggleCheckoutExpansion(_ checkout: CoreCheckoutSnapshot) {
+        var collapsed = Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? [])
+        if !collapsed.insert(checkout.id).inserted {
+            collapsed.remove(checkout.id)
+        }
+        core.persistUIState(collapsedCheckoutIDs: collapsed.sorted())
     }
 
     func requestRemoveWorkspace(_ workspace: CoreWorkspaceSnapshot) {

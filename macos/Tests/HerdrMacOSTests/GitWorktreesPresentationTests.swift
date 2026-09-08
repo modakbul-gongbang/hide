@@ -5,9 +5,10 @@ import Testing
 @Suite("Worktree panel contract")
 struct GitWorktreesPresentationTests {
     @Test func gitSelectionAndLineageCollapseDecodeFromPersistentState() throws {
-        let state = try JSONDecoder().decode(CoreUIStateSnapshot.self, from: Data(#"{"right_panel_section":"git","expanded_paths":[],"collapsed_agent_pane_ids":["parent"],"project_base_branches":{"/repo":"release"}}"#.utf8))
+        let state = try JSONDecoder().decode(CoreUIStateSnapshot.self, from: Data(#"{"right_panel_section":"git","expanded_paths":[],"collapsed_agent_pane_ids":["parent"],"collapsed_checkout_ids":["main"],"project_base_branches":{"/repo":"release"}}"#.utf8))
         #expect(state.rightPanelSection == .git)
         #expect(state.collapsedAgentPaneIDs == ["parent"])
+        #expect(state.collapsedCheckoutIDs == ["main"])
         #expect(state.projectBaseBranches["/repo"] == "release")
     }
 
@@ -58,6 +59,7 @@ struct GitWorktreesPresentationTests {
         let raised = Set(SidebarGrouping.raised(agents).flatMap(\.agents).map(\.id))
         #expect(SidebarGrouping.tree(agents, checkoutID: "main", excluding: raised).map(\.id) == ["parent", "child"])
         #expect(AgentShortcutNumbering.candidates(for: .projects, agents: agents, visibleCheckoutIDs: ["main"]).map(\.id) == ["parent", "child"])
+        #expect(AgentShortcutNumbering.candidates(for: .projects, agents: agents, visibleCheckoutIDs: ["main"], collapsedCheckoutIDs: ["main"]).map(\.id) == ["parent", "child"])
         parent.lineageCollapsed = true
         #expect(SidebarGrouping.tree([child, parent], checkoutID: "main", excluding: raised).map(\.id) == ["parent"])
     }

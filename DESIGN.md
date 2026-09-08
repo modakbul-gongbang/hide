@@ -818,7 +818,12 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 `lineageChevronWidth` reserves 16pt on every project agent row, with a disclosure control for parents and hairline connectors for descendants.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
 The branch is the title; the primary checkout carries a separate `primary` role badge.
-Detached checkouts name `Detached HEAD` and the short commit instead of presenting a hash as a branch.
+The sidebar hierarchy is Project > Workspace > Agents; a workspace corresponds to one checkout path, including a plain folder.
+Workspaces without a branch use their actual folder name, including missing paths.
+Detached checkouts carry a separate `detached` badge; their tooltip retains the commit and path.
+Only workspaces with visible agent rows have a disclosure arrow, separate from the name's selection action.
+Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
+Project-view number shortcuts skip agents hidden by workspace disclosure.
 `checkoutStatusSize` (6pt) and `checkoutIconWidth` (14pt) align the activity and branch columns.
 Agent counts are omitted from checkout rows; pull requests and uncommitted changes retain their existing badges.
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
