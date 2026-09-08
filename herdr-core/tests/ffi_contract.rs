@@ -390,6 +390,7 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
 #[test]
 fn failed_ui_state_save_is_visible_and_free_finishes() {
     let blocked_parent = temporary_state_path();
+    fs::create_dir_all(blocked_parent.parent().unwrap()).unwrap();
     fs::write(&blocked_parent, "not a directory").unwrap();
     let options = options_with_state(&blocked_parent.join("state.json"));
     let core = create_with_socket_override_hidden(&options);
