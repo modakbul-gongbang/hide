@@ -5,7 +5,15 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 
 const root = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'macos/Sources/HerdrMacOS';
-const owners = ['HideTheme','HideKeycap','HideBalloon','HideIconButton','HideBadge'];
+const owners = [
+  'HideTheme',
+  'HideKeycap',
+  'HideBalloon',
+  'HideIconButton',
+  'HideBadge',
+  'HideFormPicker',
+  'HideTextButtonStyle',
+];
 function violations(directory, structureOnly = false) {
   const problems=[];
   const sources = new Map(fs.readdirSync(directory).filter(f=>f.endsWith('.swift')&&!f.startsWith('Pet'))

@@ -6,6 +6,7 @@ Read [docs/README.md](docs/README.md) before choosing supporting documents.
 It identifies current contracts and procedures, their code/test owners, and historical/reference-only material.
 Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
+Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host entrypoint, installation ownership, and native display verification.
 
 ## Repository Layout
 
@@ -141,6 +142,7 @@ Keep these invariants during implementation:
   Keep row preparation behind `preparedRow`; `scripts/check-terminal-row-cache.sh` enforces that the draw loop never bypasses the cache.
 - `ChangeNotifier` announces once per burst; clear its latch before taking the snapshot lock.
 - Native verification uses exactly one identified app and an isolated Herdr server, including remote-connection checks; never manipulate the operator's panes or server.
+- A Browser plugin pane is only for QA of the browser-pane product surface. Never open one as a generic verification surface for the native shell, editor, Git diff, sidebar, build, or installed app.
 
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)

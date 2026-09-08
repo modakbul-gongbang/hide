@@ -115,7 +115,12 @@ private struct GitWorktreeRow: View {
                     NSPasteboard.general.setString(worktree.path, forType: .string)
                 }
                 if let branch = worktree.branch {
-                    Button("Set as base branch") { model.core.dispatch(kind: "git_worktree_set_base", payload: ["branch": branch]) }
+                    Button("Set as base branch") {
+                        model.core.dispatch(kind: "git_worktree_set_base", payload: [
+                            "repository_root": root,
+                            "branch": branch,
+                        ])
+                    }
                 }
                 Divider()
             }

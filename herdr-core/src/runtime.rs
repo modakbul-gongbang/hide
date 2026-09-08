@@ -19,11 +19,11 @@ use crate::model::SidebarAgentSnapshot;
 use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
     EditorTabKind, EditorTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
-    PaneForkSnapshot,
-    PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
-    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
-    SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
-    TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
+    PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
+    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
+    RightPanelSection, SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface,
+    TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot,
+    clamp_pane_text_scale,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
@@ -890,7 +890,34 @@ struct GitWorktreeOpenPayload {
 
 #[derive(Debug, Deserialize)]
 struct GitWorktreeSetBasePayload {
+    repository_root: String,
     branch: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateScratchChatTabPayload {
+    label: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateWorktreePayload {
+    repository_root: String,
+    branch: String,
+    #[serde(default)]
+    base_branch: Option<String>,
+    #[serde(default)]
+    agent_kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MigrateMainBranchPayload {
+    repository_root: String,
+    base_branch: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskOperationAckPayload {
+    id: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1046,6 +1073,10 @@ enum ValidatedEvent {
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
+    CreateScratchChatTab(CreateScratchChatTabPayload),
+    CreateWorktree(CreateWorktreePayload),
+    MigrateMainBranch(MigrateMainBranchPayload),
+    TaskOperationAck(TaskOperationAckPayload),
     RemoveWorktree(RemoveWorktreePayload),
     WorktreeRemovalFinished(WorktreeRemovalFinishedPayload),
     /// The card's refresh button, opening the delete confirmation, and a
@@ -1275,6 +1306,7 @@ pub struct Runtime {
     /// Identifies one delete handshake across core, Herdr and the shell.
     /// A repeated callback for an older request cannot authorize a newer one.
     next_worktree_removal_id: u64,
+    next_task_operation_id: u64,
     delta: DeltaState,
 }
 
@@ -1358,12 +1390,11 @@ impl Runtime {
         };
         if let Some((kind, message)) = diagnostic {
             crate::diagnostic!(serde_json::json!({
-                    "component": "ui_state",
-                    "kind": kind,
-                    "message": message,
-                    "fallback": "defaults"
-                })
-            );
+                "component": "ui_state",
+                "kind": kind,
+                "message": message,
+                "fallback": "defaults"
+            }));
             snapshot.status.diagnostics.push(DiagnosticSnapshot {
                 kind: kind.to_owned(),
                 message: message.to_owned(),
@@ -1428,6 +1459,7 @@ impl Runtime {
             disk_generation: 0,
             worktree_generation: 0,
             next_worktree_removal_id: 0,
+            next_task_operation_id: 0,
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -1516,18 +1548,21 @@ impl Runtime {
     }
 
     fn sync_active_editor_document(&mut self) {
-        self.snapshot.editor.document = self.snapshot.editor.active_tab_id.as_deref().and_then(
-            |tab_id| {
-                self.editor_documents.get(tab_id).and_then(|document| {
-                    self.snapshot
-                        .editor
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::File)
-                        .map(|_| document.clone())
-                })
-            },
-        );
+        self.snapshot.editor.document =
+            self.snapshot
+                .editor
+                .active_tab_id
+                .as_deref()
+                .and_then(|tab_id| {
+                    self.editor_documents.get(tab_id).and_then(|document| {
+                        self.snapshot
+                            .editor
+                            .tabs
+                            .iter()
+                            .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::File)
+                            .map(|_| document.clone())
+                    })
+                });
     }
 
     fn sync_file_tab_dirty(&mut self, tab_id: &str) {
@@ -1945,14 +1980,13 @@ impl Runtime {
                     generation,
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "remote_files",
-                        "kind": "remote.files_failed",
-                        "target": target_id,
-                        "root_path": root_path,
-                        "generation": generation,
-                        "message": message,
-                    })
-                );
+                    "component": "remote_files",
+                    "kind": "remote.files_failed",
+                    "target": target_id,
+                    "root_path": root_path,
+                    "generation": generation,
+                    "message": message,
+                }));
             }
         }
         true
@@ -2518,10 +2552,7 @@ impl Runtime {
                 });
                 scratch_tabs.push(crate::model::ScratchTabSnapshot {
                     id: session_tab.tab_id.clone(),
-                    label: crate::model::display_tab_label(
-                        &session_tab.label,
-                        &session_tab.tab_id,
-                    ),
+                    label: crate::model::display_tab_label(&session_tab.label, &session_tab.tab_id),
                     title,
                     panes,
                 });
@@ -3221,14 +3252,13 @@ impl Runtime {
         }
         for (checkout_id, hide_tab, herdr_tab) in followed {
             crate::diagnostic!(serde_json::json!({
-                    "component": "view_state",
-                    "kind": "tab.focus.followed",
-                    "checkout_id": checkout_id,
-                    "from_tab_id": hide_tab,
-                    "to_tab_id": herdr_tab,
-                    "origin": "herdr",
-                })
-            );
+                "component": "view_state",
+                "kind": "tab.focus.followed",
+                "checkout_id": checkout_id,
+                "from_tab_id": hide_tab,
+                "to_tab_id": herdr_tab,
+                "origin": "herdr",
+            }));
             self.push_diagnostic(
                 "tab.focus.followed",
                 format!(
@@ -3293,14 +3323,13 @@ impl Runtime {
             .insert(checkout_id.clone(), tab_id.clone());
         self.sync_active_tab_projection();
         crate::diagnostic!(serde_json::json!({
-                "component": "view_state",
-                "kind": "tab.visible_aligned",
-                "checkout_id": checkout_id,
-                "from_tab_id": from_tab_id,
-                "to_tab_id": tab_id,
-                "pane_id": pane_id,
-            })
-        );
+            "component": "view_state",
+            "kind": "tab.visible_aligned",
+            "checkout_id": checkout_id,
+            "from_tab_id": from_tab_id,
+            "to_tab_id": tab_id,
+            "pane_id": pane_id,
+        }));
         self.push_diagnostic(
             "tab.visible_aligned",
             format!("Tab {tab_id} is visible because it holds the selected pane {pane_id}"),
@@ -3328,13 +3357,12 @@ impl Runtime {
         let changed = !expired.is_empty();
         for (what, target_id) in expired {
             crate::diagnostic!(serde_json::json!({
-                    "component": "view_state",
-                    "kind": "view_focus.timed_out",
-                    "what": what,
-                    "target_id": target_id,
-                    "timeout_ms": VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS,
-                })
-            );
+                "component": "view_state",
+                "kind": "view_focus.timed_out",
+                "what": what,
+                "target_id": target_id,
+                "timeout_ms": VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS,
+            }));
             self.push_diagnostic(
                 "view_focus.timed_out",
                 format!(
@@ -3890,44 +3918,45 @@ impl Runtime {
                         .map(str::to_owned)
                 } else {
                     selected_pane_retired
-                    .then(|| {
-                        previously_projected_tab
-                            .as_deref()
-                            .and_then(|tab_id| {
-                                payload
-                                    .layouts
-                                    .iter()
-                                    .find(|layout| layout.tab_id == tab_id)
-                                    .map(|layout| layout.focused_pane_id.as_str())
-                            })
-                            .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
-                            .or_else(|| {
-                                payload
-                                    .focused_pane_id
-                                    .as_deref()
-                                    .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
-                            })
-                            .or_else(|| {
-                                // A close moves Herdr's keyboard to another
-                                // tab, and the pane focus for it can arrive
-                                // after this snapshot; the tab Herdr names now
-                                // is where the operator is looking, not the
-                                // checkout's first pane.
-                                HerdrTabView::from_payload(&payload)
-                                    .focused_tab_id
-                                    .and_then(|tab_id| {
-                                        payload
-                                            .layouts
-                                            .iter()
-                                            .find(|layout| layout.tab_id == tab_id)
+                        .then(|| {
+                            previously_projected_tab
+                                .as_deref()
+                                .and_then(|tab_id| {
+                                    payload
+                                        .layouts
+                                        .iter()
+                                        .find(|layout| layout.tab_id == tab_id)
+                                        .map(|layout| layout.focused_pane_id.as_str())
+                                })
+                                .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
+                                .or_else(|| {
+                                    payload.focused_pane_id.as_deref().filter(|pane_id| {
+                                        focused_checkout_pane_set.contains(*pane_id)
                                     })
-                                    .map(|layout| layout.focused_pane_id.as_str())
-                                    .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
-                            })
-                            .or_else(|| focused_checkout_pane_ids.first().map(String::as_str))
-                            .map(str::to_owned)
-                    })
-                    .flatten()
+                                })
+                                .or_else(|| {
+                                    // A close moves Herdr's keyboard to another
+                                    // tab, and the pane focus for it can arrive
+                                    // after this snapshot; the tab Herdr names now
+                                    // is where the operator is looking, not the
+                                    // checkout's first pane.
+                                    HerdrTabView::from_payload(&payload)
+                                        .focused_tab_id
+                                        .and_then(|tab_id| {
+                                            payload
+                                                .layouts
+                                                .iter()
+                                                .find(|layout| layout.tab_id == tab_id)
+                                        })
+                                        .map(|layout| layout.focused_pane_id.as_str())
+                                        .filter(|pane_id| {
+                                            focused_checkout_pane_set.contains(*pane_id)
+                                        })
+                                })
+                                .or_else(|| focused_checkout_pane_ids.first().map(String::as_str))
+                                .map(str::to_owned)
+                        })
+                        .flatten()
                 };
                 let explicit_checkout_missing =
                     self.snapshot.ui_state.focused_checkout_id.is_some()
@@ -4076,13 +4105,12 @@ impl Runtime {
         for exclusion in &excluded {
             let pane_id = exclusion.pane_id.as_deref().unwrap_or("<missing pane id>");
             crate::diagnostic!(serde_json::json!({
-                    "component": "session",
-                    "kind": "agent.excluded",
-                    "pane_id": pane_id,
-                    "source_index": exclusion.source_index,
-                    "message": exclusion.reason,
-                })
-            );
+                "component": "session",
+                "kind": "agent.excluded",
+                "pane_id": pane_id,
+                "source_index": exclusion.source_index,
+                "message": exclusion.reason,
+            }));
             self.push_diagnostic(
                 "agent.excluded",
                 format!("Agent {pane_id} was excluded: {}", exclusion.reason),
@@ -4120,12 +4148,11 @@ impl Runtime {
         }
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
-                    "component": "session",
-                    "kind": "layout.excluded",
-                    "tab_id": tab_id,
-                    "message": reason,
-                })
-            );
+                "component": "session",
+                "kind": "layout.excluded",
+                "tab_id": tab_id,
+                "message": reason,
+            }));
             self.push_diagnostic(
                 "layout.excluded",
                 format!("Tab {tab_id} has no drawable layout: {reason}"),
@@ -4156,13 +4183,18 @@ impl Runtime {
     pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
         let changes_list_visible = self.snapshot.ui_state.right_panel_visible
             && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
-        let active_diff = self.snapshot.editor.active_tab_id.as_deref().and_then(|tab_id| {
-            self.snapshot
-                .editor
-                .tabs
-                .iter()
-                .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
-        });
+        let active_diff = self
+            .snapshot
+            .editor
+            .active_tab_id
+            .as_deref()
+            .and_then(|tab_id| {
+                self.snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
+            });
         if !changes_list_visible && active_diff.is_none() {
             return None;
         }
@@ -4505,16 +4537,7 @@ impl Runtime {
         true
     }
 
-    fn set_git_worktree_base(&mut self, branch: String) -> bool {
-        let Some((workspace, _)) = self.focused_local_checkout() else {
-            self.set_error(
-                "worktree.base_without_project",
-                "Choose a local Git repository before setting its base branch",
-                false,
-            );
-            return true;
-        };
-        let project_path = workspace.path.clone();
+    fn set_git_worktree_base(&mut self, project_path: String, branch: String) -> bool {
         let listed = self
             .worktree_catalog
             .project(&project_path)
@@ -5100,15 +5123,14 @@ impl Runtime {
     fn record_read_record_changes(&mut self, changes: &[crate::sidebar::ReadRecordChange]) {
         for change in changes {
             crate::diagnostic!(serde_json::json!({
-                    "component": "session",
-                    "kind": "pane.read_record",
-                    "pane_id": change.pane_id,
-                    "evicted": change.evicted,
-                    "state_change_seq": change.record.state_change_seq,
-                    "demand": change.record.demand,
-                    "activity": change.record.activity,
-                })
-            );
+                "component": "session",
+                "kind": "pane.read_record",
+                "pane_id": change.pane_id,
+                "evicted": change.evicted,
+                "state_change_seq": change.record.state_change_seq,
+                "demand": change.record.demand,
+                "activity": change.record.activity,
+            }));
         }
         self.persist_ui_state();
     }
@@ -5412,12 +5434,11 @@ impl Runtime {
         *self.pending_view_focus_mut(slot) = None;
         let what = slot.what();
         crate::diagnostic!(serde_json::json!({
-                "component": "view_state",
-                "kind": slot.refused_kind(),
-                slot.id_key(): target_id,
-                "message": message,
-            })
-        );
+            "component": "view_state",
+            "kind": slot.refused_kind(),
+            slot.id_key(): target_id,
+            "message": message,
+        }));
         self.push_diagnostic(
             slot.refused_kind(),
             format!(
@@ -5459,13 +5480,12 @@ impl Runtime {
     fn report_followed_pane_focus(&mut self, previous: Option<&str>, arriving: &str) {
         let from = previous.unwrap_or("<none>").to_owned();
         crate::diagnostic!(serde_json::json!({
-                "component": "view_state",
-                "kind": "pane.focus.followed",
-                "from_pane_id": from,
-                "to_pane_id": arriving,
-                "origin": "herdr",
-            })
-        );
+            "component": "view_state",
+            "kind": "pane.focus.followed",
+            "from_pane_id": from,
+            "to_pane_id": arriving,
+            "origin": "herdr",
+        }));
         self.push_diagnostic(
             "pane.focus.followed",
             format!("Herdr focused pane {arriving}; Hide was on {from}"),
@@ -5711,13 +5731,12 @@ impl Runtime {
                     format!("Forked pane {parent_pane_id} into {forked_pane_id} in {elapsed_ms}ms"),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "pane_fork",
-                        "kind": "pane.fork.created",
-                        "pane_id": parent_pane_id,
-                        "forked_pane_id": forked_pane_id,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "pane_fork",
+                    "kind": "pane.fork.created",
+                    "pane_id": parent_pane_id,
+                    "forked_pane_id": forked_pane_id,
+                    "duration_ms": elapsed_ms,
+                }));
                 true
             }
             Err(message) => {
@@ -5727,13 +5746,12 @@ impl Runtime {
                     true,
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "pane_fork",
-                        "kind": "pane.fork_failed",
-                        "pane_id": parent_pane_id,
-                        "message": message,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "pane_fork",
+                    "kind": "pane.fork_failed",
+                    "pane_id": parent_pane_id,
+                    "message": message,
+                    "duration_ms": elapsed_ms,
+                }));
                 true
             }
         }
@@ -5770,12 +5788,11 @@ impl Runtime {
                     format!("Pane {pane_id} projected in {elapsed_ms} ms"),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "pane_projection",
-                        "kind": "pane.projection_ready",
-                        "pane_id": pane_id,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "pane_projection",
+                    "kind": "pane.projection_ready",
+                    "pane_id": pane_id,
+                    "duration_ms": elapsed_ms,
+                }));
                 self.apply_pane_layout(layout);
                 true
             }
@@ -5810,14 +5827,13 @@ impl Runtime {
                     ),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "pane_control",
-                        "kind": "pane.split_ready",
-                        "pane_id": pane_id,
-                        "created_pane_id": created_pane_id,
-                        "direction": direction.as_str(),
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "pane_control",
+                    "kind": "pane.split_ready",
+                    "pane_id": pane_id,
+                    "created_pane_id": created_pane_id,
+                    "direction": direction.as_str(),
+                    "duration_ms": elapsed_ms,
+                }));
                 true
             }
             (
@@ -5848,12 +5864,11 @@ impl Runtime {
                     ),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "pane_control",
-                        "kind": "pane.zoom_ready",
-                        "pane_id": pane_id,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "pane_control",
+                    "kind": "pane.zoom_ready",
+                    "pane_id": pane_id,
+                    "duration_ms": elapsed_ms,
+                }));
                 true
             }
             (PaneControlAction::Close { pane_id }, Ok(PaneControlOutcome::Acknowledged { .. })) => {
@@ -5864,12 +5879,11 @@ impl Runtime {
                     ),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "pane_control",
-                        "kind": "pane.close_ready",
-                        "pane_id": pane_id,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "pane_control",
+                    "kind": "pane.close_ready",
+                    "pane_id": pane_id,
+                    "duration_ms": elapsed_ms,
+                }));
                 true
             }
             (PaneControlAction::Project { .. }, Ok(PaneControlOutcome::Acknowledged { .. }))
@@ -5950,16 +5964,15 @@ impl Runtime {
                     ),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "remote_control",
-                        "kind": "remote.control.ready",
-                        "target": target_id,
-                        "request_id": request_id,
-                        "action": action_kind,
-                        "created_tab_id": created_tab_id,
-                        "created_pane_id": created_pane_id,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "remote_control",
+                    "kind": "remote.control.ready",
+                    "target": target_id,
+                    "request_id": request_id,
+                    "action": action_kind,
+                    "created_tab_id": created_tab_id,
+                    "created_pane_id": created_pane_id,
+                    "duration_ms": elapsed_ms,
+                }));
             }
             // A remote target owns its tab order; `spawn_remote_control`
             // refuses the only action that reports one back.
@@ -5977,15 +5990,14 @@ impl Runtime {
                     true,
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "remote_control",
-                        "kind": "remote.control.failed",
-                        "target": target_id,
-                        "request_id": request_id,
-                        "action": action_kind,
-                        "message": message,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "remote_control",
+                    "kind": "remote.control.failed",
+                    "target": target_id,
+                    "request_id": request_id,
+                    "action": action_kind,
+                    "message": message,
+                    "duration_ms": elapsed_ms,
+                }));
             }
         }
         true
@@ -6070,6 +6082,246 @@ impl Runtime {
         true
     }
 
+    fn begin_task_operation(
+        &mut self,
+        kind: &str,
+        repository_root: Option<String>,
+        branch: Option<String>,
+        base_branch: Option<String>,
+        agent_kind: Option<String>,
+    ) -> Result<u64, String> {
+        if self
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working")
+        {
+            return Err("Another task operation is still running".into());
+        }
+        self.next_task_operation_id = self.next_task_operation_id.wrapping_add(1).max(1);
+        let id = self.next_task_operation_id;
+        self.snapshot.task_operation = Some(crate::model::TaskOperationSnapshot {
+            id,
+            kind: kind.to_owned(),
+            phase: "working".into(),
+            repository_root,
+            branch,
+            base_branch,
+            path: None,
+            pane_id: None,
+            agent_kind,
+            message: None,
+        });
+        Ok(id)
+    }
+
+    fn create_scratch_chat_tab(&mut self, label: String) -> bool {
+        let label = label.trim();
+        if label.is_empty() {
+            self.set_error(
+                "scratch_chat.invalid_label",
+                "Tab label cannot be empty",
+                false,
+            );
+            return true;
+        }
+        let id = match self.begin_task_operation("scratch_chat_tab", None, None, None, None) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("create tab: a live Herdr connection is required".into()),
+            );
+        };
+        let request = live::ScratchTabRequest {
+            root: self.scratch_root.clone(),
+            workspace_id: self
+                .snapshot
+                .navigator
+                .scratch
+                .session_workspace_ids
+                .first()
+                .cloned(),
+            label: label.to_owned(),
+        };
+        if let Err(message) = live::spawn_scratch_chat_tab_creation(context, id, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
+        let branch = payload.branch.trim().to_owned();
+        if branch.is_empty() {
+            self.set_error(
+                "worktree.create_invalid_branch",
+                "Branch is required",
+                false,
+            );
+            return true;
+        }
+        let has_branch = self
+            .worktree_catalog
+            .project(&payload.repository_root)
+            .is_some_and(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .any(|row| row.branch.is_some() && row.head_sha.is_some())
+            });
+        if !has_branch {
+            self.set_error(
+                "worktree.create_without_branches",
+                "Create the repository's first branch before creating a worktree",
+                true,
+            );
+            return true;
+        }
+        let id = match self.begin_task_operation(
+            "worktree_create",
+            Some(payload.repository_root.clone()),
+            Some(branch.clone()),
+            payload.base_branch.clone(),
+            payload.agent_kind.clone(),
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let request = live::WorktreeTaskRequest {
+            id,
+            repository_root: payload.repository_root,
+            branch,
+            base_branch: payload.base_branch,
+            agent_kind: payload.agent_kind,
+            focus: true,
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("create worktree: a live Herdr connection is required".into()),
+            );
+        };
+        if let Err(message) = live::spawn_worktree_create(context, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {
+        let Some(project) = self.worktree_catalog.project(&payload.repository_root) else {
+            self.set_error(
+                "branch_migrate.unknown_project",
+                "Repository status is unavailable",
+                true,
+            );
+            return true;
+        };
+        let Some(main) = project.worktrees.iter().find(|row| row.is_main) else {
+            self.set_error(
+                "branch_migrate.missing_main",
+                "The main worktree is unavailable",
+                true,
+            );
+            return true;
+        };
+        if main.dirty {
+            self.set_error(
+                "branch_migrate.dirty",
+                "Commit or discard uncommitted changes before moving the branch",
+                true,
+            );
+            return true;
+        }
+        let branch = main.branch.clone();
+        let id = match self.begin_task_operation(
+            "branch_migrate",
+            Some(payload.repository_root.clone()),
+            branch.clone(),
+            Some(payload.base_branch.clone()),
+            None,
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let request = live::WorktreeTaskRequest {
+            id,
+            repository_root: payload.repository_root,
+            branch: branch.unwrap_or_default(),
+            base_branch: Some(payload.base_branch),
+            agent_kind: None,
+            focus: false,
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("move branch: a live Herdr connection is required".into()),
+            );
+        };
+        if let Err(message) = live::spawn_branch_migration(context, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    pub fn ingest_task_operation_result(
+        &mut self,
+        id: u64,
+        result: Result<live::WorktreeTaskOutcome, String>,
+    ) -> bool {
+        let Some(operation) = self.snapshot.task_operation.as_mut() else {
+            return false;
+        };
+        if operation.id != id || operation.phase != "working" {
+            return false;
+        }
+        let should_focus = operation.kind != "branch_migrate";
+        match result {
+            Ok(outcome) => {
+                operation.phase = "ready".into();
+                operation.path = Some(outcome.path);
+                operation.pane_id = Some(outcome.pane_id.clone());
+                if should_focus {
+                    self.snapshot.terminal.pane_id = Some(outcome.pane_id.clone());
+                    self.snapshot.focused.surface = Surface::Terminal;
+                    self.snapshot.focused.pane_id = Some(outcome.pane_id.clone());
+                    self.snapshot.ui_state.selected_pane_id = Some(outcome.pane_id);
+                }
+                self.refresh_worktrees();
+            }
+            Err(message) => {
+                operation.phase = "failed".into();
+                operation.message = Some(message);
+                self.refresh_worktrees();
+            }
+        }
+        true
+    }
+
+    fn acknowledge_task_operation(&mut self, id: u64) -> bool {
+        if self
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.id == id && operation.phase != "working")
+        {
+            self.snapshot.task_operation = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn ingest_local_control_result(
         &mut self,
         action: RemoteControlAction,
@@ -6134,14 +6386,13 @@ impl Runtime {
                     ),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "tab_control",
-                        "kind": "tab.control.ready",
-                        "action": action_kind,
-                        "created_tab_id": created_tab_id,
-                        "created_pane_id": created_pane_id,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "tab_control",
+                    "kind": "tab.control.ready",
+                    "action": action_kind,
+                    "created_tab_id": created_tab_id,
+                    "created_pane_id": created_pane_id,
+                    "duration_ms": elapsed_ms,
+                }));
             }
             Err(message) => {
                 // Hide keeps the tab it made visible. The refusal is reported
@@ -6156,13 +6407,12 @@ impl Runtime {
                     true,
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "tab_control",
-                        "kind": "tab.control.failed",
-                        "action": action_kind,
-                        "message": message,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "tab_control",
+                    "kind": "tab.control.failed",
+                    "action": action_kind,
+                    "message": message,
+                    "duration_ms": elapsed_ms,
+                }));
             }
             // `tab.move` is the only action that reports a tab order and it
             // is handled above, before this match.
@@ -6219,26 +6469,24 @@ impl Runtime {
                         ),
                     );
                     crate::diagnostic!(serde_json::json!({
-                            "component": "tab_control",
-                            "kind": "tab.move.ready",
-                            "checkout_id": checkout_id,
-                            "tab_id": tab_id,
-                            "order": placed,
-                            "duration_ms": elapsed_ms,
-                        })
-                    );
+                        "component": "tab_control",
+                        "kind": "tab.move.ready",
+                        "checkout_id": checkout_id,
+                        "tab_id": tab_id,
+                        "order": placed,
+                        "duration_ms": elapsed_ms,
+                    }));
                     return true;
                 }
                 crate::diagnostic!(serde_json::json!({
-                        "component": "tab_control",
-                        "kind": "tab.move.diverged",
-                        "checkout_id": checkout_id,
-                        "tab_id": tab_id,
-                        "requested": expected_order,
-                        "placed": placed,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "tab_control",
+                    "kind": "tab.move.diverged",
+                    "checkout_id": checkout_id,
+                    "tab_id": tab_id,
+                    "requested": expected_order,
+                    "placed": placed,
+                    "duration_ms": elapsed_ms,
+                }));
                 self.abandon_tab_move(
                     checkout_id,
                     generation,
@@ -6248,15 +6496,14 @@ impl Runtime {
             }
             Err(message) => {
                 crate::diagnostic!(serde_json::json!({
-                        "component": "tab_control",
-                        "kind": "tab.move.failed",
-                        "checkout_id": checkout_id,
-                        "tab_id": tab_id,
-                        "requested": expected_order,
-                        "message": message,
-                        "duration_ms": elapsed_ms,
-                    })
-                );
+                    "component": "tab_control",
+                    "kind": "tab.move.failed",
+                    "checkout_id": checkout_id,
+                    "tab_id": tab_id,
+                    "requested": expected_order,
+                    "message": message,
+                    "duration_ms": elapsed_ms,
+                }));
                 self.abandon_tab_move(
                     checkout_id,
                     generation,
@@ -6298,11 +6545,10 @@ impl Runtime {
             // into the snapshot's diagnostics would restamp the revisioned
             // rest section on every frame of a mismatch burst.
             crate::diagnostic!(serde_json::json!({
-                    "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
-                    "pane_id": pane_id, "frame": [frame.width, frame.height],
-                    "expected": expected.map(|(height, width)| [width, height]),
-                })
-            );
+                "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
+                "pane_id": pane_id, "frame": [frame.width, frame.height],
+                "expected": expected.map(|(height, width)| [width, height]),
+            }));
             return Some(false);
         }
         if self.terminal_frames_need_full.contains(pane_id) && !frame.full {
@@ -6318,13 +6564,12 @@ impl Runtime {
         if mode == TerminalSessionMode::Control {
             if let Some(recovery) = self.terminal_recovery.remove(pane_id) {
                 crate::diagnostic!(serde_json::json!({
-                        "kind": "terminal.control_frame_ready", "pane_id": pane_id,
-                        "generation": generation, "occurred_at": unix_milliseconds(),
-                        "retries": recovery.retries,
-                        "last_attempt_at_unix_ms": recovery.last_attempt_at_unix_ms,
-                        "rows": frame.height, "cols": frame.width,
-                    })
-                );
+                    "kind": "terminal.control_frame_ready", "pane_id": pane_id,
+                    "generation": generation, "occurred_at": unix_milliseconds(),
+                    "retries": recovery.retries,
+                    "last_attempt_at_unix_ms": recovery.last_attempt_at_unix_ms,
+                    "rows": frame.height, "cols": frame.width,
+                }));
             }
             if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
                 lifecycle.message = None;
@@ -6384,17 +6629,16 @@ impl Runtime {
 
         if mode == TerminalSessionMode::Control && category == "owner_conflict" {
             crate::diagnostic!(serde_json::json!({
-                    "component": "terminal_session",
-                    "kind": "terminal.control_owner_conflict",
-                    "pane_id": pane_id,
-                    "generation": generation,
-                    "attempt": attempt,
-                    "mode": mode.as_str(),
-                    "duration_ms": 0,
-                    "exit_category": category,
-                    "retry_decision": self.terminal_retry_decision(pane_id, "observe_once"),
-                })
-            );
+                "component": "terminal_session",
+                "kind": "terminal.control_owner_conflict",
+                "pane_id": pane_id,
+                "generation": generation,
+                "attempt": attempt,
+                "mode": mode.as_str(),
+                "duration_ms": 0,
+                "exit_category": category,
+                "retry_decision": self.terminal_retry_decision(pane_id, "observe_once"),
+            }));
             self.schedule_terminal_recovery(
                 pane_id,
                 "Another client owns terminal control; viewing read-only".to_owned(),
@@ -6432,17 +6676,16 @@ impl Runtime {
             );
             self.sync_transport_projection(pane_id);
             crate::diagnostic!(serde_json::json!({
-                    "component": "terminal_session",
-                    "kind": "terminal.session_closed_with_pane",
-                    "pane_id": pane_id,
-                    "generation": generation,
-                    "attempt": attempt,
-                    "mode": mode.as_str(),
-                    "duration_ms": 0,
-                    "exit_category": category,
-                    "retry_decision": "none",
-                })
-            );
+                "component": "terminal_session",
+                "kind": "terminal.session_closed_with_pane",
+                "pane_id": pane_id,
+                "generation": generation,
+                "attempt": attempt,
+                "mode": mode.as_str(),
+                "duration_ms": 0,
+                "exit_category": category,
+                "retry_decision": "none",
+            }));
             return true;
         }
 
@@ -6463,17 +6706,16 @@ impl Runtime {
         let notice = format!("\r\n[{message}]\r\n");
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
         crate::diagnostic!(serde_json::json!({
-                "component": "terminal_session",
-                "kind": "terminal.session_ended",
-                "pane_id": pane_id,
-                "generation": generation,
-                "attempt": attempt,
-                "mode": mode.as_str(),
-                "duration_ms": 0,
-                "exit_category": category,
-                "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
-            })
-        );
+            "component": "terminal_session",
+            "kind": "terminal.session_ended",
+            "pane_id": pane_id,
+            "generation": generation,
+            "attempt": attempt,
+            "mode": mode.as_str(),
+            "duration_ms": 0,
+            "exit_category": category,
+            "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
+        }));
         true
     }
 
@@ -6496,14 +6738,13 @@ impl Runtime {
             self.sync_transport_projection(pane_id);
         }
         crate::diagnostic!(serde_json::json!({
-                "component": "terminal_session",
-                "kind": "terminal.control_write_failed",
-                "pane_id": pane_id,
-                "generation": generation,
-                "message": message,
-                "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
-            })
-        );
+            "component": "terminal_session",
+            "kind": "terminal.control_write_failed",
+            "pane_id": pane_id,
+            "generation": generation,
+            "message": message,
+            "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
+        }));
         true
     }
 
@@ -6537,9 +6778,8 @@ impl Runtime {
             occurred_at: unix_milliseconds(),
         };
         crate::diagnostic!(serde_json::json!({
-                "kind": diagnostic.kind, "message": diagnostic.message, "occurred_at": diagnostic.occurred_at
-            })
-        );
+            "kind": diagnostic.kind, "message": diagnostic.message, "occurred_at": diagnostic.occurred_at
+        }));
         self.snapshot.status.diagnostics.push(diagnostic);
         // The list rides the revisioned rest section, so it is bounded: a
         // fault that repeats every few seconds otherwise grows what every
@@ -6912,14 +7152,13 @@ impl Runtime {
                 format!("Released the terminal session for pane {pane_id}"),
             );
             crate::diagnostic!(serde_json::json!({
-                    "component": "terminal_session",
-                    "kind": "terminal.session_released",
-                    "pane_id": pane_id,
-                    "generation": generation,
-                    "attempt": attempt,
-                    "retry_decision": "on_next_visit",
-                })
-            );
+                "component": "terminal_session",
+                "kind": "terminal.session_released",
+                "pane_id": pane_id,
+                "generation": generation,
+                "attempt": attempt,
+                "retry_decision": "on_next_visit",
+            }));
         }
         true
     }
@@ -6995,12 +7234,7 @@ impl Runtime {
         }
     }
 
-    fn diff_tab_id(
-        workspace_id: &str,
-        checkout_id: &str,
-        path: &str,
-        committed: bool,
-    ) -> String {
+    fn diff_tab_id(workspace_id: &str, checkout_id: &str, path: &str, committed: bool) -> String {
         let scope = if committed { "committed" } else { "working" };
         format!("diff:{workspace_id}:{checkout_id}:{scope}:{path}")
     }
@@ -7023,7 +7257,11 @@ impl Runtime {
                 .and_then(|name| name.to_str())
                 .filter(|name| !name.is_empty())
                 .unwrap_or(path);
-            let scope = if committed { "branch diff" } else { "working diff" };
+            let scope = if committed {
+                "branch diff"
+            } else {
+                "working diff"
+            };
             self.snapshot.editor.tabs.push(EditorTabSnapshot {
                 id: tab_id.clone(),
                 workspace_id: workspace_id.to_owned(),
@@ -7315,13 +7553,12 @@ impl Runtime {
             ),
         );
         crate::diagnostic!(serde_json::json!({
-                "component": "workspace",
-                "kind": "workspace.registered",
-                "path": outcome.registration.path,
-                "duration_ms": elapsed_ms,
-                    "git_init": if git_init_failed { "failed" } else { "complete_or_skipped" },
-            })
-        );
+            "component": "workspace",
+            "kind": "workspace.registered",
+            "path": outcome.registration.path,
+            "duration_ms": elapsed_ms,
+                "git_init": if git_init_failed { "failed" } else { "complete_or_skipped" },
+        }));
         true
     }
 
@@ -8496,14 +8733,13 @@ impl Runtime {
                     .find(|agent| agent.pane_id == payload.pane_id);
                 let report = agent.is_some_and(|agent| agent.agent_kind == "claude");
                 crate::diagnostic!(serde_json::json!({
-                        "component": "terminal", "kind": "terminal.click_routed",
-                        "pane_id": payload.pane_id,
-                        "basis": if agent.is_some() { "herdr.agent.list" } else { "not_detected" },
-                        "agent_kind": agent.map(|agent| agent.agent_kind.as_str()),
-                        "route": if report { "sgr_mouse" } else { "local_selection" },
-                        "column": payload.column, "row": payload.row,
-                    })
-                );
+                    "component": "terminal", "kind": "terminal.click_routed",
+                    "pane_id": payload.pane_id,
+                    "basis": if agent.is_some() { "herdr.agent.list" } else { "not_detected" },
+                    "agent_kind": agent.map(|agent| agent.agent_kind.as_str()),
+                    "route": if report { "sgr_mouse" } else { "local_selection" },
+                    "column": payload.column, "row": payload.row,
+                }));
                 if report {
                     // SGR uses one-based cells, uppercase M for press and
                     // lowercase m for release. No newline or Enter is sent.
@@ -8607,7 +8843,8 @@ impl Runtime {
                 {
                     return false;
                 }
-                crate::diagnostic!(serde_json::json!({"kind":"terminal.resize_settled", "pane_id":payload.pane_id, "rows":payload.rows, "cols":payload.cols})
+                crate::diagnostic!(
+                    serde_json::json!({"kind":"terminal.resize_settled", "pane_id":payload.pane_id, "rows":payload.rows, "cols":payload.cols})
                 );
                 if self.terminal_sessions.contains_key(&payload.pane_id) {
                     if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
@@ -8721,7 +8958,15 @@ impl Runtime {
                 self.open_git_worktree(payload.checkout_path)
             }
             ValidatedEvent::GitWorktreeSetBase(payload) => {
-                self.set_git_worktree_base(payload.branch)
+                self.set_git_worktree_base(payload.repository_root, payload.branch)
+            }
+            ValidatedEvent::CreateScratchChatTab(payload) => {
+                self.create_scratch_chat_tab(payload.label)
+            }
+            ValidatedEvent::CreateWorktree(payload) => self.create_project_worktree(payload),
+            ValidatedEvent::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
+            ValidatedEvent::TaskOperationAck(payload) => {
+                self.acknowledge_task_operation(payload.id)
             }
             ValidatedEvent::RemoveWorktree(payload) => self.remove_git_worktree(payload),
             ValidatedEvent::WorktreeRemovalFinished(payload) => {
@@ -8770,8 +9015,7 @@ impl Runtime {
                     );
                     return true;
                 };
-                let Some(checkout_id) = self.snapshot.navigator.focused_checkout_id.clone()
-                else {
+                let Some(checkout_id) = self.snapshot.navigator.focused_checkout_id.clone() else {
                     self.set_error(
                         "diff.invalid_context",
                         "A diff tab requires the selected workspace and checkout",
@@ -8779,12 +9023,8 @@ impl Runtime {
                     );
                     return true;
                 };
-                let tab_id = Self::diff_tab_id(
-                    &workspace_id,
-                    &checkout_id,
-                    &path,
-                    payload.committed,
-                );
+                let tab_id =
+                    Self::diff_tab_id(&workspace_id, &checkout_id, &path, payload.committed);
                 if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {
                     return false;
                 }
@@ -8881,18 +9121,13 @@ impl Runtime {
                     pane_text_scales: current.pane_text_scales,
                     editor_text_scale: current.editor_text_scale,
                     pane_read_records: current.pane_read_records,
-                    last_agent_kind: payload
-                        .last_agent_kind
-                        .unwrap_or(current.last_agent_kind),
+                    last_agent_kind: payload.last_agent_kind.unwrap_or(current.last_agent_kind),
                     last_agent_bypass: payload
                         .last_agent_bypass
                         .unwrap_or(current.last_agent_bypass),
-                    scratch_expanded: payload
-                        .scratch_expanded
-                        .unwrap_or(current.scratch_expanded),
+                    scratch_expanded: payload.scratch_expanded.unwrap_or(current.scratch_expanded),
                 };
-                self.snapshot.navigator.scratch.expanded =
-                    self.snapshot.ui_state.scratch_expanded;
+                self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
                     self.snapshot.ui_state.focused_device_id.clone();
@@ -9281,17 +9516,16 @@ impl Runtime {
         self.schedule_terminal_recovery(pane_id, format!("Terminal start refused: {message}"));
         self.sync_transport_projection(pane_id);
         crate::diagnostic!(serde_json::json!({
-                "component": "terminal_session",
-                "kind": "terminal.session_unavailable",
-                "pane_id": pane_id,
-                "generation": generation,
-                "attempt": attempt,
-                "mode": mode.as_str(),
-                "duration_ms": elapsed_ms,
-                "exit_category": category,
-                "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
-            })
-        );
+            "component": "terminal_session",
+            "kind": "terminal.session_unavailable",
+            "pane_id": pane_id,
+            "generation": generation,
+            "attempt": attempt,
+            "mode": mode.as_str(),
+            "duration_ms": elapsed_ms,
+            "exit_category": category,
+            "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
+        }));
     }
 
     pub fn ingest_terminal_session_spawn(
@@ -9392,18 +9626,17 @@ impl Runtime {
                     ),
                 );
                 crate::diagnostic!(serde_json::json!({
-                        "component": "terminal_session",
-                        "kind": "terminal.session_ready",
-                        "pane_id": pane_id,
-                        "generation": generation,
-                        "attempt": attempt,
-                        "mode": mode.as_str(),
-                        "duration_ms": elapsed_ms,
-                        "exit_category": null,
-                        "retry_decision": self.terminal_retry_decision(pane_id, if mode == TerminalSessionMode::Observe { "manual" } else { "none" }),
-                        "last_attempt_at_unix_ms": self.terminal_recovery.get(pane_id).and_then(|r| r.last_attempt_at_unix_ms),
-                    })
-                );
+                    "component": "terminal_session",
+                    "kind": "terminal.session_ready",
+                    "pane_id": pane_id,
+                    "generation": generation,
+                    "attempt": attempt,
+                    "mode": mode.as_str(),
+                    "duration_ms": elapsed_ms,
+                    "exit_category": null,
+                    "retry_decision": self.terminal_retry_decision(pane_id, if mode == TerminalSessionMode::Observe { "manual" } else { "none" }),
+                    "last_attempt_at_unix_ms": self.terminal_recovery.get(pane_id).and_then(|r| r.last_attempt_at_unix_ms),
+                }));
                 true
             }
             Err(message) => {
@@ -9730,6 +9963,12 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
+        "create_scratch_chat_tab" => {
+            decode!(CreateScratchChatTabPayload, CreateScratchChatTab)
+        }
+        "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
+        "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
+        "task_operation_ack" => decode!(TaskOperationAckPayload, TaskOperationAck),
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
         "worktree_removal_finished" => {
             decode!(WorktreeRemovalFinishedPayload, WorktreeRemovalFinished)
@@ -11234,7 +11473,6 @@ mod tests {
         assert!(error.message.contains("git init failed explicitly"));
     }
 
-
     /// The Scratch projection's fixture: one Herdr workspace whose panes sit
     /// in the scratch folder, plus a project pane in another directory, so
     /// every assertion about separation has both sides present.
@@ -11341,7 +11579,12 @@ mod tests {
         // One project row, for the project pane, and no temporary row for the
         // scratch folder.
         assert_eq!(navigator.workspaces.len(), 1);
-        assert!(navigator.workspaces.iter().all(|workspace| !workspace.temporary));
+        assert!(
+            navigator
+                .workspaces
+                .iter()
+                .all(|workspace| !workspace.temporary)
+        );
         assert!(
             !navigator
                 .workspaces
@@ -11382,7 +11625,9 @@ mod tests {
         let mut after_close = scratch_session(scratch_root, project_path, None);
         after_close.panes.retain(|pane| pane.pane_id != "s1:p2");
         after_close.tabs.retain(|tab| tab.tab_id != "s1:t2");
-        after_close.layouts.retain(|layout| layout.tab_id != "s1:t2");
+        after_close
+            .layouts
+            .retain(|layout| layout.tab_id != "s1:t2");
         ingest_scratch(&mut runtime, after_close);
 
         let snapshot = runtime.snapshot();
@@ -11602,6 +11847,44 @@ mod tests {
                 home_path: None,
             },
         )
+    }
+
+    #[test]
+    fn branch_migration_receipt_preserves_core_focus() {
+        let mut runtime = runtime();
+        runtime.snapshot.terminal.pane_id = Some("existing:pane".into());
+        runtime.snapshot.focused.surface = Surface::Terminal;
+        runtime.snapshot.focused.pane_id = Some("existing:pane".into());
+        runtime.snapshot.ui_state.selected_pane_id = Some("existing:pane".into());
+        let id = runtime
+            .begin_task_operation(
+                "branch_migrate",
+                Some("/fixture/repo".into()),
+                Some("feature".into()),
+                Some("main".into()),
+                None,
+            )
+            .unwrap();
+
+        assert!(runtime.ingest_task_operation_result(
+            id,
+            Ok(live::WorktreeTaskOutcome {
+                path: "/fixture/worktree".into(),
+                pane_id: "new:pane".into(),
+            })
+        ));
+        assert_eq!(
+            runtime.snapshot.terminal.pane_id.as_deref(),
+            Some("existing:pane")
+        );
+        assert_eq!(
+            runtime.snapshot.focused.pane_id.as_deref(),
+            Some("existing:pane")
+        );
+        assert_eq!(
+            runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+            Some("existing:pane")
+        );
     }
 
     /// R11/AC16: the chords move one pane's scale within bounds and reset it,
@@ -11871,6 +12154,7 @@ mod tests {
             repo_name: label.to_owned(),
             is_git: false,
             default_branch: None,
+            branches: Vec::new(),
             registered: true,
             temporary: false,
             session_workspace_ids: Vec::new(),
@@ -15105,7 +15389,8 @@ mod tests {
         .expect("the shell's SwiftUI source");
 
         let tokens = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS/HideTheme.swift"),
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../macos/Sources/HerdrMacOS/HideTheme.swift"),
         )
         .expect("the shell's theme token source");
 
@@ -17799,13 +18084,19 @@ mod tests {
         assert_eq!(tab.kind, EditorTabKind::Diff);
         assert_eq!(tab.checkout_id, checkout_id);
         assert_eq!(tab.diff_committed, Some(false));
-        assert_eq!(snapshot.editor.active_tab_id.as_deref(), Some(tab.id.as_str()));
+        assert_eq!(
+            snapshot.editor.active_tab_id.as_deref(),
+            Some(tab.id.as_str())
+        );
         assert!(snapshot.editor.document.is_none());
         assert!(!snapshot.ui_state.right_panel_visible);
         let request = runtime
             .changes_request()
             .expect("an active diff keeps its Changes reader alive");
-        assert_eq!(request.selected_path.as_deref(), Some(path.to_string_lossy().as_ref()));
+        assert_eq!(
+            request.selected_path.as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
 
         std::fs::write(&path, "{}\n").expect("file fixture");
         runtime.open_file_tab("workspace:0", &checkout_id, path.to_string_lossy().as_ref());

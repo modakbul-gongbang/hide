@@ -283,6 +283,12 @@ final class ShellModel: ObservableObject {
     @Published var worktreeToDelete: CoreGitWorktree?
     @Published var deleteWorktreeBranch = false
     private var handledRemovalIDs: Set<UInt64> = []
+    @Published var worktreeWorkspace: CoreWorkspaceSnapshot?
+    @Published var worktreeDraft = WorktreeSheetDraft()
+    @Published private(set) var worktreeError: String?
+    @Published var branchMigration: BranchMigrationRequest?
+    private var handledTaskOperationIDs: Set<UInt64> = []
+    private var pendingScratchChat: (provider: AgentProvider, message: String, bypass: Bool)?
     @Published var interactionNotice: String?
     /// When the last reported fork failure happened, so one failure is raised
     /// once rather than on every snapshot that still carries it.
@@ -342,6 +348,7 @@ final class ShellModel: ObservableObject {
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             self.observeWorktreeRemoval(in: snapshot)
+            self.observeTaskOperation(in: snapshot)
             self.observeForkFailure(in: snapshot)
             self.observeAgentFocus(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
@@ -1212,6 +1219,169 @@ final class ShellModel: ObservableObject {
         worktreeToDelete = nil
     }
 
+    var worktreeBranches: [String] {
+        guard let workspace = worktreeWorkspace else { return [] }
+        return ProjectBaseBranchPolicy.orderedBranches(
+            workspace.branches,
+            selectedBase: baseBranch(for: workspace)
+        )
+    }
+
+    var worktreeCanSubmit: Bool {
+        worktreeDraft.canSubmit && !worktreeBranches.isEmpty
+            && core.snapshot?.taskOperation?.phase != "working"
+    }
+
+    func requestNewWorktree(_ workspace: CoreWorkspaceSnapshot) {
+        worktreeWorkspace = workspace
+        worktreeDraft.reset(
+            branches: workspace.branches,
+            preferredBase: baseBranch(for: workspace)
+        )
+        worktreeError = nil
+    }
+
+    func cancelNewWorktree() {
+        guard core.snapshot?.taskOperation?.phase != "working" else { return }
+        worktreeWorkspace = nil
+        worktreeDraft = WorktreeSheetDraft()
+        worktreeError = nil
+    }
+
+    func submitNewWorktree() {
+        guard let workspace = worktreeWorkspace, worktreeCanSubmit else { return }
+        worktreeError = nil
+        core.dispatch(kind: "create_worktree", payload: [
+            "repository_root": workspace.path,
+            "branch": worktreeDraft.branch.trimmingCharacters(in: .whitespacesAndNewlines),
+            "base_branch": worktreeDraft.baseBranch.map { $0 as Any } ?? NSNull(),
+            "agent_kind": worktreeDraft.agent.map { $0.rawValue as Any } ?? NSNull(),
+        ])
+    }
+
+    func requestBranchMigration(workspace: CoreWorkspaceSnapshot, checkout: CoreCheckoutSnapshot) {
+        guard let branch = checkout.branch,
+              let base = baseBranch(for: workspace),
+              branch != base
+        else { return }
+        branchMigration = BranchMigrationRequest(
+            repositoryRoot: workspace.path,
+            branch: branch,
+            baseBranch: base
+        )
+    }
+
+    func baseBranch(for workspace: CoreWorkspaceSnapshot) -> String? {
+        ProjectBaseBranchPolicy.selected(
+            projectPath: workspace.path,
+            defaultBranch: workspace.defaultBranch,
+            overrides: core.snapshot?.uiState.projectBaseBranches ?? [:]
+        )
+    }
+
+    func setBaseBranch(_ checkout: CoreCheckoutSnapshot, in workspace: CoreWorkspaceSnapshot) {
+        guard let branch = checkout.branch else {
+            interactionNotice = "A detached worktree cannot be the project base branch."
+            return
+        }
+        core.dispatch(kind: "git_worktree_set_base", payload: [
+            "repository_root": workspace.path,
+            "branch": branch,
+        ])
+    }
+
+    func copyCheckoutPath(_ checkout: CoreCheckoutSnapshot) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(checkout.path, forType: .string)
+    }
+
+    func revealCheckout(_ checkout: CoreCheckoutSnapshot) {
+        ExternalFileOpener.reveal(URL(fileURLWithPath: checkout.path))
+    }
+
+    func openCheckoutInDefaultEditor(_ checkout: CoreCheckoutSnapshot) {
+        ExternalFileOpener.openInDefaultEditor(URL(fileURLWithPath: checkout.path)) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    func confirmBranchMigration() {
+        guard let request = branchMigration else { return }
+        branchMigration = nil
+        core.dispatch(kind: "migrate_main_branch", payload: [
+            "repository_root": request.repositoryRoot,
+            "base_branch": request.baseBranch,
+        ])
+    }
+
+    private func observeTaskOperation(in snapshot: CoreSnapshot?) {
+        guard let operation = snapshot?.taskOperation,
+              operation.phase != "working",
+              handledTaskOperationIDs.insert(operation.id).inserted
+        else { return }
+        defer {
+            core.dispatch(kind: "task_operation_ack", payload: ["id": operation.id])
+        }
+        if operation.phase == "failed" {
+            let message = WorktreeSubmissionPresentation.oneLine(
+                operation.message ?? "The operation failed."
+            )
+            switch operation.kind {
+            case "worktree_create":
+                worktreeError = message
+            case "scratch_chat_tab":
+                composerSubmitting = false
+                pendingScratchChat = nil
+                interactionNotice = message
+            default:
+                interactionNotice = message
+            }
+            return
+        }
+        guard let paneID = operation.paneID, let path = operation.path else {
+            let message = "The operation completed without a pane or path."
+            if operation.kind == "worktree_create" {
+                worktreeError = message
+            } else {
+                composerSubmitting = false
+                pendingScratchChat = nil
+                interactionNotice = message
+            }
+            return
+        }
+        if operation.kind == "scratch_chat_tab", let pending = pendingScratchChat {
+            pendingScratchChat = nil
+            core.startAgentInCreatedPane(
+                paneID: paneID,
+                path: path,
+                provider: pending.provider,
+                message: pending.message,
+                bypassWarnings: pending.bypass
+            ) { [weak self] result in
+                guard let self else { return }
+                self.composerSubmitting = false
+                self.showComposer = false
+                if !result.succeeded { self.interactionNotice = result.message }
+            }
+            return
+        }
+        if operation.kind == "worktree_create" {
+            worktreeWorkspace = nil
+            worktreeDraft = WorktreeSheetDraft()
+            if let raw = operation.agentKind, let provider = AgentProvider(rawValue: raw) {
+                core.startAgentInCreatedPane(
+                    paneID: paneID,
+                    path: path,
+                    provider: provider,
+                    message: nil,
+                    bypassWarnings: false
+                ) { [weak self] result in
+                    if !result.succeeded { self?.interactionNotice = result.message }
+                }
+            }
+        }
+    }
+
     private func observeWorktreeRemoval(in snapshot: CoreSnapshot?) {
         guard let removal = snapshot?.worktreeRemoval else { return }
         if removal.phase == "failed", !handledRemovalIDs.contains(removal.id) {
@@ -1375,8 +1545,16 @@ final class ShellModel: ObservableObject {
         )
         composerSubmitting = true
         interactionNotice = nil
+        if case .scratch = destination {
+            pendingScratchChat = (provider, message, bypassWarnings)
+            core.dispatch(kind: "create_scratch_chat_tab", payload: [
+                "label": "hide \(provider.rawValue)"
+            ])
+            return
+        }
+        guard case .checkout(let id, let path, let workspaceID) = destination else { return }
         core.startChat(
-            destination: destination,
+            destination: CheckoutChatDestination(id: id, path: path, workspaceID: workspaceID),
             provider: provider,
             message: message,
             bypassWarnings: bypassWarnings

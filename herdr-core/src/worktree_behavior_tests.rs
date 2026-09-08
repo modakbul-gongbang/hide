@@ -15,7 +15,18 @@ impl Repository {
         git(&root, &["init", "-b", "main"]).unwrap();
         git(&root, &["config", "user.name", "Fixture"]).unwrap();
         git(&root, &["config", "user.email", "fixture@example.invalid"]).unwrap();
+        git(&root, &["config", "commit.gpgsign", "false"]).unwrap();
         git(&root, &["commit", "--allow-empty", "-m", "initial"]).unwrap();
+        git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]).unwrap();
+        git(
+            &root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        )
+        .unwrap();
         Self(root)
     }
     fn linked(&self, name: &str) -> PathBuf {
@@ -35,6 +46,104 @@ impl Repository {
             base,
         )
     }
+}
+
+#[test]
+fn base_branch_default_selection() {
+    let repo = Repository::new();
+    git(&repo.0, &["branch", "release"]).unwrap();
+    let project = repo.read(None);
+    assert_eq!(project.base_branch.as_deref(), Some("main"));
+    assert_eq!(project.base_source, "origin_head");
+    assert_eq!(project.branches, ["main", "release"]);
+}
+
+#[test]
+fn base_branch_unknown_allows_creation() {
+    let repo = Repository::new();
+    git(
+        &repo.0,
+        &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+    )
+    .unwrap();
+    let project = repo.read(None);
+    assert_eq!(project.base_branch, None);
+    assert_eq!(project.base_source, "unknown");
+    assert!(project.worktrees.iter().any(|row| row.branch.is_some()));
+}
+
+#[test]
+fn worktree_creation_blocked_without_branches() {
+    let root = std::env::temp_dir().join(format!("hide-unborn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-b", "main"]).unwrap();
+    let project = read_project(
+        &root,
+        root.to_string_lossy().into_owned(),
+        &BTreeMap::new(),
+        None,
+    );
+    assert!(
+        !project
+            .worktrees
+            .iter()
+            .any(|row| row.branch.is_some() && row.head_sha.is_some())
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn main_worktree_row_label() {
+    assert_eq!(
+        crate::workspace::worktree_row_label(true, Some("topic"), Some("abcdef")),
+        "main worktree"
+    );
+}
+
+#[test]
+fn detached_worktree_row_label() {
+    assert_eq!(
+        crate::workspace::worktree_row_label(false, None, Some("0123456789abcdef")),
+        "01234567 detached"
+    );
+}
+
+#[test]
+fn base_branch_source_excludes_head_fallback() {
+    let repo = Repository::new();
+    git(
+        &repo.0,
+        &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+    )
+    .unwrap();
+    git(&repo.0, &["checkout", "-b", "feature"]).unwrap();
+    let project = repo.read(None);
+    assert_eq!(project.default_branch, None);
+    assert_eq!(project.base_branch, None);
+    let row = project.worktrees.iter().find(|row| row.is_main).unwrap();
+    assert_eq!(row.base_branch, None);
+    assert_eq!(row.merged, None);
+    assert_eq!((row.ahead, row.behind), (0, 0));
+}
+
+#[test]
+fn set_base_branch_from_checkout_row() {
+    let repo = Repository::new();
+    repo.linked("feature");
+    let project = repo.read(Some("feature"));
+    assert_eq!(project.base_branch.as_deref(), Some("feature"));
+    assert_eq!(project.base_source, "specified");
+    assert!(
+        project
+            .worktrees
+            .iter()
+            .find(|row| row.branch.as_deref() == Some("feature"))
+            .unwrap()
+            .deletion_gate
+            .blocked_reason
+            .is_some()
+    );
 }
 impl Drop for Repository {
     fn drop(&mut self) {

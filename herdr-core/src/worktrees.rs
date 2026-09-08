@@ -298,29 +298,37 @@ fn read_project(
     base_override: Option<&str>,
 ) -> ProjectWorktreesSnapshot {
     let default_branch = default_branch(root);
+    let branches = local_branches(root);
     let valid_override = base_override.filter(|base| resolvable_base(root, base).is_some());
     let base_branch = valid_override
         .map(str::to_owned)
         .or_else(|| default_branch.clone());
     let base_branch_fallback = base_override
         .filter(|_| valid_override.is_none())
-        .map(|base| format!("Base branch {base} is unavailable; using repository default"));
+        .map(|base| {
+            if default_branch.is_some() {
+                format!("Base branch {base} is unavailable; using repository default")
+            } else {
+                format!("Base branch {base} is unavailable; repository base is unknown")
+            }
+        });
     let base_source = if valid_override.is_some() {
         "specified"
+    } else if default_branch.is_some() {
+        "origin_head"
     } else {
-        "default"
+        "unknown"
     }
     .to_owned();
     let listed = match git(root, &["worktree", "list", "--porcelain"]) {
         Ok(output) => output,
         Err(reason) => {
             crate::diagnostic!(serde_json::json!({
-                    "component": "worktrees",
-                    "kind": "worktree_list.failed",
-                    "project": root_path,
-                    "message": reason,
-                })
-            );
+                "component": "worktrees",
+                "kind": "worktree_list.failed",
+                "project": root_path,
+                "message": reason,
+            }));
             return ProjectWorktreesSnapshot {
                 root_path,
                 default_branch,
@@ -370,12 +378,32 @@ fn read_project(
     ProjectWorktreesSnapshot {
         root_path,
         default_branch,
+        branches,
         worktrees,
         unavailable_reason: None,
         base_branch,
         base_branch_fallback,
         base_source,
     }
+}
+
+fn local_branches(root: &Path) -> Vec<String> {
+    git(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .map(|output| {
+        let mut branches = output
+            .lines()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        branches.sort();
+        branches.dedup();
+        branches
+    })
+    .unwrap_or_default()
 }
 
 /// One record of `git worktree list --porcelain`, before any counting.
@@ -410,6 +438,7 @@ pub fn parse_worktree_list(output: &str, _root: &Path) -> Vec<ListedWorktree> {
                 head_sha: record
                     .lines()
                     .find_map(|line| line.strip_prefix("HEAD "))
+                    .filter(|sha| sha.chars().any(|character| character != '0'))
                     .map(str::to_owned),
                 bare: record.lines().any(|line| line == "bare"),
                 is_main: false,
@@ -715,8 +744,11 @@ fn upstream(
     ))
 }
 
-/// The repository's default branch: what `origin/HEAD` points at when the
-/// clone knows, and the main worktree's own branch when it does not.
+/// The repository's default branch is only what `origin/HEAD` names.
+///
+/// The main worktree's current branch is deliberately excluded: using it as
+/// a base would make a feature branch look like project policy and hide the
+/// very mismatch the migration action exists to explain.
 fn default_branch(root: &Path) -> Option<String> {
     if let Ok(output) = git(
         root,
@@ -727,11 +759,7 @@ fn default_branch(root: &Path) -> Option<String> {
             return Some(branch);
         }
     }
-    let branch = git(root, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .ok()?
-        .trim()
-        .to_owned();
-    (!branch.is_empty() && branch != "HEAD").then_some(branch)
+    None
 }
 
 /// The repository's main working tree, which is what identifies a project.

@@ -36,7 +36,10 @@ use crate::workspace;
 
 #[path = "worktree_control.rs"]
 mod worktree_control;
-pub use worktree_control::{spawn_worktree_close, spawn_worktree_open};
+pub use worktree_control::{
+    WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration, spawn_worktree_close,
+    spawn_worktree_create, spawn_worktree_open,
+};
 
 /// Everything a terminal session spawn needs from the live configuration.
 #[derive(Clone)]
@@ -936,6 +939,43 @@ pub fn spawn_scratch_tab_creation(
         .map_err(|error| format!("scratch tab worker could not be started: {error}"))
 }
 
+pub fn spawn_scratch_chat_tab_creation(
+    context: LiveContext,
+    id: u64,
+    request: ScratchTabRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-scratch-chat-tab".to_owned())
+        .spawn(move || {
+            let started = Instant::now();
+            let result =
+                create_scratch_tab(context.api_connector.as_ref(), &request).map(|pane_id| {
+                    WorktreeTaskOutcome {
+                        path: request.root.clone(),
+                        pane_id,
+                    }
+                });
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_task_operation_result(id, result),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                crate::diagnostic!(json!({
+                    "component":"scratch_chat",
+                    "kind":"scratch_chat.tab_finished",
+                    "duration_ms":started.elapsed().as_millis(),
+                }));
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("scratch chat tab worker could not be started: {error}"))
+}
+
 fn create_scratch_tab(
     connector: &dyn ApiConnector,
     request: &ScratchTabRequest,
@@ -1029,11 +1069,10 @@ pub(crate) fn install(
         Ok(handle) => Some(handle),
         Err(message) => {
             crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "coordinator.spawn_failed",
-                    "message": message,
-                })
-            );
+                "component": "session_sync",
+                "kind": "coordinator.spawn_failed",
+                "message": message,
+            }));
             let changed = runtime.lock().ok().is_some_and(|mut guard| {
                 guard.ingest_session(Err(SessionFetchError::Unreachable(message)))
             });
@@ -1732,11 +1771,10 @@ impl TerminalSession {
         // The writer thread reports a failed write on the pane, so a queued
         // resize with no failure after it is one the session received.
         crate::diagnostic!(json!({
-                "component": "terminal_session",
-                "kind": "terminal.resize_queued", "pane_id": self.pane_id,
-                "generation": self.generation, "rows": rows, "cols": cols,
-            })
-        );
+            "component": "terminal_session",
+            "kind": "terminal.resize_queued", "pane_id": self.pane_id,
+            "generation": self.generation, "rows": rows, "cols": cols,
+        }));
         Ok(())
     }
 }
@@ -1913,11 +1951,10 @@ impl Drop for TerminalSession {
                         .is_err()
                 {
                     crate::diagnostic!(json!({
-                            "component": "terminal_session",
-                            "kind": "terminal.release_unacknowledged",
-                            "pane_id": pane_id,
-                        })
-                    );
+                        "component": "terminal_session",
+                        "kind": "terminal.release_unacknowledged",
+                        "pane_id": pane_id,
+                    }));
                 }
                 match cleanup {
                     TerminalSessionCleanup::Local(mut child) => {
@@ -1928,11 +1965,10 @@ impl Drop for TerminalSession {
             })
         {
             crate::diagnostic!(json!({
-                    "component": "terminal_session",
-                    "kind": "terminal.session_reaper_spawn_failed",
-                    "message": error.to_string(),
-                })
-            );
+                "component": "terminal_session",
+                "kind": "terminal.session_reaper_spawn_failed",
+                "message": error.to_string(),
+            }));
         }
     }
 }
@@ -1944,33 +1980,30 @@ fn reap_local_terminal_child(child: &mut Child, pane_id: &str) {
             Ok(None) => thread::sleep(Duration::from_millis(10)),
             Err(error) => {
                 crate::diagnostic!(json!({
-                        "component": "terminal_session",
-                        "kind": "terminal.session_status_failed",
-                        "pane_id": pane_id,
-                        "message": error.to_string(),
-                    })
-                );
+                    "component": "terminal_session",
+                    "kind": "terminal.session_status_failed",
+                    "pane_id": pane_id,
+                    "message": error.to_string(),
+                }));
                 break;
             }
         }
     }
     if let Err(error) = child.kill() {
         crate::diagnostic!(json!({
-                "component": "terminal_session",
-                "kind": "terminal.session_kill_failed",
-                "pane_id": pane_id,
-                "message": error.to_string(),
-            })
-        );
+            "component": "terminal_session",
+            "kind": "terminal.session_kill_failed",
+            "pane_id": pane_id,
+            "message": error.to_string(),
+        }));
     }
     if let Err(error) = child.wait() {
         crate::diagnostic!(json!({
-                "component": "terminal_session",
-                "kind": "terminal.session_wait_failed",
-                "pane_id": pane_id,
-                "message": error.to_string(),
-            })
-        );
+            "component": "terminal_session",
+            "kind": "terminal.session_wait_failed",
+            "pane_id": pane_id,
+            "message": error.to_string(),
+        }));
     }
 }
 

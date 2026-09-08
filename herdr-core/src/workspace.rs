@@ -331,6 +331,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     repo_name: name,
                     is_git: git_root(&root).is_some(),
                     default_branch: None,
+                    branches: Vec::new(),
                     registered: false,
                     temporary: false,
                     session_workspace_ids: vec![space.id.clone()],
@@ -354,6 +355,11 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                 .to_owned()
         });
         let is_worktree = root_comparison != project_comparison;
+        let label = if is_worktree {
+            label
+        } else {
+            "main worktree".to_owned()
+        };
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
@@ -398,9 +404,8 @@ pub(crate) fn apply_worktrees(
     }) else {
         return;
     };
-    if let Some(default_branch) = listed.default_branch.clone() {
-        project.default_branch = Some(default_branch);
-    }
+    project.default_branch = listed.default_branch.clone();
+    project.branches = listed.branches.clone();
 
     for worktree in &listed.worktrees {
         let comparison = normalized_for_comparison(Path::new(&worktree.path));
@@ -431,6 +436,11 @@ pub(crate) fn apply_worktrees(
         };
         let row = &mut project.checkouts[index];
         row.is_worktree = !worktree.is_main;
+        row.label = worktree_row_label(
+            worktree.is_main,
+            worktree.branch.as_deref(),
+            worktree.head_sha.as_deref(),
+        );
         row.exists = !worktree.missing;
         row.dirty = worktree.dirty;
         row.changed_file_count = worktree.changed_file_count;
@@ -454,6 +464,27 @@ pub(crate) fn apply_worktrees(
     {
         let main = project.checkouts.remove(index);
         project.checkouts.insert(0, main);
+    }
+}
+
+pub(crate) fn worktree_row_label(
+    is_main: bool,
+    branch: Option<&str>,
+    head_sha: Option<&str>,
+) -> String {
+    if is_main {
+        "main worktree".to_owned()
+    } else {
+        branch.map(str::to_owned).unwrap_or_else(|| {
+            format!(
+                "{} detached",
+                head_sha
+                    .unwrap_or("unknown")
+                    .chars()
+                    .take(8)
+                    .collect::<String>()
+            )
+        })
     }
 }
 
@@ -572,6 +603,7 @@ fn inspect(
             .to_owned(),
         is_git,
         default_branch: branch,
+        branches: Vec::new(),
         registered,
         temporary,
         session_workspace_ids: Vec::new(),

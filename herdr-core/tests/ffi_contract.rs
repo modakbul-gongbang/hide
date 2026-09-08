@@ -241,6 +241,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "schema_version",
             "status",
             "tab",
+            "task_operation",
             "terminal",
             "ui_state",
             "worktree_removal",

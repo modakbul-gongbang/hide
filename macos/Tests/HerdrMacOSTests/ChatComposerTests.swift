@@ -114,9 +114,9 @@ struct ChatComposerTests {
     /// sent, then the title is written. The message step sitting after the
     /// start step is the whole reason the order is asserted: an agent still on
     /// its trust screen swallows anything sent before it is ready.
-    @Test func scratchSubmissionRunsTheFourStepsInOrder() {
+    @Test func checkoutSubmissionRunsTheFourStepsInOrder() {
         let plan = ChatLaunchPlan.steps(
-            destination: .scratch(path: "/scratch", workspaceID: "s1"),
+            destination: CheckoutChatDestination(id: "checkout-1", path: "/repo", workspaceID: "s1"),
             provider: .claude,
             message: "build me a parser",
             bypassWarnings: false,
@@ -127,7 +127,7 @@ struct ChatComposerTests {
         #expect(plan[0].arguments == [
             "tab", "create",
             "--workspace", "s1",
-            "--cwd", "/scratch",
+            "--cwd", "/repo",
             "--label", "hide claude",
             "--focus",
         ])
@@ -136,7 +136,11 @@ struct ChatComposerTests {
             "--kind", "claude",
             "--pane", "s1:p3",
         ])
-        #expect(plan[2].arguments == ["agent", "prompt", "s1:p3", "build me a parser"])
+        #expect(plan[2].arguments == [
+            "agent", "prompt", "s1:p3", "build me a parser",
+            "--wait",
+            "--timeout", "120000",
+        ])
         #expect(plan[3].arguments == [
             "pane", "report-metadata", "s1:p3",
             "--source", "hide",
@@ -149,25 +153,26 @@ struct ChatComposerTests {
     @Test func theFirstMessageIsSentExactlyAsTyped() {
         let message = "line one\nline two  "
         let plan = ChatLaunchPlan.steps(
-            destination: .scratch(path: "/scratch", workspaceID: nil),
+            destination: CheckoutChatDestination(id: "checkout-1", path: "/repo", workspaceID: nil),
             provider: .claude,
             message: message,
             bypassWarnings: false,
             paneID: "s1:p1"
         )
         let prompt = plan.first { $0.step == .sendFirstMessage }
-        #expect(prompt?.arguments.last == message)
+        #expect(prompt?.arguments.count == 7)
+        #expect(prompt?.arguments.dropFirst(3).first == message)
         // The title is still the trimmed first line.
         let title = plan.first { $0.step == .writeTitle }
         #expect(title?.arguments.last == "hide_chat_title=line one")
     }
 
-    /// Scratch with no live Herdr workspace creates one instead of adding a
+    /// A checkout with no live Herdr workspace creates one instead of adding a
     /// tab to nothing. Herdr drops a workspace with its last pane, so this is
     /// an ordinary state rather than a first-run one.
-    @Test func scratchWithoutALiveWorkspaceCreatesOne() {
+    @Test func checkoutWithoutALiveWorkspaceCreatesOne() {
         let plan = ChatLaunchPlan.steps(
-            destination: .scratch(path: "/scratch", workspaceID: nil),
+            destination: CheckoutChatDestination(id: "checkout-1", path: "/repo", workspaceID: nil),
             provider: .claude,
             message: "hello",
             bypassWarnings: false,
@@ -175,7 +180,7 @@ struct ChatComposerTests {
         )
         #expect(plan[0].arguments == [
             "workspace", "create",
-            "--cwd", "/scratch",
+            "--cwd", "/repo",
             "--label", "hide claude",
             "--focus",
         ])
@@ -185,7 +190,7 @@ struct ChatComposerTests {
     /// that checkout's live Herdr workspace, and takes the same four steps.
     @Test func aProjectSubmissionCarriesTheCheckoutDirectoryAndWorkspace() {
         let plan = ChatLaunchPlan.steps(
-            destination: .checkout(
+            destination: CheckoutChatDestination(
                 id: "checkout-1",
                 path: "/repo/feature",
                 workspaceID: "w7"
@@ -205,7 +210,7 @@ struct ChatComposerTests {
 
     @Test func aProjectWithoutALiveHerdrWorkspaceCreatesOne() {
         let plan = ChatLaunchPlan.steps(
-            destination: .checkout(id: "checkout-1", path: "/repo/feature", workspaceID: nil),
+            destination: CheckoutChatDestination(id: "checkout-1", path: "/repo/feature", workspaceID: nil),
             provider: .claude,
             message: "hello",
             bypassWarnings: false,
@@ -227,7 +232,7 @@ struct ChatComposerTests {
     /// for.
     @Test func bypassAddsEachProvidersOwnFlagAndNothingWhenOff() {
         let claudeOn = ChatLaunchPlan.steps(
-            destination: .scratch(path: "/scratch", workspaceID: "s1"),
+            destination: CheckoutChatDestination(id: "checkout-1", path: "/repo", workspaceID: "s1"),
             provider: .claude,
             message: "hello",
             bypassWarnings: true,
@@ -236,7 +241,7 @@ struct ChatComposerTests {
         #expect(claudeOn[1].arguments.suffix(2) == ["--", "--dangerously-skip-permissions"])
 
         let codexOn = ChatLaunchPlan.steps(
-            destination: .scratch(path: "/scratch", workspaceID: "s1"),
+            destination: CheckoutChatDestination(id: "checkout-1", path: "/repo", workspaceID: "s1"),
             provider: .codex,
             message: "hello",
             bypassWarnings: true,
@@ -249,7 +254,7 @@ struct ChatComposerTests {
 
         for provider in AgentProvider.allCases {
             let off = ChatLaunchPlan.steps(
-                destination: .scratch(path: "/scratch", workspaceID: "s1"),
+                destination: CheckoutChatDestination(id: "checkout-1", path: "/repo", workspaceID: "s1"),
                 provider: provider,
                 message: "hello",
                 bypassWarnings: false,
