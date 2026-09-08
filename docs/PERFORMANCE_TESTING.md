@@ -66,6 +66,8 @@ Projection follows the existing tab strip and indexes source tabs instead of sea
 Editor source indexing is per checkout, so reconciliation is O(T + C*E), with C checkouts and E retained editor tabs; this cost is outside repeated key input.
 Starting a gesture snapshots its relevant MRU in O(P) or O(Tproject); every subsequent step changes one index in O(1), with no core dispatch until commit.
 Only the active cycle publishes once per changed highlight; repeated cancellation and a one-item cycle publish no cycle change.
+Empty and single-item navigation and closing an empty strip produce no notice or shell publication; these are normal no-ops, not failures.
+Reconciliation emits existing structured trace events with reason, removal count, and snapshot revision, without paths, labels, or shell-wide notice updates.
 The existing cycle presentation has a dedicated observable owner read only by the overlay; preview steps send no shell-wide notification and therefore do not rebuild the retained sidebar or tab strip.
 The overlay projects at most nine rows through cached identity lookups, regardless of retained list size.
 The synthetic-key release check has one replaceable timer; repeated key-up cannot queue unbounded commits.

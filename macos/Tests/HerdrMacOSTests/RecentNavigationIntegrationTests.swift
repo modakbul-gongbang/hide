@@ -5,6 +5,51 @@ import Testing
 
 @Suite("Recent navigation through the core", .serialized)
 struct RecentNavigationIntegrationTests {
+    @MainActor @Test func emptyAndSingleItemNavigationDoesNotInterruptTheUser() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("hide-empty-navigation-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
+        let model = ShellModel(core: bridge)
+        try await eventually("initial checkout") { model.focusedCheckout != nil }
+        try await eventually("single terminal") { model.recentSurfaces.count == 1 }
+        let paneID = model.focusedPaneID
+        // A no-op must also preserve an existing, actionable failure notice.
+        model.interactionNotice = "The selected project's device is unavailable. Selection was kept."
+        let existingNotice = model.interactionNotice
+        for _ in 0..<1000 {
+            model.beginOrAdvanceProjectSwitcher(); model.beginOrRetreatProjectSwitcher()
+            model.beginOrAdvanceTabSwitcher(); model.beginOrRetreatTabSwitcher()
+        }
+        #expect(model.interactionNotice == existingNotice)
+        #expect(model.focusedPaneID == paneID)
+        #expect(model.projectSwitcherCycle == nil)
+        #expect(model.tabSwitcherCycle == nil)
+        model.interactionNotice = nil
+        bridge.dispatch(kind: "session_snapshot", payload: [
+            "agents": [], "workspaces": [], "tabs": [], "panes": [], "layouts": [],
+        ])
+        try await eventually("empty strip") { model.recentSurfaces.isEmpty }
+        let projectID = model.focusedWorkspace?.id
+        var publications = 0
+        let subscription = model.objectWillChange.sink { publications += 1 }
+        for _ in 0..<1000 {
+            model.beginOrAdvanceProjectSwitcher(); model.beginOrRetreatProjectSwitcher()
+            model.beginOrAdvanceTabSwitcher(); model.beginOrRetreatTabSwitcher()
+            model.performCloseShortcut()
+        }
+        #expect(model.interactionNotice == nil)
+        #expect(model.projectSwitcherCycle == nil)
+        #expect(model.tabSwitcherCycle == nil)
+        #expect(model.focusedWorkspace?.id == projectID)
+        #expect(publications == 0)
+        withExtendedLifetime(subscription) {}
+
+
+    }
+
     @MainActor @Test func projectSwitchRestoresItsLastFileAndControlCycleIncludesTheTerminal() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("hide-recent-\(UUID().uuidString)")
         let alpha = root.appendingPathComponent("alpha")
@@ -75,6 +120,32 @@ struct RecentNavigationIntegrationTests {
         model.beginOrAdvanceProjectSwitcher()
         model.commitProjectSwitcher()
         try await eventually("restore beta") { bridge.snapshot?.editor.activeTabID == fileBID }
+
+        // A file can close while its MRU row is highlighted. The held cycle
+        // converges to the remaining terminal without asking for acknowledgement.
+        model.beginOrAdvanceTabSwitcher()
+        model.beginOrAdvanceTabSwitcher()
+        #expect(model.tabSwitcherCycle != nil)
+        bridge.closeFileTab(fileBID)
+        try await eventually("closed file pruned") {
+            model.tabSwitcherCycle?.tabIDs.count == 1
+                && bridge.snapshot?.editor.tabs.contains { $0.id == fileBID } == false
+        }
+        #expect(model.interactionNotice == nil)
+        model.commitTabSwitcher()
+        #expect(model.focusedPaneID == "fixture-beta-pane")
+        #expect(model.interactionNotice == nil)
+
+        // A held project's target may also retire before the queued commit.
+        // Deliver the stale cycle exactly as a delayed UI callback would.
+        let retiredCycle = try #require(ProjectSwitcherCycle(
+            originalProjectID: "local:\(betaProject.id)",
+            projectIDs: ["local:\(betaProject.id)", "retired-project"]))
+        model.recentNavigation.projectCycle = retiredCycle
+        model.commitProjectSwitcher()
+        #expect(model.projectSwitcherCycle == nil)
+        #expect(model.focusedPaneID == "fixture-beta-pane")
+        #expect(model.interactionNotice == nil)
 
         // Repeated cancellation has no state transition and publishes nothing.
         var publications = 0

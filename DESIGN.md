@@ -940,6 +940,11 @@ Hold the chord's modifier to preview, release it to commit, or press Escape to k
 Menu actions commit immediately.
 Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
 Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.
+With no other project or tab available, navigation keeps the current selection without a modal.
+Selecting an empty project shows its existing empty state; closing an empty strip or reselecting a checkout whose terminal is starting requires no acknowledgement.
+Automatic MRU pruning and concurrent selection recovery use structured diagnostics without a modal.
+Workspace and device registration changes and connection-test requests use their existing list or status presentation.
+Invalid runtime identities, unavailable devices, and failed operations remain visible, and destructive decisions retain their confirmations.
 
 The project identity is `CoreWorkspaceSnapshot.id`, scoped by device, following the sidebar's Project > Workspace > Agents hierarchy.
 Its checkouts are workspaces in that hierarchy, so two checkouts of one repository share a project cycle and a tab history.

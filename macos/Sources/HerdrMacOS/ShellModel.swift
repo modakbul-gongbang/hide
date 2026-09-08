@@ -1155,7 +1155,7 @@ final class ShellModel: ObservableObject {
         guard let cycle = ProjectSwitcherCycle(
             originalProjectID: currentProjectID, projectIDs: projectMRU.projectIDs, direction: direction
         ) else {
-            reportNavigationNotice("There is no other project to switch to.")
+            // An empty or single-item history is an ordinary no-op.
             return
         }
         projectSwitcherCycle = cycle
@@ -1165,14 +1165,14 @@ final class ShellModel: ObservableObject {
         guard let cycle = projectSwitcherCycle else { return }
         cancelProjectSwitcher()
         guard let project = recentProjects[cycle.selectedProjectID] else {
-            reportNavigationNotice("The selected project disappeared. Selection was kept.")
+            HideLaunchTrace.mark("navigation.project.commit_recovered", detail: "reason=project_removed outcome=selection_kept")
             return
         }
         guard let surfaceID = tabMRU.tabIDs(in: project.id).first,
               let surface = recentSurfaces[surfaceID] else {
             // An empty project remains navigable without inventing a terminal.
             guard let checkout = project.workspace.checkouts.first else {
-                reportNavigationNotice("The selected project has no available workspace. Selection was kept.")
+                HideLaunchTrace.mark("navigation.project.commit_recovered", detail: "reason=workspace_removed outcome=selection_kept")
                 return
             }
             guard selectNavigationDevice(project.deviceID) else { return }
@@ -1182,7 +1182,6 @@ final class ShellModel: ObservableObject {
                 remote.focus(workspaceID: project.workspace.id, checkoutID: checkout.id)
                 core.focusRemoteWorkspace(targetID: project.deviceID, workspaceID: project.workspace.id)
             }
-            reportNavigationNotice("This project has no open tabs.")
             return
         }
         focusRecentSurface(surface)
@@ -1205,7 +1204,7 @@ final class ShellModel: ObservableObject {
         guard let projectID = currentProjectID,
               let cycle = TabSwitcherCycle(originalTabID: currentSurfaceID,
                   tabIDs: tabMRU.tabIDs(in: projectID), direction: direction) else {
-            reportNavigationNotice("There is no other open tab in this project.")
+            // Keep the current surface without interrupting keyboard input.
             return
         }
         tabCycleProjectID = projectID
@@ -1218,7 +1217,7 @@ final class ShellModel: ObservableObject {
         cancelTabSwitcher()
         guard projectID == currentProjectID,
               let surface = recentSurfaces[cycle.selectedTabID], surface.projectID == projectID else {
-            reportNavigationNotice("The selected tab or project disappeared. Selection was kept.")
+            HideLaunchTrace.mark("navigation.tab.commit_recovered", detail: "reason=context_changed outcome=selection_kept")
             return
         }
         focusRecentSurface(surface)
@@ -1304,7 +1303,7 @@ final class ShellModel: ObservableObject {
                             ? remote.navigation?.focusedTabID : checkout.activeTabID,
                         activeFileTabID: activeFileID)
                     if tabs.count != checkout.strip.count {
-                        reportNavigationNotice("Some tabs have missing content in project \(workspace.id), workspace \(checkout.id). Unavailable tabs were removed from recent navigation.")
+                        HideLaunchTrace.mark("navigation.tabs.reconciled", detail: "reason=missing_content removed_count=\(checkout.strip.count - tabs.count) revision=\(snapshot.navigationRevision)")
                     }
                     for item in tabs {
                         let id = "\(projectID):\(checkout.id):\(item.id)"
@@ -1326,10 +1325,10 @@ final class ShellModel: ObservableObject {
             let original = cycle
             if !cycle.reconcile(available: Set(projectOrder)) {
                 cancelProjectSwitcher()
-                reportNavigationNotice("All projects in the switcher disappeared. Selection was kept.")
+                HideLaunchTrace.mark("navigation.project.cycle_cancelled", detail: "reason=all_removed outcome=selection_kept revision=\(snapshot.navigationRevision)")
             } else if original != cycle {
                 projectSwitcherCycle = cycle
-                reportNavigationNotice("Unavailable projects were removed from the switcher.")
+                HideLaunchTrace.mark("navigation.projects.reconciled", detail: "removed_count=\(original.projectIDs.count - cycle.projectIDs.count) revision=\(snapshot.navigationRevision)")
             }
         }
         if var cycle = tabSwitcherCycle {
@@ -1337,10 +1336,10 @@ final class ShellModel: ObservableObject {
             let available = tabCycleProjectID.map { Set(tabMRU.tabIDs(in: $0)) } ?? []
             if tabCycleProjectID != currentProjectID || !cycle.reconcile(available: available) {
                 cancelTabSwitcher()
-                reportNavigationNotice("The switcher's project or tabs disappeared. Selection was kept.")
+                HideLaunchTrace.mark("navigation.tab.cycle_cancelled", detail: "reason=context_changed outcome=selection_kept revision=\(snapshot.navigationRevision)")
             } else if original != cycle {
                 tabSwitcherCycle = cycle
-                reportNavigationNotice("Unavailable tabs were removed from the switcher.")
+                HideLaunchTrace.mark("navigation.tabs.reconciled", detail: "reason=removed removed_count=\(original.tabIDs.count - cycle.tabIDs.count) revision=\(snapshot.navigationRevision)")
             }
         }
     }
@@ -1375,7 +1374,6 @@ final class ShellModel: ObservableObject {
         guard let workspace = workspaceToRemove else { return }
         core.removeWorkspace(workspace.id)
         workspaceToRemove = nil
-        interactionNotice = "Workspace removed from Hide. Its folder, repository, and worktrees were not changed."
     }
 
     func worktree(for path: String) -> CoreGitWorktree? {
@@ -1776,12 +1774,10 @@ final class ShellModel: ObservableObject {
             label: label.trimmingCharacters(in: .whitespacesAndNewlines),
             sshAlias: trimmedAlias
         )
-        interactionNotice = "Device registration requested. Hide will use your existing SSH environment."
     }
 
     func removeDevice(_ device: CoreDeviceSnapshot) {
         core.removeDevice(device.id)
-        interactionNotice = "Device removed from Hide. The remote host and its sessions were not changed."
     }
 
     func testDevice(_ device: CoreDeviceSnapshot) {
@@ -1790,7 +1786,6 @@ final class ShellModel: ObservableObject {
         if device.sshAlias != nil {
             remote.refresh(targetID: device.id, label: device.label)
         }
-        interactionNotice = "Connection test requested for \(device.label). Authentication remains owned by SSH."
     }
 
     func retryRemote() {
@@ -1805,7 +1800,6 @@ final class ShellModel: ObservableObject {
     private func startTerminal(for checkout: CoreCheckoutSnapshot, focusHerdr: Bool) {
         guard pendingCheckoutStarts.insert(checkout.id).inserted else {
             checkoutStartState = .starting
-            interactionNotice = "A terminal is already starting for this checkout."
             return
         }
         guard let runtime = core.runtimeSelection else {
@@ -2180,9 +2174,6 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("tab.close_shortcut.herdr", detail: tabID)
             requestTabClose(tab)
         case .nothingToClose:
-            interactionNotice = focusedWorkspace == nil
-                ? "There is no open tab to close. Create a workspace to start one."
-                : "There is no open tab to close. Create a pane to start one."
             HideLaunchTrace.mark(
                 "tab.close_shortcut.nothing_to_close",
                 detail: focusedWorkspace == nil ? "no_workspace" : "workspace_without_tabs"
