@@ -58,7 +58,7 @@ Done is deliberately separate from Needs You: finished-unseen is "look when you 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.
 The Projects view raises Needs You and Done above the project tree.
-Standalone raised agents appear only in those sections; parents and descendants also remain in their checkout tree so an attention transition never leaves a child without its parent.
+Raised agents also remain in their checkout tree, so a Workspace summary always has agent rows to reveal and an attention transition never leaves a child without its parent.
 Both appearances share one direct-select shortcut, assigned to the first visible occurrence.
 Collapsing a parent hides descendants in the tree while raised attention rows remain reachable.
 The Agents view draws all four groups with their boundaries visible and omits empty ones.
@@ -102,7 +102,11 @@ The existing status synchronization indexes pane ownership once and visits each 
 A descendant running in another checkout contributes to that checkout, even if its lineage row appears beneath a parent elsewhere.
 An agent repeated in a raised section and the project tree counts once.
 Plain terminal panes without agents do not create an Idle agent status.
-A Workspace with no known agents reserves the status column for alignment but draws no status mark.
+A Workspace with no known agents draws no summary chip.
+A populated Workspace places its representative status and provider icon in a trailing chip, followed by `+N` for the remaining agents (omitted for a single agent).
+The chip uses the canonical physical agent count, even when agents are also raised above the tree.
+An agent whose lineage starts in another checkout also appears as a local root in the Workspace that physically owns it, so that Workspace can reveal the agents its chip counts.
+Rendering and shortcut numbering share this ownership-aware tree projection.
 
 The representative follows the same group order as the sidebar: Needs You > Done > Working > Seen.
 Within a group, Error precedes Approval, then Question; otherwise Unknown precedes ordinary Idle within Seen, so missing information is not hidden by an idle sibling.
@@ -118,7 +122,9 @@ Connection recovery resumes the current canonical projection; it does not mark a
 ### Disclosure and selection
 
 The disclosure chevron sits at the right edge of a Workspace row.
-The left edge holds the agent status mark, checkout-kind icon, title, and checkout badges.
+The left edge holds the checkout-kind icon, title, and checkout badges.
+The representative status moves into the trailing agent summary chip immediately before the chevron.
+A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status, provider icon, and title.
 A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
 Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
 A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.

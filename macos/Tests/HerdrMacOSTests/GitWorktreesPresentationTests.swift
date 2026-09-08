@@ -37,10 +37,10 @@ struct GitWorktreesPresentationTests {
         child.lineageWorktreeBadge = "linked"
         let grandchild = row("grandchild", depth: 2)
         let agents = [grandchild, parent, child]
-        #expect(SidebarGrouping.tree(agents, checkoutID: "main", excluding: []).map(\.id) == ["parent", "child", "grandchild"])
+        #expect(SidebarGrouping.tree(agents, checkoutID: "main").map(\.id) == ["parent", "child", "grandchild"])
         #expect(AgentShortcutNumbering.candidates(for: .projects, agents: agents, visibleCheckoutIDs: ["main"]).map(\.id) == ["parent", "child", "grandchild"])
         parent.lineageCollapsed = true
-        #expect(SidebarGrouping.tree([parent, child, grandchild], checkoutID: "main", excluding: []).map(\.id) == ["parent"])
+        #expect(SidebarGrouping.tree([parent, child, grandchild], checkoutID: "main").map(\.id) == ["parent"])
         #expect(!child.unread)
     }
 
@@ -56,12 +56,39 @@ struct GitWorktreesPresentationTests {
         child.lineageDepth = 1
         child.lineageRootCheckoutID = "main"
         let agents = [child, parent]
-        let raised = Set(SidebarGrouping.raised(agents).flatMap(\.agents).map(\.id))
-        #expect(SidebarGrouping.tree(agents, checkoutID: "main", excluding: raised).map(\.id) == ["parent", "child"])
+        #expect(SidebarGrouping.tree(agents, checkoutID: "main").map(\.id) == ["parent", "child"])
         #expect(AgentShortcutNumbering.candidates(for: .projects, agents: agents, visibleCheckoutIDs: ["main"]).map(\.id) == ["parent", "child"])
         #expect(AgentShortcutNumbering.candidates(for: .projects, agents: agents, visibleCheckoutIDs: ["main"], collapsedCheckoutIDs: ["main"]).map(\.id) == ["parent", "child"])
         parent.lineageCollapsed = true
-        #expect(SidebarGrouping.tree([child, parent], checkoutID: "main", excluding: raised).map(\.id) == ["parent"])
+        #expect(SidebarGrouping.tree([child, parent], checkoutID: "main").map(\.id) == ["parent"])
+    }
+
+    @Test func completedStandaloneAgentRemainsInsideItsWorkspace() {
+        var agent = SidebarAgent(id: "done", paneID: "done", workspaceLabel: "Repo", agentKind: "terminal",
+            demand: "none", activity: "stopped", unread: true, group: "done",
+            symbol: "✓", summary: "Ready to review", elapsed: "", lastActivity: "", ambient: nil)
+        agent.lineageRootCheckoutID = "main"
+        #expect(SidebarGrouping.raised([agent]).flatMap(\.agents).map(\.paneID) == ["done"])
+        #expect(SidebarGrouping.tree([agent], checkoutID: "main").map(\.paneID) == ["done"])
+        #expect(AgentShortcutNumbering.candidates(for: .projects, agents: [agent],
+            visibleCheckoutIDs: ["main"]).map(\.paneID) == ["done"])
+    }
+
+    @Test func agentOwnedByAnotherCheckoutCanBeRevealedThere() {
+        var parent = SidebarAgent(id: "parent", paneID: "parent", workspaceLabel: "Repo", agentKind: "terminal",
+            symbol: "~", summary: "Parent", elapsed: "", lastActivity: "", ambient: nil)
+        parent.lineageRootCheckoutID = "main"
+        parent.lineageChildPaneIDs = ["child"]
+        parent.lineageCollapsed = true
+        var child = SidebarAgent(id: "child", paneID: "child", workspaceLabel: "Repo", agentKind: "terminal",
+            symbol: "~", summary: "Child", elapsed: "", lastActivity: "", ambient: nil)
+        child.lineageRootCheckoutID = "main"
+        child.lineageDepth = 1
+        let rows = SidebarGrouping.tree([parent, child], checkoutID: "linked", ownedPaneIDs: ["child"])
+        #expect(rows.map(\.paneID) == ["child"])
+        #expect(rows.first?.lineageDepth == 0)
+        #expect(AgentShortcutNumbering.candidates(for: .projects, agents: [parent, child],
+            visibleCheckoutIDs: ["linked"], ownedPaneIDsByCheckout: ["linked": ["child"]]).map(\.paneID) == ["child"])
     }
 
 }

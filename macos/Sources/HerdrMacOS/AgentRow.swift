@@ -52,10 +52,9 @@ enum AgentRowDensity {
     var badgeSize: CGFloat { self == .prominent ? 19 : 16 }
     var titleWeight: Font.Weight { self == .prominent ? .semibold : .regular }
     var titleColor: Color { self == .prominent ? HideTheme.primary : HideTheme.secondary }
-    /// The mark column sits at the indent, so the agent badge lands where it
-    /// did before the mark existed: level with the section label at the top
-    /// level, and one step in from the checkout label when nested.
-    var leadingPadding: CGFloat { self == .prominent ? 14 : HideTheme.spacingSM }
+    /// Compact marks align beneath the Workspace branch icon.
+    var leadingPadding: CGFloat { self == .prominent ? 14 : HideTheme.compactAgentLeadingInset }
+    var iconSpacing: CGFloat { self == .compact ? HideTheme.spacingXS : HideTheme.spacingSM }
     var trailingPadding: CGFloat { self == .prominent ? 14 : 9 }
     var verticalPadding: CGFloat { self == .prominent ? 7 : 5 }
 }
@@ -205,7 +204,7 @@ struct AgentRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: HideTheme.spacingSM) {
+            HStack(alignment: .top, spacing: density.iconSpacing) {
                 AgentStatusMark(symbol: presentation.symbol, color: presentation.statusColor)
                 AgentBadge(
                     agentKind: presentation.agentKind,

@@ -195,6 +195,9 @@ enum HideTheme {
     static let settingsFieldHeight: CGFloat = 24
     static let checkoutRowHeight: CGFloat = 36
     static let checkoutIconWidth: CGFloat = 14
+    /// Align the root agent mark center with the checkout branch center.
+    static let compactAgentLeadingInset = spacingSM + agentMarkWidth + spacingSM
+        + checkoutIconWidth / 2 - lineageChevronWidth - agentMarkWidth / 2
     static let tabTitleMaxWidth: CGFloat = 200
     /// A descendant's inset in the agent tree: two full steps, then a shallower
     /// step per level so a deep lineage still fits the sidebar's width.

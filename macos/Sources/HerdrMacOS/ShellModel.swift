@@ -1024,7 +1024,11 @@ final class ShellModel: ObservableObject {
             for: sidebarContent,
             agents: agents,
             visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id),
-            collapsedCheckoutIDs: Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? [])
+            collapsedCheckoutIDs: Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? []),
+            ownedPaneIDsByCheckout: Dictionary(uniqueKeysWithValues:
+                workspaces.filter(\.expanded).flatMap(\.checkouts).map {
+                    ($0.id, Set($0.tabs.flatMap(\.panes).map(\.id)))
+                })
         )
     }
 

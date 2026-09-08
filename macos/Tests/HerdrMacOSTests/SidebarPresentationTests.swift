@@ -263,6 +263,7 @@ private func presentationAgent(
     let agent = presentationAgent(id: "a1", paneID: "p1", group: "working")
     let presentation = SidebarCheckoutPresentation(workspace: presentationWorkspace(checkouts: [checkout]),
         checkout: checkout, agents: [agent], connected: false)
+    #expect(presentation.representativeAgentKind == agent.agentKind)
     #expect(presentation.status?.symbol == "⊘")
     #expect(presentation.status?.label == "Disconnected")
     #expect(presentation.status?.color == HideTheme.secondary)

@@ -4,6 +4,7 @@ struct SidebarCheckoutPresentation: Equatable {
     let agentCount: Int
     let isPrimary: Bool
     let status: AgentStatusPresentation?
+    let representativeAgentKind: String?
     let isDetached: Bool
     let detailTooltip: String
 
@@ -26,8 +27,10 @@ struct SidebarCheckoutPresentation: Equatable {
         }
         if let representative = agents.first(where: { $0.paneID == summary.representativePaneID }) {
             status = AgentStatusPresentation(agent: representative, connected: connected)
+            representativeAgentKind = representative.agentKind
         } else {
             status = nil
+            representativeAgentKind = nil
         }
         if summary.total == 0 {
             detailTooltip = pathDetail
@@ -101,16 +104,16 @@ enum AgentShortcutNumbering {
         for content: SidebarContent,
         agents: [SidebarAgent],
         visibleCheckoutIDs: [String],
-        collapsedCheckoutIDs: Set<String> = []
+        collapsedCheckoutIDs: Set<String> = [],
+        ownedPaneIDsByCheckout: [String: Set<String>] = [:]
     ) -> [SidebarAgent] {
         switch content {
         case .agents:
             return agents
         case .projects:
             let raised = SidebarGrouping.raised(agents).flatMap(\.agents)
-            let raisedIDs = Set(raised.map(\.id))
             let visible = raised + visibleCheckoutIDs.filter { !collapsedCheckoutIDs.contains($0) }.flatMap {
-                SidebarGrouping.tree(agents, checkoutID: $0, excluding: raisedIDs)
+                SidebarGrouping.tree(agents, checkoutID: $0, ownedPaneIDs: ownedPaneIDsByCheckout[$0] ?? [])
             }
             var numberedPanes = Set<String>()
             return visible.filter { numberedPanes.insert($0.paneID).inserted }

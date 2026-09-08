@@ -1235,12 +1235,6 @@ private struct WorkspaceNavigatorRow: View {
         SidebarWorkspacePresentation(workspace: workspace, agents: model.agents)
     }
 
-    /// The rows the Projects view already drew above the tree. Drawing one
-    /// again under its checkout would say the same thing twice.
-    private var raisedAgentIDs: Set<String> {
-        Set(model.raisedAgents.map(\.id))
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
             HStack(spacing: HideTheme.spacingNone) {
@@ -1309,7 +1303,8 @@ private struct WorkspaceNavigatorRow: View {
 
     private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
         let isFocused = model.focusedCheckout?.id == checkout.id
-        let visibleAgents = SidebarGrouping.tree(model.agents, checkoutID: checkout.id, excluding: raisedAgentIDs)
+        let visibleAgents = SidebarGrouping.tree(model.agents, checkoutID: checkout.id,
+            ownedPaneIDs: Set(checkout.tabs.flatMap(\.panes).map(\.id)))
         let checkoutPresentation = SidebarCheckoutPresentation(
             workspace: workspace,
             checkout: checkout,
@@ -1345,6 +1340,34 @@ private struct WorkspaceNavigatorRow: View {
     }
 }
 
+/// A compact read-only summary; the surrounding Workspace row owns disclosure.
+private struct WorkspaceAgentSummary: View {
+    let presentation: SidebarCheckoutPresentation
+
+    var body: some View {
+        HStack(spacing: HideTheme.spacingXS) {
+            if let status = presentation.status {
+                AgentStatusMark(symbol: status.symbol, color: status.color)
+            }
+            AgentBadge(
+                agentKind: presentation.representativeAgentKind ?? "terminal",
+                stateColor: presentation.status?.color ?? HideTheme.secondary,
+                size: HideTheme.lineageChevronWidth
+            )
+            if presentation.agentCount > 1 {
+                Text("+\(presentation.agentCount - 1)")
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
+                    .foregroundStyle(HideTheme.secondary)
+            }
+        }
+        .padding(.horizontal, HideTheme.spacingXS)
+        .frame(height: HideTheme.IconButton.toolbarSize.height)
+        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
+        .fixedSize()
+        .accessibilityHidden(true)
+    }
+}
+
 private struct CheckoutNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     let workspace: CoreWorkspaceSnapshot
@@ -1362,14 +1385,7 @@ private struct CheckoutNavigatorRow: View {
             }
         } label: {
             HStack(spacing: HideTheme.spacingSM) {
-                Group {
-                    if let status = presentation.status {
-                        AgentStatusMark(symbol: status.symbol, color: status.color)
-                    } else {
-                        Color.clear.frame(width: HideTheme.agentMarkWidth)
-                    }
-                }
-                .frame(width: HideTheme.agentMarkWidth)
+                Color.clear.frame(width: HideTheme.agentMarkWidth)
                 Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
@@ -1422,6 +1438,9 @@ private struct CheckoutNavigatorRow: View {
                         .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
                 }
                 Spacer(minLength: 0)
+                if presentation.agentCount > 0 {
+                    WorkspaceAgentSummary(presentation: presentation)
+                }
                 Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)

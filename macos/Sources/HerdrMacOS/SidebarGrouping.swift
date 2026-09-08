@@ -46,8 +46,8 @@ enum SidebarGrouping {
     ///
     /// This is the one thing the space tree cannot answer: it says what is
     /// waiting and what finished across every space, while the tree says what
-    /// is in one space. Standalone rows appear only at the top. Related agents also remain
-    /// in their project tree so raising a parent never severs its descendants.
+    /// is in one space. Raised agents remain in the project tree as well,
+    /// so a populated Workspace always has rows to reveal.
     static let raisedGroups: [AgentGroup] = [.needsYou, .done]
 
     /// The rows of one group, in the order the core put them in.
@@ -72,8 +72,7 @@ enum SidebarGrouping {
     ///
     /// A Scratch agent that is waiting or finished is already a row at the
     /// top, so drawing it again under Scratch would show one agent twice. The
-    /// project tree follows the same rule; this states it once for Scratch so
-    /// the two cannot drift.
+    /// project tree retains raised rows beneath its Workspace summary.
     static func scratchTabsBelowRaisedSections(
         tabs: [CoreScratchTabSnapshot],
         agents: [SidebarAgent]
@@ -86,15 +85,24 @@ enum SidebarGrouping {
 
     /// The visible preorder is shared by rendering and direct-select numbering.
     /// Parentage and collapse are already decided by the core.
-    static func tree(_ agents: [SidebarAgent], checkoutID: String, excluding raisedIDs: Set<String>) -> [SidebarAgent] {
+    static func tree(_ agents: [SidebarAgent], checkoutID: String, ownedPaneIDs: Set<String> = []) -> [SidebarAgent] {
         let byPane = Dictionary(uniqueKeysWithValues: agents.map { ($0.paneID, $0) })
-        var pending = Array(agents.filter { $0.lineageDepth == 0 && $0.lineageRootCheckoutID == checkoutID }.reversed())
+        let ownedChildren = Set(agents.filter { ownedPaneIDs.contains($0.paneID) }.flatMap(\.lineageChildPaneIDs))
+        let roots = agents.filter {
+            ($0.lineageDepth == 0 && $0.lineageRootCheckoutID == checkoutID)
+                || (ownedPaneIDs.contains($0.paneID) && $0.lineageRootCheckoutID != checkoutID
+                    && !ownedChildren.contains($0.paneID))
+        }
+        var pending = Array(roots.map { ($0, $0.lineageDepth) }.reversed())
         var visible: [SidebarAgent] = []
-        while let row = pending.popLast() {
-            let belongsToFamily = row.lineageDepth > 0 || !row.lineageChildPaneIDs.isEmpty
-            if belongsToFamily || !raisedIDs.contains(row.id) { visible.append(row) }
+        var visited = Set<String>()
+        while let (source, rootDepth) = pending.popLast() {
+            guard visited.insert(source.paneID).inserted else { continue }
+            var row = source
+            row.lineageDepth = max(0, row.lineageDepth - rootDepth)
+            visible.append(row)
             if !row.lineageCollapsed {
-                pending.append(contentsOf: row.lineageChildPaneIDs.reversed().compactMap { byPane[$0] })
+                pending.append(contentsOf: row.lineageChildPaneIDs.reversed().compactMap { byPane[$0].map { ($0, rootDepth) } })
             }
         }
         return visible

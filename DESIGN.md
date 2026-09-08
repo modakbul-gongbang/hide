@@ -825,7 +825,11 @@ Workspaces with nested agent rows toggle disclosure across the whole row; the ri
 Workspaces without nested agent rows open when clicked and have no arrow.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 Project-view number shortcuts skip agents hidden by workspace disclosure.
-`agentMarkWidth` and `checkoutIconWidth` (14pt) align the shared agent-status and checkout-kind columns.
+`agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
+`compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
+Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
+The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
+The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
 The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
 `agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
 Agent counts are omitted from checkout rows; pull requests and uncommitted changes retain their existing badges.
