@@ -940,7 +940,7 @@ The native controls are not replaced with gesture-only drawings.
 | Component | Appearance and geometry | State contract |
 | --- | --- | --- |
 | `HideTextButtonStyle` | Quiet, standard and prominent appearances; compact 24pt / body 11, regular 36pt / title 13; radius 6 | Standard uses elevated fill and divider; quiet has no resting container; prominent uses the neutral accent; destructive role uses danger; hover, pressed, focus and disabled remain visible |
-| `HideChoiceGroup` tabs | Subhead 12; transparent base; selected primary label and 2pt bottom indicator | Selection never adds a pill to section tabs; hover and keyboard focus remain distinct from selection |
+| `HideChoiceGroup` tabs | Subhead 12; single-line labels, 4pt horizontal padding and 8pt gaps; transparent base; selected primary label and 2pt bottom indicator | Selection never adds a pill to section tabs; hover and keyboard focus remain distinct from selection |
 | `HideChoiceGroup` segmented | Contained choices on sidebar, 2pt inset, divider border, radius 6, elevated selected choice | Tree/List changes only inspection mode; selected choice and group label are accessible |
 | `HideSearchField` | 36pt height, elevated fill, radius 6, 8pt gap, magnifier and 24pt clear action | Existing `HideSearchKeyboard` is the only focus owner; a local focus observation drives the neutral outline; native IME and search keyboard behavior remain intact |
 | `HideCheckboxStyle` | 16pt mark inside a compact hit area; neutral checked fill and check mark | Toggle owns checked state and accessibility; unchecked, checked, disabled, hover and focus are distinguishable |

@@ -31,13 +31,14 @@ struct HideChoiceGroup<Value: Hashable>: View {
     }
 
     var body: some View {
-        HStack(spacing: appearance == .tabs ? HideTheme.spacingLG : HideTheme.spacingXXS) {
+        HStack(spacing: appearance == .tabs ? HideTheme.spacingSM : HideTheme.spacingXXS) {
             ForEach(values, id: \.self) { value in
                 Button {
                     guard selection != value else { return }
                     selection = value
                 } label: {
                     Text(title(value))
+                        .fixedSize()
                 }
                 .buttonStyle(HideChoiceButtonStyle(
                     appearance: appearance,
@@ -101,7 +102,7 @@ private struct HideChoiceButtonBody<Label: View>: View {
         label
             .hideFont(size: fontSize, weight: .medium)
             .foregroundStyle(foreground)
-            .padding(.horizontal, HideTheme.spacingSM)
+            .padding(.horizontal, appearance == .tabs ? HideTheme.spacingXS : HideTheme.spacingSM)
             .frame(minHeight: HideTheme.Control.compactHeight)
             .background {
                 if appearance == .segmented, isSelected {

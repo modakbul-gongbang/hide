@@ -66,7 +66,7 @@ struct MergedWorktreeCleanup: View {
                 if !busy && review?.phase != "review" {
                     Button("Review again") { selected.removeAll(); model.core.dispatch(kind: "cleanup_review", payload: [:]) }
                 }
-                Button("Remove \(selected.intersection(eligible).count) folders", role: .destructive) {
+                Button("Remove \(selected.intersection(eligible).count) \(selected.intersection(eligible).count == 1 ? "folder" : "folders")", role: .destructive) {
                     guard let review else { return }
                     model.core.dispatch(kind: "cleanup_confirm", payload: ["id": review.id, "paths": selected.intersection(eligible).sorted()])
                 }.disabled(busy || review?.phase != "review" || selected.intersection(eligible).isEmpty)
