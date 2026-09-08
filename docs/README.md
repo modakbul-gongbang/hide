@@ -15,7 +15,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Which local build is running | [dev-runtime.md](dev-runtime.md) | Bundle identity, `CoreBridge.defaultStatePath`, actual process/window |
 | Performance and rendering verification | [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) | Regression tests, measurement tools, native run evidence |
 | Browser pane use and ownership | [BROWSER_PANES.md](BROWSER_PANES.md) | `plugins/browser/`, native browser viewer |
-| Agent status and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `pet.rs`, status tests |
+| Agent status, semantic colors, Workspace aggregation, and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `AgentRow.swift`, `SidebarPresentation.swift`, status tests |
 | Optional ambient counts and privacy | [status-model.md](status-model.md#ambient-signals-subagents-background-tasks) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
 | Native pet window and gestures | [pet-window-macos.md](pet-window-macos.md) | `PetWindow.swift`, `PetIntegrationTests.swift` |
 | Pet theme format | [theme-contract.md](theme-contract.md) | `PetTheme.swift`, each `theme.json`, theme tests |

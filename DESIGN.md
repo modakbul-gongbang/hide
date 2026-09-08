@@ -824,7 +824,9 @@ Detached checkouts carry a separate `detached` badge; their tooltip retains the 
 Only workspaces with visible agent rows have a disclosure arrow, separate from the name's selection action.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 Project-view number shortcuts skip agents hidden by workspace disclosure.
-`checkoutStatusSize` (6pt) and `checkoutIconWidth` (14pt) align the activity and branch columns.
+`agentMarkWidth` and `checkoutIconWidth` (14pt) align the shared agent-status and checkout-kind columns.
+The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
+`agentWorking` is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
 Agent counts are omitted from checkout rows; pull requests and uncommitted changes retain their existing badges.
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.

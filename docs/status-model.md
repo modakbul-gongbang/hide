@@ -63,6 +63,74 @@ Both appearances share one direct-select shortcut, assigned to the first visible
 Collapsing a parent hides descendants in the tree while raised attention rows remain reachable.
 The Agents view draws all four groups with their boundaries visible and omits empty ones.
 
+## Shared agent and Workspace status contract
+
+The sidebar hierarchy is Project > Workspace > Agents.
+A Workspace is one checkout path, including a plain folder; internal `WorkspaceSnapshot` names the project and `CheckoutSnapshot` names this Workspace.
+A branch is the Workspace title when available; otherwise its real folder name is the title.
+`primary`, `detached`, `missing`, temporary state, and uncommitted changes describe the checkout, not an agent lifecycle.
+They remain separate badges or Git indicators and never select the agent status color.
+
+### One meaning across surfaces
+
+Agent rows, focused-agent tab marks, and Workspace summaries use the same status mark and semantic color mapping.
+Working uses a fixed blue status token, independent of the user's accent color; Done uses green, so running and completed work remain distinct.
+The symbol and accessible text accompany color, so color alone never carries the distinction.
+
+| Agent condition | Mark | Color | Text and behavior |
+| --- | --- | --- | --- |
+| Question | `?` | Yellow | Question; Needs You while unread or blocked |
+| Approval | `!` | Yellow | Approval; a blocked pane stays Needs You even after being read |
+| Error | `×` | Red | Error; Needs You while unread or blocked |
+| No demand, stopped, unread | `✓` | Green | Done; completion awaiting the operator's review |
+| No demand, working | `●` | Blue | Working |
+| No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
+| No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
+| Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
+
+Read questions, approvals, and errors retain their symbol and hue with reduced emphasis.
+Reading is acknowledgment, not evidence that a demand was resolved.
+A read, non-blocked demand belongs to Seen unless the core places its running activity in Working; the status mark still describes the demand.
+Disconnected presentation overrides the retained mark and text on every affected surface without modifying demand, activity, read records, or the last known group.
+Unavailable-server tooltips describe the connection problem rather than presenting retained counts as current work.
+
+### Workspace aggregation
+
+`sidebar.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
+Each Workspace counts unique agent pane IDs physically owned by its tabs, independent of sidebar visibility, raised rows, parent collapse, or Workspace collapse.
+A descendant running in another checkout contributes to that checkout, even if its lineage row appears beneath a parent elsewhere.
+An agent repeated in a raised section and the project tree counts once.
+Plain terminal panes without agents do not create an Idle agent status.
+A Workspace with no known agents reserves the status column for alignment but draws no status mark.
+
+The representative follows the same group order as the sidebar: Needs You > Done > Working > Seen.
+Within a group, Error precedes Approval, then Question; otherwise Unknown precedes ordinary Idle within Seen, so missing information is not hidden by an idle sibling.
+Equivalent candidates keep canonical agent order.
+A read error in Seen cannot outrank an unread question in Needs You.
+The Workspace draws the representative agent's exact mark, color, and emphasis through the shared presentation.
+
+The tooltip lists positive counts in group order: Needs You, Done, Working, Seen.
+Unknown is reported as a subset of Seen, never added again to the total.
+When the owning server disconnects, a Workspace with retained agents displays Disconnected and suppresses the stale activity breakdown.
+Connection recovery resumes the current canonical projection; it does not mark agents read.
+
+### Disclosure and selection
+
+The disclosure chevron sits at the right edge of a Workspace row.
+The left edge holds the agent status mark, checkout-kind icon, title, and checkout badges.
+Only a Workspace with nested agent rows has a visible disclosure control.
+Clicking the chevron hides or reveals those rows; clicking the name selects the Workspace.
+Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
+`collapsed_checkout_ids` persists across launches.
+Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
+
+### Verification ownership
+
+Core status tests own the Done mark, representative priority, unique-pane counts, cross-checkout ownership, and unchanged read semantics.
+Swift presentation tests own fixed semantic colors and the shared disconnected override.
+Native verification covers mixed states, Done-to-Idle acknowledgment, right-side disclosure, unchanged terminal selection on collapse, empty and missing workspaces, and disconnect/recovery.
+Run evidence belongs under `agents/runs/`, never in `docs/`.
+
 ## Pet pose priority
 
 An error or an unread demand takes precedence over ordinary work, so a `!` or `?` is never hidden by a background task.
