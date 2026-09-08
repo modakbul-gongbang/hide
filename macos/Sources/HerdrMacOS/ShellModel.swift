@@ -461,6 +461,13 @@ final class ShellModel: ObservableObject {
         core.snapshot?.navigator.devices ?? []
     }
 
+    var agentsConnected: Bool {
+        if let device = activeRemoteDevice {
+            return core.snapshot?.status.remote.first { $0.targetID == device.id }?.state == "connected"
+        }
+        return core.snapshot?.status.herdr.state == "connected"
+    }
+
     var agents: [SidebarAgent] {
         if isRemoteContext {
             return remote.navigation?.agents ?? []

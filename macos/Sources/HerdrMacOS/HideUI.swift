@@ -451,20 +451,17 @@ private struct PetDashboardView: View {
                 PetCountTile(
                     label: AgentGroup.working.title.uppercased(),
                     value: projection.counts.working,
-                    color: HideTheme.PetDashboard.accent
+                    color: HideTheme.agentWorking
                 )
                 PetCountTile(
                     label: AgentGroup.seen.title.uppercased(),
                     value: projection.counts.seen,
                     color: HideTheme.PetDashboard.secondary
                 )
-                // The warning hue, the same one a disconnected row carries in
-                // `AgentStatusStyle`, so the tile and the row cannot say a
-                // different thing about the same state.
                 PetCountTile(
                     label: "DISCONNECTED",
                     value: projection.counts.disconnected,
-                    color: HideTheme.warning
+                    color: HideTheme.secondary
                 )
             }
             .padding(.horizontal, HideTheme.PetDashboard.contentInset)
@@ -569,7 +566,7 @@ private struct PetDashboardAgentRow: View {
 
     var body: some View {
         AgentRow(
-            presentation: AgentRowPresentation(row: agent, accent: accent),
+            presentation: AgentRowPresentation(row: agent),
             style: rowStyle,
             action: action
         )
@@ -751,7 +748,6 @@ private struct ScratchSection: View {
 /// chat and a project chat read as the same kind of thing.
 private struct ScratchRow: View {
     @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
     let tab: CoreScratchTabSnapshot
 
     var body: some View {
@@ -760,7 +756,7 @@ private struct ScratchRow: View {
                 presentation: AgentRowPresentation(
                     agent: agent,
                     title: tab.displayName,
-                    accent: accent
+                    connected: model.core.snapshot?.status.herdr.state == "connected"
                 ),
                 style: .shell(density: .compact),
                 density: .compact,
@@ -1317,7 +1313,8 @@ private struct WorkspaceNavigatorRow: View {
         let checkoutPresentation = SidebarCheckoutPresentation(
             workspace: workspace,
             checkout: checkout,
-            agents: model.agents
+            agents: model.agents,
+            connected: model.agentsConnected
         )
 
         return VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
@@ -1350,48 +1347,26 @@ private struct WorkspaceNavigatorRow: View {
 
 private struct CheckoutNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
     let workspace: CoreWorkspaceSnapshot
     let checkout: CoreCheckoutSnapshot
     let presentation: SidebarCheckoutPresentation
     let isFocused: Bool
     let hasAgents: Bool
 
-    private var activityColor: Color {
-        switch presentation.activity {
-        case .missing, .error: HideTheme.danger
-        case .needsAttention: HideTheme.warning
-        case .working: accent
-        case .idle: HideTheme.secondary
-        case .empty: HideTheme.muted
-        }
-    }
-
     var body: some View {
         HStack(spacing: HideTheme.spacingNone) {
-            Button {
-                model.toggleCheckoutExpansion(checkout)
-            } label: {
-                Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
-                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                    .foregroundStyle(HideTheme.secondary)
-                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.checkoutRowHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .hideTooltip("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
-            .accessibilityLabel("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
-            .accessibilityIdentifier("hide-checkout-disclosure-\(checkout.id)")
-            .opacity(hasAgents ? 1 : 0)
-            .disabled(!hasAgents)
-            .accessibilityHidden(!hasAgents)
             Button {
                 model.selectCheckout(checkout)
             } label: {
                 HStack(spacing: HideTheme.spacingSM) {
-                    Circle()
-                        .fill(activityColor)
-                        .frame(width: HideTheme.checkoutStatusSize, height: HideTheme.checkoutStatusSize)
+                    Group {
+                        if let status = presentation.status {
+                            AgentStatusMark(symbol: status.symbol, color: status.color)
+                        } else {
+                            Color.clear.frame(width: HideTheme.agentMarkWidth)
+                        }
+                    }
+                    .frame(width: HideTheme.agentMarkWidth)
                     Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
                         .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                         .foregroundStyle(HideTheme.secondary)
@@ -1459,9 +1434,25 @@ private struct CheckoutNavigatorRow: View {
                     repoName: workspace.repoName,
                     checkout: checkout,
                     agentCount: presentation.agentCount
-                )
+                ) + (presentation.status.map { ". \($0.label)" } ?? "")
             )
             .accessibilityValue(isFocused ? "Selected" : "Not selected")
+            Button {
+                model.toggleCheckoutExpansion(checkout)
+            } label: {
+                Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                    .foregroundStyle(HideTheme.secondary)
+                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.checkoutRowHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hideTooltip("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
+            .accessibilityLabel("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
+            .accessibilityIdentifier("hide-checkout-disclosure-\(checkout.id)")
+            .opacity(hasAgents ? 1 : 0)
+            .disabled(!hasAgents)
+            .accessibilityHidden(!hasAgents)
         }
         .padding(.leading, HideTheme.spacingSM)
         .contextMenu {
@@ -1495,7 +1486,6 @@ private struct CheckoutNavigatorRow: View {
 /// its direct-select shortcut hint.
 private struct AgentNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
     let agent: SidebarAgent
     /// Under a checkout the project name is the heading above the row, so
     /// repeating it wastes the line the summary needs.
@@ -1525,7 +1515,7 @@ private struct AgentNavigatorRow: View {
                     presentation: AgentRowPresentation(
                         agent: agent,
                         density: density,
-                        accent: accent
+                        connected: model.agentsConnected
                     ),
                     style: .shell(density: density),
                     density: density,
@@ -1653,12 +1643,9 @@ private struct HideTabStrip: View {
                                     } label: {
                                         HStack(spacing: HideTheme.spacingSM) {
                                             if let agent = tab.focusedAgent {
-                                                let color = AgentStatusStyle.color(
-                                                    demand: agent.demand, activity: agent.activity,
-                                                    emphasized: agent.unread, accent: accent
-                                                )
-                                                AgentStatusMark(symbol: agent.symbol, color: color)
-                                                AgentBadge(agentKind: agent.agentKind, stateColor: color, size: HideTheme.lineageChevronWidth)
+                                                let status = AgentStatusPresentation(agent: agent, connected: model.agentsConnected)
+                                                AgentStatusMark(symbol: status.symbol, color: status.color)
+                                                AgentBadge(agentKind: agent.agentKind, stateColor: status.color, size: HideTheme.lineageChevronWidth)
                                             } else {
                                                 Image(systemName: tabIcon(tab))
                                                     .hideFont(size: HideTheme.Typography.caption, weight: .medium)
@@ -1689,7 +1676,7 @@ private struct HideTabStrip: View {
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
-                                    .hideTooltip(tab.contextLabel ?? tab.label, command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
+                                    .hideTooltip([tab.contextLabel ?? tab.label, tab.focusedAgent.map { AgentStatusPresentation(agent: $0, connected: model.agentsConnected).label }].compactMap { $0 }.joined(separator: " · "), command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
 
                                     Button {
                                         model.closeUnifiedTab(tab)

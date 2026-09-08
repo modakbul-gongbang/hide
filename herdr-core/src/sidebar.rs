@@ -248,11 +248,83 @@ fn agent_symbol(demand: AgentDemand, activity: AgentActivity, unread: bool) -> &
         AgentDemand::Approval => "!",
         AgentDemand::None => match activity {
             AgentActivity::Working => "\u{25cf}",
-            AgentActivity::Stopped if unread => "\u{25cf}",
+            AgentActivity::Stopped if unread => "✓",
             AgentActivity::Stopped => "\u{25cb}",
             AgentActivity::Unknown => "~",
         },
     }
+}
+
+/// Aggregate physical pane ownership, never the visual lineage tree or raised rows.
+/// Canonical order breaks ties after group and demand priority.
+pub fn sync_checkout_agent_summaries(
+    workspaces: &mut [crate::model::WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+) -> bool {
+    let owners = workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .enumerate()
+        .flat_map(|(index, checkout)| {
+            checkout
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.panes)
+                .map(move |pane| (pane.id.as_str(), index))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let count = workspaces
+        .iter()
+        .map(|workspace| workspace.checkouts.len())
+        .sum();
+    let mut summaries = vec![crate::model::CheckoutAgentSummary::default(); count];
+    let mut ranks = vec![None; count];
+    let mut counted = std::collections::HashSet::new();
+    for agent in agents {
+        let Some(&index) = owners.get(agent.pane_id.as_str()) else {
+            continue;
+        };
+        if !counted.insert(agent.pane_id.as_str()) {
+            continue;
+        }
+        let summary = &mut summaries[index];
+        let group = group_of(agent);
+        match group {
+            AgentGroup::NeedsYou => summary.needs_you += 1,
+            AgentGroup::Done => summary.done += 1,
+            AgentGroup::Working => summary.working += 1,
+            AgentGroup::Seen => {
+                summary.seen += 1;
+                if agent.activity == "unknown" && agent.demand == "none" {
+                    summary.unknown += 1;
+                }
+            }
+        }
+        let demand_rank = match demand_of(agent) {
+            AgentDemand::Error => 0,
+            AgentDemand::Approval => 1,
+            AgentDemand::Question => 2,
+            AgentDemand::None if agent.activity == "unknown" => 3,
+            AgentDemand::None => 4,
+        };
+        let rank = (group.rank(), demand_rank);
+        if ranks[index].is_none_or(|best| rank < best) {
+            ranks[index] = Some(rank);
+            summary.representative_pane_id = Some(agent.pane_id.clone());
+        }
+    }
+    let mut changed = false;
+    for (checkout, summary) in workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+        .zip(summaries)
+    {
+        if checkout.agent_summary != summary {
+            checkout.agent_summary = summary;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// The one short word a row shows. A stopped agent the operator has not read
@@ -871,6 +943,120 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn workspace_summary_uses_physical_ownership_priority_and_unique_panes() {
+        use crate::model::{CheckoutSnapshot, PaneSnapshot, TabSnapshot, WorkspaceSnapshot};
+        let checkout = |id: &str, panes: &[&str]| CheckoutSnapshot {
+            id: id.to_owned(),
+            tabs: vec![TabSnapshot {
+                panes: panes
+                    .iter()
+                    .map(|id| PaneSnapshot {
+                        id: (*id).to_owned(),
+                        content: Default::default(),
+                        herdr_label: None,
+                        terminal_title: None,
+                        workspace_label: None,
+                        cwd: "/fixture".to_owned(),
+                        status_label: "Unknown".to_owned(),
+                        requires_close_confirmation: false,
+                        summary: None,
+                        activity_at_unix_ms: None,
+                        fork: Default::default(),
+                        ports: vec![],
+                    })
+                    .collect(),
+                id: None,
+                workspace_id: None,
+                checkout_id: None,
+                label: None,
+                empty: false,
+            }],
+            ..Default::default()
+        };
+        let mut workspaces = vec![WorkspaceSnapshot {
+            checkouts: vec![
+                checkout(
+                    "main",
+                    &[
+                        "error", "question", "done", "working", "unknown", "shell", "done",
+                    ],
+                ),
+                checkout("child", &["child"]),
+                checkout("empty", &["plain"]),
+            ],
+            id: "project".to_owned(),
+            label: "Project".to_owned(),
+            path: "/fixture".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "Project".to_owned(),
+            is_git: true,
+            default_branch: None,
+            branches: vec![],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec![],
+        }];
+        let mut agents = project_agents(payload(json!([
+            {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},
+            {"pane_id":"question", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_question":"?"}},
+            {"pane_id":"done", "state_change_seq":1, "agent_status":"idle"},
+            {"pane_id":"working", "state_change_seq":1, "agent_status":"working"},
+            {"pane_id":"unknown", "state_change_seq":1, "agent_status":"unknown"},
+            {"pane_id":"child", "state_change_seq":1, "agent_status":"blocked", "spawned_from_pane_id":"working"}
+        ])))
+        .agents;
+        let error = agents.iter_mut().find(|a| a.pane_id == "error").unwrap();
+        error.unread = false;
+        derive_from_axes(error);
+        let duplicate = agents.iter().find(|a| a.pane_id == "done").unwrap().clone();
+        agents.push(duplicate);
+        assert!(sync_checkout_agent_summaries(&mut workspaces, &agents));
+        let summaries = &workspaces[0].checkouts;
+        assert_eq!(
+            summaries[0].agent_summary.representative_pane_id.as_deref(),
+            Some("question")
+        );
+        assert_eq!(
+            (
+                summaries[0].agent_summary.needs_you,
+                summaries[0].agent_summary.done,
+                summaries[0].agent_summary.working,
+                summaries[0].agent_summary.seen,
+                summaries[0].agent_summary.unknown
+            ),
+            (1, 1, 1, 2, 1)
+        );
+        assert_eq!(
+            summaries[1].agent_summary.representative_pane_id.as_deref(),
+            Some("child")
+        );
+        assert_eq!(summaries[2].agent_summary, Default::default());
+        assert!(!sync_checkout_agent_summaries(&mut workspaces, &agents));
+        let question = agents.iter_mut().find(|a| a.pane_id == "question").unwrap();
+        question.unread = false;
+        derive_from_axes(question);
+        sync_checkout_agent_summaries(&mut workspaces, &agents);
+        assert_eq!(
+            workspaces[0].checkouts[0]
+                .agent_summary
+                .representative_pane_id
+                .as_deref(),
+            Some("done")
+        );
+        agents.retain(|a| a.pane_id != "done");
+        sync_checkout_agent_summaries(&mut workspaces, &agents);
+        assert_eq!(
+            workspaces[0].checkouts[0]
+                .agent_summary
+                .representative_pane_id
+                .as_deref(),
+            Some("working")
+        );
+    }
+
     fn payload(agents: Value) -> SessionSnapshotPayload {
         serde_json::from_value(json!({"agents": agents})).expect("valid fixture")
     }
@@ -917,14 +1103,9 @@ mod tests {
                 json!({"status_done_new": "\u{25cf}"}),
                 "none",
                 "stopped",
-                "\u{25cf}",
+                "✓",
             ),
-            (
-                json!({"status_idle": "\u{25cb}"}),
-                "none",
-                "stopped",
-                "\u{25cf}",
-            ),
+            (json!({"status_idle": "\u{25cb}"}), "none", "stopped", "✓"),
             (json!({"status_unknown": "~"}), "none", "unknown", "~"),
         ];
         let agents = cases

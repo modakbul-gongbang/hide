@@ -122,6 +122,7 @@ enum HideTheme {
     static let accent = Color(red: 211.0 / 255, green: 211.0 / 255, blue: 212.0 / 255)
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
+    static let agentWorking = Color(red: 0.38, green: 0.65, blue: 1.0)
     static let success = Color(red: 0.37, green: 0.90, blue: 0.62)
     /// How far a status mark is dimmed once the operator has read it. The mark
     /// keeps its shape and its hue so the row still says what it is; only its
@@ -193,7 +194,6 @@ enum HideTheme {
     static let formControlHeight: CGFloat = 36
     static let settingsFieldHeight: CGFloat = 24
     static let checkoutRowHeight: CGFloat = 36
-    static let checkoutStatusSize: CGFloat = 6
     static let checkoutIconWidth: CGFloat = 14
     static let tabTitleMaxWidth: CGFloat = 200
     /// A descendant's inset in the agent tree: two full steps, then a shallower

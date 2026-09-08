@@ -566,7 +566,24 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     }
 }
 
+struct CoreCheckoutAgentSummary: Decodable, Equatable {
+    var representativePaneID: String? = nil
+    var needsYou = 0
+    var done = 0
+    var working = 0
+    var seen = 0
+    var unknown = 0
+    var total: Int { needsYou + done + working + seen }
+
+    enum CodingKeys: String, CodingKey {
+        case representativePaneID = "representative_pane_id"
+        case needsYou = "needs_you"
+        case done, working, seen, unknown
+    }
+}
+
 struct CoreCheckoutSnapshot: Decodable, Identifiable {
+    var agentSummary = CoreCheckoutAgentSummary()
     let id: String
     let workspaceID: String
     let label: String
@@ -602,6 +619,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let nextTabLabel: String
 
     enum CodingKeys: String, CodingKey {
+        case agentSummary = "agent_summary"
         case id
         case workspaceID = "workspace_id"
         case label
@@ -677,6 +695,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        agentSummary = try container.decode(CoreCheckoutAgentSummary.self, forKey: .agentSummary)
         id = try container.decode(String.self, forKey: .id)
         workspaceID = try container.decode(String.self, forKey: .workspaceID)
         label = try container.decode(String.self, forKey: .label)

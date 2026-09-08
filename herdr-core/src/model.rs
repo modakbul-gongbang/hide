@@ -339,8 +339,21 @@ pub struct WorkspaceSnapshot {
     pub checkouts: Vec<CheckoutSnapshot>,
 }
 
+/// Agent counts and representative after Hide applies its pane-level read records.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct CheckoutAgentSummary {
+    pub representative_pane_id: Option<String>,
+    pub needs_you: usize,
+    pub done: usize,
+    pub working: usize,
+    pub seen: usize,
+    /// A subset of Seen, not an additional group.
+    pub unknown: usize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
+    pub agent_summary: CheckoutAgentSummary,
     pub id: String,
     pub workspace_id: String,
     pub label: String,

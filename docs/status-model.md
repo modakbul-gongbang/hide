@@ -98,6 +98,7 @@ Unavailable-server tooltips describe the connection problem rather than presenti
 
 `sidebar.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
 Each Workspace counts unique agent pane IDs physically owned by its tabs, independent of sidebar visibility, raised rows, parent collapse, or Workspace collapse.
+The existing status synchronization indexes pane ownership once and visits each canonical agent once; it adds no timer, I/O, or per-frame work and publishes only changed summaries.
 A descendant running in another checkout contributes to that checkout, even if its lineage row appears beneath a parent elsewhere.
 An agent repeated in a raised section and the project tree counts once.
 Plain terminal panes without agents do not create an Idle agent status.

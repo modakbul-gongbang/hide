@@ -826,7 +826,7 @@ Workspace disclosure persists across launches and hides only the nested agent ro
 Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` and `checkoutIconWidth` (14pt) align the shared agent-status and checkout-kind columns.
 The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
-`agentWorking` is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
+`agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
 Agent counts are omitted from checkout rows; pull requests and uncommitted changes retain their existing badges.
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.

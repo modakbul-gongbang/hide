@@ -682,6 +682,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
             changed = true;
         }
     }
+    changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
     changed
 }
 
@@ -2698,6 +2699,7 @@ impl Runtime {
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
+        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.scratch = crate::model::ScratchSnapshot {
             id: crate::scratch::NODE_ID.to_owned(),
@@ -6929,6 +6931,7 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
+        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,

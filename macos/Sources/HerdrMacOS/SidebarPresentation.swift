@@ -1,66 +1,45 @@
 import Foundation
 
-enum SidebarCheckoutActivity: Equatable {
-    case missing
-    case error
-    case needsAttention
-    case working
-    case idle
-    case empty
-}
-
 struct SidebarCheckoutPresentation: Equatable {
-    let paneCount: Int
     let agentCount: Int
     let isPrimary: Bool
-    let activity: SidebarCheckoutActivity
+    let status: AgentStatusPresentation?
     let isDetached: Bool
     let detailTooltip: String
-
-    var activityLabel: String? {
-        if agentCount > 0 {
-            return Self.countLabel(agentCount, singular: "agent")
-        }
-        if paneCount > 0 {
-            return Self.countLabel(paneCount, singular: "pane")
-        }
-        return nil
-    }
 
     init(
         workspace: CoreWorkspaceSnapshot,
         checkout: CoreCheckoutSnapshot,
-        agents: [SidebarAgent]
+        agents: [SidebarAgent],
+        connected: Bool = true
     ) {
-        let checkoutAgents = SidebarGrouping.agents(agents, in: checkout)
-        paneCount = checkout.tabs.reduce(0) { $0 + $1.panes.count }
-        agentCount = checkoutAgents.count
+        let summary = checkout.agentSummary
+        agentCount = summary.total
         isPrimary = !checkout.isWorktree && checkout.path == workspace.path
         isDetached = checkout.worktree.map { $0.branch == nil } ?? false
+        let pathDetail: String
         if isDetached {
             let commit = checkout.worktree?.headSHA.map { " at \($0)" } ?? ""
-            detailTooltip = "Detached HEAD\(commit)\n\(checkout.path)"
+            pathDetail = "Detached HEAD\(commit)\n\(checkout.path)"
         } else {
-            detailTooltip = checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path
+            pathDetail = checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path
         }
-
-        if !checkout.exists {
-            activity = .missing
-        } else if checkoutAgents.contains(where: { $0.demand == "error" }) {
-            activity = .error
-        } else if checkoutAgents.contains(where: { AgentGroup(agent: $0) == .needsYou }) {
-            activity = .needsAttention
-        } else if checkoutAgents.contains(where: { AgentGroup(agent: $0) == .working }) {
-            activity = .working
-        } else if paneCount > 0 {
-            activity = .idle
+        if let representative = agents.first(where: { $0.paneID == summary.representativePaneID }) {
+            status = AgentStatusPresentation(agent: representative, connected: connected)
         } else {
-            activity = .empty
+            status = nil
         }
-    }
-
-    private static func countLabel(_ count: Int, singular: String) -> String {
-        count == 1 ? "1 \(singular)" : "\(count) \(singular)s"
+        if summary.total == 0 {
+            detailTooltip = pathDetail
+        } else if !connected {
+            detailTooltip = "Disconnected · agent activity unavailable\n\(pathDetail)"
+        } else {
+            let counts = [("Needs You", summary.needsYou), ("Done", summary.done),
+                          ("Working", summary.working), ("Seen", summary.seen)]
+                .filter { $0.1 > 0 }.map { "\($0.0): \($0.1)" }.joined(separator: " · ")
+            let unknown = summary.unknown > 0 ? " (\(summary.unknown) Unknown)" : ""
+            detailTooltip = "\(counts)\(unknown)\n\(pathDetail)"
+        }
     }
 }
 

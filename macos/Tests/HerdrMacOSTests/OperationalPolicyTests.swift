@@ -284,7 +284,7 @@ import Testing
             "source_id": "w1:t1",
             "label": "Tab 1"
           }],
-          "next_tab_label": "Tab 2",
+          "agent_summary":{"representative_pane_id":null,"needs_you":0,"done":0,"working":0,"seen":0,"unknown":0},"next_tab_label": "Tab 2",
           "tabs": [{
             "id": "w1:t1",
             "workspace_id": "remote:device:mini:workspace:w1",
