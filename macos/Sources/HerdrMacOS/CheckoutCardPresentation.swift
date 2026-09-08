@@ -42,13 +42,25 @@ enum CheckoutCardPresentation {
         return request.isDraft ? HideTheme.PullRequest.draft : HideTheme.PullRequest.open
     }
 
-    static func pullRequestIcon(_ request: CorePullRequest?) -> Image {
+    @MainActor private static let pullRequestImages: [String: NSImage] = {
+        let names = ["git-merge-16", "git-pull-request-closed-16", "git-pull-request-draft-16", "git-pull-request-16"]
+        return Dictionary(uniqueKeysWithValues: names.map { name in
+            guard let url = Bundle.module.url(forResource: name, withExtension: "pdf"),
+                  let image = NSImage(contentsOf: url), image.isValid else {
+                preconditionFailure("The bundled pull request icon is missing or unreadable: \(name)")
+            }
+            image.isTemplate = true
+            return (name, image)
+        })
+    }()
+
+    @MainActor static func pullRequestIcon(_ request: CorePullRequest?) -> Image {
         let name: String
         if request?.badge == .merged { name = "git-merge-16" }
         else if request?.badge == .closed { name = "git-pull-request-closed-16" }
         else if request?.isDraft == true { name = "git-pull-request-draft-16" }
         else { name = "git-pull-request-16" }
-        return Image(name, bundle: .module).renderingMode(.template)
+        return Image(nsImage: pullRequestImages[name]!).renderingMode(.template)
     }
 
     /// Review badges retain their decision colors; PR lifecycle uses its own palette.
