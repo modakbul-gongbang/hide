@@ -838,6 +838,13 @@ Clicking it opens a 360pt details popover with PR number, title, state, CI rollu
 The PR control is a sibling of the full-row disclosure button, so opening details never folds the Workspace.
 Workspace rows without agents reserve no disclosure slot.
 Their PR control uses the same trailing 24pt column as populated rows' disclosure, keeping the icon centers and right inset aligned.
+PR lifecycle is a semantic-color exception to monochrome chrome: Open `#3FB950`, Merged `#A371F7`, Closed `#F85149`, and Draft `#9198A1`.
+`HideTheme.PullRequest` owns this GitHub-style dark palette and the 18pt glyph size inside the existing 24pt control.
+Official MIT-licensed Octicons distinguish open, merged, closed, and draft by shape as well as color; the vector PDF resources and license ship in the bundle.
+The sidebar control, popover header, and State badge use the same lifecycle color, including during hover and selection.
+Review decisions and CI retain their own status meanings.
+`HideIconButton` supports template image content with an explicit semantic color while keeping the shared hit area, interaction treatment, tooltip, and accessibility behavior.
+Reference: [GitHub Primer state labels](https://primer.github.io/design/components/state-label/).
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
 New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.

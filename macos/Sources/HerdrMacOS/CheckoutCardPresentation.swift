@@ -35,19 +35,31 @@ enum CheckoutCardPresentation {
         }
     }
 
-    /// The badge's colour. Merged and closed share one because both mean the
-    /// work is over; the three review
-    /// decisions are the distinction the colour actually has to carry.
-    ///
-    /// No saturated accent is used: DESIGN.md reserves those for category
-    /// illustration, and this is chrome.
+    static func pullRequestColor(_ request: CorePullRequest?) -> Color {
+        guard let request else { return HideTheme.PullRequest.draft }
+        if request.badge == .merged { return HideTheme.PullRequest.merged }
+        if request.badge == .closed { return HideTheme.PullRequest.closed }
+        return request.isDraft ? HideTheme.PullRequest.draft : HideTheme.PullRequest.open
+    }
+
+    static func pullRequestIcon(_ request: CorePullRequest?) -> Image {
+        let name: String
+        if request?.badge == .merged { name = "git-merge-16" }
+        else if request?.badge == .closed { name = "git-pull-request-closed-16" }
+        else if request?.isDraft == true { name = "git-pull-request-draft-16" }
+        else { name = "git-pull-request-16" }
+        return Image(name, bundle: .module).renderingMode(.template)
+    }
+
+    /// Review badges retain their decision colors; PR lifecycle uses its own palette.
     static func badgeColor(
         _ badge: CorePullRequestBadge,
         review: CoreReviewDecision?
     ) -> Color {
         switch badge {
-        case .merged, .closed: HideTheme.muted
-        case .open: HideTheme.secondary
+        case .merged: HideTheme.PullRequest.merged
+        case .closed: HideTheme.PullRequest.closed
+        case .open: HideTheme.PullRequest.open
         case .review:
             switch review {
             case .approved: HideTheme.success

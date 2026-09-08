@@ -18,7 +18,9 @@ struct HideIconButton: View {
         }
     }
 
-    let systemImage: String
+    let image: Image
+    var imageSize: CGFloat? = nil
+    var color: Color? = nil
     let help: String
     var accessibilityLabel: String? = nil
     var variant: Variant = .standard
@@ -28,12 +30,40 @@ struct HideIconButton: View {
     var tabID: String? = nil
     let action: () -> Void
 
+    init(systemImage: String, help: String, accessibilityLabel: String? = nil,
+         variant: Variant = .standard, isSelected: Bool = false, command: HideCommand? = nil,
+         paneID: String? = nil, tabID: String? = nil, action: @escaping () -> Void) {
+        self.image = Image(systemName: systemImage)
+        self.help = help
+        self.accessibilityLabel = accessibilityLabel
+        self.variant = variant
+        self.isSelected = isSelected
+        self.command = command
+        self.paneID = paneID
+        self.tabID = tabID
+        self.action = action
+    }
+
+    init(image: Image, imageSize: CGFloat, color: Color, help: String,
+         variant: Variant = .toolbar, isSelected: Bool = false, action: @escaping () -> Void) {
+        self.image = image
+        self.imageSize = imageSize
+        self.color = color
+        self.help = help
+        self.variant = variant
+        self.isSelected = isSelected
+        self.action = action
+    }
+
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .hideFont(size: variant.fontSize, weight: .semibold)
+            if let imageSize {
+                image.resizable().frame(width: imageSize, height: imageSize)
+            } else {
+                image.hideFont(size: variant.fontSize, weight: .semibold)
+            }
         }
-        .buttonStyle(HideIconButtonStyle(variant: variant, isSelected: isSelected))
+        .buttonStyle(HideIconButtonStyle(variant: variant, isSelected: isSelected, color: color))
         .hideTooltip(help, command: command, paneID: paneID, tabID: tabID)
         .accessibilityLabel(accessibilityLabel ?? help)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -44,12 +74,13 @@ struct HideIconButton: View {
 private struct HideIconButtonStyle: ButtonStyle {
     let variant: HideIconButton.Variant
     let isSelected: Bool
+    let color: Color?
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(isSelected || (isEnabled && isHovering) ? HideTheme.primary : HideTheme.secondary)
+            .foregroundStyle(color ?? (isSelected || (isEnabled && isHovering) ? HideTheme.primary : HideTheme.secondary))
             .frame(width: variant.size.width, height: variant.size.height)
             .background {
                 RoundedRectangle(cornerRadius: HideTheme.radiusMedium)

@@ -1380,23 +1380,19 @@ private struct WorkspacePullRequestControl: View {
     @State private var isPresented = false
 
     private var request: CorePullRequest? { checkout.pullRequest }
-    private var icon: String {
-        switch request?.badge {
-        case .merged: HideTheme.GitIcon.pullMerged
-        case .closed: HideTheme.GitIcon.pullClosed
-        default: HideTheme.gitPullRequestIcon
-        }
-    }
+    private var icon: Image { CheckoutCardPresentation.pullRequestIcon(request) }
+    private var color: Color { CheckoutCardPresentation.pullRequestColor(request) }
 
     var body: some View {
-        HideIconButton(systemImage: icon, help: request.map { "PR #\($0.number): \(CheckoutCardPresentation.pullRequestState($0))" }
+        HideIconButton(image: icon, imageSize: HideTheme.PullRequest.iconSize, color: color, help: request.map { "PR #\($0.number): \(CheckoutCardPresentation.pullRequestState($0))" }
             ?? "GitHub status for \(checkout.label)", variant: .toolbar, isSelected: isPresented,
             action: { isPresented.toggle() })
             .accessibilityIdentifier("hide-pull-request-\(checkout.id)")
             .popover(isPresented: $isPresented, arrowEdge: .trailing) {
                 VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
                     HStack(spacing: HideTheme.spacingSM) {
-                        Image(systemName: icon).foregroundStyle(HideTheme.secondary)
+                        icon.resizable().frame(width: HideTheme.PullRequest.iconSize, height: HideTheme.PullRequest.iconSize)
+                            .foregroundStyle(color)
                         Text(request.map { "PR #\($0.number)" } ?? "GitHub")
                             .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                         Spacer()
@@ -1414,7 +1410,7 @@ private struct WorkspacePullRequestControl: View {
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: HideTheme.spacingSM) {
                             HideBadge(label: "State: \(CheckoutCardPresentation.pullRequestState(request))",
-                                color: CheckoutCardPresentation.badgeColor(request.badge, review: request.review))
+                                color: color)
                             HideBadge(label: "Checks: \(CheckoutCardPresentation.checksLabel(request.checks))",
                                 color: CheckoutCardPresentation.checksColor(request.checks))
                         }
