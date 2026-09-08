@@ -50,6 +50,53 @@ struct RecentNavigationIntegrationTests {
 
     }
 
+    @MainActor @Test func controlTabRestoresTheActuallyPreviousPanelAcrossFilesAndTerminal() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("hide-recent-panels-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first.txt")
+        let last = root.appendingPathComponent("직전-file.txt")
+        for file in [first, last] { try "review\n".write(to: file, atomically: true, encoding: .utf8) }
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
+        let model = ShellModel(core: bridge)
+        try await eventually("initial terminal") { model.recentSurfaces.count == 1 }
+        let workspaceID = try #require(model.focusedWorkspace?.id)
+        let checkoutID = try #require(model.focusedCheckout?.id)
+        let terminalID = try #require(model.focusedCheckout?.activeTabID)
+        model.openFile(first)
+        try await eventually("first file") { bridge.snapshot?.editor.tabs.contains { $0.path == first.path } == true }
+        let firstID = try #require(bridge.snapshot?.editor.activeTabID)
+        model.openFile(last)
+        try await eventually("last file") { bridge.snapshot?.editor.tabs.contains { $0.path == last.path } == true }
+        let lastID = try #require(bridge.snapshot?.editor.activeTabID)
+        bridge.focusTab(workspaceID: workspaceID, checkoutID: checkoutID, tabID: terminalID)
+        try await eventually("return to terminal") { bridge.snapshot?.editor.activeTabID == nil }
+
+        // Tab-strip order is terminal, first, last. Recent order must be
+        // terminal, last, first, so one chord returns to the actual last file.
+        model.beginOrAdvanceTabSwitcher()
+        let selectedID = try #require(model.tabSwitcherCycle?.selectedTabID)
+        let selected = try #require(model.recentSurfaces[selectedID])
+        guard case .editor(let file) = selected.item.kind else {
+            Issue.record("The previous panel must be the file, not another agent")
+            return
+        }
+        #expect(file.id == lastID)
+        model.commitTabSwitcher()
+        try await eventually("restore last file") { bridge.snapshot?.editor.activeTabID == lastID }
+        model.beginOrAdvanceTabSwitcher()
+        model.commitTabSwitcher()
+        try await eventually("toggle back to terminal") { bridge.snapshot?.editor.activeTabID == nil }
+        model.beginOrAdvanceTabSwitcher()
+        model.beginOrAdvanceTabSwitcher()
+        model.commitTabSwitcher()
+        try await eventually("second recent file") { bridge.snapshot?.editor.activeTabID == firstID }
+        #expect(model.focusedWorkspace?.id == workspaceID)
+        #expect(model.interactionNotice == nil)
+    }
+
     @MainActor @Test func projectSwitchRestoresItsLastFileAndControlCycleIncludesTheTerminal() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("hide-recent-\(UUID().uuidString)")
         let alpha = root.appendingPathComponent("alpha")

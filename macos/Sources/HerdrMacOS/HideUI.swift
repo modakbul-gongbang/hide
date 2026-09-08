@@ -304,7 +304,7 @@ private struct RecentNavigationOverlay: View {
             )
         } else if let cycle = presentation.tabCycle {
             RecentSwitcherOverlay(
-                title: "RECENT TABS", command: .recentTab,
+                title: "RECENT PANELS", command: .recentTab,
                 rows: cycle.visibleIDs.compactMap { id in
                     guard let surface = model.recentSurfaces[id] else { return nil }
                     return RecentSwitcherRow(id: id, title: surface.item.label,

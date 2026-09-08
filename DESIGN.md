@@ -935,6 +935,8 @@ Fixed content geometry remains in its named Layout tokens rather than changing w
 
 Control+Tab and Control+Shift+Tab cycle all unified surfaces inside the selected project in recent-use order.
 This includes terminal, Browser plugin, file/editor, and diff tabs across every checkout in that project.
+The overlay is named “Recent Panels”: a single Control+Tab returns to the actually previous surface, including a file view, and repeated chords toggle between the last two surfaces.
+Holding Control while pressing Tab again walks older visits rather than tab-strip or agent-list order.
 Option+Tab and Option+Shift+Tab cycle projects globally and restore each project's last used surface.
 Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
 Menu actions commit immediately.
