@@ -839,7 +839,7 @@ The PR control is a sibling of the full-row disclosure button, so opening detail
 Workspace rows without agents reserve no disclosure slot.
 Their PR control uses the same trailing 24pt column as populated rows' disclosure, keeping the icon centers and right inset aligned.
 PR lifecycle is a semantic-color exception to monochrome chrome: Open `#3FB950`, Merged `#A371F7`, Closed `#F85149`, and Draft `#9198A1`.
-`HideTheme.PullRequest` owns this GitHub-style dark palette and the 18pt glyph size inside the existing 24pt control.
+`HideTheme.PullRequest` owns this GitHub-style dark palette and the 14pt glyph size, shared with the branch icon, inside the existing 24pt control.
 Official MIT-licensed Octicons distinguish open, merged, closed, and draft by shape as well as color; the vector PDF resources and license ship in the bundle.
 The sidebar control, popover header, and State badge use the same lifecycle color, including during hover and selection.
 Review decisions and CI retain their own status meanings.

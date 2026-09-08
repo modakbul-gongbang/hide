@@ -180,7 +180,7 @@ enum HideTheme {
         static let merged = color(for: "#A371F7")
         static let closed = color(for: "#F85149")
         static let draft = color(for: "#9198A1")
-        static let iconSize: CGFloat = 18
+        static let iconSize: CGFloat = checkoutIconWidth
     }
     enum GitIcon {
         static let refresh = "arrow.clockwise"

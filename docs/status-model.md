@@ -221,5 +221,5 @@ This is linear in the visited project panes and agent projection per recomputati
 PR lifecycle uses the GitHub convention: Open is green, Merged purple, Closed red, and Draft gray.
 The sidebar and popover share one color mapping and the matching Octicon; the State text and accessibility label preserve meaning without relying on color.
 A merged or closed result takes precedence over an old draft flag.
-Glyphs are 18pt inside the existing 24pt trailing control, aligned with Workspace disclosure.
+Glyphs match the 14pt branch icon inside the existing 24pt trailing control, aligned with Workspace disclosure.
 CI colors remain separate from PR lifecycle, so Merged does not imply Passing.
