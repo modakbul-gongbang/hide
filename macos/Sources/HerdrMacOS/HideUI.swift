@@ -1533,6 +1533,10 @@ private struct AgentNavigatorRow: View {
     private var density: AgentRowDensity { showsWorkspace ? .prominent : .compact }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var shortcutVisible: Bool {
+        model.shortcutHintState.reveals(.agent(1), bindings: model.paneShortcuts)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
             HStack(spacing: HideTheme.spacingNone) {
@@ -1560,7 +1564,7 @@ private struct AgentNavigatorRow: View {
                     density: density,
                     isFocused: model.focusedPaneID == agent.paneID,
                     shortcutNumber: model.agentShortcutNumber(paneID: agent.paneID),
-                    shortcutVisible: model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.control],
+                    shortcutVisible: shortcutVisible,
                     action: { model.selectAgent(agent) }
                 )
             }
@@ -1585,7 +1589,7 @@ private struct AgentNavigatorRow: View {
         }
         .padding(.leading, showsWorkspace ? HideTheme.spacingNone : HideTheme.lineageInset(depth: agent.lineageDepth))
 
-        .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.control]))
+        .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (shortcutVisible))
         .accessibilityIdentifier("hide-agent-\(agent.id)")
         .hideTooltip(agent.summary, command: model.agentShortcutNumber(paneID: agent.paneID).map(HideCommand.agent), inline: true)
     }

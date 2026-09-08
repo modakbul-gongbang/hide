@@ -939,6 +939,7 @@ Option+Tab and Option+Shift+Tab cycle projects globally and restore each project
 Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
 Menu actions commit immediately.
 Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
+Agent number hints follow the command registry: reveal only during an exact Option hold, ignoring Caps Lock, and clear on release or a suppressing sheet.
 Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.
 With no other project or tab available, navigation keeps the current selection without a modal.
 Selecting an empty project shows its existing empty state; closing an empty strip or reselecting a checkout whose terminal is starting requires no acknowledgement.
@@ -954,9 +955,9 @@ The existing core catalog determines grouping; navigation does not infer it from
 Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
 Project rows show the last surface and checkout; tab rows show their checkout and surface type.
 History is session-local and retains only existing projects and surfaces.
-A deleted highlight moves to the next surviving entry without reordering the held cycle and reports the change.
-If none survives, cancel with a visible diagnostic and keep the core's current selection.
-Empty projects show “No open tabs”; a project without an available checkout reports that it cannot be selected.
+A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
+If none survives, cancel with a structured recovery trace and keep the core's current selection.
+Empty projects show “No open tabs”; a project without an available checkout keeps the current selection and records the recovery.
 
 ### Keycaps, hint chips, and tooltips
 

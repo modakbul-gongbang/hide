@@ -43,6 +43,29 @@ struct HideHintTests {
         #expect(HideCommand.pane(.closePane).displayString(bindings: [.closePane: binding]) == binding.displayString)
     }
 
+    @Test func agentHintsFollowRegistryHoldReleaseAndCapsLock() {
+        var state = HideHintState()
+        for flags: NSEvent.ModifierFlags in [.control, [.control, .capsLock], .option, [.option, .capsLock]] {
+            state.clear()
+            state.update(HideHintState.modifiers(in: flags), at: 0)
+            #expect(!state.reveals(.agent(1), bindings: [:]))
+            state.advance(to: HideTheme.Hint.delay)
+            for number in 1...9 {
+                #expect(state.reveals(.agent(number), bindings: [:]) == flags.contains(.option))
+            }
+            state.update(HideHintState.modifiers(in: .capsLock), at: 1)
+            #expect(!state.reveals(.agent(1), bindings: [:]))
+            #expect(state.deadline == nil)
+        }
+        state.update([.option], at: 2)
+        state.advance(to: 3)
+        state.update([.option, .shift], at: 4)
+        #expect(!state.reveals(.agent(1), bindings: [:]))
+        state.update([.option], at: 5)
+        #expect(state.reveals(.agent(1), bindings: [:]))
+        #expect(!state.reveals(.agent(10), bindings: [:]))
+    }
+
     @Test func deadlineReleaseReplacementAndSnapshotRetargeting() {
         var state = HideHintState()
         state.update([.command], at: 0)
@@ -77,7 +100,7 @@ struct HideHintTests {
         #expect(state.revealed && state.modifiers == [.control])
     }
 
-    @MainActor @Test func fileSearchSuppressesAndThenRestoresShortcutHints() async throws {
+    @MainActor @Test func sheetsSuppressAndThenRestoreAgentShortcutHints() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("hide-hint-file-search-\(UUID().uuidString)", isDirectory: true)
         let stateURL = FileManager.default.temporaryDirectory
@@ -91,29 +114,36 @@ struct HideHintTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
+            "--verification-no-remote",
             "--workspace-root", root.path,
             "--state-path", stateURL.path,
         ])
         let model = ShellModel(core: bridge)
 
-        model.setShortcutModifiersHeld([.command])
+        model.setShortcutModifiersHeld([.option])
         #expect(try await revealed(model))
+        #expect(model.shortcutHintState.reveals(.agent(1), bindings: [:]))
 
-        model.showFileSearch = true
-        #expect(model.hintSheetPresented)
-        #expect(model.shortcutHintState.modifiers.isEmpty)
-        #expect(!model.shortcutHintState.revealed)
-        // A hold while a sheet is up schedules nothing: no deadline means no
-        // reveal can arrive later, so this needs no waiting to be proven.
-        model.setShortcutModifiersHeld([.command])
-        #expect(model.shortcutHintState.deadline == nil)
-        #expect(model.shortcutHintState.modifiers.isEmpty)
-        #expect(!model.shortcutHintState.revealed)
+        let sheets: [ReferenceWritableKeyPath<ShellModel, Bool>] = [
+            \.showComposer, \.showSearch, \.showFileSearch, \.showSettings,
+        ]
+        for sheet in sheets {
+            model[keyPath: sheet] = true
+            #expect(model.hintSheetPresented)
+            #expect(model.shortcutHintState.modifiers.isEmpty)
+            #expect(!model.shortcutHintState.reveals(.agent(1), bindings: [:]))
+            // Suppression schedules no deadline, so a late reveal cannot fire.
+            model.setShortcutModifiersHeld([.option])
+            #expect(model.shortcutHintState.deadline == nil)
+            #expect(model.shortcutHintState.modifiers.isEmpty)
+            #expect(!model.shortcutHintState.revealed)
 
-        model.showFileSearch = false
-        #expect(!model.hintSheetPresented)
-        model.setShortcutModifiersHeld([.command])
-        #expect(try await revealed(model))
+            model[keyPath: sheet] = false
+            #expect(!model.hintSheetPresented)
+            model.setShortcutModifiersHeld([.option])
+            #expect(try await revealed(model))
+            #expect(model.shortcutHintState.reveals(.agent(1), bindings: [:]))
+        }
     }
 
     /// The reveal rides a 150 ms task on the main actor, and the actor is
