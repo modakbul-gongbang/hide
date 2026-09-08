@@ -207,6 +207,13 @@ enum HideTheme {
     static let settingsSheetSize = CGSize(width: 720, height: 560)
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
 
+    static let badgeHeight: CGFloat = 16
+
+    enum IconButton {
+        static let standardSize = CGSize(width: 32, height: 32)
+        static let toolbarSize = CGSize(width: 24, height: 24)
+    }
+
     /// Sizes that describe the window's three-column frame rather than the
     /// spacing and radius scale above, which any view may reach for.
     enum Layout {

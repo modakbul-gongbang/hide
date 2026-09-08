@@ -119,8 +119,10 @@ Connection recovery resumes the current canonical projection; it does not mark a
 
 The disclosure chevron sits at the right edge of a Workspace row.
 The left edge holds the agent status mark, checkout-kind icon, title, and checkout badges.
-Only a Workspace with nested agent rows has a visible disclosure control.
-Clicking the chevron hides or reveals those rows; clicking the name selects the Workspace.
+A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
+Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
+A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.
+Select an agent to focus its pane; expanding or collapsing a populated Workspace only changes the tree.
 Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
 `collapsed_checkout_ids` persists across launches.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.

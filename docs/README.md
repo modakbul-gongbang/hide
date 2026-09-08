@@ -10,6 +10,7 @@ A document's location or an old PRD citation does not make it current authority.
 | --- | --- | --- |
 | Architecture, ownership, integration boundaries, working rules | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `macos/`, relevant local rules |
 | Product UI and design tokens | [DESIGN.md: In-Product Components](../DESIGN.md#in-product-components) | `HideTheme.swift`, component checks and design tests |
+| Icon button roles, hit areas, interaction states, and reuse | [DESIGN.md: Icon buttons and badges](../DESIGN.md#icon-buttons-and-badges) | `HideIconButton.swift`, `HideTheme.IconButton`, component checks |
 | Required CI and delivery gates | [CONTRIBUTING.md](../CONTRIBUTING.md) | `.github/workflows/pr.yml` and `design-contract.yml` |
 | Install, update, bundle contents | [INSTALL.md](INSTALL.md) | `scripts/build-app.sh`, bundled resources |
 | Which local build is running | [dev-runtime.md](dev-runtime.md) | Bundle identity, `CoreBridge.defaultStatePath`, actual process/window |

@@ -10,7 +10,7 @@ struct HideBadge: View {
             .hideFont(size: HideTheme.Typography.micro, weight: .medium)
             .foregroundStyle(dimmed ? color.opacity(HideTheme.Opacity.dimmed) : color)
             .padding(.horizontal, HideTheme.spacingXS)
-            .frame(height: 16)
+            .frame(height: HideTheme.badgeHeight)
             .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
             .overlay {
                 RoundedRectangle(cornerRadius: HideTheme.radiusSmall)

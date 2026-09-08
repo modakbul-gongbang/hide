@@ -685,7 +685,7 @@ private struct NewChatRow: View {
                 HideKeycap(command: .menu(.newChat), emphasized: model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.command])
             }
             .padding(.horizontal, HideTheme.spacingMD)
-            .frame(maxWidth: .infinity, minHeight: 32)
+            .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -843,7 +843,7 @@ private struct SidebarCommandBar: View {
                 }
                 .foregroundStyle(HideTheme.secondary)
                 .padding(.horizontal, HideTheme.spacingMD)
-                .frame(maxWidth: .infinity, minHeight: 32)
+                .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
                 .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
             }
             .buttonStyle(.plain)
@@ -1354,107 +1354,101 @@ private struct CheckoutNavigatorRow: View {
     let hasAgents: Bool
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingNone) {
-            Button {
-                model.selectCheckout(checkout)
-            } label: {
-                HStack(spacing: HideTheme.spacingSM) {
-                    Group {
-                        if let status = presentation.status {
-                            AgentStatusMark(symbol: status.symbol, color: status.color)
-                        } else {
-                            Color.clear.frame(width: HideTheme.agentMarkWidth)
-                        }
-                    }
-                    .frame(width: HideTheme.agentMarkWidth)
-                    Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
-                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                        .foregroundStyle(HideTheme.secondary)
-                        .frame(width: HideTheme.checkoutIconWidth)
-                    Text(checkout.label)
-                        .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
-                        .foregroundStyle(HideTheme.primary)
-                        .lineLimit(1)
-                    if presentation.isDetached {
-                        HideBadge(label: "detached", color: HideTheme.secondary)
-                            .hideTooltip(presentation.detailTooltip)
-                    }
-                    if !checkout.exists {
-                        HideBadge(label: "missing", color: HideTheme.danger)
-                    } else if checkout.temporary {
-                        HideBadge(label: "temporary", color: HideTheme.warning)
-                    }
-                    if presentation.isPrimary {
-                        HideBadge(label: "primary", color: HideTheme.secondary)
-                        if case .warning(let branch, _) = MainWorktreePresentation.state(
-                            branch: checkout.branch, base: model.baseBranch(for: workspace)
-                        ) {
-                            Button {
-                                model.requestBranchMigration(workspace: workspace, checkout: checkout)
-                            } label: {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .foregroundStyle(HideTheme.warning)
-                            }
-                            .buttonStyle(.plain)
-                            .hideTooltip("Move \(branch) to a worktree")
-                            .accessibilityLabel("Move \(branch) to a worktree")
-                        }
-                    }
-                    if let pullRequest = checkout.pullRequest {
-                        HideBadge(
-                            label: CheckoutCardPresentation.badgeLabel(
-                                pullRequest.badge,
-                                review: pullRequest.review
-                            ),
-                            color: CheckoutCardPresentation.badgeColor(
-                                pullRequest.badge,
-                                review: pullRequest.review
-                            )
-                        )
-                    }
-                    if checkout.dirty {
-                        Circle()
-                            .fill(HideTheme.warning)
-                            .frame(width: 5, height: 5)
-                            .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.trailing, HideTheme.spacingSM)
-                .frame(minHeight: HideTheme.checkoutRowHeight)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .hideTooltip(presentation.detailTooltip)
-            .accessibilityIdentifier("hide-checkout-\(checkout.id)")
-            // The row is deliberately almost wordless, so everything the colours,
-            // dots, and badges carry is said here in words (G1, design 7).
-            .accessibilityLabel(
-                CheckoutCardPresentation.rowAccessibilityLabel(
-                    repoName: workspace.repoName,
-                    checkout: checkout,
-                    agentCount: presentation.agentCount
-                ) + (presentation.status.map { ". \($0.label)" } ?? "")
-            )
-            .accessibilityValue(isFocused ? "Selected" : "Not selected")
-            Button {
+        Button {
+            if hasAgents {
                 model.toggleCheckoutExpansion(checkout)
-            } label: {
+            } else {
+                model.selectCheckout(checkout)
+            }
+        } label: {
+            HStack(spacing: HideTheme.spacingSM) {
+                Group {
+                    if let status = presentation.status {
+                        AgentStatusMark(symbol: status.symbol, color: status.color)
+                    } else {
+                        Color.clear.frame(width: HideTheme.agentMarkWidth)
+                    }
+                }
+                .frame(width: HideTheme.agentMarkWidth)
+                Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                    .foregroundStyle(HideTheme.secondary)
+                    .frame(width: HideTheme.checkoutIconWidth)
+                Text(checkout.label)
+                    .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
+                    .foregroundStyle(HideTheme.primary)
+                    .lineLimit(1)
+                if presentation.isDetached {
+                    HideBadge(label: "detached", color: HideTheme.secondary)
+                        .hideTooltip(presentation.detailTooltip)
+                }
+                if !checkout.exists {
+                    HideBadge(label: "missing", color: HideTheme.danger)
+                } else if checkout.temporary {
+                    HideBadge(label: "temporary", color: HideTheme.warning)
+                }
+                if presentation.isPrimary {
+                    HideBadge(label: "primary", color: HideTheme.secondary)
+                    if case .warning(let branch, _) = MainWorktreePresentation.state(
+                        branch: checkout.branch, base: model.baseBranch(for: workspace)
+                    ) {
+                        Button {
+                            model.requestBranchMigration(workspace: workspace, checkout: checkout)
+                        } label: {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(HideTheme.warning)
+                        }
+                        .buttonStyle(.plain)
+                        .hideTooltip("Move \(branch) to a worktree")
+                        .accessibilityLabel("Move \(branch) to a worktree")
+                    }
+                }
+                if let pullRequest = checkout.pullRequest {
+                    HideBadge(
+                        label: CheckoutCardPresentation.badgeLabel(
+                            pullRequest.badge,
+                            review: pullRequest.review
+                        ),
+                        color: CheckoutCardPresentation.badgeColor(
+                            pullRequest.badge,
+                            review: pullRequest.review
+                        )
+                    )
+                }
+                if checkout.dirty {
+                    Circle()
+                        .fill(HideTheme.warning)
+                        .frame(width: 5, height: 5)
+                        .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
+                }
+                Spacer(minLength: 0)
                 Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
-                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.checkoutRowHeight)
-                    .contentShape(Rectangle())
+                    .frame(width: HideTheme.lineageChevronWidth)
+                    .opacity(hasAgents ? 1 : 0)
+                    .accessibilityHidden(true)
             }
-            .buttonStyle(.plain)
-            .hideTooltip("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
-            .accessibilityLabel("\(model.isCheckoutExpanded(checkout) ? "Collapse" : "Expand") \(checkout.label)")
-            .accessibilityIdentifier("hide-checkout-disclosure-\(checkout.id)")
-            .opacity(hasAgents ? 1 : 0)
-            .disabled(!hasAgents)
-            .accessibilityHidden(!hasAgents)
+            .padding(.horizontal, HideTheme.spacingSM)
+            .frame(minHeight: HideTheme.checkoutRowHeight)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, HideTheme.spacingSM)
+        .buttonStyle(.plain)
+        .hideTooltip(presentation.detailTooltip)
+        .accessibilityIdentifier("hide-checkout-\(checkout.id)")
+        // The row is deliberately almost wordless, so everything the colours,
+        // dots, and badges carry is said here in words (G1, design 7).
+        .accessibilityLabel(
+            CheckoutCardPresentation.rowAccessibilityLabel(
+                repoName: workspace.repoName,
+                checkout: checkout,
+                agentCount: presentation.agentCount
+            ) + (presentation.status.map { ". \($0.label)" } ?? "")
+        )
+        .accessibilityValue(hasAgents
+            ? (model.isCheckoutExpanded(checkout) ? "Expanded" : "Collapsed")
+            : (isFocused ? "Selected" : "Not selected"))
+        .accessibilityHint(hasAgents ? "Show or hide agents in this workspace" : "Open this workspace")
         .contextMenu {
             Button(WorktreeMenuPolicy.newWorktree, systemImage: "plus") { model.requestNewWorktree(workspace) }
             if checkout.isWorktree {
@@ -1620,14 +1614,13 @@ private struct HideTabStrip: View {
     var body: some View {
         HStack(spacing: HideTheme.spacingSM) {
             if !model.leftSidebarVisible {
-                Button {
-                    model.toggleLeftSidebar()
-                } label: {
-                    Image(systemName: "rectangle.leftthird.inset.filled")
-                }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                .hideTooltip("Show left sidebar", command: .menu(.toggleLeftSidebar))
-                .accessibilityLabel("Show left sidebar")
+                HideIconButton(
+                    systemImage: "rectangle.leftthird.inset.filled",
+                    help: "Show left sidebar",
+                    variant: .toolbar,
+                    command: .menu(.toggleLeftSidebar),
+                    action: model.toggleLeftSidebar
+                )
                 .accessibilityIdentifier("hide-restore-left-sidebar")
             }
 
@@ -1678,18 +1671,14 @@ private struct HideTabStrip: View {
                                     .buttonStyle(.plain)
                                     .hideTooltip([tab.contextLabel ?? tab.label, tab.focusedAgent.map { AgentStatusPresentation(agent: $0, connected: model.agentsConnected).label }].compactMap { $0 }.joined(separator: " · "), command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
 
-                                    Button {
-                                        model.closeUnifiedTab(tab)
-                                    } label: {
-                                        Image(systemName: "xmark")
-                                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                                            .frame(width: 20, height: 20)
-                                            .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(tab.active ? HideTheme.secondary : HideTheme.muted)
-                                    .hideTooltip("Close \(tab.label)", command: .menu(.closeTab), tabID: tab.id)
-                                    .accessibilityLabel("Close \(tab.label)")
+                                    HideIconButton(
+                                        systemImage: "xmark",
+                                        help: "Close \(tab.label)",
+                                        variant: .toolbar,
+                                        command: .menu(.closeTab),
+                                        tabID: tab.id,
+                                        action: { model.closeUnifiedTab(tab) }
+                                    )
                                 }
                                 .padding(.trailing, HideTheme.spacingXS)
                                 // A carried tab climbs to the top of the
@@ -1745,20 +1734,14 @@ private struct HideTabStrip: View {
                         scroll.scrollTo(activeID)
                     }
                     }
-                    Button {
-                        model.addTab()
-                    } label: {
-                        Image(systemName: "plus")
-                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                            .frame(
-                                width: HideTheme.Layout.tabStripHeight,
-                                height: HideTheme.Layout.tabStripHeight
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(HideTheme.secondary)
-                    .hideTooltip("New Tab", command: .menu(.newTab))
-                    .accessibilityLabel("New Herdr tab")
+                    HideIconButton(
+                        systemImage: "plus",
+                        help: "New Tab",
+                        accessibilityLabel: "New Herdr tab",
+                        variant: .toolbar,
+                        command: .menu(.newTab),
+                        action: model.addTab
+                    )
                     .accessibilityIdentifier("hide-new-tab")
                 }
                 // The strip takes the row before the drag area does. Sharing
@@ -1771,14 +1754,13 @@ private struct HideTabStrip: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if !model.rightPanelVisible {
-                Button {
-                    model.toggleRightPanel()
-                } label: {
-                    Image(systemName: "rectangle.rightthird.inset.filled")
-                }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                .hideTooltip("Show Right Panel", command: .menu(.toggleRightPanel))
-                .accessibilityLabel("Show Right Panel")
+                HideIconButton(
+                    systemImage: "rectangle.rightthird.inset.filled",
+                    help: "Show Right Panel",
+                    variant: .toolbar,
+                    command: .menu(.toggleRightPanel),
+                    action: model.toggleRightPanel
+                )
                 .accessibilityIdentifier("hide-restore-right-panel")
             }
         }

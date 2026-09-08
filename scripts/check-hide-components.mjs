@@ -25,6 +25,7 @@ function violations(directory, structureOnly = false) {
     for(const [other,source] of sources) if(other!==file&&definition.test(source)) problems.push(`${other} duplicates ${owner}`);
   }
   for(const [file,source] of sources) {
+    if(/\bPaneHeaderButton\b/.test(source)) problems.push(`${file}: obsolete pane header icon button; use HideIconButton`);
     if(/\bHideSettingsKeycaps\b/.test(source)) problems.push(`${file}: obsolete keycaps`);
     if(/(?:SidebarBadge|HideBadge)\(\s*label:\s*"[⌘⌃⌥⇧]/.test(source)) problems.push(`${file}: badge used as keycap`);
     if(file!=='HideKeycap.swift'&&/Text\(\s*"[⌘⌃⌥⇧]/.test(source)) problems.push(`${file}: inline keycap drawing`);
@@ -49,6 +50,8 @@ else {
     fs.cpSync(root,fixture,{recursive:true});
     fs.appendFileSync(path.join(fixture,'HideUI.swift'),'\nstruct HideKeycap {}\n');
     assert(violations(fixture,structureOnly).some(s=>s.includes('duplicates HideKeycap')),'Positive duplicate fixture must fail');
+    fs.appendFileSync(path.join(fixture,'HideUI.swift'),'\nstruct PaneHeaderButton {}\n');
+    assert(violations(fixture,structureOnly).some(s=>s.includes('obsolete pane header icon button')),'Retired button fixture must fail');
   } finally {fs.rmSync(fixture,{recursive:true,force:true});}
   console.log(`Component ownership and positive duplicate fixture: PASS${structureOnly?' (T2 structure only; T5 migration pending)':''}`);
 }

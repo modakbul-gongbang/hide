@@ -36,9 +36,10 @@ struct BrowserPaneView: View {
         ) {
             VStack(spacing: HideTheme.spacingNone) {
                 HStack(spacing: HideTheme.spacingSM) {
-                    PaneHeaderButton(
+                    HideIconButton(
                         systemImage: "arrow.clockwise", help: "Reload this page",
-                        accessibilityLabel: "Reload browser pane \(pane.id)"
+                        accessibilityLabel: "Reload browser pane \(pane.id)",
+                        variant: .toolbar
                     ) { controller.send("Page.reload") }
                     .disabled(!controller.connected)
                     TextField("Page address", text: $addressDraft)
@@ -47,9 +48,10 @@ struct BrowserPaneView: View {
                         .focused($editingAddress)
                         .onSubmit { controller.navigate(addressDraft) }
                         .accessibilityIdentifier("browser-address-\(pane.id)")
-                    PaneHeaderButton(
+                    HideIconButton(
                         systemImage: "doc.on.doc", help: "Copy the CDP endpoint for this browser",
-                        accessibilityLabel: "Copy CDP endpoint for pane \(pane.id)"
+                        accessibilityLabel: "Copy CDP endpoint for pane \(pane.id)",
+                        variant: .toolbar
                     ) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString("http://127.0.0.1:\(binding.cdpPort)", forType: .string)

@@ -821,7 +821,8 @@ The branch is the title; the primary checkout carries a separate `primary` role 
 The sidebar hierarchy is Project > Workspace > Agents; a workspace corresponds to one checkout path, including a plain folder.
 Workspaces without a branch use their actual folder name, including missing paths.
 Detached checkouts carry a separate `detached` badge; their tooltip retains the commit and path.
-Only workspaces with visible agent rows have a disclosure arrow, separate from the name's selection action.
+Workspaces with nested agent rows toggle disclosure across the whole row; the right-edge arrow only indicates expansion.
+Workspaces without nested agent rows open when clicked and have no arrow.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` and `checkoutIconWidth` (14pt) align the shared agent-status and checkout-kind columns.
@@ -944,10 +945,29 @@ The event monitor observes and returns key events.
 
 ### Icon buttons and badges
 
-`HideIconButton.swift` owns icon controls and the pane header button variant.
-Icons use primary or secondary text, an elevated active surface, small radius, and the shared command tooltip.
-Pressed and disabled appearances use the named opacity tokens.
-`HideBadge.swift` owns compact labels; agent provider artwork remains in the existing agent badge.
+`HideIconButton.swift` owns icon-only actions in the sidebar command bar, tab strip, pane headers, and browser toolbar.
+Callers provide the symbol, help text, action, optional selection state, and a role; they do not add size, padding, foreground, background, or button-style overrides.
+`standard` uses `HideTheme.IconButton.standardSize` (32×32pt) with an elevated resting surface.
+`toolbar` uses `HideTheme.IconButton.toolbarSize` (24×24pt) with a transparent resting surface, fitting the 28pt pane header and 32pt tab strip.
+Both use `radiusMedium`; icon typography is `body` for standard and `caption` for toolbar, independently of the hit area.
+Hover raises foreground contrast and adds `Opacity.subtleFill`; selection uses `Opacity.selectedFill` and the accessibility selected trait.
+Press uses `Opacity.secondary`; disabled uses `Opacity.disabled`, suppresses hover emphasis, and delegates activation blocking to the native Button.
+Hover state stays local to each button; repeated identical hover events publish no state changes, and no runtime dispatch or new timer is added.
+The shared command tooltip retains pane/tab targets, and the accessibility label defaults to help unless a more specific name is supplied.
+
+```swift
+HideIconButton(
+    systemImage: "plus",
+    help: "New Tab",
+    variant: .toolbar,
+    command: .menu(.newTab),
+    action: model.addTab
+)
+```
+
+Text buttons, menu triggers, title-bearing navigation rows, and the agent lineage renderer retain their own components and semantics.
+Workspace disclosure uses its entire 36pt row, so its chevron is an indicator rather than an icon button.
+`HideBadge.swift` owns compact labels, with `HideTheme.badgeHeight` (16pt); agent provider artwork remains in the existing agent badge.
 A state keeps its symbol and semantic color when read, with reduced emphasis instead of a new word.
 
 ### Sheets, overlays, and abnormal states
