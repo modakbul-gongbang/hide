@@ -220,6 +220,7 @@ enum HideTheme {
     /// Sizes that describe the window's three-column frame rather than the
     /// spacing and radius scale above, which any view may reach for.
     enum Layout {
+        static let pullRequestPopoverWidth: CGFloat = 360
         static let hairlineWidth: CGFloat = 1
         static let resizeHandleThickness: CGFloat = 2
         /// The strip that answers the pointer. Wider than the 2pt marker it

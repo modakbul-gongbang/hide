@@ -353,6 +353,7 @@ pub struct CheckoutAgentSummary {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
+    pub github: GithubStatusSnapshot,
     pub agent_summary: CheckoutAgentSummary,
     pub id: String,
     pub workspace_id: String,
@@ -1144,10 +1145,24 @@ pub enum ReviewDecision {
     Approved,
 }
 
+/// CI rollup. Unknown and absent checks must never look like a pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestChecks {
+    #[default]
+    Unknown,
+    None,
+    Pending,
+    Failed,
+    Passing,
+}
+
 /// One branch's pull request, already tie-broken against every other pull
 /// request on that branch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PullRequestSnapshot {
+    pub title: String,
+    pub checks: PullRequestChecks,
     pub number: u32,
     pub head_branch: String,
     pub base_branch: String,

@@ -1844,6 +1844,11 @@ final class ShellModel: ObservableObject {
 
     /// The card's refresh button: read the pull request, the worktree counts,
     /// and the size again, now.
+    func requestGithubStatus(_ workspace: CoreWorkspaceSnapshot, refresh: Bool = false) {
+        guard workspace.isGit, workspace.remoteTargetID == nil else { return }
+        core.dispatch(kind: "github_request", payload: ["workspace_id": workspace.id, "refresh": refresh])
+    }
+
     func refreshCheckoutCard() {
         core.refreshCheckoutCard()
     }

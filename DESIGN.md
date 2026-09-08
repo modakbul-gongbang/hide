@@ -832,7 +832,10 @@ The Workspace status is shown once in a trailing chip with the representative pr
 The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
 The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
 `agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
-Agent counts are omitted from checkout rows; pull requests and uncommitted changes retain their existing badges.
+Workspace agent counts use the trailing representative chip; uncommitted changes retain their separate Git indicator.
+A PR icon appears before the chip for a known pull request, an active GitHub lookup, or a lookup failure.
+Clicking it opens a 360pt details popover with PR number, title, state, CI rollup, branches, refresh, and an external GitHub action.
+The PR control is a sibling of the full-row disclosure button, so opening details never folds the Workspace.
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
 New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
@@ -982,8 +985,11 @@ The selected provider card uses an elevated fill and stronger neutral border; it
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
 The right panel's Explorer and Changes sections use the same panel and text ladder.
-The checkout card shows an initial pull-request spinner only while the visible Git section requests a lookup.
-Explorer and Changes do not start GitHub queries, so an absent answer there is not a loading state; an existing answer remains visible.
+The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
+The Git section retains its existing open/refresh trigger, while the sidebar popover and project menu can explicitly refresh one repository.
+All triggers share the existing bounded background reader, authentication and cache.
+Explorer and Changes do not independently start GitHub queries.
+Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
 Changes is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
 Diff tabs use the editor's monospaced content scale, fixed old and new line-number columns, semantic added and removed tints, and horizontal scrolling for long lines.
 Their scroll canvas fills the editor viewport, with short diffs anchored at the top left and long diffs growing beyond it for scrolling.

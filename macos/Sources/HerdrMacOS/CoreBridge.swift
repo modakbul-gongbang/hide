@@ -583,6 +583,7 @@ struct CoreCheckoutAgentSummary: Decodable, Equatable {
 }
 
 struct CoreCheckoutSnapshot: Decodable, Identifiable {
+    var github: CoreGithubStatus = .empty
     var agentSummary = CoreCheckoutAgentSummary()
     let id: String
     let workspaceID: String
@@ -619,6 +620,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let nextTabLabel: String
 
     enum CodingKeys: String, CodingKey {
+        case github
         case agentSummary = "agent_summary"
         case id
         case workspaceID = "workspace_id"
@@ -695,6 +697,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         agentSummary = try container.decode(CoreCheckoutAgentSummary.self, forKey: .agentSummary)
         id = try container.decode(String.self, forKey: .id)
         workspaceID = try container.decode(String.self, forKey: .workspaceID)
@@ -778,7 +781,13 @@ enum CoreReviewDecision: String, Decodable, Equatable {
     case approved
 }
 
+enum CorePullRequestChecks: String, Decodable, Equatable {
+    case unknown, none, pending, failed, passing
+}
+
 struct CorePullRequest: Decodable, Equatable {
+    var title: String? = nil
+    var checks: CorePullRequestChecks? = nil
     let number: Int
     let headBranch: String
     let baseBranch: String
@@ -791,6 +800,7 @@ struct CorePullRequest: Decodable, Equatable {
     let updatedAtUnixMS: Double?
 
     enum CodingKeys: String, CodingKey {
+        case title, checks
         case number
         case headBranch = "head_branch"
         case baseBranch = "base_branch"

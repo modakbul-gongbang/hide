@@ -210,3 +210,14 @@ struct CheckoutCardPresentationTests {
         #expect(root.addedLines == nil)
     }
 }
+
+@Test func githubChecksAndLifecycleUseExplicitLabels() {
+    #expect(CheckoutCardPresentation.checksLabel(nil) == "Unknown")
+    #expect(CheckoutCardPresentation.checksLabel(.some(.none)) == "No checks")
+    #expect(CheckoutCardPresentation.checksLabel(.pending) == "Running")
+    #expect(CheckoutCardPresentation.checksLabel(.failed) == "Failing")
+    #expect(CheckoutCardPresentation.checksLabel(.passing) == "Passing")
+    #expect(CheckoutCardPresentation.pullRequestState(pullRequest(badge: .merged)) == "Merged")
+    #expect(CheckoutCardPresentation.pullRequestState(pullRequest(badge: .closed)) == "Closed")
+    #expect(CheckoutCardPresentation.pullRequestState(pullRequest(badge: .review, review: .approved)) == "Open")
+}

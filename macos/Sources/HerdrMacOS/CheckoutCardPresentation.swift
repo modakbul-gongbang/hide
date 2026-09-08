@@ -8,6 +8,33 @@ import SwiftUI
 /// pull request gets and what counts as stale -
 /// so they can be checked against fixed input instead of against a screenshot.
 enum CheckoutCardPresentation {
+    static func pullRequestState(_ request: CorePullRequest) -> String {
+        switch request.badge {
+        case .merged: "Merged"
+        case .closed: "Closed"
+        default: request.isDraft ? "Draft" : "Open"
+        }
+    }
+
+    static func checksLabel(_ checks: CorePullRequestChecks?) -> String {
+        switch checks {
+        case .passing: "Passing"
+        case .failed: "Failing"
+        case .pending: "Running"
+        case .none?: "No checks"
+        case .unknown, nil: "Unknown"
+        }
+    }
+
+    static func checksColor(_ checks: CorePullRequestChecks?) -> Color {
+        switch checks {
+        case .passing: HideTheme.success
+        case .failed: HideTheme.danger
+        case .pending: HideTheme.warning
+        default: HideTheme.secondary
+        }
+    }
+
     /// The badge's colour. Merged and closed share one because both mean the
     /// work is over; the three review
     /// decisions are the distinction the colour actually has to carry.

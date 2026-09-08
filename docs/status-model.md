@@ -184,3 +184,34 @@ A malformed ambient object excludes that agent with a diagnostic while other val
 This client does not own upstream transcript scanning, authorization, or server restart policy.
 
 Regression owners are `ambient_counts_parse_and_unknown_keys_never_survive`, `a_malformed_ambient_record_excludes_only_that_agent`, and `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected`.
+
+## GitHub status in the Workspace row
+
+The PR icon is independent of agent status and Workspace disclosure.
+It appears for a known pull request, an in-progress lookup, or a GitHub lookup failure; a successful lookup with no matching PR leaves it absent.
+Clicking opens details without selecting a pane, marking agents read, or folding the Workspace.
+The popover shows the PR number, title, Open/Draft/Merged/Closed state, head and base branches, and CI rollup.
+Its refresh action reloads one repository; its external action opens the PR URL through the existing external browser route.
+
+The first appearance of a local Git project requests its GitHub status once for the runtime session.
+Repeated appearances are no-ops; explicit refresh advances that repository's generation.
+The existing Git section trigger and sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
+Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
+The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
+
+| GitHub checks | UI |
+| --- | --- |
+| Every reported check succeeded, was neutral, or was skipped | Passing, green |
+| Any failure, error, cancellation, timeout, or required action | Failing, red |
+| At least one running, queued, waiting, pending, or requested check, with no failure | Running, yellow |
+| An explicitly empty check list | No checks, gray |
+| Absent check data, an unknown check kind, or an unrecognized terminal result | Unknown, gray |
+
+Failure takes precedence over pending, then unknown, then passing.
+A failed refresh preserves the last known PR and reports the lookup failure and last successful read time.
+The visible stale notice qualifies both PR state and CI; old green checks are not presented as a fresh result.
+Missing `gh`, logged-out authentication, network errors and rate limits use the reader's existing categorized diagnostics and user-facing reason.
+
+The sidebar tree projection additionally indexes physical pane ownership when forming root rows and direct-select candidates.
+This is linear in the visited project panes and agent projection per recomputation, with no queue or asynchronous work; repeated hover values do not trigger it.

@@ -1271,6 +1271,9 @@ private struct WorkspaceNavigatorRow: View {
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
+                    if workspace.isGit && workspace.remoteTargetID == nil {
+                        Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
+                    }
                     Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
                         .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
                     Divider()
@@ -1299,6 +1302,7 @@ private struct WorkspaceNavigatorRow: View {
             }
         }
         .padding(.bottom, HideTheme.spacingXS)
+        .onAppear { model.requestGithubStatus(workspace) }
     }
 
     private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
@@ -1368,6 +1372,78 @@ private struct WorkspaceAgentSummary: View {
     }
 }
 
+/// GitHub details are a separate action over the row's disclosure hit area.
+private struct WorkspacePullRequestControl: View {
+    @EnvironmentObject private var model: ShellModel
+    let workspace: CoreWorkspaceSnapshot
+    let checkout: CoreCheckoutSnapshot
+    @State private var isPresented = false
+
+    private var request: CorePullRequest? { checkout.pullRequest }
+    private var icon: String {
+        switch request?.badge {
+        case .merged: HideTheme.GitIcon.pullMerged
+        case .closed: HideTheme.GitIcon.pullClosed
+        default: HideTheme.gitPullRequestIcon
+        }
+    }
+
+    var body: some View {
+        HideIconButton(systemImage: icon, help: request.map { "PR #\($0.number): \(CheckoutCardPresentation.pullRequestState($0))" }
+            ?? "GitHub status for \(checkout.label)", variant: .toolbar, isSelected: isPresented,
+            action: { isPresented.toggle() })
+            .accessibilityIdentifier("hide-pull-request-\(checkout.id)")
+            .popover(isPresented: $isPresented, arrowEdge: .trailing) {
+                VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
+                    HStack(spacing: HideTheme.spacingSM) {
+                        Image(systemName: icon).foregroundStyle(HideTheme.secondary)
+                        Text(request.map { "PR #\($0.number)" } ?? "GitHub")
+                            .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                        Spacer()
+                        HideIconButton(systemImage: "arrow.clockwise", help: "Refresh GitHub status", variant: .toolbar,
+                            action: { model.requestGithubStatus(workspace, refresh: true) })
+                            .disabled(checkout.github.loading)
+                        if let request {
+                            HideIconButton(systemImage: "arrow.up.right.square", help: "Open PR #\(request.number) on GitHub",
+                                variant: .toolbar, action: { model.openPullRequest(request) })
+                        }
+                    }
+                    if let request {
+                        Text(request.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Pull request #\(request.number)")
+                            .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: HideTheme.spacingSM) {
+                            HideBadge(label: "State: \(CheckoutCardPresentation.pullRequestState(request))",
+                                color: CheckoutCardPresentation.badgeColor(request.badge, review: request.review))
+                            HideBadge(label: "Checks: \(CheckoutCardPresentation.checksLabel(request.checks))",
+                                color: CheckoutCardPresentation.checksColor(request.checks))
+                        }
+                        Text("\(request.headBranch) → \(request.baseBranch)")
+                            .hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.secondary)
+                    }
+                    if checkout.github.loading {
+                        HStack { ProgressView().controlSize(.small); Text("Updating GitHub status…") }
+                    } else if let notice = CheckoutCardPresentation.githubNotice(checkout.github) {
+                        Text(notice).foregroundStyle(HideTheme.warning)
+                    } else if request == nil {
+                        Text("No pull request for this branch").foregroundStyle(HideTheme.secondary)
+                    }
+                    if let stale = CheckoutCardPresentation.staleNotice(checkout.github, now: Date()) {
+                        Text("Last known status · \(stale)").foregroundStyle(HideTheme.warning)
+                    }
+                }
+                .hideFont(size: HideTheme.Typography.body)
+                .foregroundStyle(HideTheme.primary)
+                .padding(HideTheme.spacingLG)
+                .frame(width: HideTheme.Layout.pullRequestPopoverWidth)
+                .background(HideTheme.panel)
+                .hideOverlayHost()
+                .environmentObject(model)
+                .preferredColorScheme(.dark)
+            }
+    }
+}
+
 private struct CheckoutNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     let workspace: CoreWorkspaceSnapshot
@@ -1377,97 +1453,72 @@ private struct CheckoutNavigatorRow: View {
     let hasAgents: Bool
 
     var body: some View {
-        Button {
-            if hasAgents {
-                model.toggleCheckoutExpansion(checkout)
-            } else {
-                model.selectCheckout(checkout)
+        ZStack {
+            Button {
+                if hasAgents { model.toggleCheckoutExpansion(checkout) }
+                else { model.selectCheckout(checkout) }
+            } label: {
+                Color.clear.contentShape(Rectangle())
             }
-        } label: {
+            .buttonStyle(.plain)
+            .hideTooltip(presentation.detailTooltip)
+            .accessibilityIdentifier("hide-checkout-\(checkout.id)")
+            .accessibilityLabel(CheckoutCardPresentation.rowAccessibilityLabel(
+                repoName: workspace.repoName, checkout: checkout, agentCount: presentation.agentCount
+            ) + (presentation.status.map { ". \($0.label)" } ?? ""))
+            .accessibilityValue(hasAgents
+                ? (model.isCheckoutExpanded(checkout) ? "Expanded" : "Collapsed")
+                : (isFocused ? "Selected" : "Not selected"))
+            .accessibilityHint(hasAgents ? "Show or hide agents in this workspace" : "Open this workspace")
+
             HStack(spacing: HideTheme.spacingSM) {
-                Color.clear.frame(width: HideTheme.agentMarkWidth)
-                Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
-                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                    .foregroundStyle(HideTheme.secondary)
-                    .frame(width: HideTheme.checkoutIconWidth)
-                Text(checkout.label)
-                    .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
-                    .foregroundStyle(HideTheme.primary)
-                    .lineLimit(1)
-                if presentation.isDetached {
-                    HideBadge(label: "detached", color: HideTheme.secondary)
-                        .hideTooltip(presentation.detailTooltip)
+                Group {
+                    Color.clear.frame(width: HideTheme.agentMarkWidth)
+                    Image(systemName: workspace.isGit ? "arrow.triangle.branch" : "folder")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                        .foregroundStyle(HideTheme.secondary)
+                        .frame(width: HideTheme.checkoutIconWidth)
+                    Text(checkout.label)
+                        .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
+                        .foregroundStyle(HideTheme.primary)
+                        .lineLimit(1)
+                    if presentation.isDetached { HideBadge(label: "detached", color: HideTheme.secondary) }
+                    if !checkout.exists { HideBadge(label: "missing", color: HideTheme.danger) }
+                    else if checkout.temporary { HideBadge(label: "temporary", color: HideTheme.warning) }
+                    if presentation.isPrimary { HideBadge(label: "primary", color: HideTheme.secondary) }
                 }
-                if !checkout.exists {
-                    HideBadge(label: "missing", color: HideTheme.danger)
-                } else if checkout.temporary {
-                    HideBadge(label: "temporary", color: HideTheme.warning)
-                }
-                if presentation.isPrimary {
-                    HideBadge(label: "primary", color: HideTheme.secondary)
-                    if case .warning(let branch, _) = MainWorktreePresentation.state(
-                        branch: checkout.branch, base: model.baseBranch(for: workspace)
-                    ) {
-                        Button {
-                            model.requestBranchMigration(workspace: workspace, checkout: checkout)
-                        } label: {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(HideTheme.warning)
-                        }
-                        .buttonStyle(.plain)
-                        .hideTooltip("Move \(branch) to a worktree")
-                        .accessibilityLabel("Move \(branch) to a worktree")
-                    }
-                }
-                if let pullRequest = checkout.pullRequest {
-                    HideBadge(
-                        label: CheckoutCardPresentation.badgeLabel(
-                            pullRequest.badge,
-                            review: pullRequest.review
-                        ),
-                        color: CheckoutCardPresentation.badgeColor(
-                            pullRequest.badge,
-                            review: pullRequest.review
-                        )
-                    )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                if presentation.isPrimary, case .warning(let branch, _) = MainWorktreePresentation.state(
+                    branch: checkout.branch, base: model.baseBranch(for: workspace)
+                ) {
+                    HideIconButton(systemImage: "exclamationmark.triangle", help: "Move \(branch) to a worktree",
+                        variant: .toolbar, action: { model.requestBranchMigration(workspace: workspace, checkout: checkout) })
                 }
                 if checkout.dirty {
-                    Circle()
-                        .fill(HideTheme.warning)
-                        .frame(width: 5, height: 5)
+                    Circle().fill(HideTheme.warning).frame(width: 5, height: 5)
                         .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
+                        .allowsHitTesting(false)
                 }
-                Spacer(minLength: 0)
-                if presentation.agentCount > 0 {
-                    WorkspaceAgentSummary(presentation: presentation)
+                Spacer(minLength: 0).allowsHitTesting(false)
+                if workspace.isGit && workspace.remoteTargetID == nil && checkout.branch != nil,
+                   checkout.pullRequest != nil || checkout.github.loading || checkout.github.unavailableReason != nil {
+                    WorkspacePullRequestControl(workspace: workspace, checkout: checkout)
                 }
-                Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
-                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                    .foregroundStyle(HideTheme.secondary)
-                    .frame(width: HideTheme.lineageChevronWidth)
-                    .opacity(hasAgents ? 1 : 0)
-                    .accessibilityHidden(true)
+                Group {
+                    if presentation.agentCount > 0 { WorkspaceAgentSummary(presentation: presentation) }
+                    Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                        .foregroundStyle(HideTheme.secondary)
+                        .frame(width: HideTheme.lineageChevronWidth)
+                        .opacity(hasAgents ? 1 : 0)
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             .padding(.horizontal, HideTheme.spacingSM)
-            .frame(minHeight: HideTheme.checkoutRowHeight)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .hideTooltip(presentation.detailTooltip)
-        .accessibilityIdentifier("hide-checkout-\(checkout.id)")
-        // The row is deliberately almost wordless, so everything the colours,
-        // dots, and badges carry is said here in words (G1, design 7).
-        .accessibilityLabel(
-            CheckoutCardPresentation.rowAccessibilityLabel(
-                repoName: workspace.repoName,
-                checkout: checkout,
-                agentCount: presentation.agentCount
-            ) + (presentation.status.map { ". \($0.label)" } ?? "")
-        )
-        .accessibilityValue(hasAgents
-            ? (model.isCheckoutExpanded(checkout) ? "Expanded" : "Collapsed")
-            : (isFocused ? "Selected" : "Not selected"))
-        .accessibilityHint(hasAgents ? "Show or hide agents in this workspace" : "Open this workspace")
+        .frame(height: HideTheme.checkoutRowHeight)
         .contextMenu {
             Button(WorktreeMenuPolicy.newWorktree, systemImage: "plus") { model.requestNewWorktree(workspace) }
             if checkout.isWorktree {

@@ -23,7 +23,7 @@ use serde::Deserialize;
 
 use crate::model::{
     GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
-    PullRequestSnapshot, ReviewDecision,
+    PullRequestSnapshot, PullRequestChecks, ReviewDecision,
 };
 use crate::reader::BackgroundRead;
 
@@ -235,7 +235,7 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
             "--limit",
             PULL_REQUEST_LIMIT,
             "--json",
-            "number,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt",
+            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt",
         ],
     ) {
         Ok(listed) => listed,
@@ -286,6 +286,8 @@ fn failed(reason: GhFailure) -> GithubStatusSnapshot {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GhPullRequest {
+    title: String,
+    status_check_rollup: Option<Vec<GhCheck>>,
     number: u32,
     head_ref_name: String,
     base_ref_name: String,
@@ -295,6 +297,40 @@ struct GhPullRequest {
     url: String,
     merged_at: Option<String>,
     updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "__typename")]
+enum GhCheck {
+    CheckRun { status: String, conclusion: Option<String> },
+    StatusContext { state: String },
+    #[serde(other)]
+    Unknown,
+}
+
+fn rollup_checks(checks: Option<&[GhCheck]>) -> PullRequestChecks {
+    let Some(checks) = checks else { return PullRequestChecks::Unknown; };
+    if checks.is_empty() { return PullRequestChecks::None; }
+    let mut pending = false;
+    let mut unknown = false;
+    for check in checks {
+        match check {
+            GhCheck::CheckRun { status, conclusion } if status == "COMPLETED" => {
+                match conclusion.as_deref() {
+                    Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => {},
+                    Some("FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE" | "STALE") => return PullRequestChecks::Failed,
+                    _ => unknown = true,
+                }
+            },
+            GhCheck::CheckRun { status, .. } if matches!(status.as_str(), "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED") => pending = true,
+            GhCheck::StatusContext { state } => match state.as_str() {
+                "SUCCESS" => {}, "FAILURE" | "ERROR" => return PullRequestChecks::Failed,
+                "PENDING" | "EXPECTED" => pending = true, _ => unknown = true,
+            },
+            _ => unknown = true,
+        }
+    }
+    if pending { PullRequestChecks::Pending } else if unknown { PullRequestChecks::Unknown } else { PullRequestChecks::Passing }
 }
 
 /// Reduces `gh pr list --json` to at most one pull request per branch.
@@ -309,6 +345,8 @@ pub fn parse_pull_requests(output: &str) -> Result<Vec<PullRequestSnapshot>, Str
 fn project(listed: GhPullRequest) -> PullRequestSnapshot {
     let review = review_decision(listed.review_decision.as_deref());
     PullRequestSnapshot {
+        title: listed.title,
+        checks: rollup_checks(listed.status_check_rollup.as_deref()),
         badge: badge(&listed.state, listed.is_draft, review),
         number: listed.number,
         head_branch: listed.head_ref_name,
@@ -608,6 +646,18 @@ mod tests {
     }
 
     #[test]
+    fn ci_rollup_never_reports_absent_pending_or_failed_checks_as_passing() {
+        let decode = |json: &str| serde_json::from_str::<Vec<GhCheck>>(json).unwrap();
+        assert_eq!(rollup_checks(None), PullRequestChecks::Unknown);
+        assert_eq!(rollup_checks(Some(&[])), PullRequestChecks::None);
+        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]"#))), PullRequestChecks::Passing);
+        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"QUEUED","conclusion":null}]"#))), PullRequestChecks::Pending);
+        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"IN_PROGRESS"},{"__typename":"StatusContext","state":"ERROR"}]"#))), PullRequestChecks::Failed);
+        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"CANCELLED"}]"#))), PullRequestChecks::Failed);
+        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"FutureCheck"}]"#))), PullRequestChecks::Unknown);
+    }
+
+    #[test]
     #[cfg(unix)]
     fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
         let fixture = GhFixture::new(
@@ -729,7 +779,7 @@ esac"#,
         updated: &str,
     ) -> String {
         format!(
-            r#"{{"number":{number},"headRefName":"{branch}","baseRefName":"main","state":"{state}","reviewDecision":{review},"isDraft":{draft},"url":"https://example.invalid/{number}","mergedAt":null,"updatedAt":"{updated}"}}"#,
+            r#"{{"title":"Fixture PR","statusCheckRollup":[],"number":{number},"headRefName":"{branch}","baseRefName":"main","state":"{state}","reviewDecision":{review},"isDraft":{draft},"url":"https://example.invalid/{number}","mergedAt":null,"updatedAt":"{updated}"}}"#,
             review = review
                 .map(|value| format!("\"{value}\""))
                 .unwrap_or_else(|| "null".to_owned())
