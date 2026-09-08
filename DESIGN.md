@@ -1084,7 +1084,15 @@ Completion lists individual removed/refused outcomes; repeating the same complet
 Review and cancel perform no filesystem mutations.
 This file deletion flow is separate from registration removal.
 
-Overview geometry uses named `HideTheme.Overview` tokens: a 64pt minimum rail, 14pt lane spacing, 12pt inset, 16pt node offset, 6pt nodes, 28pt commit rows, 76pt worktree rows and 236pt row content.
+Overview geometry uses named `HideTheme.Overview` tokens: a 64pt minimum rail, 14pt lane spacing, 12pt inset, 28pt node offset, 7pt nodes, 28pt commit rows, 96pt worktree rows and 236pt row content.
+The project title uses the 17pt headline token; workspace titles and summary values use 13pt, with 12pt supporting text.
+Git lanes use a repeating blue, violet (`#B69AFF`), green and amber category palette through `HideTheme.Overview`; these colors identify graph lanes, not agent status or commit authorship.
+Actual agent lifecycle colors retain their existing semantic meaning.
+A 16pt ring marks the selected workspace HEAD, and only selected rows receive the elevated surface.
+The graph legend distinguishes solid ancestry, dashed workspace attachments and folded commits without relying on color alone.
+The inspector groups the short folder with its branch, then places agent status below the task and beside its explicit Open/Return action.
+These actions reuse `HideTextButtonStyle` so system appearance cannot introduce a competing light button surface.
+GitHub and disk popovers use the same dark panel surface as existing PR details and show pending refresh alongside any retained result.
 The cleanup sheet uses the existing 440pt worktree dialog width and a 560pt height with a scrolling list.
 Colors, typography, spacing, corners, status marks and tooltip/accessibility help come from the shared shell system.
 

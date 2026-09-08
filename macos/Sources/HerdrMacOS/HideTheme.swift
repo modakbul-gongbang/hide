@@ -230,11 +230,16 @@ enum HideTheme {
         static let railWidth: CGFloat = 64
         static let laneInset: CGFloat = 12
         static let laneSpacing: CGFloat = 14
-        static let nodeOffset: CGFloat = 16
-        static let nodeSize: CGFloat = 6
+        static let nodeOffset: CGFloat = 28
+        static let nodeSize: CGFloat = 7
         static let commitHeight: CGFloat = 28
-        static let workspaceHeight: CGFloat = 76
+        static let workspaceHeight: CGFloat = 96
         static let rowWidth: CGFloat = 236
+        static let selectedNodeSize: CGFloat = 16
+        static let graphLineWidth: CGFloat = 1.5
+        // Git lane categories, independent of agent lifecycle colors.
+        static let lanes = [agentWorking, color(for: "#B69AFF"), success, warning]
+        static func laneColor(_ lane: Int) -> Color { lanes[lane % lanes.count] }
     }
 
     enum Layout {

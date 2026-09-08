@@ -44,10 +44,10 @@ struct CheckoutOverview: View {
             VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                 HStack(alignment: .top, spacing: HideTheme.spacingSM) {
                     VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
-                        Text(workspace.label).hideFont(size: HideTheme.Typography.title, weight: .semibold)
+                        Text(workspace.label).hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                             .lineLimit(1)
                         Text("Project · \(workspace.checkouts.count) workspaces")
-                            .hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.secondary)
+                            .hideFont(size: HideTheme.Typography.subhead).foregroundStyle(HideTheme.secondary)
                     }
                     Spacer(minLength: HideTheme.spacingXS)
                     Picker("Project view", selection: $mode) {
@@ -65,7 +65,8 @@ struct CheckoutOverview: View {
                                 inspect(row); mode = "List"; query = ""; listScrollID = row.id
                             }
                         } label: {
-                            Text("Needs You · \(workspace.checkouts.reduce(0) { $0 + $1.agentSummary.needsYou })")
+                            Text("? Needs You · \(workspace.checkouts.reduce(0) { $0 + $1.agentSummary.needsYou })")
+                                .foregroundStyle(workspace.checkouts.contains { $0.agentSummary.needsYou > 0 } ? HideTheme.warning : HideTheme.secondary)
                         }.buttonStyle(.plain)
                         Spacer(minLength: HideTheme.spacingXS)
                         Text(mode == "Tree" ? "Git history" : "Attention first").foregroundStyle(HideTheme.muted)
@@ -73,10 +74,10 @@ struct CheckoutOverview: View {
                             mode = "List"; query = ""
                             if let selected { listScrollID = selected.id }
                         }
-                    }.hideFont(size: HideTheme.Typography.caption).padding(.horizontal, HideTheme.spacingMD)
+                    }.hideFont(size: HideTheme.Typography.subhead).padding(.horizontal, HideTheme.spacingMD).padding(.vertical, HideTheme.spacingSM)
                     if mode == "List" {
                         TextField("Find workspace or agent…", text: $query)
-                            .textFieldStyle(.plain).hideFont(size: HideTheme.Typography.body)
+                            .textFieldStyle(.plain).hideFont(size: HideTheme.Typography.title)
                             .padding(HideTheme.spacingSM).background(HideTheme.elevated)
                             .padding(.horizontal, HideTheme.spacingMD)
                             .hideSearchKeyboard(selection: $searchSelection, resultIDs: rows.map(\.id), activate: {
@@ -93,7 +94,7 @@ struct CheckoutOverview: View {
                                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                                     if index == 0 || rank(rows[index - 1]) != rank(row) {
                                         Text(["Needs You", "Done", "Working", "Seen", "No agent"][rank(row)])
-                                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                                            .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                                             .foregroundStyle(HideTheme.secondary).padding(HideTheme.spacingSM)
                                     }
                                     workspaceRow(row).id(row.id)
@@ -103,7 +104,7 @@ struct CheckoutOverview: View {
                             if let id { proxy.scrollTo(id, anchor: .center) }
                         }
                     } else if workspace.isGit {
-                        OverviewGitTree(history: project?.history, checkouts: workspace.checkouts) { row in
+                        OverviewGitTree(history: project?.history, checkouts: workspace.checkouts, selectedID: selected?.id) { row in
                             workspaceRow(row)
                         }
                     } else {
@@ -114,6 +115,7 @@ struct CheckoutOverview: View {
                 inspector
             }
             .foregroundStyle(HideTheme.primary)
+            .buttonStyle(HideTextButtonStyle(isProminent: false))
             .accessibilityIdentifier("checkout-overview")
             .sheet(isPresented: $showCleanup) {
                 MergedWorktreeCleanup(review: project?.cleanup) {
@@ -129,7 +131,7 @@ struct CheckoutOverview: View {
     }
 
     private var summary: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
             Button { showGitHub.toggle() } label: {
                 summaryRow("GitHub", value: githubLabel)
             }.buttonStyle(.plain).popover(isPresented: $showGitHub) { githubDetails }
@@ -146,7 +148,7 @@ struct CheckoutOverview: View {
                 HideIconButton(systemImage: HideTheme.GitIcon.refresh, help: "Refresh Overview", variant: .toolbar) {
                     model.refreshCheckoutCard()
                 }
-            }.hideFont(size: HideTheme.Typography.caption)
+            }.hideFont(size: HideTheme.Typography.subhead)
         }.padding(.horizontal, HideTheme.spacingMD).padding(.bottom, HideTheme.spacingSM)
     }
 
@@ -154,9 +156,9 @@ struct CheckoutOverview: View {
         HStack(spacing: HideTheme.spacingSM) {
             Text(label).foregroundStyle(HideTheme.secondary)
             Spacer(minLength: HideTheme.spacingXS)
-            Text(value).lineLimit(1)
+            Text(value).fontWeight(.medium).multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
             Image(systemName: "chevron.right").foregroundStyle(HideTheme.muted)
-        }.hideFont(size: HideTheme.Typography.body).contentShape(Rectangle())
+        }.hideFont(size: HideTheme.Typography.title).contentShape(Rectangle())
     }
 
     private var githubLabel: String {
@@ -167,6 +169,9 @@ struct CheckoutOverview: View {
     private var githubDetails: some View {
         ScrollView { VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
             Text("GitHub").hideFont(size: HideTheme.Typography.title, weight: .semibold)
+            if model.card.github.loading {
+                ProgressView("Updating GitHub status…").controlSize(.small)
+            }
             if let reason = model.card.github.unavailableReason {
                 Text(reason).foregroundStyle(HideTheme.warning).fixedSize(horizontal: false, vertical: true)
             }
@@ -184,13 +189,19 @@ struct CheckoutOverview: View {
                 }.buttonStyle(.plain)
             }
             Button("Refresh") { if let workspace { model.requestGithubStatus(workspace, refresh: true) } }
-        }.hideFont(size: HideTheme.Typography.body).padding(HideTheme.spacingLG)
-            .frame(width: HideTheme.Layout.pullRequestPopoverWidth) }.frame(maxHeight: HideTheme.searchSheetSize.height).hideOverlayHost()
+        }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingLG)
+            .frame(width: HideTheme.Layout.pullRequestPopoverWidth) }
+            .frame(maxHeight: HideTheme.searchSheetSize.height)
+            .foregroundStyle(HideTheme.primary).background(HideTheme.panel)
+            .hideOverlayHost().preferredColorScheme(.dark)
     }
 
     private var diskDetails: some View {
         ScrollView { VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
             Text("Allocated on disk").hideFont(size: HideTheme.Typography.title, weight: .semibold)
+            if model.card.diskMeasuring {
+                ProgressView("Measuring allocated disk…").controlSize(.small)
+            }
             Text("Shared Git data is counted once. APFS clones may share storage; this is not guaranteed reclaimable space.")
                 .foregroundStyle(HideTheme.secondary).fixedSize(horizontal: false, vertical: true)
             if project?.diskTotalBytes == nil, let known = project?.diskConfirmedBytes {
@@ -207,18 +218,21 @@ struct CheckoutOverview: View {
             summaryRow("Shared Git data", value: project?.sharedGitDisk?.totalBytes.map(CheckoutCardPresentation.formattedBytes) ?? "Unavailable")
             if let reason = project?.sharedGitDisk?.unavailableReason { Text(reason).foregroundStyle(HideTheme.warning) }
             Button("Measure again") { model.refreshCheckoutCard() }
-        }.hideFont(size: HideTheme.Typography.body).padding(HideTheme.spacingLG)
-            .frame(width: HideTheme.Layout.pullRequestPopoverWidth) }.frame(maxHeight: HideTheme.searchSheetSize.height).hideOverlayHost()
+        }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingLG)
+            .frame(width: HideTheme.Layout.pullRequestPopoverWidth) }
+            .frame(maxHeight: HideTheme.searchSheetSize.height)
+            .foregroundStyle(HideTheme.primary).background(HideTheme.panel)
+            .hideOverlayHost().preferredColorScheme(.dark)
     }
 
     private func workspaceRow(_ checkout: CoreCheckoutSnapshot) -> some View {
         Button { inspect(checkout) } label: {
             VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
                 HStack {
-                    Text(checkout.label).hideFont(size: HideTheme.Typography.body, weight: .medium)
+                    Text(checkout.label).hideFont(size: HideTheme.Typography.title, weight: .medium)
                         .lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: HideTheme.spacingXS)
-                    if checkout.id == model.focusedCheckout?.id { Image(systemName: "arrow.up.right") }
+                    if checkout.id == model.focusedCheckout?.id { Image(systemName: "arrow.up.right").foregroundStyle(HideTheme.secondary) }
                 }
                 if let agent = representative(checkout) {
                     HStack(spacing: HideTheme.spacingXS) {
@@ -227,8 +241,9 @@ struct CheckoutOverview: View {
                         status(agent)
                     }
                 } else { Text("No agent").foregroundStyle(HideTheme.muted) }
-                Text(changesLabel(checkout)).foregroundStyle(HideTheme.secondary)
-            }.hideFont(size: HideTheme.Typography.caption)
+                Text(checkout.pullRequest.map { "\(changesLabel(checkout)) · PR #\($0.number)" } ?? changesLabel(checkout))
+                    .foregroundStyle(HideTheme.secondary).lineLimit(1)
+            }.hideFont(size: HideTheme.Typography.subhead)
                 .padding(HideTheme.spacingSM).frame(maxWidth: .infinity, alignment: .leading)
                 .background(selected?.id == checkout.id || (mode == "List" && searchSelection.selectedID == checkout.id) ? HideTheme.elevated : HideTheme.panel,
                             in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
@@ -248,32 +263,37 @@ struct CheckoutOverview: View {
     private func changesLabel(_ checkout: CoreCheckoutSnapshot) -> String {
         guard let row = checkout.worktree else { return "Git context unavailable" }
         if row.missing || row.unavailableReason != nil { return "Changes unavailable" }
-        return row.changedFileCount == 0 ? "Clean" : "\(row.changedFileCount) changed files"
+        return row.changedFileCount == 0 ? "Clean" : "\(row.changedFileCount) changed \(row.changedFileCount == 1 ? "file" : "files")"
     }
 
     private var inspector: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
             HStack {
                 Text("Selected workspace").foregroundStyle(HideTheme.secondary)
                 Spacer(minLength: HideTheme.spacingXS)
                 Button(selected?.id == model.focusedCheckout?.id ? "Viewing" : "Back to viewing") {
                     if let checkout = model.focusedCheckout { inspect(checkout) }
                 }.buttonStyle(.plain)
-            }.hideFont(size: HideTheme.Typography.caption)
+            }.hideFont(size: HideTheme.Typography.subhead)
             if let selected {
-                Text(selected.label).hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                    .lineLimit(2).truncationMode(.middle)
-                Text(URL(fileURLWithPath: selected.path).lastPathComponent)
-                    .foregroundStyle(HideTheme.muted).lineLimit(1)
+                VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                    Text(selected.label).hideFont(size: HideTheme.Typography.title, weight: .semibold)
+                        .lineLimit(2).truncationMode(.middle)
+                    Text(URL(fileURLWithPath: selected.path).lastPathComponent)
+                        .foregroundStyle(HideTheme.muted).lineLimit(1)
+                }
                 if let agent = representative(selected) {
-                    HStack {
-                        Text(agent.summary).lineLimit(1)
+                    HStack(alignment: .center, spacing: HideTheme.spacingSM) {
+                        VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                            Text(agent.summary).lineLimit(2)
+                            status(agent)
+                        }
                         Spacer(minLength: HideTheme.spacingXS)
-                        status(agent)
+                        Button(selected.id == model.focusedCheckout?.id ? "Return to agent" : "Open agent") {
+                            model.selectAgent(paneID: agent.paneID)
+                        }.controlSize(.large).fixedSize()
+                            .accessibilityIdentifier("overview-open-agent")
                     }
-                    Button(selected.id == model.focusedCheckout?.id ? "Return to agent" : "Open agent") {
-                        model.selectAgent(paneID: agent.paneID)
-                    }.accessibilityIdentifier("overview-open-agent")
                 } else {
                     HStack {
                         Button("Open workspace") {
@@ -292,7 +312,7 @@ struct CheckoutOverview: View {
                 }
                 if let pr = selected.pullRequest {
                     HStack {
-                        Text("PR #\(pr.number)").foregroundStyle(HideTheme.secondary)
+                        Text("PR #\(pr.number) · \(CheckoutCardPresentation.pullRequestState(pr))").foregroundStyle(HideTheme.secondary)
                         Spacer(minLength: HideTheme.spacingXS)
                         Button("Open PR") { model.openPullRequest(pr) }.buttonStyle(.plain)
                     }
@@ -312,7 +332,7 @@ struct CheckoutOverview: View {
                     }.foregroundStyle(HideTheme.secondary)
                 }
             }
-        }.hideFont(size: HideTheme.Typography.body).padding(HideTheme.spacingMD)
+        }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingMD)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("overview-inspector")
     }
