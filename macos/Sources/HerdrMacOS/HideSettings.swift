@@ -80,7 +80,7 @@ struct HideSettingsView: View {
                     Image(systemName: "xmark")
                         .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                 }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .buttonStyle(HideTextButtonStyle())
                 .hideTooltip("Close Settings")
                 .accessibilityLabel("Close Settings")
                 .accessibilityIdentifier("hide-settings-close")
@@ -524,12 +524,12 @@ private struct HidePetSettings: View {
                     .frame(width: 150, height: 24)
                     .accessibilityIdentifier("pet-shortcut-field")
                     Button(capturing ? "Cancel" : "Record") { capturing.toggle() }
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                        .buttonStyle(HideTextButtonStyle())
                     Button("Clear") {
                         capturing = false
                         model.updatePetShortcut(nil)
                     }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .buttonStyle(HideTextButtonStyle())
                     .disabled(pet?.shortcut == nil)
                 }
             }
@@ -623,7 +623,7 @@ private struct HideDeviceSettings: View {
         HStack {
             Spacer(minLength: 0)
             Button("Add device") { showAddDevice = true }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                 .accessibilityIdentifier("hide-settings-add-device")
         }
 
@@ -653,7 +653,7 @@ private struct HideDeviceSettings: View {
                     HStack {
                         Spacer(minLength: 0)
                         Button("Retry") { model.retryRemote() }
-                            .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                            .buttonStyle(HideTextButtonStyle())
                     }
                     .padding(.horizontal, HideTheme.spacingMD)
                     .padding(.vertical, HideTheme.spacingSM)
@@ -710,9 +710,9 @@ private struct HideDeviceRow: View {
                 Spacer(minLength: HideTheme.spacingSM)
                 if device.kind == "remote" {
                     Button("Test", action: onTest)
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    Button("Remove", action: onRemove)
-                        .buttonStyle(HideDestructiveButtonStyle())
+                        .buttonStyle(HideTextButtonStyle())
+                    Button("Remove", role: .destructive, action: onRemove)
+                        .buttonStyle(HideTextButtonStyle())
                 }
             }
             .padding(.horizontal, HideTheme.spacingMD)
@@ -801,7 +801,7 @@ private struct HidePaneShortcutRow: View {
                 }
                 .accessibilityLabel("\(command.title) shortcut")
                 Button("Apply") { model.updateShortcut(command, raw: draft) }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .buttonStyle(HideTextButtonStyle())
             }
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.spacingSM)
@@ -827,23 +827,6 @@ private struct HidePaneShortcutRow: View {
         .onChange(of: model.shortcut(for: command).canonical) { _, value in
             draft = value
         }
-    }
-}
-
-/// Removing a device is the one destructive action in Settings, so it is the
-/// one button allowed to carry the danger color.
-struct HideDestructiveButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-            .foregroundStyle(HideTheme.danger)
-            .padding(.horizontal, HideTheme.spacingSM)
-            .padding(.vertical, HideTheme.spacingSM)
-            .background(
-                HideTheme.danger.opacity(HideTheme.Opacity.selectedFill),
-                in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-            )
-            .opacity(configuration.isPressed ? HideTheme.Opacity.secondary : 1)
     }
 }
 
@@ -877,12 +860,12 @@ struct AddDeviceSheet: View {
             HStack(spacing: HideTheme.spacingSM) {
                 Spacer(minLength: 0)
                 Button("Cancel") { dismiss() }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .buttonStyle(HideTextButtonStyle())
                 Button("Add") {
                     model.addDevice(label: label, alias: alias)
                     dismiss()
                 }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canAdd)
                 .opacity(canAdd ? 1 : HideTheme.Opacity.dimmed)

@@ -32,6 +32,7 @@ private struct HideSearchKeyboard: ViewModifier {
     let resultIDs: [String]
     let activate: () -> Void
     let dismiss: () -> Void
+    let focusChanged: (Bool) -> Void
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
@@ -48,6 +49,7 @@ private struct HideSearchKeyboard: ViewModifier {
                 selection.reconcile(resultIDs)
                 focused = true
             }
+            .onChange(of: focused) { _, value in focusChanged(value) }
             .onChange(of: resultIDs) { _, ids in selection.reconcile(ids) }
             .onExitCommand(perform: dismiss)
     }
@@ -56,8 +58,9 @@ private struct HideSearchKeyboard: ViewModifier {
 extension View {
     func hideSearchKeyboard(
         selection: Binding<HideSearchSelection>, resultIDs: [String],
-        activate: @escaping () -> Void, dismiss: @escaping () -> Void
+        activate: @escaping () -> Void, dismiss: @escaping () -> Void,
+        focusChanged: @escaping (Bool) -> Void = { _ in }
     ) -> some View {
-        modifier(HideSearchKeyboard(selection: selection, resultIDs: resultIDs, activate: activate, dismiss: dismiss))
+        modifier(HideSearchKeyboard(selection: selection, resultIDs: resultIDs, activate: activate, dismiss: dismiss, focusChanged: focusChanged))
     }
 }

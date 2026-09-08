@@ -344,6 +344,12 @@ Use a qualified verdict when coverage is bounded: “no whole-body blanking obse
 
 ## Projects and Overview cost contract
 
+Shared control hover, pressed and keyboard-focus appearance stays in local SwiftUI state.
+`HideSearchField` observes the existing search keyboard modifier's focus instead of creating another focus owner.
+These visual transitions neither dispatch runtime events nor mark the snapshot rest payload dirty.
+Choice controls publish only a changed selection; repeated activation of the selected option has no action.
+Their work scales with the small visible choice set, not the retained project catalog.
+
 Project activity and checkout-pane context reuse canonical agent projection, current topology and cached worktree HEAD metadata.
 The existing single `git log -1` read now returns timestamp and subject together; no timer or additional Git subprocess is introduced.
 A changed projection indexes agents and visits retained panes once, then sorts projects and each project's checkouts by cached keys.

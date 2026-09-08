@@ -4,9 +4,10 @@ import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
 import {tokens} from './swift-source-tokens.mjs';
+import {sources} from './check-design-controls.mjs';
 
 const root = process.argv[2] ?? 'macos/Sources/HerdrMacOS';
-const excluded = name => name.startsWith('Pet') || name === 'HideTheme.swift';
+const excluded = name => path.basename(name).startsWith('Pet') || name === 'HideTheme.swift';
 const number = value => typeof value === 'string' && /^[0-9]/.test(value);
 function violations(source) {
   const ts = tokens(source), issues = [];
@@ -47,9 +48,8 @@ function violations(source) {
   return issues;
 }
 function scan(directory) {
-  return fs.readdirSync(directory).filter(name => name.endsWith('.swift') && !excluded(name))
-    .flatMap(name => violations(fs.readFileSync(path.join(directory, name), 'utf8'))
-      .map(rule => name + ': ' + rule));
+  return sources(directory).filter(({file}) => !excluded(file))
+    .flatMap(({file,source}) => violations(source).map(rule => file + ': ' + rule));
 }
 const issues = scan(root);
 if (issues.length) {

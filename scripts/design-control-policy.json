@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "files": {
+    "CheckoutOverview.swift": {
+      "kind": "legacy",
+      "reason": "Existing empty views and disclosure invocation retained; disclosure appearance is owned by HideDisclosureStyle. Stock segmented Picker was removed.",
+      "rules": {
+        "control:ContentUnavailableView": 3,
+        "control:DisclosureGroup": 1
+      }
+    },
+    "EditorViewerOverlay.swift": {
+      "kind": "legacy",
+      "reason": "Existing editor empty state; outside Overview migration scope.",
+      "rules": {
+        "control:ContentUnavailableView": 1
+      }
+    },
+    "HideFormPicker.swift": {
+      "kind": "owner",
+      "reason": "Owns form menu picker appearance while retaining platform menu selection.",
+      "rules": {
+        "control:Picker": 2,
+        "native-style:pickerStyle:menu": 1
+      }
+    },
+    "HideIconButton.swift": {
+      "kind": "owner",
+      "reason": "Owns shared icon button appearance and interaction feedback.",
+      "rules": {
+        "implementation:ButtonStyle": 1
+      }
+    },
+    "HideSettings.swift": {
+      "kind": "legacy",
+      "reason": "Existing settings switch and text input retained; obsolete local destructive button style was removed.",
+      "rules": {
+        "control:TextField": 1,
+        "control:Toggle": 1,
+        "native-style:toggleStyle:switch": 1
+      }
+    },
+    "HideTextButtonStyle.swift": {
+      "kind": "owner",
+      "reason": "Owns shared form and sheet text button appearance.",
+      "rules": {
+        "implementation:ButtonStyle": 1
+      }
+    },
+    "HideUI.swift": {
+      "kind": "legacy",
+      "reason": "Existing shell toggle, empty views and input controls retained with exact counts; obsolete toolbar button style was removed.",
+      "rules": {
+        "control:Toggle": 2,
+        "native-style:toggleStyle:checkbox": 1,
+        "control:ContentUnavailableView": 4,
+        "control:TextEditor": 1,
+        "control:TextField": 1
+      }
+    },
+    "MergedWorktreeCleanup.swift": {
+      "kind": "legacy",
+      "reason": "Existing Toggle invocation uses HideCheckboxStyle; stock checkbox appearance was removed.",
+      "rules": {
+        "control:Toggle": 1
+      }
+    },
+    "RightPanel.swift": {
+      "kind": "legacy",
+      "reason": "Existing Explorer empty states retained; no panel implementation changes.",
+      "rules": {
+        "control:ContentUnavailableView": 5
+      }
+    },
+    "ShellView.swift": {
+      "kind": "platform",
+      "reason": "Existing pet switch and borderless shell control; pet exception retained with exact counts.",
+      "rules": {
+        "native-style:buttonStyle:borderless": 1,
+        "control:Toggle": 1,
+        "native-style:toggleStyle:switch": 1
+      }
+    },
+    "WorkspaceFileSearch.swift": {
+      "kind": "legacy",
+      "reason": "Existing file-search input and error view retained with exact counts.",
+      "rules": {
+        "control:TextField": 1,
+        "control:ContentUnavailableView": 1
+      }
+    },
+    "BrowserPaneView.swift": {
+      "kind": "legacy",
+      "reason": "Existing browser address field retains its current behavior; new input usage requires an owner.",
+      "rules": {
+        "control:TextField": 1
+      }
+    },
+    "HideCheckboxStyle.swift": {
+      "kind": "owner",
+      "reason": "Owns checkbox appearance and preserves Toggle semantics.",
+      "rules": {
+        "implementation:ToggleStyle": 1
+      }
+    },
+    "HideChoiceGroup.swift": {
+      "kind": "owner",
+      "reason": "Owns mode choice buttons and selected-state appearance.",
+      "rules": {
+        "implementation:ButtonStyle": 1
+      }
+    },
+    "HideDisclosureStyle.swift": {
+      "kind": "owner",
+      "reason": "Owns shared disclosure appearance and expansion feedback.",
+      "rules": {
+        "implementation:DisclosureGroupStyle": 1
+      }
+    },
+    "HideInteractiveButtonStyle.swift": {
+      "kind": "owner",
+      "reason": "Owns shared hover, press and keyboard focus feedback.",
+      "rules": {
+        "implementation:ButtonStyle": 1
+      }
+    },
+    "HideSearchField.swift": {
+      "kind": "owner",
+      "reason": "Owns shared search input appearance, focus and keyboard handling.",
+      "rules": {
+        "control:TextField": 1
+      }
+    }
+  }
+}

@@ -50,10 +50,8 @@ struct CheckoutOverview: View {
                             .hideFont(size: HideTheme.Typography.subhead).foregroundStyle(HideTheme.secondary)
                     }
                     Spacer(minLength: HideTheme.spacingXS)
-                    Picker("Project view", selection: $mode) {
-                        Text("Tree").tag("Tree")
-                        Text("List").tag("List")
-                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                    HideChoiceGroup(label: "Project view", values: ["Tree", "List"], selection: $mode,
+                                    title: { $0 }).fixedSize()
                     .accessibilityIdentifier("overview-view-mode")
                 }.padding(HideTheme.spacingMD)
                 summary
@@ -67,7 +65,7 @@ struct CheckoutOverview: View {
                         } label: {
                             Text("? Needs You · \(workspace.checkouts.reduce(0) { $0 + $1.agentSummary.needsYou })")
                                 .foregroundStyle(workspace.checkouts.contains { $0.agentSummary.needsYou > 0 } ? HideTheme.warning : HideTheme.secondary)
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(HideInteractiveButtonStyle())
                         Spacer(minLength: HideTheme.spacingXS)
                         Text(mode == "Tree" ? "Git history" : "Attention first").foregroundStyle(HideTheme.muted)
                         HideIconButton(systemImage: "scope", help: "Locate selected workspace", variant: .toolbar) {
@@ -76,13 +74,11 @@ struct CheckoutOverview: View {
                         }
                     }.hideFont(size: HideTheme.Typography.subhead).padding(.horizontal, HideTheme.spacingMD).padding(.vertical, HideTheme.spacingSM)
                     if mode == "List" {
-                        TextField("Find workspace or agent…", text: $query)
-                            .textFieldStyle(.plain).hideFont(size: HideTheme.Typography.title)
-                            .padding(HideTheme.spacingSM).background(HideTheme.elevated)
+                        HideSearchField(placeholder: "Find workspace or agent…", text: $query,
+                                        selection: $searchSelection, resultIDs: rows.map(\.id), activate: {
+                            if let row = searchSelection.entry(in: rows) { inspect(row) }
+                        }, dismiss: { query = "" })
                             .padding(.horizontal, HideTheme.spacingMD)
-                            .hideSearchKeyboard(selection: $searchSelection, resultIDs: rows.map(\.id), activate: {
-                                if let row = searchSelection.entry(in: rows) { inspect(row) }
-                            }, dismiss: { query = "" })
                             .accessibilityIdentifier("overview-search")
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
@@ -115,7 +111,7 @@ struct CheckoutOverview: View {
                 inspector
             }
             .foregroundStyle(HideTheme.primary)
-            .buttonStyle(HideTextButtonStyle(isProminent: false))
+            .buttonStyle(HideTextButtonStyle(density: .regular))
             .accessibilityIdentifier("checkout-overview")
             .sheet(isPresented: $showCleanup) {
                 MergedWorktreeCleanup(review: project?.cleanup) {
@@ -134,16 +130,16 @@ struct CheckoutOverview: View {
         VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
             Button { showGitHub.toggle() } label: {
                 summaryRow("GitHub", value: githubLabel)
-            }.buttonStyle(.plain).popover(isPresented: $showGitHub) { githubDetails }
+            }.buttonStyle(HideInteractiveButtonStyle()).popover(isPresented: $showGitHub) { githubDetails }
             Button { showDisk.toggle() } label: {
                 summaryRow("Allocated on disk", value: OverviewPresentation.diskLabel(total: project?.diskTotalBytes,
                     confirmed: project?.diskConfirmedBytes, failure: project?.diskUnavailableReason, isGit: workspace?.isGit == true))
-            }.buttonStyle(.plain).popover(isPresented: $showDisk) { diskDetails }
+            }.buttonStyle(HideInteractiveButtonStyle()).popover(isPresented: $showDisk) { diskDetails }
             HStack {
                 Button("Clean up merged worktrees…") {
                     showCleanup = true
                     model.core.dispatch(kind: "cleanup_review", payload: [:])
-                }.buttonStyle(.plain).disabled(project == nil)
+                }.buttonStyle(HideInteractiveButtonStyle()).disabled(project == nil)
                 Spacer(minLength: HideTheme.spacingXS)
                 HideIconButton(systemImage: HideTheme.GitIcon.refresh, help: "Refresh Overview", variant: .toolbar) {
                     model.refreshCheckoutCard()
@@ -186,7 +182,7 @@ struct CheckoutOverview: View {
                         Text(pr.title ?? "PR #\(pr.number)").lineLimit(2)
                         Text("#\(pr.number) · \(pr.headBranch)").foregroundStyle(HideTheme.secondary)
                     }
-                }.buttonStyle(.plain)
+                }.buttonStyle(HideTextButtonStyle(appearance: .quiet))
             }
             Button("Refresh") { if let workspace { model.requestGithubStatus(workspace, refresh: true) } }
         }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingLG)
@@ -247,7 +243,7 @@ struct CheckoutOverview: View {
                 .padding(HideTheme.spacingSM).frame(maxWidth: .infinity, alignment: .leading)
                 .background(selected?.id == checkout.id || (mode == "List" && searchSelection.selectedID == checkout.id) ? HideTheme.elevated : HideTheme.panel,
                             in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-        }.buttonStyle(.plain).hideTooltip(checkout.label)
+        }.buttonStyle(HideInteractiveButtonStyle()).hideTooltip(checkout.label)
             .accessibilityLabel("Inspect \(checkout.label), \(changesLabel(checkout))")
             .accessibilityAddTraits(selected?.id == checkout.id ? .isSelected : [])
             .accessibilityIdentifier("overview-workspace-\(checkout.id)")
@@ -273,7 +269,7 @@ struct CheckoutOverview: View {
                 Spacer(minLength: HideTheme.spacingXS)
                 Button(selected?.id == model.focusedCheckout?.id ? "Viewing" : "Back to viewing") {
                     if let checkout = model.focusedCheckout { inspect(checkout) }
-                }.buttonStyle(.plain)
+                }.buttonStyle(HideTextButtonStyle(appearance: .quiet))
             }.hideFont(size: HideTheme.Typography.subhead)
             if let selected {
                 VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
@@ -307,14 +303,14 @@ struct CheckoutOverview: View {
                     Spacer(minLength: HideTheme.spacingXS)
                     Button("View changes") {
                         model.core.dispatch(kind: "overview_changes", payload: ["checkout_path": selected.path])
-                    }.buttonStyle(.plain).disabled(selected.worktree == nil || selected.id != model.focusedCheckout?.id)
+                    }.buttonStyle(HideTextButtonStyle(appearance: .quiet)).disabled(selected.worktree == nil || selected.id != model.focusedCheckout?.id)
                         .hideTooltip("Open this workspace first to view its changes")
                 }
                 if let pr = selected.pullRequest {
                     HStack {
                         Text("PR #\(pr.number) · \(CheckoutCardPresentation.pullRequestState(pr))").foregroundStyle(HideTheme.secondary)
                         Spacer(minLength: HideTheme.spacingXS)
-                        Button("Open PR") { model.openPullRequest(pr) }.buttonStyle(.plain)
+                        Button("Open PR") { model.openPullRequest(pr) }.buttonStyle(HideTextButtonStyle(appearance: .quiet))
                     }
                 }
                 DisclosureGroup("Latest commit & details") {
@@ -330,7 +326,7 @@ struct CheckoutOverview: View {
                             Button("Copy path") { model.copyCheckoutPath(selected) }
                         }
                     }.foregroundStyle(HideTheme.secondary)
-                }
+                }.disclosureGroupStyle(HideDisclosureStyle())
             }
         }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingMD)
             .frame(maxWidth: .infinity, alignment: .leading)

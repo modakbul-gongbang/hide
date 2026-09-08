@@ -268,10 +268,10 @@ private struct WorktreeCreationSheet: View {
                     ProgressView(WorktreeSubmissionPresentation.primaryLabel(phase: "working"))
                 } else {
                     Button("Cancel", action: model.cancelNewWorktree)
-                        .buttonStyle(HideTextButtonStyle(isProminent: false))
+                        .buttonStyle(HideTextButtonStyle())
                         .keyboardShortcut(.cancelAction)
                     Button(WorktreeSubmissionPresentation.primaryLabel(phase: nil), action: model.submitNewWorktree)
-                        .buttonStyle(HideTextButtonStyle(isProminent: true))
+                        .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                         .keyboardShortcut(.defaultAction)
                         .disabled(!model.worktreeCanSubmit)
                 }
@@ -1867,21 +1867,6 @@ private struct HideTabStrip: View {
     }
 }
 
-struct HideToolbarButtonStyle: ButtonStyle {
-    let isProminent: Bool
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-            .foregroundStyle(isProminent ? HideTheme.background : HideTheme.primary)
-            .padding(.horizontal, isProminent ? HideTheme.spacingMD : HideTheme.spacingSM)
-            .padding(.vertical, HideTheme.spacingSM)
-            .background(isProminent ? HideTheme.accent : HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-            .opacity(!isEnabled ? HideTheme.Opacity.disabled : (configuration.isPressed ? HideTheme.Opacity.secondary : 1))
-    }
-}
-
 private struct HideTerminalSurface: View {
     @EnvironmentObject private var model: ShellModel
 
@@ -2058,7 +2043,7 @@ private struct HideEmptyCheckoutState: View {
                     .frame(maxWidth: 420)
                 if model.remote.phase != .loading {
                     Button("Retry mini") { model.retryRemote() }
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                        .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2087,7 +2072,7 @@ private struct HideEmptyCheckoutState: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
                     Button("New Workspace") { model.openNewWorkspace() }
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                        .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                         .accessibilityIdentifier("hide-empty-state-new-workspace")
                 } else {
                     switch model.checkoutStartState {
@@ -2125,7 +2110,7 @@ private struct HideEmptyCheckoutState: View {
                                 model.selectCheckout(checkout)
                             }
                         }
-                            .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                            .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                     case .idle:
                         // This state used to promise a terminal Hide never
                         // started: nothing calls `startTerminal` from here.
@@ -2140,7 +2125,7 @@ private struct HideEmptyCheckoutState: View {
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 360)
                         Button("Start new terminal") { model.addTab() }
-                            .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                            .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                             .accessibilityIdentifier("hide-empty-state-start-terminal")
                     }
                 }

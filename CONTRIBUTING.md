@@ -52,7 +52,26 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
 
 The gates that read a running Herdr server (the full `check-herdr-contract.sh` and the workbench evidence scripts under `macos/scripts/`) are local steps and are not required in CI.
-The separate `design-contract.yml` workflow runs `check-hide-theme-literals.sh` and `check-hide-components.sh`; it performs static checks, not desktop interaction.
+The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs` and `node --test scripts/tests/design-controls.test.mjs`.
+The shared entrypoint runs the token, component ownership and counted control-policy checks; it performs static checks, not desktop interaction.
+The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
+
+### Local design hook
+
+Run `node scripts/check-design-contract.mjs` for immediate feedback on working-tree sources.
+The tracked `.githooks/pre-commit` checks staged content through `node scripts/check-design-contract.mjs --staged`.
+Use `git -c core.hooksPath=.githooks commit` to enable it for one commit without changing shared Git configuration or other worktrees.
+This is opt-in; the hook is not installed automatically and an ordinary commit does not imply it ran.
+If an existing hook is already configured, retain it and call the shared staged entrypoint from that hook rather than replacing its hook path.
+CI independently runs the same checks even when the local hook was not enabled.
+No branch-protection setting is changed by this repository patch.
+
+Stage the checker, policy and affected sources together: staged verification executes the staged checker files and reads staged Swift sources, ignoring unstaged repairs or new violations.
+A missing script, conflict, non-ordinary source input or checker failure blocks the hook with its cause.
+The checker does not stage, stash, restore or modify files.
+When a check fails, reuse the documented owner or fix the source; if an existing usage was removed, retire its counted allowance in `scripts/design-control-policy.json` in the same change.
+Adding an exception requires an explicit design decision and reason in DESIGN.md, not an automatic baseline update.
+Keep visual acceptance separate: DESIGN.md owns the future native catalog and human screenshot-review procedure; neither exists as an automated aesthetic approval gate.
 
 ## Performance-sensitive changes
 

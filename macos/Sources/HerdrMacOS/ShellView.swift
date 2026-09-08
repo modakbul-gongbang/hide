@@ -954,28 +954,9 @@ private struct PanelSectionPicker: View {
     let select: (RightPanelSection) -> Void
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXXS) {
-            ForEach(RightPanelSection.allCases) { section in
-                let isActive = section == active
-                Button {
-                    select(section)
-                } label: {
-                    Text(section.title)
-                        .hideFont(size: HideTheme.Typography.body, weight: .medium)
-                        .fixedSize()
-                        .foregroundStyle(isActive ? HideTheme.primary : HideTheme.secondary)
-                        .padding(.horizontal, HideTheme.spacingSM)
-                        .padding(.vertical, HideTheme.spacingXS)
-                        .background(
-                            RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                                .fill(isActive ? HideTheme.elevated : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("right-panel-section-\(section.rawValue)")
-                .accessibilityAddTraits(isActive ? [.isSelected] : [])
-            }
-        }
+        HideChoiceGroup(label: "Right panel section", values: RightPanelSection.allCases,
+                        selection: Binding(get: { active }, set: { select($0) }), title: { $0.title }, appearance: .tabs,
+                        identifier: { "right-panel-section-\($0.rawValue)" })
     }
 }
 

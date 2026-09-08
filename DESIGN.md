@@ -931,6 +931,29 @@ Fixed content geometry remains in its named Layout tokens rather than changing w
 | `{rounded.radiusLarge}` | Search input and larger cards |
 | `{rounded.radiusExtraLarge}` | Container vocabulary |
 
+### Shared control family
+
+The shell owns control appearance through shared styles while retaining native Button, Toggle, DisclosureGroup and TextField behavior.
+Sheet and popover presentation, text editing, IME, scroll physics and ProgressView animation remain platform-owned.
+The native controls are not replaced with gesture-only drawings.
+
+| Component | Appearance and geometry | State contract |
+| --- | --- | --- |
+| `HideTextButtonStyle` | Quiet, standard and prominent appearances; compact 24pt / body 11, regular 36pt / title 13; radius 6 | Standard uses elevated fill and divider; quiet has no resting container; prominent uses the neutral accent; destructive role uses danger; hover, pressed, focus and disabled remain visible |
+| `HideChoiceGroup` tabs | Subhead 12; transparent base; selected primary label and 2pt bottom indicator | Selection never adds a pill to section tabs; hover and keyboard focus remain distinct from selection |
+| `HideChoiceGroup` segmented | Contained choices on sidebar, 2pt inset, divider border, radius 6, elevated selected choice | Tree/List changes only inspection mode; selected choice and group label are accessible |
+| `HideSearchField` | 36pt height, elevated fill, radius 6, 8pt gap, magnifier and 24pt clear action | Existing `HideSearchKeyboard` is the only focus owner; a local focus observation drives the neutral outline; native IME and search keyboard behavior remain intact |
+| `HideCheckboxStyle` | 16pt mark inside a compact hit area; neutral checked fill and check mark | Toggle owns checked state and accessibility; unchecked, checked, disabled, hover and focus are distinguishable |
+| `HideDisclosureStyle` | Subhead 12 label, compact row, chevron and shared quiet interaction treatment | DisclosureGroup owns expansion; visible label and expanded state remain accessible, and collapsed content is absent |
+
+`HideTheme.Control` owns compactHeight 24, regularHeight 36, checkboxSize 16 and tabIndicatorHeight 2.
+All controls use the existing spacing, corner and surface tokens; hover uses subtleFill, pressed uses secondary opacity, and disabled uses disabled opacity.
+A disabled control cannot activate, and destructive meaning comes from the Button role rather than its text.
+Pending operations keep their existing explicit progress labels and disabled actions; shared styles do not invent pending or error state.
+Hover and focus observations are local to the affected control and never dispatch core events or publish shell state.
+The duplicate toolbar and destructive button styles are retired into `HideTextButtonStyle`.
+Project summary rows, Git rails, worktree rows and inspector composition remain owned by Overview instead of becoming general-purpose domain components.
+
 ### Recent navigation in the native shell
 
 Control+Tab and Control+Shift+Tab cycle all unified surfaces inside the selected project in recent-use order.
@@ -1123,3 +1146,59 @@ Add a named token before using a new visual value.
 `scripts/check-hide-theme-literals.sh` rejects inline styling, native tooltips, and shortcut glyph literals outside token definitions and Pet files.
 `scripts/check-hide-components.sh` prevents duplicated component ownership and checks every migrated tooltip file.
 The shell test parses this document's frontmatter and typography table against actual token values.
+
+### Design consistency and control ownership
+
+`HideTheme` owns visual tokens; the shared component owning a control owns its appearance and interaction states.
+A screen chooses the component's supported role or variant and supplies data and actions.
+It must not introduce a parallel button, picker, disclosure or checkbox style merely to match one screen.
+Use existing `HideTextButtonStyle`, `HideIconButton`, `HideFormPicker`, `HideBadge`, `HideKeycap` and `HideBalloon` where their contracts fit.
+A missing component or variant is a design decision: describe its role and states here before a separately authorized UI implementation, then update the owner and all affected consumers together.
+A token name alone is not approval to add a new visual treatment.
+
+Every interactive component's contract specifies its label and accessible name, supported sizes/roles, default, hovered, pressed, keyboard-focused, selected and disabled states where applicable.
+Pending actions must show pending feedback and preserve the existing retry/duplicate-action contract.
+Status indicators retain text or a symbol alongside color; actual product state supplies their values.
+Keyboard activation, selection, IME handling and focus semantics remain part of the control contract when its appearance changes.
+Focus and hover are local presentation state and must not publish core snapshots or trigger Git/disk work.
+Geometry, color, typography and spacing are selected through existing tokens and supported variants rather than downstream overrides of a shared component's appearance.
+
+The machine-readable control policy is `scripts/design-control-policy.json`.
+Its exact paths identify approved owners, existing legacy uses and platform exceptions, with a reason and count for each detected construct.
+The policy retains existing empty views, native control invocations with shared appearances, settings switches and enumerated input fields.
+Overview's stock segmented Picker, cleanup's stock checkbox appearance and obsolete toolbar/destructive styles have no retained allowance.
+TextField, SecureField and TextEditor invocations are counted as well: new input controls belong in a documented shared owner, while enumerated existing fields remain legacy uses.
+These allowances preserve existing behavior without claiming every legacy appearance is the desired final design.
+A new occurrence, an unlisted style implementation, or a new source file using these constructs fails the check, including in nested directories.
+When an occurrence is removed, reduce its allowance in the same reviewed change so old exceptions cannot silently become spare capacity.
+Do not regenerate or increase allowances just to make CI pass.
+A new exception requires its owning reason and design decision in this guide, plus the explicit policy diff.
+Existing platform menu/sheet/popover presentation, scroll behavior, SF Symbols and `ProgressView` retain native behavior; the checker does not prohibit their use or claim to restyle them.
+The Pet design exception remains in the existing token/component checks; the control inventory still bounds the currently enumerated uses rather than exempting every new file with a similar name.
+
+`node scripts/check-design-contract.mjs` runs the token, component ownership and control-policy checks together.
+`--staged` reads ordinary staged source and checker files into a temporary directory, checks that exact content and removes the temporary copy without changing the index or working tree.
+These are static source checks, not a Swift compiler or an aesthetic evaluator.
+The control inventory deliberately does not count every Button invocation because buttons can inherit an approved root style.
+It does not resolve inherited styles, AppKit controls, protocol aliases or arbitrary custom drawing; component ownership and token checks provide complementary bounds.
+They catch the listed syntax and counted drift; aliases, an equally sized replacement inside an allowed legacy file, and visually poor compositions made from valid tokens are not proven correct by a passing result.
+The Git hook uses the same repository checks for every contributor without changing global configuration.
+CI and the opt-in local pre-commit hook run the same checker; activation and failure recovery are owned by CONTRIBUTING.md.
+
+### Native component catalog and visual review procedure
+
+A native component catalog is planned and is not currently a shipped screen.
+When separately authorized, it should render the actual shared components with explicitly labelled sample data and local state, without dispatching project, pane or filesystem actions.
+Its coverage should include buttons, section tabs and mode choices, search fields, checkbox/disclosure controls, workspace rows, status labels and empty/pending/error states.
+It must reuse product components rather than draw a second approximation of them.
+Review actual hover, focus, selection and disabled feedback alongside English, Korean, mixed-script labels and long unbroken identifiers.
+Use the approved Overview structure as the product composition reference; sample PR counts and activity labels never enter runtime data.
+
+For a visual change, first show the component states and the affected product screen in the exact identified native candidate at 320, 344 and 400pt panel widths where supported.
+Follow docs/PERFORMANCE_TESTING.md for isolated state and app/process coordination; preserve the installed app and operator panes.
+Record the build, actual widths, interactions, screenshots and unverified states under `agents/runs/<slug>/`.
+Obtain human judgment on a new visual baseline before treating it as approved; a passing hook, CI result or image diff cannot supply that judgment.
+If layout structure remains unresolved, present distinct candidates before implementation under design principle 11.
+Do not refresh an expected screenshot merely because a new build differs; explain the intended design change and review it.
+Shared controls and their policy checks are implemented; a native component catalog and screenshot-comparison service are not yet available.
+Visual baseline approval remains a separate human review.

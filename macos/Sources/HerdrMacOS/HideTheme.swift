@@ -218,6 +218,13 @@ enum HideTheme {
 
     static let badgeHeight: CGFloat = 16
 
+    enum Control {
+        static let compactHeight: CGFloat = 24
+        static let regularHeight = formControlHeight
+        static let checkboxSize: CGFloat = 16
+        static let tabIndicatorHeight: CGFloat = 2
+    }
+
     enum IconButton {
         static let standardSize = CGSize(width: 32, height: 32)
         static let toolbarSize = CGSize(width: 24, height: 24)

@@ -31,7 +31,7 @@ struct MergedWorktreeCleanup: View {
                         HStack(alignment: .top, spacing: HideTheme.spacingSM) {
                             Toggle(isOn: Binding(get: { selected.contains(row.path) }, set: { value in
                                 if value { selected.insert(row.path) } else { selected.remove(row.path) }
-                            })) { EmptyView() }.toggleStyle(.checkbox).labelsHidden()
+                            })) { EmptyView() }.toggleStyle(HideCheckboxStyle()).labelsHidden()
                                 .disabled(busy || row.exclusion != nil || review?.phase != "review")
                                 .accessibilityLabel("Remove \(row.branch ?? "detached") at \(row.path)")
                             VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
@@ -71,7 +71,8 @@ struct MergedWorktreeCleanup: View {
                     model.core.dispatch(kind: "cleanup_confirm", payload: ["id": review.id, "paths": selected.intersection(eligible).sorted()])
                 }.disabled(busy || review?.phase != "review" || selected.intersection(eligible).isEmpty)
             }
-        }.hideFont(size: HideTheme.Typography.body).foregroundStyle(HideTheme.primary)
+        }.buttonStyle(HideTextButtonStyle(density: .regular))
+            .hideFont(size: HideTheme.Typography.body).foregroundStyle(HideTheme.primary)
             .padding(HideTheme.spacingXL).frame(width: HideTheme.worktreeDialogWidth, height: HideTheme.Overview.cleanupHeight)
             .background(HideTheme.background).hideOverlayHost()
             .interactiveDismissDisabled(review?.phase == "removing")
