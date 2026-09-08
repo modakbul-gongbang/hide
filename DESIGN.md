@@ -836,6 +836,8 @@ Workspace agent counts use the trailing representative chip; uncommitted changes
 A PR icon appears before the chip for a known pull request, an active GitHub lookup, or a lookup failure.
 Clicking it opens a 360pt details popover with PR number, title, state, CI rollup, branches, refresh, and an external GitHub action.
 The PR control is a sibling of the full-row disclosure button, so opening details never folds the Workspace.
+Workspace rows without agents reserve no disclosure slot.
+Their PR control uses the same trailing 24pt column as populated rows' disclosure, keeping the icon centers and right inset aligned.
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
 New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.

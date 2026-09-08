@@ -1505,16 +1505,17 @@ private struct CheckoutNavigatorRow: View {
                    checkout.pullRequest != nil || checkout.github.loading || checkout.github.unavailableReason != nil {
                     WorkspacePullRequestControl(workspace: workspace, checkout: checkout)
                 }
-                Group {
-                    if presentation.agentCount > 0 { WorkspaceAgentSummary(presentation: presentation) }
-                    Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
-                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                        .foregroundStyle(HideTheme.secondary)
-                        .frame(width: HideTheme.lineageChevronWidth)
-                        .opacity(hasAgents ? 1 : 0)
+                if hasAgents {
+                    Group {
+                        WorkspaceAgentSummary(presentation: presentation)
+                        Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
+                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                            .foregroundStyle(HideTheme.secondary)
+                            .frame(width: HideTheme.IconButton.toolbarSize.width)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
             }
             .padding(.horizontal, HideTheme.spacingSM)
         }
