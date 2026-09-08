@@ -9,7 +9,7 @@ import SwiftUI
 /// so they can be checked against fixed input instead of against a screenshot.
 enum CheckoutCardPresentation {
     /// The badge's colour. Merged and closed share one because both mean the
-    /// work is over and the whole row is dimmed anyway; the three review
+    /// work is over; the three review
     /// decisions are the distinction the colour actually has to carry.
     ///
     /// No saturated accent is used: DESIGN.md reserves those for category
@@ -47,16 +47,6 @@ enum CheckoutCardPresentation {
             case .reviewRequired, .none: "review"
             }
         }
-    }
-
-    /// Whether the row is drawn dimmed. A worktree with no terminal is not
-    /// where work is happening, and a merged or closed one is where it has
-    /// stopped; both are things to look past rather than at.
-    static func isDimmed(_ checkout: CoreCheckoutSnapshot) -> Bool {
-        if let badge = checkout.pullRequest?.badge, badge.isSettled {
-            return true
-        }
-        return !checkout.hasPanes
     }
 
     /// The row's accessibility label: every badge, dot, and count said in

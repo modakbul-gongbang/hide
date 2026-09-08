@@ -217,26 +217,42 @@ private struct WorktreeCreationSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
-            Text("New worktree")
-                .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
-            Text(workspace.label)
-                .hideFont(size: HideTheme.Typography.caption)
-                .foregroundStyle(HideTheme.secondary)
-            HideSettingsField(
-                placeholder: "Branch",
-                text: $model.worktreeDraft.branch,
-                width: HideTheme.worktreeDialogWidth - (HideTheme.spacingXL * 2)
-            )
-            .accessibilityIdentifier("worktree-branch")
-            .disabled(working)
-            HideFormPicker("Base", selection: $model.worktreeDraft.baseBranch) {
+            VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                Text("New worktree")
+                    .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
+                Label(workspace.label, systemImage: "folder")
+                    .hideFont(size: HideTheme.Typography.body)
+                    .foregroundStyle(HideTheme.secondary)
+            }
+            VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+                Text("Branch name")
+                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                    .foregroundStyle(HideTheme.secondary)
+                HideSettingsField(
+                    placeholder: "feature/your-task",
+                    text: $model.worktreeDraft.branch,
+                    height: HideTheme.formControlHeight
+                )
+                .accessibilityLabel("Branch name")
+                .accessibilityIdentifier("worktree-branch")
+                .disabled(working)
+            }
+            HideFormPicker(
+                "Create from", selection: $model.worktreeDraft.baseBranch,
+                selectedLabel: model.worktreeDraft.baseBranch ?? "Select a base branch"
+            ) {
                 ForEach(model.worktreeBranches, id: \.self) { branch in
                     Text(branch).tag(Optional(branch))
                 }
-                Text("Unknown").tag(String?.none)
+                if model.worktreeDraft.baseBranch == nil {
+                    Text("Select a base branch").tag(String?.none)
+                }
             }
             .disabled(working)
-            HideFormPicker("Agent", selection: $model.worktreeDraft.agent) {
+            HideFormPicker(
+                "Start with", selection: $model.worktreeDraft.agent,
+                selectedLabel: model.worktreeDraft.agent?.rawValue.capitalized ?? "Terminal only"
+            ) {
                 Text("Terminal only").tag(AgentProvider?.none)
                 ForEach(AgentProvider.allCases, id: \.rawValue) { provider in
                     Text(provider.rawValue.capitalized).tag(Optional(provider))
@@ -257,12 +273,12 @@ private struct WorktreeCreationSheet: View {
             HStack {
                 Spacer()
                 if working {
-                    ProgressView("Creating…")
+                    ProgressView(WorktreeSubmissionPresentation.primaryLabel(phase: "working"))
                 } else {
                     Button("Cancel", action: model.cancelNewWorktree)
                         .buttonStyle(HideTextButtonStyle(isProminent: false))
                         .keyboardShortcut(.cancelAction)
-                    Button("Create", action: model.submitNewWorktree)
+                    Button(WorktreeSubmissionPresentation.primaryLabel(phase: nil), action: model.submitNewWorktree)
                         .buttonStyle(HideTextButtonStyle(isProminent: true))
                         .keyboardShortcut(.defaultAction)
                         .disabled(!model.worktreeCanSubmit)
@@ -1132,6 +1148,9 @@ private struct HideBrandHeader: View {
             Text(model.isRemoteContext ? model.remote.targetLabel : (model.core.runtimeSelection?.version ?? "offline"))
                 .hideFont(size: HideTheme.Typography.micro, weight: .medium, design: .monospaced)
                 .foregroundStyle(HideTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .hideTooltip(model.isRemoteContext ? model.remote.targetLabel : (model.core.runtimeSelection?.version ?? "offline"))
             Button {
                 model.toggleLeftSidebar()
             } label: {
@@ -1351,41 +1370,36 @@ private struct CheckoutNavigatorRow: View {
             HStack(spacing: HideTheme.spacingSM) {
                 Circle()
                     .fill(activityColor)
-                    .frame(width: 6, height: 6)
-                Image(systemName: checkout.isWorktree ? "arrow.triangle.branch" : "rectangle.stack")
+                    .frame(width: HideTheme.checkoutStatusSize, height: HideTheme.checkoutStatusSize)
+                Image(systemName: checkout.branch == nil ? "point.topleft.down.to.point.bottomright.curvepath" : "arrow.triangle.branch")
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                     .foregroundStyle(HideTheme.secondary)
-                    .frame(width: 14)
+                    .frame(width: HideTheme.checkoutIconWidth)
                 Text(checkout.label)
-                    .hideFont(size: HideTheme.Typography.body, weight: isFocused ? .semibold : .regular)
-                    .foregroundStyle(isFocused ? HideTheme.primary : HideTheme.secondary)
+                    .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
+                    .foregroundStyle(HideTheme.primary)
                     .lineLimit(1)
                 if !checkout.exists {
                     HideBadge(label: "missing", color: HideTheme.danger)
                 } else if checkout.temporary {
                     HideBadge(label: "temporary", color: HideTheme.warning)
-                } else if presentation.isPrimary {
-                    switch MainWorktreePresentation.state(
-                        branch: checkout.branch,
-                        base: model.baseBranch(for: workspace)
+                }
+                if presentation.isPrimary {
+                    HideBadge(label: "primary", color: HideTheme.secondary)
+                    if case .warning(let branch, _) = MainWorktreePresentation.state(
+                        branch: checkout.branch, base: model.baseBranch(for: workspace)
                     ) {
-                    case .neutral(let branch):
-                        HideBadge(label: branch, color: HideTheme.secondary)
-                    case .warning(let branch, let base):
                         Button {
                             model.requestBranchMigration(workspace: workspace, checkout: checkout)
                         } label: {
-                            HideBadge(label: "\(branch) ≠ \(base)", color: HideTheme.warning)
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(HideTheme.warning)
                         }
                         .buttonStyle(.plain)
                         .hideTooltip("Move \(branch) to a worktree")
-                    case .unknown(let branch):
-                        HideBadge(label: branch.map { "\($0) • base unknown" } ?? "base unknown", color: HideTheme.muted)
+                        .accessibilityLabel("Move \(branch) to a worktree")
                     }
                 }
-                // The three things a row may say about a worktree, and no
-                // more: what its pull request is, that something is
-                // uncommitted, and how many agents are in it (R2, G1).
                 if let pullRequest = checkout.pullRequest {
                     HideBadge(
                         label: CheckoutCardPresentation.badgeLabel(
@@ -1405,18 +1419,10 @@ private struct CheckoutNavigatorRow: View {
                         .hideTooltip("\(checkout.changedFileCount) uncommitted changes")
                 }
                 Spacer(minLength: 0)
-                if presentation.agentCount > 0 {
-                    Text("\(presentation.agentCount)")
-                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                        .foregroundStyle(HideTheme.muted)
-                }
             }
-            // A worktree with no terminal, and one whose pull request is
-            // settled, are both things to look past rather than at.
-            .opacity(CheckoutCardPresentation.isDimmed(checkout) ? HideTheme.Opacity.dimmed : 1)
             .padding(.leading, HideTheme.spacingXL)
             .padding(.trailing, HideTheme.spacingSM)
-            .frame(minHeight: 31)
+            .frame(minHeight: HideTheme.checkoutRowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1433,16 +1439,17 @@ private struct CheckoutNavigatorRow: View {
         )
         .accessibilityValue(isFocused ? "Selected" : "Not selected")
         .contextMenu {
+            Button(WorktreeMenuPolicy.newWorktree, systemImage: "plus") { model.requestNewWorktree(workspace) }
             if checkout.isWorktree {
-                Button(WorktreeMenuPolicy.startAgentHere) { model.openComposer(checkoutID: checkout.id) }
+                Button(WorktreeMenuPolicy.startAgentHere, systemImage: "terminal") { model.openComposer(checkoutID: checkout.id) }
             }
             if let branch = checkout.branch {
-                Button(WorktreeMenuPolicy.setBaseBranch) { model.setBaseBranch(checkout, in: workspace) }
+                Button(WorktreeMenuPolicy.setBaseBranch, systemImage: "arrow.triangle.branch") { model.setBaseBranch(checkout, in: workspace) }
                     .disabled(branch == model.baseBranch(for: workspace))
             }
             Divider()
-            Button(WorktreeMenuPolicy.copyPath) { model.copyCheckoutPath(checkout) }
-            Menu(WorktreeMenuPolicy.openIn) {
+            Button(WorktreeMenuPolicy.copyPath, systemImage: "doc.on.doc") { model.copyCheckoutPath(checkout) }
+            Menu(WorktreeMenuPolicy.openIn, systemImage: "arrow.up.forward.app") {
                 Button("Finder") { model.revealCheckout(checkout) }
                 Button("Default editor") { model.openCheckoutInDefaultEditor(checkout) }
             }
@@ -1474,7 +1481,7 @@ private struct AgentNavigatorRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
             HStack(spacing: HideTheme.spacingNone) {
-                if !showsWorkspace && !agent.lineageChildPaneIDs.isEmpty {
+                if !showsWorkspace {
                     Button {
                         model.core.dispatch(kind: "agent_tree_toggle", payload: ["pane_id": agent.paneID])
                     } label: {
@@ -1483,6 +1490,9 @@ private struct AgentNavigatorRow: View {
                     }
                     .buttonStyle(.plain)
                     .frame(width: HideTheme.lineageChevronWidth)
+                    .opacity(agent.lineageChildPaneIDs.isEmpty ? 0 : 1)
+                    .disabled(agent.lineageChildPaneIDs.isEmpty)
+                    .accessibilityHidden(agent.lineageChildPaneIDs.isEmpty)
                     .hideTooltip(agent.lineageCollapsed ? "Expand descendants" : "Collapse descendants")
                 }
                 AgentRow(
@@ -1504,6 +1514,18 @@ private struct AgentNavigatorRow: View {
             }
             if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
                 Text(hint).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.muted)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if !showsWorkspace && agent.lineageDepth > 0 {
+                HStack(spacing: HideTheme.spacingNone) {
+                    Rectangle().frame(width: HideTheme.Layout.hairlineWidth)
+                    Rectangle().frame(width: HideTheme.spacingSM, height: HideTheme.Layout.hairlineWidth)
+                }
+                .foregroundStyle(HideTheme.divider)
+                .frame(width: HideTheme.lineageChevronWidth, alignment: .leading)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
         .padding(.leading, showsWorkspace ? HideTheme.spacingNone : HideTheme.lineageInset(depth: agent.lineageDepth))
@@ -1562,6 +1584,7 @@ private struct TabWidthPreferenceKey: PreferenceKey {
 /// report, and the herdr version the sidebar's brand header's.
 private struct HideTabStrip: View {
     @EnvironmentObject private var model: ShellModel
+    @Environment(\.hideAccent) private var accent
     /// What the pointer is carrying right now. This is the only piece of the
     /// strip the shell holds: the order itself belongs to the core, so a drop
     /// is reported rather than applied here.
@@ -1603,11 +1626,21 @@ private struct HideTabStrip: View {
                                         model.focusUnifiedTab(tab)
                                     } label: {
                                         HStack(spacing: HideTheme.spacingSM) {
-                                            Image(systemName: tabIcon(tab))
-                                                .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                                            if let agent = tab.focusedAgent {
+                                                let color = AgentStatusStyle.color(
+                                                    demand: agent.demand, activity: agent.activity,
+                                                    emphasized: agent.unread, accent: accent
+                                                )
+                                                AgentStatusMark(symbol: agent.symbol, color: color)
+                                                AgentBadge(agentKind: agent.agentKind, stateColor: color, size: HideTheme.lineageChevronWidth)
+                                            } else {
+                                                Image(systemName: tabIcon(tab))
+                                                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                                            }
                                             Text(tab.label)
-                                                .hideFont(size: HideTheme.Typography.caption, weight: tab.active ? .semibold : .medium)
+                                                .hideFont(size: HideTheme.Typography.body, weight: tab.active ? .semibold : .medium)
                                                 .lineLimit(1)
+                                                .frame(maxWidth: HideTheme.tabTitleMaxWidth, alignment: .leading)
                                             if tab.dirty {
                                                 Circle()
                                                     .fill(HideTheme.secondary)
@@ -1630,7 +1663,7 @@ private struct HideTabStrip: View {
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
-                                    .hideTooltip(tab.label, command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
+                                    .hideTooltip(tab.contextLabel ?? tab.label, command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
 
                                     Button {
                                         model.closeUnifiedTab(tab)

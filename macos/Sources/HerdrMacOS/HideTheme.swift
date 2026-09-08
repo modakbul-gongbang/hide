@@ -190,6 +190,12 @@ enum HideTheme {
     static let lineageDeepIndent: CGFloat = 6
     static let lineageChevronWidth: CGFloat = 16
     static let worktreeDialogWidth: CGFloat = 440
+    static let formControlHeight: CGFloat = 36
+    static let settingsFieldHeight: CGFloat = 24
+    static let checkoutRowHeight: CGFloat = 36
+    static let checkoutStatusSize: CGFloat = 6
+    static let checkoutIconWidth: CGFloat = 14
+    static let tabTitleMaxWidth: CGFloat = 200
     /// A descendant's inset in the agent tree: two full steps, then a shallower
     /// step per level so a deep lineage still fits the sidebar's width.
     static func lineageInset(depth: Int) -> CGFloat {

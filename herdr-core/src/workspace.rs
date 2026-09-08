@@ -355,11 +355,6 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                 .to_owned()
         });
         let is_worktree = root_comparison != project_comparison;
-        let label = if is_worktree {
-            label
-        } else {
-            "main worktree".to_owned()
-        };
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
@@ -436,11 +431,7 @@ pub(crate) fn apply_worktrees(
         };
         let row = &mut project.checkouts[index];
         row.is_worktree = !worktree.is_main;
-        row.label = worktree_row_label(
-            worktree.is_main,
-            worktree.branch.as_deref(),
-            worktree.head_sha.as_deref(),
-        );
+        row.label = worktree_row_label(worktree.branch.as_deref(), worktree.head_sha.as_deref());
         row.exists = !worktree.missing;
         row.dirty = worktree.dirty;
         row.changed_file_count = worktree.changed_file_count;
@@ -451,9 +442,7 @@ pub(crate) fn apply_worktrees(
         row.removed_lines = worktree.removed_lines;
         row.unpushed = worktree.unpushed.clone();
         row.worktree = Some(worktree.clone());
-        if row.branch.is_none() {
-            row.branch = worktree.branch.clone();
-        }
+        row.branch = worktree.branch.clone();
     }
 
     // The main worktree leads, so the primary badge and the project path
@@ -467,25 +456,17 @@ pub(crate) fn apply_worktrees(
     }
 }
 
-pub(crate) fn worktree_row_label(
-    is_main: bool,
-    branch: Option<&str>,
-    head_sha: Option<&str>,
-) -> String {
-    if is_main {
-        "main worktree".to_owned()
-    } else {
-        branch.map(str::to_owned).unwrap_or_else(|| {
-            format!(
-                "{} detached",
-                head_sha
-                    .unwrap_or("unknown")
-                    .chars()
-                    .take(8)
-                    .collect::<String>()
-            )
-        })
-    }
+pub(crate) fn worktree_row_label(branch: Option<&str>, head_sha: Option<&str>) -> String {
+    branch.map(str::to_owned).unwrap_or_else(|| {
+        format!(
+            "Detached HEAD · {}",
+            head_sha
+                .unwrap_or("unknown")
+                .chars()
+                .take(8)
+                .collect::<String>()
+        )
+    })
 }
 
 fn current_branch(root: &Path) -> Option<String> {

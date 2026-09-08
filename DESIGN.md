@@ -815,8 +815,20 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 ## Native Git and lineage tokens
 
 `HideTheme.lineageIndent` is 12pt for the first two descendant levels, and `lineageDeepIndent` is 6pt per level from depth three onward.
-`lineageChevronWidth` reserves 16pt for the parent disclosure control.
-Worktree rows use `{typography.body}` and their detail lines `{typography.caption}`, with the existing spacing and neutral surface tokens.
+`lineageChevronWidth` reserves 16pt on every project agent row, with a disclosure control for parents and hairline connectors for descendants.
+Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
+The branch is the title; the primary checkout carries a separate `primary` role badge.
+Detached checkouts name `Detached HEAD` and the short commit instead of presenting a hash as a branch.
+`checkoutStatusSize` (6pt) and `checkoutIconWidth` (14pt) align the activity and branch columns.
+Agent counts are omitted from checkout rows; pull requests and uncommitted changes retain their existing badges.
+The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
+The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
+New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
+`formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
+`HideFormPicker` owns both compact and stacked menu presentations, and `HideSettingsField` owns text inputs.
+Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
+The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
+The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
 `HideTheme.GitIcon` names refresh (`arrow.clockwise`), merged (`checkmark.circle`), unmerged (`circle`), dirty (`circle.fill`), clean (`checkmark`), merged PR (`arrow.triangle.merge`), closed PR (`xmark.circle`), unavailable (`exclamationmark.circle`), and absent PR (`minus.circle`).

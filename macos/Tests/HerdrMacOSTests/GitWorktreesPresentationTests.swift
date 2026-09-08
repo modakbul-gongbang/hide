@@ -43,4 +43,23 @@ struct GitWorktreesPresentationTests {
         #expect(!child.unread)
     }
 
+    @Test func raisedFamilyMembersKeepTheirTreeAndShareOneShortcut() {
+        var parent = SidebarAgent(id: "parent", paneID: "parent", workspaceLabel: "Repo", agentKind: "terminal",
+            demand: "question", activity: "stopped", unread: true, group: "needs_you",
+            symbol: "?", summary: "Review needed", elapsed: "", lastActivity: "", ambient: nil)
+        parent.lineageRootCheckoutID = "main"
+        parent.lineageChildPaneIDs = ["child"]
+        var child = SidebarAgent(id: "child", paneID: "child", workspaceLabel: "Repo", agentKind: "terminal",
+            demand: "none", activity: "stopped", unread: true, group: "done",
+            symbol: "✓", summary: "Completed task", elapsed: "", lastActivity: "", ambient: nil)
+        child.lineageDepth = 1
+        child.lineageRootCheckoutID = "main"
+        let agents = [child, parent]
+        let raised = Set(SidebarGrouping.raised(agents).flatMap(\.agents).map(\.id))
+        #expect(SidebarGrouping.tree(agents, checkoutID: "main", excluding: raised).map(\.id) == ["parent", "child"])
+        #expect(AgentShortcutNumbering.candidates(for: .projects, agents: agents, visibleCheckoutIDs: ["main"]).map(\.id) == ["parent", "child"])
+        parent.lineageCollapsed = true
+        #expect(SidebarGrouping.tree([child, parent], checkoutID: "main", excluding: raised).map(\.id) == ["parent"])
+    }
+
 }

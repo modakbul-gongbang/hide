@@ -290,6 +290,7 @@ struct HideSettingsField: View {
     let placeholder: String
     @Binding var text: String
     var width: CGFloat?
+    var height: CGFloat = HideTheme.settingsFieldHeight
     var onSubmit: () -> Void = {}
 
     var body: some View {
@@ -300,7 +301,7 @@ struct HideSettingsField: View {
             .labelsHidden()
             .onSubmit(onSubmit)
             .padding(.horizontal, HideTheme.spacingSM)
-            .frame(width: width, height: 24)
+            .frame(width: width, height: height)
             .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
             .overlay {
                 RoundedRectangle(cornerRadius: HideTheme.radiusSmall)

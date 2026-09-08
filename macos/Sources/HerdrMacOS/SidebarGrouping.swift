@@ -46,8 +46,8 @@ enum SidebarGrouping {
     ///
     /// This is the one thing the space tree cannot answer: it says what is
     /// waiting and what finished across every space, while the tree says what
-    /// is in one space. A row in either group is drawn once, at the top, and
-    /// left out of the tree below.
+    /// is in one space. Standalone rows appear only at the top. Related agents also remain
+    /// in their project tree so raising a parent never severs its descendants.
     static let raisedGroups: [AgentGroup] = [.needsYou, .done]
 
     /// The rows of one group, in the order the core put them in.
@@ -91,7 +91,8 @@ enum SidebarGrouping {
         var pending = Array(agents.filter { $0.lineageDepth == 0 && $0.lineageRootCheckoutID == checkoutID }.reversed())
         var visible: [SidebarAgent] = []
         while let row = pending.popLast() {
-            if !raisedIDs.contains(row.id) { visible.append(row) }
+            let belongsToFamily = row.lineageDepth > 0 || !row.lineageChildPaneIDs.isEmpty
+            if belongsToFamily || !raisedIDs.contains(row.id) { visible.append(row) }
             if !row.lineageCollapsed {
                 pending.append(contentsOf: row.lineageChildPaneIDs.reversed().compactMap { byPane[$0] })
             }

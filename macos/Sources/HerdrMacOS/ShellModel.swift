@@ -124,6 +124,8 @@ struct ShellTabItem: Identifiable {
     let dirty: Bool
     let active: Bool
     let kind: ShellTabKind
+    var focusedAgent: SidebarAgent? = nil
+    var contextLabel: String? = nil
 }
 
 /// Resolves the core's ordered tab strip into what the strip draws.
@@ -138,21 +140,34 @@ enum ShellTabStrip {
         herdrTabs: [CoreTabSnapshot],
         editorTabs: [CoreEditorTabSnapshot],
         activeHerdrTabID: String?,
-        activeFileTabID: String?
+        activeFileTabID: String?,
+        focusedPaneIDsByTab: [String: String] = [:],
+        agents: [SidebarAgent] = []
     ) -> [ShellTabItem] {
-        strip.compactMap { entry in
+        let agentsByPane = Dictionary(uniqueKeysWithValues: agents.map { ($0.paneID, $0) })
+        return strip.compactMap { entry in
             switch entry.kind {
             case .herdr:
                 // The core builds the strip from the same tabs it publishes,
                 // so an entry always has one to point at.
                 guard let tab = herdrTabs.first(where: { $0.id == entry.sourceID })
                 else { return nil }
+                let pane = tab.panes.first { $0.id == focusedPaneIDsByTab[entry.sourceID] }
+                let agent = pane.flatMap { agentsByPane[$0.id] }
+                let title = pane.map {
+                    PaneHeaderPresentation.title(
+                        herdrLabel: $0.herdrLabel, agentSummary: agent?.summary ?? $0.summary,
+                        terminalTitle: $0.terminalTitle, workspaceLabel: $0.workspaceLabel, paneID: $0.id
+                    )
+                } ?? entry.label
                 return ShellTabItem(
                     id: entry.id,
-                    label: entry.label,
+                    label: title,
                     dirty: false,
                     active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
-                    kind: .herdr(tab)
+                    kind: .herdr(tab),
+                    focusedAgent: agent,
+                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(title)" }
                 )
             case .file:
                 guard let tab = editorTabs.first(where: { $0.id == entry.sourceID })
@@ -508,12 +523,19 @@ final class ShellModel: ObservableObject {
     var unifiedTabs: [ShellTabItem] {
         guard let checkout = focusedCheckout else { return [] }
         let activeFileID = isRemoteContext ? nil : core.snapshot?.editor.activeTabID
+        var paneIDs = isRemoteContext
+            ? Dictionary(uniqueKeysWithValues: (remote.navigation?.paneLayouts ?? []).map { ($0.tabID, $0.focusedPaneID) })
+            : Dictionary(uniqueKeysWithValues: (core.snapshot?.paneLayouts ?? []).map { ($0.tabID, $0.focusedPaneID) })
+        // Core-owned focus responds immediately while Herdr confirms the layout.
+        if let tabID = focusedTab?.id, let paneID = focusedPaneID { paneIDs[tabID] = paneID }
         return ShellTabStrip.items(
             strip: checkout.strip,
             herdrTabs: checkout.tabs,
             editorTabs: core.snapshot?.editor.tabs ?? [],
             activeHerdrTabID: focusedTab?.id,
-            activeFileTabID: activeFileID
+            activeFileTabID: activeFileID,
+            focusedPaneIDsByTab: paneIDs,
+            agents: agents
         )
     }
 

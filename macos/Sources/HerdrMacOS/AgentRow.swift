@@ -45,7 +45,7 @@ enum AgentRowDensity {
     /// The mark column sits at the indent, so the agent badge lands where it
     /// did before the mark existed: level with the section label at the top
     /// level, and one step in from the checkout label when nested.
-    var leadingPadding: CGFloat { self == .prominent ? 14 : 23 }
+    var leadingPadding: CGFloat { self == .prominent ? 14 : HideTheme.spacingSM }
     var trailingPadding: CGFloat { self == .prominent ? 14 : 9 }
     var verticalPadding: CGFloat { self == .prominent ? 7 : 5 }
 }
@@ -163,7 +163,7 @@ extension AgentRowPresentation {
 
 /// The core's mark for one agent, in its own column so the marks line up down
 /// the list whichever symbol each row carries.
-private struct AgentStatusMark: View {
+struct AgentStatusMark: View {
     let symbol: String
     let color: Color
 

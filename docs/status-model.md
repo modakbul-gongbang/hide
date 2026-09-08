@@ -57,7 +57,11 @@ Done is deliberately separate from Needs You: finished-unseen is "look when you 
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.
-The Projects view raises Needs You and Done above the project tree and does not repeat those rows inside it; the Agents view draws all four groups with their boundaries visible and omits empty ones.
+The Projects view raises Needs You and Done above the project tree.
+Standalone raised agents appear only in those sections; parents and descendants also remain in their checkout tree so an attention transition never leaves a child without its parent.
+Both appearances share one direct-select shortcut, assigned to the first visible occurrence.
+Collapsing a parent hides descendants in the tree while raised attention rows remain reachable.
+The Agents view draws all four groups with their boundaries visible and omits empty ones.
 
 ## Pet pose priority
 

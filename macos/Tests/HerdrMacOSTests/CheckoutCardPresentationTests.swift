@@ -78,28 +78,6 @@ struct CheckoutCardPresentationTests {
         #expect(!CorePullRequestBadge.review.isSettled)
     }
 
-    /// A worktree with no terminal and one whose work is over are both dimmed;
-    /// a worktree being actively worked in is not.
-    @Test func dimmingMarksWhatThereIsNothingToDoIn() {
-        #expect(CheckoutCardPresentation.isDimmed(checkout(hasPanes: false)))
-        #expect(
-            CheckoutCardPresentation.isDimmed(
-                checkout(pullRequest: pullRequest(badge: .merged))
-            )
-        )
-        #expect(
-            CheckoutCardPresentation.isDimmed(
-                checkout(pullRequest: pullRequest(badge: .closed))
-            )
-        )
-        #expect(
-            !CheckoutCardPresentation.isDimmed(
-                checkout(pullRequest: pullRequest(badge: .open))
-            )
-        )
-        #expect(!CheckoutCardPresentation.isDimmed(checkout()))
-    }
-
     /// The row is almost wordless on purpose, so every badge, dot, and count
     /// has to be reachable in words.
     @Test func theRowSaysInWordsWhatItDrawsInSymbols() {

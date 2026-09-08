@@ -120,9 +120,11 @@ enum AgentShortcutNumbering {
         case .projects:
             let raised = SidebarGrouping.raised(agents).flatMap(\.agents)
             let raisedIDs = Set(raised.map(\.id))
-            return raised + visibleCheckoutIDs.flatMap {
+            let visible = raised + visibleCheckoutIDs.flatMap {
                 SidebarGrouping.tree(agents, checkoutID: $0, excluding: raisedIDs)
             }
+            var numberedPanes = Set<String>()
+            return visible.filter { numberedPanes.insert($0.paneID).inserted }
         }
     }
 
