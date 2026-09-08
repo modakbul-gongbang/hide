@@ -441,6 +441,14 @@ struct BrowserStatusPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GithubRequestPayload {
+    workspace_id: String,
+    #[serde(default)]
+    refresh: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateWorkspacePayload {
     path: String,
     label: String,
@@ -682,6 +690,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
             changed = true;
         }
     }
+    changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
     changed
 }
 
@@ -841,6 +850,8 @@ struct UiStateUpdatePayload {
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
+    #[serde(default)]
+    collapsed_checkout_ids: Option<Vec<String>>,
     #[serde(default)]
     collapsed_agent_pane_ids: Option<Vec<String>>,
     selected_path: Option<String>,
@@ -1079,6 +1090,7 @@ enum ValidatedEvent {
     TaskOperationAck(TaskOperationAckPayload),
     RemoveWorktree(RemoveWorktreePayload),
     WorktreeRemovalFinished(WorktreeRemovalFinishedPayload),
+    GithubRequest(GithubRequestPayload),
     /// The card's refresh button, opening the delete confirmation, and a
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
@@ -1294,9 +1306,10 @@ pub struct Runtime {
     /// this only while Git is visible or after an explicit refresh.
     disk_usage: Vec<crate::model::DiskUsageSnapshot>,
     /// One counter per local git project, keyed by its navigator path. Opening
-    /// the Git section and its explicit refresh move the focused project's
-    /// counter; equal generations reuse the cached answer indefinitely.
+    /// the Git section or explicitly refreshing GitHub advances the target
+    /// project counter; equal generations reuse the cached answer indefinitely.
     github_generations: HashMap<String, u64>,
+    sidebar_github_projects: HashSet<String>,
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
@@ -1456,6 +1469,7 @@ impl Runtime {
             github: crate::model::GithubSnapshot::default(),
             disk_usage: Vec::new(),
             github_generations: HashMap::new(),
+            sidebar_github_projects: HashSet::new(),
             disk_generation: 0,
             worktree_generation: 0,
             next_worktree_removal_id: 0,
@@ -2696,6 +2710,7 @@ impl Runtime {
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
+        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.scratch = crate::model::ScratchSnapshot {
             id: crate::scratch::NODE_ID.to_owned(),
@@ -4420,7 +4435,7 @@ impl Runtime {
     /// Which repositories to look pull requests up for. Remote projects are
     /// out of scope, and a plain folder has no repository to ask about.
     pub fn github_request(&self) -> crate::github::GithubRequest {
-        if !self.github_lookup_requested() {
+        if !self.github_lookup_requested() && self.sidebar_github_projects.is_empty() {
             return crate::github::GithubRequest::default();
         }
         crate::github::GithubRequest {
@@ -4430,6 +4445,7 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+                .filter(|workspace| self.github_lookup_requested() || self.sidebar_github_projects.contains(&workspace.path))
                 .map(|workspace| crate::github::GithubProjectRequest {
                     root: PathBuf::from(&workspace.path),
                     generation: self
@@ -4453,10 +4469,11 @@ impl Runtime {
         // stale project keeps its results and only its status changes.
         let mut merged = github;
         for project in &mut merged.projects {
-            if project.status.stale
+            if (project.status.stale || project.status.unavailable_reason.is_some())
                 && let Some(previous) = self.github.project(&project.root_path)
                 && !previous.pull_requests.is_empty()
             {
+                project.status.stale = true;
                 project.pull_requests = previous.pull_requests.clone();
                 project.status.last_success_at_unix_ms = previous.status.last_success_at_unix_ms;
             }
@@ -4848,9 +4865,19 @@ impl Runtime {
     fn apply_pull_requests(&mut self) -> bool {
         let mut changed = false;
         let github = self.github.clone();
+        let git_requested = self.github_lookup_requested();
         for workspace in self.snapshot.navigator.workspaces.iter_mut() {
             let project = github.project(&workspace.path);
+            let status = project.map(|project| project.status.clone()).unwrap_or_else(|| crate::model::GithubStatusSnapshot {
+                loading: workspace.is_git && workspace.remote_target_id.is_none()
+                    && (self.sidebar_github_projects.contains(&workspace.path) || git_requested),
+                ..Default::default()
+            });
             for checkout in workspace.checkouts.iter_mut() {
+                if checkout.github != status {
+                    checkout.github = status.clone();
+                    changed = true;
+                }
                 let pull_request = checkout.branch.as_deref().and_then(|branch| {
                     project?
                         .pull_requests
@@ -6927,6 +6954,7 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
+        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
@@ -8935,6 +8963,24 @@ impl Runtime {
                 }
                 changed
             }
+            ValidatedEvent::GithubRequest(payload) => {
+                let project = self.snapshot.navigator.workspaces.iter()
+                    .find(|workspace| workspace.id == payload.workspace_id && workspace.is_git && workspace.remote_target_id.is_none())
+                    .map(|workspace| workspace.path.clone());
+                let Some(project) = project else {
+                    self.set_error("github.invalid_project", "GitHub lookup requires a registered local Git project".to_owned(), false);
+                    return true;
+                };
+                let first = self.sidebar_github_projects.insert(project.clone());
+                if payload.refresh {
+                    self.refresh_pull_requests(&project);
+                    if let Some(cached) = self.github.projects.iter_mut().find(|cached| cached.root_path == project) {
+                        cached.status.loading = true;
+                    }
+                }
+                if first || payload.refresh { self.apply_pull_requests(); }
+                first || payload.refresh
+            }
             ValidatedEvent::CardRefresh => {
                 // The card's one refresh button re-reads both the remote
                 // answer and the local counts, because the operator pressing
@@ -9091,6 +9137,9 @@ impl Runtime {
                         .unwrap_or(current.right_panel_section),
                     expanded_paths: payload.expanded_paths,
                     collapsed_workspace_ids: payload.collapsed_workspace_ids,
+                    collapsed_checkout_ids: payload
+                        .collapsed_checkout_ids
+                        .unwrap_or(current.collapsed_checkout_ids),
                     project_base_branches: current.project_base_branches,
                     collapsed_agent_pane_ids: payload
                         .collapsed_agent_pane_ids
@@ -9973,6 +10022,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "worktree_removal_finished" => {
             decode!(WorktreeRemovalFinishedPayload, WorktreeRemovalFinished)
         }
+        "github_request" => decode!(GithubRequestPayload, GithubRequest),
         "card_refresh" => Ok(ValidatedEvent::CardRefresh),
         "card_measure_disk" => Ok(ValidatedEvent::CardMeasureDisk),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
@@ -10306,6 +10356,8 @@ mod tests {
     /// button's rules to be applied to it.
     fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
         let pull_request = crate::model::PullRequestSnapshot {
+            title: "Fixture pull request".into(),
+            checks: crate::model::PullRequestChecks::Unknown,
             number: 7,
             head_branch: "feature".to_owned(),
             base_branch: "main".to_owned(),
@@ -10356,7 +10408,32 @@ mod tests {
         runtime.snapshot.card.clone()
     }
 
-    /// Pull requests are absent from the reader request until Git is visible.
+    #[test]
+    fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
+        let mut runtime = runtime();
+        let mut project = workspace("workspace-1", "hide", "/tmp/hide",
+            vec![settled_worktree(crate::model::PullRequestBadge::Open)]);
+        project.is_git = true;
+        let mut other = workspace("workspace-2", "other", "/tmp/other", Vec::new());
+        other.is_git = true;
+        runtime.snapshot.navigator.workspaces = vec![project, other];
+        let focus = runtime.snapshot.focused.clone();
+        let event = |refresh| serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "github_request",
+            "payload": {"workspace_id":"workspace-1", "refresh":refresh}
+        })).unwrap();
+        assert!(runtime.dispatch_json(&event(false)));
+        assert!(!runtime.dispatch_json(&event(false)));
+        assert_eq!(runtime.snapshot.focused, focus);
+        assert_eq!(runtime.github_request().projects.len(), 1);
+        assert_eq!(runtime.github_request().projects[0].root, PathBuf::from("/tmp/hide"));
+        assert_eq!(runtime.github_request().projects[0].generation, 0);
+        assert!(runtime.snapshot.navigator.workspaces[0].checkouts[0].github.loading);
+        assert!(runtime.dispatch_json(&event(true)));
+        assert_eq!(runtime.github_request().projects[0].generation, 1);
+    }
+
+    /// Without sidebar requests, pull requests are absent until Git is visible.
     /// Once visible, one request per project is stable until header refresh.
     #[test]
     fn pull_requests_are_requested_only_for_the_visible_git_section() {
@@ -10484,6 +10561,8 @@ mod tests {
         };
         let mut runtime = runtime();
         let pull_request = PullRequestSnapshot {
+            title: "Fixture pull request".into(),
+            checks: crate::model::PullRequestChecks::Unknown,
             number: 7,
             head_branch: "feature".to_owned(),
             base_branch: "main".to_owned(),
@@ -10523,8 +10602,24 @@ mod tests {
             .github
             .project("/tmp/hide")
             .expect("the project survives");
+        assert_eq!(project.pull_requests, vec![pull_request.clone()]);
+        assert!(project.status.stale);
+        assert_eq!(project.status.last_success_at_unix_ms, Some(1_000));
+        runtime.ingest_github(GithubSnapshot {
+            projects: vec![GithubProjectSnapshot {
+                root_path: "/tmp/hide".to_owned(),
+                status: GithubStatusSnapshot {
+                    available: false,
+                    unavailable_reason: Some("gh is not logged in".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+        });
+        let project = runtime.github.project("/tmp/hide").unwrap();
         assert_eq!(project.pull_requests, vec![pull_request]);
         assert!(project.status.stale);
+        assert!(!project.status.available);
         assert_eq!(project.status.last_success_at_unix_ms, Some(1_000));
     }
     use crate::live::SessionFetchError;
@@ -12177,6 +12272,7 @@ mod tests {
             "payload": {
                 "expanded_paths": [],
                 "collapsed_workspace_ids": ["workspace-a"],
+                "collapsed_checkout_ids": ["checkout-a"],
                 "selected_path": null,
                 "selected_pane_id": null,
                 "shortcut_bindings": {}
@@ -12186,6 +12282,7 @@ mod tests {
 
         assert!(runtime.dispatch_json(&collapse));
         assert!(!runtime.snapshot().navigator.workspaces[0].expanded);
+        assert_eq!(runtime.snapshot().ui_state.collapsed_checkout_ids, ["checkout-a"]);
 
         let expand = serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION,
@@ -12202,6 +12299,20 @@ mod tests {
 
         assert!(runtime.dispatch_json(&expand));
         assert!(runtime.snapshot().navigator.workspaces[0].expanded);
+        // An unrelated UI save must not reopen a collapsed checkout.
+        assert_eq!(runtime.snapshot().ui_state.collapsed_checkout_ids, ["checkout-a"]);
+        let reopen = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_checkout_ids": [],
+                "selected_path": null,
+                "selected_pane_id": null
+            }
+        })).unwrap();
+        assert!(runtime.dispatch_json(&reopen));
+        assert!(runtime.snapshot().ui_state.collapsed_checkout_ids.is_empty());
     }
 
     #[test]

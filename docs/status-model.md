@@ -57,7 +57,88 @@ Done is deliberately separate from Needs You: finished-unseen is "look when you 
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.
-The Projects view raises Needs You and Done above the project tree and does not repeat those rows inside it; the Agents view draws all four groups with their boundaries visible and omits empty ones.
+The Projects view raises Needs You and Done above the project tree.
+Raised agents also remain in their checkout tree, so a Workspace summary always has agent rows to reveal and an attention transition never leaves a child without its parent.
+Both appearances share one direct-select shortcut, assigned to the first visible occurrence.
+Collapsing a parent hides descendants in the tree while raised attention rows remain reachable.
+The Agents view draws all four groups with their boundaries visible and omits empty ones.
+
+## Shared agent and Workspace status contract
+
+The sidebar hierarchy is Project > Workspace > Agents.
+A Workspace is one checkout path, including a plain folder; internal `WorkspaceSnapshot` names the project and `CheckoutSnapshot` names this Workspace.
+A branch is the Workspace title when available; otherwise its real folder name is the title.
+`primary`, `detached`, `missing`, temporary state, and uncommitted changes describe the checkout, not an agent lifecycle.
+They remain separate badges or Git indicators and never select the agent status color.
+
+### One meaning across surfaces
+
+Agent rows, focused-agent tab marks, and Workspace summaries use the same status mark and semantic color mapping.
+Working uses a fixed blue status token, independent of the user's accent color; Done uses green, so running and completed work remain distinct.
+The symbol and accessible text accompany color, so color alone never carries the distinction.
+
+| Agent condition | Mark | Color | Text and behavior |
+| --- | --- | --- | --- |
+| Question | `?` | Yellow | Question; Needs You while unread or blocked |
+| Approval | `!` | Yellow | Approval; a blocked pane stays Needs You even after being read |
+| Error | `×` | Red | Error; Needs You while unread or blocked |
+| No demand, stopped, unread | `✓` | Green | Done; completion awaiting the operator's review |
+| No demand, working | `●` | Blue | Working |
+| No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
+| No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
+| Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
+
+Read questions, approvals, and errors retain their symbol and hue with reduced emphasis.
+Reading is acknowledgment, not evidence that a demand was resolved.
+A read, non-blocked demand belongs to Seen unless the core places its running activity in Working; the status mark still describes the demand.
+Disconnected presentation overrides the retained mark and text on every affected surface without modifying demand, activity, read records, or the last known group.
+Unavailable-server tooltips describe the connection problem rather than presenting retained counts as current work.
+
+### Workspace aggregation
+
+`sidebar.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
+Each Workspace counts unique agent pane IDs physically owned by its tabs, independent of sidebar visibility, raised rows, parent collapse, or Workspace collapse.
+The existing status synchronization indexes pane ownership once and visits each canonical agent once; it adds no timer, I/O, or per-frame work and publishes only changed summaries.
+A descendant running in another checkout contributes to that checkout, even if its lineage row appears beneath a parent elsewhere.
+An agent repeated in a raised section and the project tree counts once.
+Plain terminal panes without agents do not create an Idle agent status.
+A Workspace with no known agents draws no summary chip.
+A populated Workspace places its representative status and provider icon in a trailing chip, followed by `+N` for the remaining agents (omitted for a single agent).
+The chip uses the canonical physical agent count, even when agents are also raised above the tree.
+An agent whose lineage starts in another checkout also appears as a local root in the Workspace that physically owns it, so that Workspace can reveal the agents its chip counts.
+Rendering and shortcut numbering share this ownership-aware tree projection.
+
+The representative follows the same group order as the sidebar: Needs You > Done > Working > Seen.
+Within a group, Error precedes Approval, then Question; otherwise Unknown precedes ordinary Idle within Seen, so missing information is not hidden by an idle sibling.
+Equivalent candidates keep canonical agent order.
+A read error in Seen cannot outrank an unread question in Needs You.
+The Workspace draws the representative agent's exact mark, color, and emphasis through the shared presentation.
+
+The tooltip lists positive counts in group order: Needs You, Done, Working, Seen.
+Unknown is reported as a subset of Seen, never added again to the total.
+When the owning server disconnects, a Workspace with retained agents displays Disconnected and suppresses the stale activity breakdown.
+Connection recovery resumes the current canonical projection; it does not mark agents read.
+
+### Disclosure and selection
+
+The disclosure chevron sits at the right edge of a Workspace row.
+The left edge holds the checkout-kind icon, title, and checkout badges.
+The representative status moves into the trailing agent summary chip immediately before the chevron.
+A root agent status mark aligns with the Workspace branch icon; compact agent rows use a 4pt gap between status, provider icon, and title.
+A Workspace with nested agent rows uses the entire row, including its name and empty space, as the disclosure hit area.
+Its right-edge chevron is a non-interactive indicator within that same button, not a second small control.
+A Workspace without nested agent rows shows no chevron and clicking its row opens the Workspace.
+Select an agent to focus its pane; expanding or collapsing a populated Workspace only changes the tree.
+Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
+`collapsed_checkout_ids` persists across launches.
+Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
+
+### Verification ownership
+
+Core status tests own the Done mark, representative priority, unique-pane counts, cross-checkout ownership, and unchanged read semantics.
+Swift presentation tests own fixed semantic colors and the shared disconnected override.
+Native verification covers mixed states, Done-to-Idle acknowledgment, right-side disclosure, unchanged terminal selection on collapse, empty and missing workspaces, and disconnect/recovery.
+Run evidence belongs under `agents/runs/`, never in `docs/`.
 
 ## Pet pose priority
 
@@ -103,3 +184,34 @@ A malformed ambient object excludes that agent with a diagnostic while other val
 This client does not own upstream transcript scanning, authorization, or server restart policy.
 
 Regression owners are `ambient_counts_parse_and_unknown_keys_never_survive`, `a_malformed_ambient_record_excludes_only_that_agent`, and `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected`.
+
+## GitHub status in the Workspace row
+
+The PR icon is independent of agent status and Workspace disclosure.
+It appears for a known pull request, an in-progress lookup, or a GitHub lookup failure; a successful lookup with no matching PR leaves it absent.
+Clicking opens details without selecting a pane, marking agents read, or folding the Workspace.
+The popover shows the PR number, title, Open/Draft/Merged/Closed state, head and base branches, and CI rollup.
+Its refresh action reloads one repository; its external action opens the PR URL through the existing external browser route.
+
+The first appearance of a local Git project requests its GitHub status once for the runtime session.
+Repeated appearances are no-ops; explicit refresh advances that repository's generation.
+The existing Git section trigger and sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
+Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
+The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
+
+| GitHub checks | UI |
+| --- | --- |
+| Every reported check succeeded, was neutral, or was skipped | Passing, green |
+| Any failure, error, cancellation, timeout, or required action | Failing, red |
+| At least one running, queued, waiting, pending, or requested check, with no failure | Running, yellow |
+| An explicitly empty check list | No checks, gray |
+| Absent check data, an unknown check kind, or an unrecognized terminal result | Unknown, gray |
+
+Failure takes precedence over pending, then unknown, then passing.
+A failed refresh preserves the last known PR and reports the lookup failure and last successful read time.
+The visible stale notice qualifies both PR state and CI; old green checks are not presented as a fresh result.
+Missing `gh`, logged-out authentication, network errors and rate limits use the reader's existing categorized diagnostics and user-facing reason.
+
+The sidebar tree projection additionally indexes physical pane ownership when forming root rows and direct-select candidates.
+This is linear in the visited project panes and agent projection per recomputation, with no queue or asynchronous work; repeated hover values do not trigger it.

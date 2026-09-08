@@ -10,7 +10,8 @@ enum WorktreeMenuPolicy {
 
     static let projectItems = [newWorktree, removeRegistration]
     static func checkoutItems(isMain: Bool) -> [String] {
-        var items = isMain ? [] : [startAgentHere]
+        var items = [newWorktree]
+        if !isMain { items.append(startAgentHere) }
         items += [setBaseBranch, copyPath, openIn]
         return items
     }
@@ -84,7 +85,7 @@ enum WorktreeSubmissionPresentation {
     static func isLocked(phase: String?) -> Bool { phase == "working" }
     static func showsCancel(phase: String?) -> Bool { phase != "working" }
     static func primaryLabel(phase: String?) -> String {
-        phase == "working" ? "Creating…" : "Create"
+        phase == "working" ? "Creating…" : "Create worktree"
     }
 
     static func completion(paneID: String?) -> (closeSheet: Bool, focusPaneID: String?) {

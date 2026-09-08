@@ -749,18 +749,20 @@ struct HideTerminalPaneCard<Content: View>: View {
                 }
 
                 if showsFork {
-                    PaneHeaderButton(
+                    HideIconButton(
                         systemImage: "arrow.triangle.branch",
                         help: "Fork this agent into a sibling pane",
                         accessibilityLabel: "Fork pane \(paneID)",
+                        variant: .toolbar,
                         action: onFork
                     )
                 }
 
-                PaneHeaderButton(
+                HideIconButton(
                     systemImage: "xmark",
                     help: closeHelp,
                     accessibilityLabel: "Close pane \(paneID)",
+                    variant: .toolbar,
                     command: .pane(.closePane),
                     paneID: paneID,
                     action: onClose

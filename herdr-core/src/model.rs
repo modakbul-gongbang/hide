@@ -339,8 +339,22 @@ pub struct WorkspaceSnapshot {
     pub checkouts: Vec<CheckoutSnapshot>,
 }
 
+/// Agent counts and representative after Hide applies its pane-level read records.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct CheckoutAgentSummary {
+    pub representative_pane_id: Option<String>,
+    pub needs_you: usize,
+    pub done: usize,
+    pub working: usize,
+    pub seen: usize,
+    /// A subset of Seen, not an additional group.
+    pub unknown: usize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
+    pub github: GithubStatusSnapshot,
+    pub agent_summary: CheckoutAgentSummary,
     pub id: String,
     pub workspace_id: String,
     pub label: String,
@@ -798,6 +812,9 @@ pub struct UiStateSnapshot {
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
+    /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
+    #[serde(default)]
+    pub collapsed_checkout_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
     #[serde(default)]
@@ -920,6 +937,7 @@ impl Default for UiStateSnapshot {
             right_panel_section: RightPanelSection::default(),
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
+            collapsed_checkout_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
             collapsed_agent_pane_ids: Vec::new(),
             selected_path: None,
@@ -1127,10 +1145,24 @@ pub enum ReviewDecision {
     Approved,
 }
 
+/// CI rollup. Unknown and absent checks must never look like a pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestChecks {
+    #[default]
+    Unknown,
+    None,
+    Pending,
+    Failed,
+    Passing,
+}
+
 /// One branch's pull request, already tie-broken against every other pull
 /// request on that branch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PullRequestSnapshot {
+    pub title: String,
+    pub checks: PullRequestChecks,
     pub number: u32,
     pub head_branch: String,
     pub base_branch: String,

@@ -348,18 +348,8 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
             continue;
         }
         let branch = current_branch(&root);
-        let label = branch.clone().unwrap_or_else(|| {
-            root.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Checkout")
-                .to_owned()
-        });
+        let label = checkout_row_label(branch.as_deref(), &root);
         let is_worktree = root_comparison != project_comparison;
-        let label = if is_worktree {
-            label
-        } else {
-            "main worktree".to_owned()
-        };
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
@@ -417,12 +407,7 @@ pub(crate) fn apply_worktrees(
             Some(index) => index,
             None => {
                 let path = PathBuf::from(&worktree.path);
-                let label = worktree.branch.clone().unwrap_or_else(|| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("Checkout")
-                        .to_owned()
-                });
+                let label = checkout_row_label(worktree.branch.as_deref(), &path);
                 project.checkouts.push(checkout(
                     &project.id,
                     &path,
@@ -436,11 +421,7 @@ pub(crate) fn apply_worktrees(
         };
         let row = &mut project.checkouts[index];
         row.is_worktree = !worktree.is_main;
-        row.label = worktree_row_label(
-            worktree.is_main,
-            worktree.branch.as_deref(),
-            worktree.head_sha.as_deref(),
-        );
+        row.label = checkout_row_label(worktree.branch.as_deref(), Path::new(&worktree.path));
         row.exists = !worktree.missing;
         row.dirty = worktree.dirty;
         row.changed_file_count = worktree.changed_file_count;
@@ -451,9 +432,7 @@ pub(crate) fn apply_worktrees(
         row.removed_lines = worktree.removed_lines;
         row.unpushed = worktree.unpushed.clone();
         row.worktree = Some(worktree.clone());
-        if row.branch.is_none() {
-            row.branch = worktree.branch.clone();
-        }
+        row.branch = worktree.branch.clone();
     }
 
     // The main worktree leads, so the primary badge and the project path
@@ -467,25 +446,13 @@ pub(crate) fn apply_worktrees(
     }
 }
 
-pub(crate) fn worktree_row_label(
-    is_main: bool,
-    branch: Option<&str>,
-    head_sha: Option<&str>,
-) -> String {
-    if is_main {
-        "main worktree".to_owned()
-    } else {
-        branch.map(str::to_owned).unwrap_or_else(|| {
-            format!(
-                "{} detached",
-                head_sha
-                    .unwrap_or("unknown")
-                    .chars()
-                    .take(8)
-                    .collect::<String>()
-            )
-        })
-    }
+pub(crate) fn checkout_row_label(branch: Option<&str>, path: &Path) -> String {
+    branch.map(str::to_owned).unwrap_or_else(|| {
+        path.file_name()
+            .unwrap_or_else(|| path.as_os_str())
+            .to_string_lossy()
+            .into_owned()
+    })
 }
 
 fn current_branch(root: &Path) -> Option<String> {
@@ -580,12 +547,19 @@ fn inspect(
         Some(root) => vec![checkout(
             id,
             root,
-            branch.as_deref().unwrap_or("Repository"),
+            &checkout_row_label(branch.as_deref(), root),
             branch.clone(),
             false,
             temporary,
         )],
-        None => vec![checkout(id, &normalized, "Folder", None, false, temporary)],
+        None => vec![checkout(
+            id,
+            &normalized,
+            &checkout_row_label(None, &normalized),
+            None,
+            false,
+            temporary,
+        )],
     };
 
     WorkspaceSnapshot {
@@ -820,7 +794,10 @@ mod tests {
         let snapshot = inspect_registered(&registration);
         assert!(!snapshot.is_git);
         assert_eq!(snapshot.checkouts.len(), 1);
-        assert_eq!(snapshot.checkouts[0].label, "Folder");
+        assert_eq!(
+            snapshot.checkouts[0].label,
+            root.file_name().unwrap().to_string_lossy()
+        );
         assert!(!root.join(".git").exists());
         let _ = fs::remove_dir_all(root);
     }

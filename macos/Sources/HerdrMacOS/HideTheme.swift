@@ -122,6 +122,7 @@ enum HideTheme {
     static let accent = Color(red: 211.0 / 255, green: 211.0 / 255, blue: 212.0 / 255)
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
+    static let agentWorking = Color(red: 0.38, green: 0.65, blue: 1.0)
     static let success = Color(red: 0.37, green: 0.90, blue: 0.62)
     /// How far a status mark is dimmed once the operator has read it. The mark
     /// keeps its shape and its hue so the row still says what it is; only its
@@ -190,6 +191,14 @@ enum HideTheme {
     static let lineageDeepIndent: CGFloat = 6
     static let lineageChevronWidth: CGFloat = 16
     static let worktreeDialogWidth: CGFloat = 440
+    static let formControlHeight: CGFloat = 36
+    static let settingsFieldHeight: CGFloat = 24
+    static let checkoutRowHeight: CGFloat = 36
+    static let checkoutIconWidth: CGFloat = 14
+    /// Align the root agent mark center with the checkout branch center.
+    static let compactAgentLeadingInset = spacingSM + agentMarkWidth + spacingSM
+        + checkoutIconWidth / 2 - lineageChevronWidth - agentMarkWidth / 2
+    static let tabTitleMaxWidth: CGFloat = 200
     /// A descendant's inset in the agent tree: two full steps, then a shallower
     /// step per level so a deep lineage still fits the sidebar's width.
     static func lineageInset(depth: Int) -> CGFloat {
@@ -201,9 +210,17 @@ enum HideTheme {
     static let settingsSheetSize = CGSize(width: 720, height: 560)
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
 
+    static let badgeHeight: CGFloat = 16
+
+    enum IconButton {
+        static let standardSize = CGSize(width: 32, height: 32)
+        static let toolbarSize = CGSize(width: 24, height: 24)
+    }
+
     /// Sizes that describe the window's three-column frame rather than the
     /// spacing and radius scale above, which any view may reach for.
     enum Layout {
+        static let pullRequestPopoverWidth: CGFloat = 360
         static let hairlineWidth: CGFloat = 1
         static let resizeHandleThickness: CGFloat = 2
         /// The strip that answers the pointer. Wider than the 2pt marker it

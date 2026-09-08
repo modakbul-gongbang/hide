@@ -1,4 +1,5 @@
 import Testing
+import SwiftUI
 
 @testable import HerdrMacOS
 
@@ -84,11 +85,12 @@ private func presentationAgent(
 }
 
 @Test func checkoutSummaryPrefersAgentCountOverPaneCount() {
-    let checkout = presentationCheckout(
+    var checkout = presentationCheckout(
         id: "main",
         path: "/tmp/hide",
         paneIDs: ["pane-1", "pane-2"]
     )
+    checkout.agentSummary = CoreCheckoutAgentSummary(representativePaneID: "pane-1", working: 1)
     let workspace = presentationWorkspace(checkouts: [checkout])
     let agents = [presentationAgent(id: "agent-1", paneID: "pane-1", group: "working")]
 
@@ -98,9 +100,9 @@ private func presentationAgent(
         agents: agents
     )
 
-    #expect(presentation.activityLabel == "1 agent")
-    #expect(presentation.paneCount == 2)
-    #expect(presentation.activity == .working)
+    #expect(presentation.agentCount == 1)
+    #expect(presentation.status?.color == HideTheme.agentWorking)
+    #expect(presentation.detailTooltip.hasPrefix("Working: 1"))
     #expect(presentation.isPrimary)
 }
 
@@ -118,8 +120,8 @@ private func presentationAgent(
         agents: []
     )
 
-    #expect(presentation.activityLabel == "2 panes")
-    #expect(presentation.activity == .missing)
+    #expect(presentation.agentCount == 0)
+    #expect(presentation.status == nil)
     #expect(!presentation.isPrimary)
 }
 
@@ -190,6 +192,16 @@ private func presentationAgent(
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-3", in: projectsView) == 1)
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: projectsView) == nil)
     #expect(noCheckout.isEmpty)
+    let collapsed = AgentShortcutNumbering.candidates(
+        for: .projects, agents: agents, visibleCheckoutIDs: [checkout.id],
+        collapsedCheckoutIDs: [checkout.id]
+    )
+    #expect(collapsed.isEmpty)
+    let agentsWithCollapsedWorkspace = AgentShortcutNumbering.candidates(
+        for: .agents, agents: agents, visibleCheckoutIDs: [checkout.id],
+        collapsedCheckoutIDs: [checkout.id]
+    )
+    #expect(agentsWithCollapsedWorkspace.map(\.paneID) == agentsView.map(\.paneID))
 }
 
 @Test func agentContextLabelNamesTheProjectAndItsCheckout() {
@@ -243,4 +255,33 @@ private func presentationAgent(
     #expect(TabShortcutNumbering.tab(atNumber: 2, in: tabs)?.id == "tab-2")
     #expect(TabShortcutNumbering.tab(atNumber: 0, in: tabs) == nil)
     #expect(TabShortcutNumbering.tab(atNumber: 11, in: tabs) == nil)
+}
+
+@Test func workspaceDisconnectedSuppressesRetainedCountsAndMark() {
+    var checkout = presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["p1"])
+    checkout.agentSummary = CoreCheckoutAgentSummary(representativePaneID: "p1", working: 1)
+    let agent = presentationAgent(id: "a1", paneID: "p1", group: "working")
+    let presentation = SidebarCheckoutPresentation(workspace: presentationWorkspace(checkouts: [checkout]),
+        checkout: checkout, agents: [agent], connected: false)
+    #expect(presentation.representativeAgentKind == agent.agentKind)
+    #expect(presentation.status?.symbol == "⊘")
+    #expect(presentation.status?.label == "Disconnected")
+    #expect(presentation.status?.color == HideTheme.secondary)
+    #expect(!presentation.detailTooltip.contains("Working: 1"))
+    let row = AgentRowPresentation(agent: agent, density: .compact, connected: false)
+    #expect(row.symbol == presentation.status?.symbol)
+    #expect(row.statusColor == presentation.status?.color)
+}
+
+@Test func semanticStatusUsesFixedColorsAndAcknowledgesWithoutResolving() {
+    let working = AgentStatusPresentation(demand: "none", activity: "working", emphasized: false,
+        symbol: "●", label: "Working", connected: true)
+    #expect(working.color == HideTheme.agentWorking)
+    let done = AgentStatusPresentation(demand: "none", activity: "stopped", emphasized: true,
+        symbol: "✓", label: "Done", connected: true)
+    #expect(done.color == HideTheme.success)
+    let readError = AgentStatusPresentation(demand: "error", activity: "stopped", emphasized: false,
+        symbol: "×", label: "Error", connected: true)
+    #expect(readError.symbol == "×")
+    #expect(readError.color == HideTheme.danger.opacity(HideTheme.readStatusOpacity))
 }

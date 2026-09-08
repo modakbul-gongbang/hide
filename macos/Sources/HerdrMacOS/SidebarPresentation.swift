@@ -1,57 +1,48 @@
 import Foundation
 
-enum SidebarCheckoutActivity: Equatable {
-    case missing
-    case error
-    case needsAttention
-    case working
-    case idle
-    case empty
-}
-
 struct SidebarCheckoutPresentation: Equatable {
-    let paneCount: Int
     let agentCount: Int
     let isPrimary: Bool
-    let activity: SidebarCheckoutActivity
-
-    var activityLabel: String? {
-        if agentCount > 0 {
-            return Self.countLabel(agentCount, singular: "agent")
-        }
-        if paneCount > 0 {
-            return Self.countLabel(paneCount, singular: "pane")
-        }
-        return nil
-    }
+    let status: AgentStatusPresentation?
+    let representativeAgentKind: String?
+    let isDetached: Bool
+    let detailTooltip: String
 
     init(
         workspace: CoreWorkspaceSnapshot,
         checkout: CoreCheckoutSnapshot,
-        agents: [SidebarAgent]
+        agents: [SidebarAgent],
+        connected: Bool = true
     ) {
-        let checkoutAgents = SidebarGrouping.agents(agents, in: checkout)
-        paneCount = checkout.tabs.reduce(0) { $0 + $1.panes.count }
-        agentCount = checkoutAgents.count
+        let summary = checkout.agentSummary
+        agentCount = summary.total
         isPrimary = !checkout.isWorktree && checkout.path == workspace.path
-
-        if !checkout.exists {
-            activity = .missing
-        } else if checkoutAgents.contains(where: { $0.demand == "error" }) {
-            activity = .error
-        } else if checkoutAgents.contains(where: { AgentGroup(agent: $0) == .needsYou }) {
-            activity = .needsAttention
-        } else if checkoutAgents.contains(where: { AgentGroup(agent: $0) == .working }) {
-            activity = .working
-        } else if paneCount > 0 {
-            activity = .idle
+        isDetached = checkout.worktree.map { $0.branch == nil } ?? false
+        let pathDetail: String
+        if isDetached {
+            let commit = checkout.worktree?.headSHA.map { " at \($0)" } ?? ""
+            pathDetail = "Detached HEAD\(commit)\n\(checkout.path)"
         } else {
-            activity = .empty
+            pathDetail = checkout.branch.map { "\($0)\n\(checkout.path)" } ?? checkout.path
         }
-    }
-
-    private static func countLabel(_ count: Int, singular: String) -> String {
-        count == 1 ? "1 \(singular)" : "\(count) \(singular)s"
+        if let representative = agents.first(where: { $0.paneID == summary.representativePaneID }) {
+            status = AgentStatusPresentation(agent: representative, connected: connected)
+            representativeAgentKind = representative.agentKind
+        } else {
+            status = nil
+            representativeAgentKind = nil
+        }
+        if summary.total == 0 {
+            detailTooltip = pathDetail
+        } else if !connected {
+            detailTooltip = "Disconnected · agent activity unavailable\n\(pathDetail)"
+        } else {
+            let counts = [("Needs You", summary.needsYou), ("Done", summary.done),
+                          ("Working", summary.working), ("Seen", summary.seen)]
+                .filter { $0.1 > 0 }.map { "\($0.0): \($0.1)" }.joined(separator: " · ")
+            let unknown = summary.unknown > 0 ? " (\(summary.unknown) Unknown)" : ""
+            detailTooltip = "\(counts)\(unknown)\n\(pathDetail)"
+        }
     }
 }
 
@@ -64,7 +55,7 @@ struct SidebarWorkspacePresentation: Equatable {
         if agentCount > 0 {
             return agentCount == 1 ? "1 agent" : "\(agentCount) agents"
         }
-        return checkoutCount == 1 ? "1 checkout" : "\(checkoutCount) checkouts"
+        return checkoutCount == 1 ? "1 workspace" : "\(checkoutCount) workspaces"
     }
 
     init(workspace: CoreWorkspaceSnapshot, agents: [SidebarAgent]) {
@@ -112,17 +103,20 @@ enum AgentShortcutNumbering {
     static func candidates(
         for content: SidebarContent,
         agents: [SidebarAgent],
-        visibleCheckoutIDs: [String]
+        visibleCheckoutIDs: [String],
+        collapsedCheckoutIDs: Set<String> = [],
+        ownedPaneIDsByCheckout: [String: Set<String>] = [:]
     ) -> [SidebarAgent] {
         switch content {
         case .agents:
             return agents
         case .projects:
             let raised = SidebarGrouping.raised(agents).flatMap(\.agents)
-            let raisedIDs = Set(raised.map(\.id))
-            return raised + visibleCheckoutIDs.flatMap {
-                SidebarGrouping.tree(agents, checkoutID: $0, excluding: raisedIDs)
+            let visible = raised + visibleCheckoutIDs.filter { !collapsedCheckoutIDs.contains($0) }.flatMap {
+                SidebarGrouping.tree(agents, checkoutID: $0, ownedPaneIDs: ownedPaneIDsByCheckout[$0] ?? [])
             }
+            var numberedPanes = Set<String>()
+            return visible.filter { numberedPanes.insert($0.paneID).inserted }
         }
     }
 

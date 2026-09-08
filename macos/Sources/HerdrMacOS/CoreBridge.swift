@@ -566,7 +566,25 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     }
 }
 
+struct CoreCheckoutAgentSummary: Decodable, Equatable {
+    var representativePaneID: String? = nil
+    var needsYou = 0
+    var done = 0
+    var working = 0
+    var seen = 0
+    var unknown = 0
+    var total: Int { needsYou + done + working + seen }
+
+    enum CodingKeys: String, CodingKey {
+        case representativePaneID = "representative_pane_id"
+        case needsYou = "needs_you"
+        case done, working, seen, unknown
+    }
+}
+
 struct CoreCheckoutSnapshot: Decodable, Identifiable {
+    var github: CoreGithubStatus = .empty
+    var agentSummary = CoreCheckoutAgentSummary()
     let id: String
     let workspaceID: String
     let label: String
@@ -602,6 +620,8 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let nextTabLabel: String
 
     enum CodingKeys: String, CodingKey {
+        case github
+        case agentSummary = "agent_summary"
         case id
         case workspaceID = "workspace_id"
         case label
@@ -677,6 +697,8 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
+        agentSummary = try container.decode(CoreCheckoutAgentSummary.self, forKey: .agentSummary)
         id = try container.decode(String.self, forKey: .id)
         workspaceID = try container.decode(String.self, forKey: .workspaceID)
         label = try container.decode(String.self, forKey: .label)
@@ -759,7 +781,13 @@ enum CoreReviewDecision: String, Decodable, Equatable {
     case approved
 }
 
+enum CorePullRequestChecks: String, Decodable, Equatable {
+    case unknown, none, pending, failed, passing
+}
+
 struct CorePullRequest: Decodable, Equatable {
+    var title: String? = nil
+    var checks: CorePullRequestChecks? = nil
     let number: Int
     let headBranch: String
     let baseBranch: String
@@ -772,6 +800,7 @@ struct CorePullRequest: Decodable, Equatable {
     let updatedAtUnixMS: Double?
 
     enum CodingKeys: String, CodingKey {
+        case title, checks
         case number
         case headBranch = "head_branch"
         case baseBranch = "base_branch"
@@ -1361,6 +1390,7 @@ struct CoreUIStateSnapshot: Decodable {
     let rightPanelSection: RightPanelSection
     let expandedPaths: [String]
     let collapsedWorkspaceIDs: [String]
+    let collapsedCheckoutIDs: [String]
     let selectedPath: String?
     let selectedPaneID: String?
     let shortcutBindings: [String: String]
@@ -1397,6 +1427,7 @@ struct CoreUIStateSnapshot: Decodable {
         case rightPanelSection = "right_panel_section"
         case expandedPaths = "expanded_paths"
         case collapsedWorkspaceIDs = "collapsed_workspace_ids"
+        case collapsedCheckoutIDs = "collapsed_checkout_ids"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
         case shortcutBindings = "shortcut_bindings"
@@ -1424,6 +1455,10 @@ struct CoreUIStateSnapshot: Decodable {
         collapsedWorkspaceIDs = try container.decodeIfPresent(
             [String].self,
             forKey: .collapsedWorkspaceIDs
+        ) ?? []
+        collapsedCheckoutIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .collapsedCheckoutIDs
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
@@ -2762,6 +2797,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         rightPanelSection: RightPanelSection? = nil,
         expandedPaths: [String]? = nil,
         collapsedWorkspaceIDs: [String]? = nil,
+        collapsedCheckoutIDs: [String]? = nil,
         selectedPath: String? = nil,
         selectedPaneID: String? = nil,
         focusedCheckoutID: String? = nil,
@@ -2791,6 +2827,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         // Registration events own durable workspace/device lists. A generic
         // UI-state save must not replay a stale snapshot and erase the
         // session-derived temporary catalog.
+        if let collapsedCheckoutIDs {
+            payload["collapsed_checkout_ids"] = collapsedCheckoutIDs
+        }
         if let focusedCheckoutID {
             // This is the one explicit local-selection anchor used after a
             // terminal launcher returns. It never asks Herdr to change focus.

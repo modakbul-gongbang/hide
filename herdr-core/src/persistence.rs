@@ -26,6 +26,8 @@ struct StoredUiState {
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
+    collapsed_checkout_ids: Vec<String>,
+    #[serde(default)]
     project_base_branches: BTreeMap<String, String>,
     #[serde(default)]
     collapsed_agent_pane_ids: Vec<String>,
@@ -139,6 +141,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             right_panel_section: stored.right_panel_section,
             expanded_paths: stored.expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
+            collapsed_checkout_ids: stored.collapsed_checkout_ids,
             project_base_branches: stored.project_base_branches,
             collapsed_agent_pane_ids: stored.collapsed_agent_pane_ids,
             selected_path: stored.selected_path,
@@ -183,6 +186,7 @@ pub fn save(
         right_panel_section: state.right_panel_section,
         expanded_paths: state.expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
+        collapsed_checkout_ids: state.collapsed_checkout_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
         collapsed_agent_pane_ids: state.collapsed_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
@@ -381,10 +385,8 @@ mod tests {
     /// being handed Claude again.
     #[test]
     fn the_composer_choices_and_the_scratch_section_survive_a_relaunch() {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-composer-state-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-composer-state-{}", std::process::id()));
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             last_agent_kind: "codex".to_owned(),
@@ -409,10 +411,8 @@ mod tests {
     /// composer's own defaults rather than a discarded file.
     #[test]
     fn a_store_written_before_the_composer_loads_with_its_defaults() {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-composer-legacy-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-composer-legacy-{}", std::process::id()));
         fs::create_dir_all(&root).expect("legacy store directory");
         let path = root.join("state.json");
         fs::write(
@@ -442,6 +442,7 @@ mod tests {
         let mut state = UiStateSnapshot {
             expanded_paths: vec!["/repo/src".to_owned()],
             collapsed_workspace_ids: vec!["workspace:alpha".to_owned()],
+            collapsed_checkout_ids: vec!["checkout:main".to_owned()],
             ..UiStateSnapshot::default()
         };
 
@@ -452,6 +453,7 @@ mod tests {
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(restored.expanded_paths, ["/repo/src"]);
         assert_eq!(restored.collapsed_workspace_ids, ["workspace:alpha"]);
+        assert_eq!(restored.collapsed_checkout_ids, ["checkout:main"]);
 
         state.expanded_paths.push("/repo/tests".to_owned());
         save(&path, &state, &PaneTerminalSizes::new())
@@ -459,6 +461,7 @@ mod tests {
         let restored_again = load(&path).0;
         assert_eq!(restored_again.expanded_paths, ["/repo/src", "/repo/tests"]);
         assert_eq!(restored_again.collapsed_workspace_ids, ["workspace:alpha"]);
+        assert_eq!(restored_again.collapsed_checkout_ids, ["checkout:main"]);
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);

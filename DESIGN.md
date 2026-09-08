@@ -815,8 +815,37 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 ## Native Git and lineage tokens
 
 `HideTheme.lineageIndent` is 12pt for the first two descendant levels, and `lineageDeepIndent` is 6pt per level from depth three onward.
-`lineageChevronWidth` reserves 16pt for the parent disclosure control.
-Worktree rows use `{typography.body}` and their detail lines `{typography.caption}`, with the existing spacing and neutral surface tokens.
+`lineageChevronWidth` reserves 16pt on every project agent row, with a disclosure control for parents and hairline connectors for descendants.
+Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
+The branch is the title; the primary checkout carries a separate `primary` role badge.
+The sidebar hierarchy is Project > Workspace > Agents; a workspace corresponds to one checkout path, including a plain folder.
+Workspaces without a branch use their actual folder name, including missing paths.
+Detached checkouts carry a separate `detached` badge; their tooltip retains the commit and path.
+Workspaces with nested agent rows toggle disclosure across the whole row; the right-edge arrow only indicates expansion.
+Workspaces without nested agent rows open when clicked and have no arrow.
+Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
+Project-view number shortcuts skip agents hidden by workspace disclosure.
+`agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
+`compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
+Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
+The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
+The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
+The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
+`agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
+Workspace agent counts use the trailing representative chip; uncommitted changes retain their separate Git indicator.
+A PR icon appears before the chip for a known pull request, an active GitHub lookup, or a lookup failure.
+Clicking it opens a 360pt details popover with PR number, title, state, CI rollup, branches, refresh, and an external GitHub action.
+The PR control is a sibling of the full-row disclosure button, so opening details never folds the Workspace.
+Workspace rows without agents reserve no disclosure slot.
+Their PR control uses the same trailing 24pt column as populated rows' disclosure, keeping the icon centers and right inset aligned.
+The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
+The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
+New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
+`formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
+`HideFormPicker` owns both compact and stacked menu presentations, and `HideSettingsField` owns text inputs.
+Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
+The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
+The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
 `HideTheme.GitIcon` names refresh (`arrow.clockwise`), merged (`checkmark.circle`), unmerged (`circle`), dirty (`circle.fill`), clean (`checkmark`), merged PR (`arrow.triangle.merge`), closed PR (`xmark.circle`), unavailable (`exclamationmark.circle`), and absent PR (`minus.circle`).
@@ -925,10 +954,29 @@ The event monitor observes and returns key events.
 
 ### Icon buttons and badges
 
-`HideIconButton.swift` owns icon controls and the pane header button variant.
-Icons use primary or secondary text, an elevated active surface, small radius, and the shared command tooltip.
-Pressed and disabled appearances use the named opacity tokens.
-`HideBadge.swift` owns compact labels; agent provider artwork remains in the existing agent badge.
+`HideIconButton.swift` owns icon-only actions in the sidebar command bar, tab strip, pane headers, and browser toolbar.
+Callers provide the symbol, help text, action, optional selection state, and a role; they do not add size, padding, foreground, background, or button-style overrides.
+`standard` uses `HideTheme.IconButton.standardSize` (32×32pt) with an elevated resting surface.
+`toolbar` uses `HideTheme.IconButton.toolbarSize` (24×24pt) with a transparent resting surface, fitting the 28pt pane header and 32pt tab strip.
+Both use `radiusMedium`; icon typography is `body` for standard and `caption` for toolbar, independently of the hit area.
+Hover raises foreground contrast and adds `Opacity.subtleFill`; selection uses `Opacity.selectedFill` and the accessibility selected trait.
+Press uses `Opacity.secondary`; disabled uses `Opacity.disabled`, suppresses hover emphasis, and delegates activation blocking to the native Button.
+Hover state stays local to each button; repeated identical hover events publish no state changes, and no runtime dispatch or new timer is added.
+The shared command tooltip retains pane/tab targets, and the accessibility label defaults to help unless a more specific name is supplied.
+
+```swift
+HideIconButton(
+    systemImage: "plus",
+    help: "New Tab",
+    variant: .toolbar,
+    command: .menu(.newTab),
+    action: model.addTab
+)
+```
+
+Text buttons, menu triggers, title-bearing navigation rows, and the agent lineage renderer retain their own components and semantics.
+Workspace disclosure uses its entire 36pt row, so its chevron is an indicator rather than an icon button.
+`HideBadge.swift` owns compact labels, with `HideTheme.badgeHeight` (16pt); agent provider artwork remains in the existing agent badge.
 A state keeps its symbol and semantic color when read, with reduced emphasis instead of a new word.
 
 ### Sheets, overlays, and abnormal states
@@ -939,8 +987,11 @@ The selected provider card uses an elevated fill and stronger neutral border; it
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
 The right panel's Explorer and Changes sections use the same panel and text ladder.
-The checkout card shows an initial pull-request spinner only while the visible Git section requests a lookup.
-Explorer and Changes do not start GitHub queries, so an absent answer there is not a loading state; an existing answer remains visible.
+The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
+The Git section retains its existing open/refresh trigger, while the sidebar popover and project menu can explicitly refresh one repository.
+All triggers share the existing bounded background reader, authentication and cache.
+Explorer and Changes do not independently start GitHub queries.
+Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
 Changes is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
 Diff tabs use the editor's monospaced content scale, fixed old and new line-number columns, semantic added and removed tints, and horizontal scrolling for long lines.
 Their scroll canvas fills the editor viewport, with short diffs anchored at the top left and long diffs growing beyond it for scrolling.

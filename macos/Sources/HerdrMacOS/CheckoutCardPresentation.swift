@@ -8,8 +8,35 @@ import SwiftUI
 /// pull request gets and what counts as stale -
 /// so they can be checked against fixed input instead of against a screenshot.
 enum CheckoutCardPresentation {
+    static func pullRequestState(_ request: CorePullRequest) -> String {
+        switch request.badge {
+        case .merged: "Merged"
+        case .closed: "Closed"
+        default: request.isDraft ? "Draft" : "Open"
+        }
+    }
+
+    static func checksLabel(_ checks: CorePullRequestChecks?) -> String {
+        switch checks {
+        case .passing: "Passing"
+        case .failed: "Failing"
+        case .pending: "Running"
+        case .none?: "No checks"
+        case .unknown, nil: "Unknown"
+        }
+    }
+
+    static func checksColor(_ checks: CorePullRequestChecks?) -> Color {
+        switch checks {
+        case .passing: HideTheme.success
+        case .failed: HideTheme.danger
+        case .pending: HideTheme.warning
+        default: HideTheme.secondary
+        }
+    }
+
     /// The badge's colour. Merged and closed share one because both mean the
-    /// work is over and the whole row is dimmed anyway; the three review
+    /// work is over; the three review
     /// decisions are the distinction the colour actually has to carry.
     ///
     /// No saturated accent is used: DESIGN.md reserves those for category
@@ -49,16 +76,6 @@ enum CheckoutCardPresentation {
         }
     }
 
-    /// Whether the row is drawn dimmed. A worktree with no terminal is not
-    /// where work is happening, and a merged or closed one is where it has
-    /// stopped; both are things to look past rather than at.
-    static func isDimmed(_ checkout: CoreCheckoutSnapshot) -> Bool {
-        if let badge = checkout.pullRequest?.badge, badge.isSettled {
-            return true
-        }
-        return !checkout.hasPanes
-    }
-
     /// The row's accessibility label: every badge, dot, and count said in
     /// words, because the row itself is deliberately almost wordless.
     static func rowAccessibilityLabel(
@@ -67,6 +84,9 @@ enum CheckoutCardPresentation {
         agentCount: Int
     ) -> String {
         var parts = [repoName, checkout.label]
+        if let worktree = checkout.worktree, worktree.branch == nil {
+            parts.append("detached HEAD")
+        }
         if !checkout.exists {
             parts.append("missing")
         }

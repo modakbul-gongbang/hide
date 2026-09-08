@@ -78,28 +78,6 @@ struct CheckoutCardPresentationTests {
         #expect(!CorePullRequestBadge.review.isSettled)
     }
 
-    /// A worktree with no terminal and one whose work is over are both dimmed;
-    /// a worktree being actively worked in is not.
-    @Test func dimmingMarksWhatThereIsNothingToDoIn() {
-        #expect(CheckoutCardPresentation.isDimmed(checkout(hasPanes: false)))
-        #expect(
-            CheckoutCardPresentation.isDimmed(
-                checkout(pullRequest: pullRequest(badge: .merged))
-            )
-        )
-        #expect(
-            CheckoutCardPresentation.isDimmed(
-                checkout(pullRequest: pullRequest(badge: .closed))
-            )
-        )
-        #expect(
-            !CheckoutCardPresentation.isDimmed(
-                checkout(pullRequest: pullRequest(badge: .open))
-            )
-        )
-        #expect(!CheckoutCardPresentation.isDimmed(checkout()))
-    }
-
     /// The row is almost wordless on purpose, so every badge, dot, and count
     /// has to be reachable in words.
     @Test func theRowSaysInWordsWhatItDrawsInSymbols() {
@@ -231,4 +209,15 @@ struct CheckoutCardPresentationTests {
         // A file git cannot count shows no numbers rather than zeros.
         #expect(root.addedLines == nil)
     }
+}
+
+@Test func githubChecksAndLifecycleUseExplicitLabels() {
+    #expect(CheckoutCardPresentation.checksLabel(nil) == "Unknown")
+    #expect(CheckoutCardPresentation.checksLabel(.some(.none)) == "No checks")
+    #expect(CheckoutCardPresentation.checksLabel(.pending) == "Running")
+    #expect(CheckoutCardPresentation.checksLabel(.failed) == "Failing")
+    #expect(CheckoutCardPresentation.checksLabel(.passing) == "Passing")
+    #expect(CheckoutCardPresentation.pullRequestState(pullRequest(badge: .merged)) == "Merged")
+    #expect(CheckoutCardPresentation.pullRequestState(pullRequest(badge: .closed)) == "Closed")
+    #expect(CheckoutCardPresentation.pullRequestState(pullRequest(badge: .review, review: .approved)) == "Open")
 }

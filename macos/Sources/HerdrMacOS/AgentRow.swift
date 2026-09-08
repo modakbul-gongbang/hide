@@ -5,26 +5,36 @@ import SwiftUI
 /// It reads the axes the core publishes, never a state name, so the pet
 /// dashboard, the sidebar rows, and anything added later cannot drift apart.
 /// A row the operator has already read keeps its hue and loses its urgency.
-enum AgentStatusStyle {
-    static func color(
-        demand: String,
-        activity: String,
-        emphasized: Bool,
-        accent: Color,
-        secondary: Color = HideTheme.secondary
-    ) -> Color {
+struct AgentStatusPresentation: Equatable {
+    let symbol: String
+    let label: String
+    let color: Color
+
+    init(demand: String, activity: String, emphasized: Bool, symbol: String, label: String, connected: Bool) {
+        guard connected else {
+            self.symbol = "⊘"
+            self.label = "Disconnected"
+            self.color = HideTheme.secondary
+            return
+        }
+        self.symbol = symbol
+        self.label = label
         let base: Color = switch demand {
         case "error": HideTheme.danger
         case "question", "approval": HideTheme.warning
         default:
             switch activity {
-            case "working": accent
-            case "stopped": emphasized ? HideTheme.success : secondary
-            default: secondary
+            case "working": HideTheme.agentWorking
+            case "stopped": emphasized ? HideTheme.success : HideTheme.secondary
+            default: HideTheme.secondary
             }
         }
-        guard !emphasized, demand != "none" else { return base }
-        return base.opacity(HideTheme.readStatusOpacity)
+        color = !emphasized && demand != "none" ? base.opacity(HideTheme.readStatusOpacity) : base
+    }
+
+    init(agent: SidebarAgent, connected: Bool) {
+        self.init(demand: agent.demand, activity: agent.activity, emphasized: agent.emphasized,
+                  symbol: agent.symbol, label: agent.statusLabel, connected: connected)
     }
 }
 
@@ -42,10 +52,9 @@ enum AgentRowDensity {
     var badgeSize: CGFloat { self == .prominent ? 19 : 16 }
     var titleWeight: Font.Weight { self == .prominent ? .semibold : .regular }
     var titleColor: Color { self == .prominent ? HideTheme.primary : HideTheme.secondary }
-    /// The mark column sits at the indent, so the agent badge lands where it
-    /// did before the mark existed: level with the section label at the top
-    /// level, and one step in from the checkout label when nested.
-    var leadingPadding: CGFloat { self == .prominent ? 14 : 23 }
+    /// Compact marks align beneath the Workspace branch icon.
+    var leadingPadding: CGFloat { self == .prominent ? 14 : HideTheme.compactAgentLeadingInset }
+    var iconSpacing: CGFloat { self == .compact ? HideTheme.spacingXS : HideTheme.spacingSM }
     var trailingPadding: CGFloat { self == .prominent ? 14 : 9 }
     var verticalPadding: CGFloat { self == .prominent ? 7 : 5 }
 }
@@ -96,17 +105,13 @@ extension AgentRowPresentation {
     /// A sidebar row. At `prominent` the project name is the title and the
     /// summary sits beneath it; nested under a checkout the summary is the
     /// title on its own, because the project name is already the heading.
-    init(agent: SidebarAgent, density: AgentRowDensity, accent: Color) {
+    init(agent: SidebarAgent, density: AgentRowDensity, connected: Bool) {
         paneID = agent.paneID
         agentKind = agent.agentKind
-        symbol = agent.symbol
-        statusLabel = agent.statusLabel
-        statusColor = AgentStatusStyle.color(
-            demand: agent.demand,
-            activity: agent.activity,
-            emphasized: agent.emphasized,
-            accent: accent
-        )
+        let status = AgentStatusPresentation(agent: agent, connected: connected)
+        symbol = status.symbol
+        statusLabel = status.label
+        statusColor = status.color
         title = density == .prominent ? agent.workspaceLabel : agent.summary
         detail = density == .prominent ? agent.summary : nil
         qualifier = density == .prominent ? agent.checkoutQualifier : nil
@@ -117,17 +122,13 @@ extension AgentRowPresentation {
     /// A Scratch row. The chat's own title is the line that identifies it -
     /// there is no project name to stand in for one - and the agent's summary
     /// sits beneath it.
-    init(agent: SidebarAgent, title: String, accent: Color) {
+    init(agent: SidebarAgent, title: String, connected: Bool) {
         paneID = agent.paneID
         agentKind = agent.agentKind
-        symbol = agent.symbol
-        statusLabel = agent.statusLabel
-        statusColor = AgentStatusStyle.color(
-            demand: agent.demand,
-            activity: agent.activity,
-            emphasized: agent.emphasized,
-            accent: accent
-        )
+        let status = AgentStatusPresentation(agent: agent, connected: connected)
+        symbol = status.symbol
+        statusLabel = status.label
+        statusColor = status.color
         self.title = title
         detail = agent.summary
         qualifier = nil
@@ -138,21 +139,17 @@ extension AgentRowPresentation {
     /// A pet dashboard row. The dashboard groups by project, so the project
     /// name is the heading and the summary is the title. A server that stopped
     /// answering is a state of the row, not of the agent, so it takes the
-    /// warning hue and says so in its own word.
-    init(row: PetDashboardRow, accent: Color) {
+    /// disconnected mark and says so in its own word.
+    init(row: PetDashboardRow) {
         paneID = row.paneID
         agentKind = row.agentKind
-        symbol = row.symbol
-        statusLabel = row.statusLabel
-        statusColor = row.connection == "connected"
-            ? AgentStatusStyle.color(
-                demand: row.demand,
-                activity: row.activity,
-                emphasized: row.emphasized,
-                accent: accent,
-                secondary: HideTheme.PetDashboard.secondary
-            )
-            : HideTheme.warning
+        let status = AgentStatusPresentation(
+            demand: row.demand, activity: row.activity, emphasized: row.emphasized,
+            symbol: row.symbol, label: row.statusLabel, connected: row.connection == "connected"
+        )
+        symbol = status.symbol
+        statusLabel = status.label
+        statusColor = status.color
         title = row.summary
         detail = nil
         qualifier = row.paneID
@@ -163,7 +160,7 @@ extension AgentRowPresentation {
 
 /// The core's mark for one agent, in its own column so the marks line up down
 /// the list whichever symbol each row carries.
-private struct AgentStatusMark: View {
+struct AgentStatusMark: View {
     let symbol: String
     let color: Color
 
@@ -207,7 +204,7 @@ struct AgentRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: HideTheme.spacingSM) {
+            HStack(alignment: .top, spacing: density.iconSpacing) {
                 AgentStatusMark(symbol: presentation.symbol, color: presentation.statusColor)
                 AgentBadge(
                     agentKind: presentation.agentKind,
