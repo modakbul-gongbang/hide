@@ -50,6 +50,56 @@ struct RecentNavigationIntegrationTests {
 
     }
 
+    @MainActor @Test func recentPanelKeepsTheFocusedAgentBrandAcrossSplitFocusAndFileVisits() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("hide-panel-marks-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
+        let model = ShellModel(core: bridge)
+        try await eventually("initial terminal") { model.recentSurfaces.count == 1 }
+        bridge.dispatch(kind: "session_snapshot", payload: [
+            "focused_pane_id": "fixture-working",
+            "agents": [("fixture-working", "codex"), ("fixture-claude", "claude")].map { pane, kind in
+                ["id": pane, "pane_id": pane, "workspace_label": "Review", "agent": kind,
+                 "agent_status": "working", "tokens": ["summary": "Review", "status_working": "●", "activity": "1755000003000"]] as [String: Any]
+            },
+            "workspaces": [["workspace_id": "fixture-workspace", "label": "Review", "active_tab_id": "fixture-tab"]],
+            "tabs": [["tab_id": "fixture-tab", "workspace_id": "fixture-workspace", "label": "Review"]],
+            "panes": ["fixture-working", "fixture-claude"].map { ["pane_id": $0, "cwd": root.path] },
+            "layouts": [[
+                "workspace_id": "fixture-workspace", "tab_id": "fixture-tab", "zoomed": false,
+                "focused_pane_id": "fixture-working", "area": ["x": 0, "y": 0, "width": 80, "height": 24],
+                "panes": [
+                    ["pane_id": "fixture-working", "rect": ["x": 0, "y": 0, "width": 40, "height": 24]],
+                    ["pane_id": "fixture-claude", "rect": ["x": 40, "y": 0, "width": 40, "height": 24]],
+                ], "splits": [["direction": "right", "ratio": 0.5,
+                    "rect": ["x": 0, "y": 0, "width": 80, "height": 24]]],
+            ]],
+        ])
+        try await eventually("Codex panel mark") {
+            model.recentSurfaces.values.first?.item.focusedAgent?.agentKind == "codex"
+        }
+        let tabSurfaceID = try #require(model.recentSurfaces.values.first?.id)
+        bridge.focusPane("fixture-claude", origin: .operatorChoice)
+        try await eventually("Claude panel mark follows core focus before layout acknowledgement") {
+            model.recentSurfaces[tabSurfaceID]?.item.focusedAgent?.agentKind == "claude"
+        }
+        #expect(model.recentSurfaces[tabSurfaceID]?.item.focusedAgent?.paneID == "fixture-claude")
+        let file = root.appendingPathComponent("검토.md")
+        try "review".write(to: file, atomically: true, encoding: .utf8)
+        model.openFile(file)
+        try await eventually("file appears alongside agent") { model.recentSurfaces.count == 2 }
+        let fileSurface = try #require(model.recentSurfaces.values.first { $0.id != tabSurfaceID })
+        #expect(fileSurface.item.focusedAgent == nil)
+        #expect(fileSurface.symbol == "doc.text")
+        model.beginOrAdvanceTabSwitcher()
+        #expect(model.tabSwitcherCycle?.selectedTabID == tabSurfaceID)
+        #expect(model.recentSurfaces[tabSurfaceID]?.item.focusedAgent?.agentKind == "claude")
+        model.cancelTabSwitcher()
+    }
+
     @MainActor @Test func controlTabRestoresTheActuallyPreviousPanelAcrossFilesAndTerminal() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("hide-recent-panels-\(UUID().uuidString)")

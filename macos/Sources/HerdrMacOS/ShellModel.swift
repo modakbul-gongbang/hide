@@ -1277,18 +1277,26 @@ final class ShellModel: ObservableObject {
         var projectOrder: [String] = []
         currentProjectID = nil
         currentSurfaceID = nil
-        var contexts: [(String, [CoreWorkspaceSnapshot], String?, String?, String?, [CoreEditorTabSnapshot])] = [
+        var contexts: [(String, [CoreWorkspaceSnapshot], String?, String?, String?, [CoreEditorTabSnapshot],
+                        [String: String], [SidebarAgent], String?)] = [
             ("local", snapshot.navigator.workspaces, snapshot.navigator.focusedWorkspaceID,
-             snapshot.navigator.focusedCheckoutID, snapshot.editor.activeTabID, snapshot.editor.tabs)
+             snapshot.navigator.focusedCheckoutID, snapshot.editor.activeTabID, snapshot.editor.tabs,
+             Dictionary(uniqueKeysWithValues: snapshot.paneLayouts.map { ($0.tabID, $0.focusedPaneID) }),
+             snapshot.navigator.agents, snapshot.focusedPaneID)
         ]
         for status in snapshot.status.remote {
             guard let session = status.session else { continue }
             let navigation = remote.navigation?.deviceID == status.targetID ? remote.navigation : nil
             contexts.append((status.targetID, session.workspaces,
                 navigation?.focusedWorkspaceID ?? session.focusedWorkspaceID,
-                navigation?.focusedCheckoutID ?? session.focusedCheckoutID, nil, []))
+                navigation?.focusedCheckoutID ?? session.focusedCheckoutID, nil, [],
+                Dictionary(uniqueKeysWithValues: (navigation?.paneLayouts ?? session.paneLayouts).map { ($0.tabID, $0.focusedPaneID) }),
+                navigation?.agents ?? session.agents, navigation?.focusedPaneID ?? session.focusedPaneID))
         }
-        for (deviceID, workspaces, focusedWorkspaceID, focusedCheckoutID, activeFileID, editorTabs) in contexts {
+        for (deviceID, workspaces, focusedWorkspaceID, focusedCheckoutID, activeFileID, editorTabs,
+             layoutPaneIDs, contextAgents, focusedPaneID) in contexts {
+            var paneIDs = layoutPaneIDs
+            let agentsByPane = Dictionary(uniqueKeysWithValues: contextAgents.map { ($0.paneID, $0) })
             for workspace in workspaces {
                 let projectID = "\(deviceID):\(workspace.id)"
                 projects[projectID] = RecentProject(id: projectID, deviceID: deviceID, workspace: workspace)
@@ -1298,10 +1306,16 @@ final class ShellModel: ObservableObject {
                 var available: [String] = []
                 for checkout in workspace.checkouts {
                     let isFocused = selected && checkout.id == focusedCheckoutID
+                    let activeTabID = deviceID != "local" && isFocused
+                        ? remote.navigation?.focusedTabID : checkout.activeTabID
+                    // Match the tab strip: core-owned focus wins while its
+                    // layout confirmation is pending. Index agents once per
+                    // device, then pass only this checkout's panes.
+                    if isFocused, let activeTabID, let focusedPaneID { paneIDs[activeTabID] = focusedPaneID }
+                    let checkoutAgents = checkout.tabs.flatMap(\.panes).compactMap { agentsByPane[$0.id] }
                     let tabs = ShellTabStrip.items(strip: checkout.strip, herdrTabs: checkout.tabs,
-                        editorTabs: editorTabs, activeHerdrTabID: deviceID != "local" && isFocused
-                            ? remote.navigation?.focusedTabID : checkout.activeTabID,
-                        activeFileTabID: activeFileID)
+                        editorTabs: editorTabs, activeHerdrTabID: activeTabID,
+                        activeFileTabID: activeFileID, focusedPaneIDsByTab: paneIDs, agents: checkoutAgents)
                     if tabs.count != checkout.strip.count {
                         HideLaunchTrace.mark("navigation.tabs.reconciled", detail: "reason=missing_content removed_count=\(checkout.strip.count - tabs.count) revision=\(snapshot.navigationRevision)")
                     }

@@ -956,6 +956,7 @@ The existing core catalog determines grouping; navigation does not infer it from
 
 Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
 Project rows show the last surface and checkout; tab rows show their checkout and surface type.
+Recent Panels uses the same focused-pane agent brand mark as the tab strip, including Claude Code and Codex; file, diff and unassociated terminal surfaces keep their type icons.
 History is session-local and retains only existing projects and surfaces.
 A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
 If none survives, cancel with a structured recovery trace and keep the core's current selection.

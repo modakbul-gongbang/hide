@@ -308,7 +308,8 @@ private struct RecentNavigationOverlay: View {
                 rows: cycle.visibleIDs.compactMap { id in
                     guard let surface = model.recentSurfaces[id] else { return nil }
                     return RecentSwitcherRow(id: id, title: surface.item.label,
-                        detail: surface.checkoutLabel, symbol: surface.symbol, dirty: surface.item.dirty)
+                        detail: surface.checkoutLabel, symbol: surface.symbol, dirty: surface.item.dirty,
+                        agent: surface.item.focusedAgent)
                 }, selectedID: cycle.selectedTabID,
                 identifier: "tab-mru-switcher"
             )
@@ -322,6 +323,7 @@ private struct RecentSwitcherRow: Identifiable {
     let detail: String
     let symbol: String
     var dirty = false
+    var agent: SidebarAgent? = nil
 }
 
 /// Both navigation levels share the existing panel, typography and keycaps.
@@ -344,10 +346,18 @@ private struct RecentSwitcherOverlay: View {
             }
             ForEach(rows) { row in
                 HStack(spacing: HideTheme.spacingMD) {
-                    Image(systemName: row.symbol)
-                        .hideFont(size: HideTheme.Typography.title, weight: .semibold)
-                        .foregroundStyle(HideTheme.secondary)
-                        .frame(width: HideTheme.checkoutIconWidth)
+                    Group {
+                        if let agent = row.agent {
+                            AgentBadge(agentKind: agent.agentKind,
+                                stateColor: HideTheme.secondary,
+                                size: HideTheme.checkoutIconWidth)
+                        } else {
+                            Image(systemName: row.symbol)
+                                .hideFont(size: HideTheme.Typography.title, weight: .semibold)
+                                .foregroundStyle(HideTheme.secondary)
+                        }
+                    }
+                    .frame(width: HideTheme.checkoutIconWidth)
                     VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                         Text(row.title)
                             .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
