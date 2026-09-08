@@ -691,6 +691,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         }
     }
     changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
+    changed |= crate::project_context::sort_projects(workspaces, agents);
     changed
 }
 
@@ -1153,6 +1154,9 @@ fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bo
 pub struct Runtime {
     snapshot: Snapshot,
     state_path: PathBuf,
+    state_save_pending: bool,
+    state_save_active: bool,
+    state_save_worker: Option<thread::JoinHandle<()>>,
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
@@ -1443,6 +1447,9 @@ impl Runtime {
             editor_documents: HashMap::new(),
             editor_tab_history: Vec::new(),
             worker_context: None,
+            state_save_pending: false,
+            state_save_active: false,
+            state_save_worker: None,
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
@@ -1488,6 +1495,10 @@ impl Runtime {
         notifier: ChangeNotifier,
     ) {
         self.worker_context = Some(RuntimeWorkerContext { runtime, notifier });
+    }
+
+    pub(crate) fn take_state_save_worker(&mut self) -> Option<thread::JoinHandle<()>> {
+        self.state_save_worker.take()
     }
 
     pub fn snapshot(&self) -> &Snapshot {
@@ -2704,7 +2715,11 @@ impl Runtime {
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
-        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
+        crate::sidebar::sync_checkout_agent_summaries(
+            &mut workspaces,
+            &self.snapshot.navigator.agents,
+        );
+        crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.scratch = crate::model::ScratchSnapshot {
             id: crate::scratch::NODE_ID.to_owned(),
@@ -4372,26 +4387,11 @@ impl Runtime {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
-            workspace.checkouts.sort_by(|left, right| {
-                let left_worktree = left.worktree.as_ref();
-                let right_worktree = right.worktree.as_ref();
-                right_worktree
-                    .is_some_and(|worktree| worktree.is_main)
-                    .cmp(&left_worktree.is_some_and(|worktree| worktree.is_main))
-                    .then_with(|| right.has_panes.cmp(&left.has_panes))
-                    .then_with(|| {
-                        right_worktree
-                            .and_then(|worktree| worktree.last_commit_unix_seconds)
-                            .unwrap_or(0)
-                            .cmp(
-                                &left_worktree
-                                    .and_then(|worktree| worktree.last_commit_unix_seconds)
-                                    .unwrap_or(0),
-                            )
-                    })
-                    .then_with(|| left.path.cmp(&right.path))
-            });
         }
+        crate::project_context::sort_projects(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
 
         let focused_project = self
             .snapshot
@@ -4439,7 +4439,10 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
-                .filter(|workspace| self.github_lookup_requested() || self.sidebar_github_projects.contains(&workspace.path))
+                .filter(|workspace| {
+                    self.github_lookup_requested()
+                        || self.sidebar_github_projects.contains(&workspace.path)
+                })
                 .map(|workspace| crate::github::GithubProjectRequest {
                     root: PathBuf::from(&workspace.path),
                     generation: self
@@ -4898,6 +4901,22 @@ impl Runtime {
         if self.snapshot.card == card {
             return false;
         }
+        let retired = self
+            .snapshot
+            .card
+            .panes
+            .iter()
+            .filter(|old| {
+                !card.panes.iter().any(|new| {
+                    new.pane_id == old.pane_id && new.parent_pane_id == old.parent_pane_id
+                })
+            })
+            .count();
+        if retired > 0 {
+            crate::diagnostic!(serde_json::json!({
+                "component": "checkout_context", "kind": "context.retired", "count": retired,
+            }));
+        }
         self.snapshot.card = card;
         true
     }
@@ -4929,6 +4948,11 @@ impl Runtime {
         let disk_measuring = checkout.is_worktree && disk.path.is_none();
         crate::model::CheckoutCardSnapshot {
             checkout_id: Some(checkout.id.clone()),
+            panes: crate::project_context::checkout_panes(
+                checkout,
+                &self.snapshot.navigator.workspaces,
+                &self.snapshot.navigator.agents,
+            ),
             github,
             disk,
             disk_measuring,
@@ -5185,17 +5209,45 @@ impl Runtime {
     /// Writes the operator's UI state and the pane sizes the next launch
     /// attaches with. The sizes are not part of the UI state the shell draws,
     /// so they are collected here rather than carried on the snapshot.
-    fn write_ui_state(&self) -> Result<(), String> {
-        let pane_terminal_sizes: persistence::PaneTerminalSizes = self
-            .terminal_sizes
-            .iter()
-            .map(|(pane_id, size)| (pane_id.clone(), *size))
-            .collect();
-        persistence::save(
-            &self.state_path,
-            &self.snapshot.ui_state,
-            &pane_terminal_sizes,
-        )
+    fn write_ui_state(&mut self) -> Result<(), String> {
+        let Some(context) = self.worker_context.clone() else {
+            // Standalone runtimes have no shared mutex or worker context.
+            return persistence::save(&self.state_path, &self.snapshot.ui_state,
+                &self.terminal_sizes.iter().map(|(id, size)| (id.clone(), *size)).collect());
+        };
+        self.state_save_pending = true;
+        if self.state_save_active {
+            return Ok(());
+        }
+        self.state_save_active = true;
+        match thread::Builder::new().name("hide-state-save".into()).spawn(move || {
+            let Some(runtime) = context.runtime.upgrade() else { return; };
+            loop {
+                let (path, state, sizes) = {
+                    let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
+                    if !guard.state_save_pending {
+                        guard.state_save_active = false;
+                        return;
+                    }
+                    guard.state_save_pending = false;
+                    (guard.state_path.clone(), guard.snapshot.ui_state.clone(),
+                     guard.terminal_sizes.iter().map(|(id, size)| (id.clone(), *size)).collect())
+                };
+                // The existing save function serializes and writes outside the
+                // runtime mutex. One pending flag coalesces newer UI state.
+                if let Err(message) = persistence::save(&path, &state, &sizes) {
+                    runtime.lock().unwrap_or_else(|e| e.into_inner())
+                        .set_error("ui_state.save_failed", message, true);
+                    context.notifier.notify();
+                }
+            }
+        }) {
+            Ok(worker) => { self.state_save_worker = Some(worker); Ok(()) }
+            Err(error) => {
+                self.state_save_active = false;
+                Err(format!("UI state save worker could not start: {error}"))
+            }
+        }
     }
 
     fn persist_ui_state(&mut self) {
@@ -6948,7 +7000,10 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
-        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
+        crate::sidebar::sync_checkout_agent_summaries(
+            &mut workspaces,
+            &self.snapshot.navigator.agents,
+        );
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
@@ -8090,20 +8145,49 @@ impl Runtime {
                 true
             }
             ValidatedEvent::RemoveWorkspace(payload) => {
+                // Removing a registration never closes Herdr workspaces. An
+                // occupied project would immediately return through discovery.
+                if self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                    workspace.id == payload.workspace_id
+                        && (!workspace.session_workspace_ids.is_empty()
+                            || workspace
+                                .checkouts
+                                .iter()
+                                .any(|checkout| checkout.has_panes))
+                }) {
+                    self.set_error(
+                        "workspace.registration_in_use",
+                        "This project is still open in Herdr. Close or move its panes and workspaces, then remove the registration again. Files and worktrees are kept.",
+                        true,
+                    );
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "registration", "kind": "remove.in_use",
+                        "workspace_id": payload.workspace_id,
+                    }));
+                    return true;
+                }
                 let before = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
                     .ui_state
                     .workspace_registrations
                     .retain(|registration| registration.id != payload.workspace_id);
                 if before == self.snapshot.ui_state.workspace_registrations.len() {
-                    self.set_error(
-                        "workspace.unknown",
-                        format!("Workspace {} is not registered", payload.workspace_id),
-                        false,
-                    );
-                    return true;
+                    return false;
                 }
-                self.rebuild_catalog();
+                // Retire the accepted projection directly. Rebuilding the
+                // filesystem catalog here ran git while holding the mutex.
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .retain(|workspace| workspace.id != payload.workspace_id);
+                if let Some(catalog) = &mut self.last_accepted_catalog {
+                    catalog.retain(|workspace| workspace.id != payload.workspace_id);
+                }
+                self.snapshot
+                    .ui_state
+                    .collapsed_workspace_ids
+                    .retain(|id| id != &payload.workspace_id);
+                self.resync_navigator_focus();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "workspace.unregistered",
@@ -8987,11 +9071,23 @@ impl Runtime {
                 changed
             }
             ValidatedEvent::GithubRequest(payload) => {
-                let project = self.snapshot.navigator.workspaces.iter()
-                    .find(|workspace| workspace.id == payload.workspace_id && workspace.is_git && workspace.remote_target_id.is_none())
+                let project = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| {
+                        workspace.id == payload.workspace_id
+                            && workspace.is_git
+                            && workspace.remote_target_id.is_none()
+                    })
                     .map(|workspace| workspace.path.clone());
                 let Some(project) = project else {
-                    self.set_error("github.invalid_project", "GitHub lookup requires a registered local Git project".to_owned(), false);
+                    self.set_error(
+                        "github.invalid_project",
+                        "GitHub lookup requires a registered local Git project".to_owned(),
+                        false,
+                    );
                     return true;
                 };
                 let first = self.sidebar_github_projects.insert(project.clone());
@@ -10434,17 +10530,24 @@ mod tests {
     #[test]
     fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
         let mut runtime = runtime();
-        let mut project = workspace("workspace-1", "hide", "/tmp/hide",
-            vec![settled_worktree(crate::model::PullRequestBadge::Open)]);
+        let mut project = workspace(
+            "workspace-1",
+            "hide",
+            "/tmp/hide",
+            vec![settled_worktree(crate::model::PullRequestBadge::Open)],
+        );
         project.is_git = true;
         let mut other = workspace("workspace-2", "other", "/tmp/other", Vec::new());
         other.is_git = true;
         runtime.snapshot.navigator.workspaces = vec![project, other];
         let focus = runtime.snapshot.focused.clone();
-        let event = |refresh| serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "github_request",
-            "payload": {"workspace_id":"workspace-1", "refresh":refresh}
-        })).unwrap();
+        let event = |refresh| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "github_request",
+                "payload": {"workspace_id":"workspace-1", "refresh":refresh}
+            }))
+            .unwrap()
+        };
         assert!(runtime.dispatch_json(&event(false)));
         assert!(!runtime.dispatch_json(&event(false)));
         assert_eq!(runtime.snapshot.focused, focus);
@@ -11936,6 +12039,159 @@ mod tests {
             runtime.terminal_sessions[pane_id]
                 .test_written_lines()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn removing_registration_in_use_preserves_it_and_explains_recovery() {
+        let mut runtime = runtime();
+        let path =
+            std::env::temp_dir().join(format!("hide-registration-busy-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let registration =
+            workspace::registration(path.to_str().unwrap(), "Busy project", "local").unwrap();
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.last_session_spaces = vec![workspace::SessionSpace {
+            id: "w1".into(),
+            label: "Busy project".into(),
+            cwds: vec![registration.path.clone()],
+        }];
+        runtime.rebuild_catalog();
+        runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
+        })).unwrap());
+        assert_eq!(
+            runtime.snapshot.ui_state.workspace_registrations,
+            vec![registration]
+        );
+        assert_eq!(
+            runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+            "workspace.registration_in_use"
+        );
+        assert!(path.is_dir(), "Registration removal must not delete files");
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn removing_registration_converges_without_git_or_repeat_publication() {
+        let mut runtime = runtime();
+        let path =
+            std::env::temp_dir().join(format!("hide-registration-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let registration =
+            workspace::registration(path.to_str().unwrap(), "Empty project", "local").unwrap();
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.rebuild_catalog();
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
+        })).unwrap();
+        let git_before = workspace::git_calls_on_this_thread();
+        assert!(runtime.dispatch_json(&event));
+        assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+        assert!(runtime.snapshot.navigator.workspaces.is_empty());
+        assert_eq!(workspace::git_calls_on_this_thread(), git_before);
+        assert!(
+            !runtime.dispatch_json(&event),
+            "The same target state is already reached"
+        );
+        assert!(runtime.snapshot.status.last_error.is_none());
+        assert!(path.is_dir());
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    fn context_payload() -> SessionSnapshotPayload {
+        serde_json::from_value(serde_json::json!({
+            "agents": [
+                {"pane_id":"w1:p1", "agent":"codex", "agent_status":"working", "state_change_seq":10,
+                 "cwd":"/tmp/hide-context-alpha", "tokens":{"activity":"1788871000000"}},
+                {"pane_id":"w2:p1", "agent":"codex", "agent_status":"working", "state_change_seq":20,
+                 "cwd":"/tmp/hide-context-zeta", "tokens":{"activity":"1788872000000"},
+                 "agent_session":{"kind":"id", "value":"context-session"}, "spawned_from_pane_id":"w1:p1"}
+            ],
+            "workspaces":[{"workspace_id":"w1","label":"Alpha"},{"workspace_id":"w2","label":"Zeta"}],
+            "tabs":[{"workspace_id":"w1","tab_id":"w1:t1","label":"1"},{"workspace_id":"w2","tab_id":"w2:t1","label":"1"}],
+            "panes":[{"pane_id":"w1:p1","cwd":"/tmp/hide-context-alpha"},{"pane_id":"w2:p1","cwd":"/tmp/hide-context-zeta"}],
+            "layouts":[
+                {"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},
+                 "focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]},
+                {"workspace_id":"w2","tab_id":"w2:t1","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},
+                 "focused_pane_id":"w2:p1","panes":[{"pane_id":"w2:p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}
+            ]
+        })).unwrap()
+    }
+
+    #[test]
+    fn projects_follow_authoritative_activity_and_identical_snapshots_settle() {
+        let mut runtime = runtime();
+        let mut payload = context_payload();
+        runtime.ingest_session(Ok(payload.clone()));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .path
+                .ends_with("/hide-context-zeta")
+        );
+        runtime.ingest_session(Ok(payload.clone()));
+        let before = runtime.snapshot_delta_payload(0, 0);
+        let revision = before.revision;
+        for _ in 0..5 {
+            runtime.ingest_session(Ok(payload.clone()));
+            let delta = runtime.snapshot_delta_payload(revision, 0);
+            assert!(
+                delta.rest.is_none(),
+                "Unchanged activity must not resend the navigator"
+            );
+        }
+        payload.agents[0]
+            .tokens
+            .insert("activity".into(), serde_json::json!("1788873000000"));
+        runtime.ingest_session(Ok(payload));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .path
+                .ends_with("/hide-context-alpha")
+        );
+    }
+
+    #[test]
+    fn overview_tracks_live_checkout_panes_and_drops_retired_lineage() {
+        let mut runtime = runtime();
+        let mut payload = context_payload();
+        runtime.ingest_session(Ok(payload.clone()));
+        let project = runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|w| w.path.ends_with("zeta"))
+            .unwrap()
+            .clone();
+        runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+        runtime.refresh_card();
+        assert_eq!(runtime.snapshot.card.panes.len(), 1);
+        assert_eq!(runtime.snapshot.card.panes[0].pane_id, "w2:p1");
+        assert_eq!(
+            runtime.snapshot.card.panes[0].session_id.as_deref(),
+            Some("context-session")
+        );
+        assert_eq!(
+            runtime.snapshot.card.panes[0].parent_pane_id.as_deref(),
+            Some("w1:p1")
+        );
+        payload.agents.remove(0);
+        payload.panes.remove(0);
+        payload.layouts.remove(0);
+        payload.tabs.remove(0);
+        payload.workspaces.remove(0);
+        runtime.ingest_session(Ok(payload.clone()));
+        runtime.refresh_card();
+        assert_eq!(runtime.snapshot.card.panes[0].parent_pane_id, None);
+        payload.panes[0].cwd = Some("/tmp/hide-context-moved".into());
+        payload.agents[0].cwd = Some("/tmp/hide-context-moved".into());
+        runtime.ingest_session(Ok(payload));
+        runtime.refresh_card();
+        assert!(
+            runtime.snapshot.card.panes.is_empty(),
+            "A pane moved away is no longer checkout context"
         );
     }
 

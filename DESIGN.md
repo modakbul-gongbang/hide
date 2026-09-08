@@ -1035,7 +1035,32 @@ Sheets use panel containers, headline titles, body or caption supporting text, a
 The selected provider card uses an elevated fill and stronger neutral border; its status remains readable.
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
-The right panel's Explorer and Changes sections use the same panel and text ladder.
+### Projects and checkout context
+
+Projects use the native sidebar list, existing Search (Command+K), and persisted project/workspace disclosure.
+Projects and their checkouts sort by the latest authoritative agent activity timestamp or Git commit timestamp, descending; server state-change sequence breaks timestamp ties, and stable IDs break remaining ties.
+Missing activity remains absent and sorts after known activity; no UI interaction or local clock invents recency.
+An active pane without a wall timestamp can only contribute its server sequence, not a fabricated date.
+Raised Needs You and Done groups retain their status ordering above Projects.
+
+The right panel starts with Overview, followed by Explorer, Changes, and Git.
+The compact section selector uses text labels on one line without a competing checkout title.
+Existing saved section selections survive; new state starts on Overview.
+Overview alone owns the shared checkout summary: branch, ahead/behind, PR health, recent commit, and connected Herdr panes.
+It uses the existing summary components, text ladder and spacing tokens; each connected pane is a focus action with pane ID, current status, title, optional session ID and live parent ID.
+The latest commit is the checkout's current HEAD, not a claim that a current pane authored it.
+The pinned Herdr contract offers lifetime-scoped display metadata and agent lineage but no persistent commit-authoring relation, so Hide neither adds Git trailers nor renames branches.
+Retired or moved panes leave the checkout context on the next topology projection; a retired parent ID is omitted.
+Remote Overview explicitly reports that local Git context is unavailable.
+Explorer contains file navigation only, with no checkout summary above it.
+Changes and Git keep their existing responsibilities.
+
+Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
+The action is offered only for registered projects and retains its existing confirmation.
+An in-use project stays registered and reports how to close or move its Herdr workspaces before retrying.
+A completed removal disappears from the core snapshot and a repeated request is a quiet no-op.
+Save failures remain caller-visible; normal no-op results never become alerts.
+
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
 The Git section retains its existing open/refresh trigger, while the sidebar popover and project menu can explicitly refresh one repository.
 All triggers share the existing bounded background reader, authentication and cache.
@@ -1049,7 +1074,7 @@ The ruler clips all drawing to its own bounds, and text loaded into an initially
 Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.
 Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
-Content and accessibility identifiers are unchanged; only the visual hierarchy changes.
+Existing controls retain their accessibility contracts; Overview adds named section, commit and pane targets.
 
 ### Enforcement
 

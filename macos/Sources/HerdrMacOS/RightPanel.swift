@@ -26,9 +26,10 @@ struct RightPanel: View {
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: 1)
-            // The summary remains shared by all sections.
-            CheckoutSummaryCard()
             switch model.rightPanelSection {
+            case .overview:
+                CheckoutOverview()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .explorer:
                 fileTree
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

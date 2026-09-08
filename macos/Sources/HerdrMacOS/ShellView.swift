@@ -920,10 +920,12 @@ struct PanelHeader: View {
                     .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
             }
             Spacer(minLength: ShellMetrics.compactSpacing)
-            Text(trailing)
-                .hideFont(size: HideTheme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if sections == nil {
+                Text(trailing)
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.secondary)
+                    .lineLimit(1)
+            }
             if let collapseAction {
                 Button(action: collapseAction) {
                     Image(systemName: "sidebar.right")
@@ -944,7 +946,7 @@ struct PanelHeader: View {
     }
 }
 
-/// The right panel's section chooser. Both sections are always visible, so
+/// The right panel's section chooser. All sections are always visible, so
 /// the panel's structure is encoded in the control rather than hidden behind a
 /// menu the operator has to open to discover.
 private struct PanelSectionPicker: View {
@@ -958,8 +960,9 @@ private struct PanelSectionPicker: View {
                 Button {
                     select(section)
                 } label: {
-                    Label(section.title, systemImage: section.systemImage)
+                    Text(section.title)
                         .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                        .fixedSize()
                         .foregroundStyle(isActive ? HideTheme.primary : HideTheme.secondary)
                         .padding(.horizontal, HideTheme.spacingSM)
                         .padding(.vertical, HideTheme.spacingXS)

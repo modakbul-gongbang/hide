@@ -18,6 +18,7 @@ pub mod pane_content;
 mod persistence;
 pub mod pet;
 mod ports;
+mod project_context;
 mod reader;
 pub mod remote;
 pub mod remote_files;

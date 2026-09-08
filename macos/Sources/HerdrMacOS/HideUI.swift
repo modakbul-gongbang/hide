@@ -617,7 +617,7 @@ private struct HideSidebar: View {
 
         ScratchSection()
 
-        HideSectionLabel(title: "Projects", count: model.workspaces.count)
+        HideSectionLabel(title: "Projects · Recent activity", count: model.workspaces.count)
         if model.workspaces.isEmpty {
             EmptySidebarRow(
                 systemImage: "square.stack.3d.up",
@@ -1265,8 +1265,10 @@ private struct WorkspaceNavigatorRow: View {
                     Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
                         .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
                     Divider()
-                    Button(WorktreeMenuPolicy.removeRegistration, role: .destructive) {
-                        model.requestRemoveWorkspace(workspace)
+                    if workspace.registered {
+                        Button(WorktreeMenuPolicy.removeRegistration, role: .destructive) {
+                            model.requestRemoveWorkspace(workspace)
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis")

@@ -71,6 +71,7 @@ struct CoreGitWorktree: Decodable, Identifiable {
     let path: String
     let branch: String?
     let headSHA: String?
+    let lastCommitSubject: String?
     let missing: Bool
     let isMain: Bool
     let dirty: Bool
@@ -95,6 +96,7 @@ struct CoreGitWorktree: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case path, branch, missing, dirty, ahead, behind, merged, unpushed, disk, github
         case headSHA = "head_sha", isMain = "is_main", changedFileCount = "changed_file_count", baseBranch = "base_branch"
+        case lastCommitSubject = "last_commit_subject"
         case upstreamState = "upstream_state", unavailableReason = "unavailable_reason", lastFetchAtUnixMS = "last_fetch_at_unix_ms"
         case measuredAtUnixMS = "measured_at_unix_ms", lastCommitUnixSeconds = "last_commit_unix_seconds"
         case paneCount = "pane_count", runningAgentCount = "running_agent_count", pullRequest = "pull_request"

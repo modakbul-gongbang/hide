@@ -777,11 +777,12 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's three persisted sections.
+/// The right panel's four persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
+    Overview,
     Explorer,
     Changes,
     Git,
@@ -790,6 +791,7 @@ pub enum RightPanelSection {
 impl RightPanelSection {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "overview" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
             "git" => Some(Self::Git),
@@ -1234,6 +1236,7 @@ pub struct UnpushedSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
     pub head_sha: Option<String>,
+    pub last_commit_subject: Option<String>,
     pub last_commit_unix_seconds: Option<u64>,
     pub nested: bool,
     pub merged: Option<bool>,
@@ -1372,6 +1375,17 @@ pub struct CheckoutCardSnapshot {
     /// True while the selected checkout's size is still being measured.
     pub disk_measuring: bool,
     pub deletion_gate: Option<WorktreeDeletionGateSnapshot>,
+    /// Current topology, not a claim about who authored HEAD or older commits.
+    pub panes: Vec<CheckoutPaneContext>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CheckoutPaneContext {
+    pub pane_id: String,
+    pub title: String,
+    pub status: String,
+    pub session_id: Option<String>,
+    pub parent_pane_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

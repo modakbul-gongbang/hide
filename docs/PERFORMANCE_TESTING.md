@@ -341,3 +341,22 @@ The run verdict must include:
 - Cleanup/restoration evidence and whether the fix was merely committed, built, installed, or merged.
 
 Use a qualified verdict when coverage is bounded: “no whole-body blanking observed in these recordings” is supportable; “all performance issues resolved” is not.
+
+## Projects and Overview cost contract
+
+Project activity and checkout-pane context reuse canonical agent projection, current topology and cached worktree HEAD metadata.
+The existing single `git log -1` read now returns timestamp and subject together; no timer or additional Git subprocess is introduced.
+A changed projection indexes agents and visits retained panes once, then sorts projects and each project's checkouts by cached keys.
+Cost is O(agents + panes + projects log projects + sum(checkouts log checkouts)); selected Overview context visits retained topology once and renders only the selected checkout's pane rows.
+No work is scheduled by hover or by an unchanged agent-list tick.
+Identical catalog snapshots settle to the same ordering and revision, so the shell receives no redundant navigator update.
+
+UI persistence reuses the runtime worker context with one active save and one pending flag; serialization, write, fsync and rename occur outside Runtime's mutex.
+Sequential writes prevent an older state from overwriting a newer one; intermediate UI saves may coalesce, while pane input never enters this queue.
+A write failure publishes the existing caller-visible save error.
+FFI destruction stops producers and joins the last save outside the mutex; forced process termination does not guarantee a pending save.
+Standalone unit runtimes without a worker context retain synchronous persistence outside any shared runtime mutex.
+
+Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, and the two `removing_registration_*` tests.
+Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, and successful versus in-use registration removal.
+Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove native responsiveness.

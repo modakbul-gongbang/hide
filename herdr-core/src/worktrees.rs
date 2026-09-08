@@ -514,9 +514,12 @@ fn describe(
         &mut unavailable_reason,
         ("unavailable".into(), None),
     );
-    let last_commit_unix_seconds = git(&listed.path, &["log", "-1", "--format=%ct"])
-        .ok()
-        .and_then(|s| s.trim().parse().ok());
+    let last_commit = git(&listed.path, &["log", "-1", "--format=%ct%x00%s"]).ok();
+    let commit_fields = last_commit
+        .as_deref()
+        .and_then(|value| value.trim_end().split_once('\0'));
+    let last_commit_unix_seconds = commit_fields.and_then(|(time, _)| time.parse().ok());
+    let last_commit_subject = commit_fields.map(|(_, subject)| subject.to_owned());
     let last_fetch_at_unix_ms = git(
         &listed.path,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -543,6 +546,7 @@ fn describe(
         merged,
         head_sha: listed.head_sha,
         last_commit_unix_seconds,
+        last_commit_subject,
         last_fetch_at_unix_ms,
         measured_at_unix_ms: Some(
             std::time::SystemTime::now()
