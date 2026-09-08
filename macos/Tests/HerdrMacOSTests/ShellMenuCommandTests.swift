@@ -18,6 +18,17 @@ struct ShellMenuCommandTests {
         #expect(!PaneCommand.allCases.contains { $0.defaultShortcut == retired })
     }
 
+    @Test func recentNavigationAndDirectSelectionFollowThePublicContract() {
+        #expect(ShellMenuCommand.recentTab.shortcut.canonical == "control+tab")
+        #expect(ShellMenuCommand.previousRecentTab.shortcut.canonical == "control+shift+tab")
+        #expect(ShellMenuCommand.recentProject.shortcut.canonical == "option+tab")
+        #expect(ShellMenuCommand.previousRecentProject.shortcut.canonical == "option+shift+tab")
+        for number in 1...9 {
+            #expect(HideCommand.agent(number).shortcut(bindings: [:])?.canonical == "option+\(number)")
+            #expect(HideCommand.tab(number).shortcut(bindings: [:])?.canonical == "command+\(number)")
+        }
+    }
+
     @Test func noTwoMenuCommandsClaimTheSameChord() {
         let chords = ShellMenuCommand.allCases.map(\.shortcut.canonical)
         #expect(Set(chords).count == chords.count)
@@ -32,7 +43,7 @@ struct ShellMenuCommandTests {
         }
     }
 
-    /// ⌘n numbers the tabs and ⌃n numbers the agent rows, and the keycaps
+    /// ⌘n numbers the tabs and ⌥n numbers the agent rows, and the keycaps
     /// drawn on both surfaces claim exactly that. A chord catalogue that
     /// disagreed with the keycap would print a shortcut that does nothing.
     static let directSelectionChords: Set<String> = {
@@ -40,14 +51,14 @@ struct ShellMenuCommandTests {
             PaneShortcut(key: "\($0)", modifiers: [.command]).canonical
         }
         let agentChords = (1...AgentShortcutNumbering.capacity).map {
-            PaneShortcut(key: "\($0)", modifiers: [.control]).canonical
+            PaneShortcut(key: "\($0)", modifiers: [.option]).canonical
         }
         return Set(tabChords + agentChords)
     }()
 
-    @Test func everyMenuCommandRequiresCommand() {
+    @Test func onlyRecentNavigationUsesNonCommandMenuChords() {
         for command in ShellMenuCommand.allCases {
-            #expect(command.shortcut.modifiers.contains(.command))
+            #expect(command.shortcut.modifiers.contains(.command) || command.shortcut.key == "tab")
         }
     }
 

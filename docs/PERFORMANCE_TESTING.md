@@ -57,6 +57,23 @@ An asynchronous task still costs work and can accumulate a queue; it is not a pe
 | Terminal wheel / typing | Prompt delivery preserving routing, ordering, and signed scroll quantity | Wait for an unrelated frame; drop intentional input as a duplicate |
 | Drag / repaint | Update affected geometry or damaged visible content | Per-event persistence or rebuilding unchanged rows |
 
+### Two-level recent navigation cost contract
+
+`AgentMRU.swift` contains the shared recent-item ordering and held-cycle implementation, with project and per-project tab adapters.
+`ShellModel` observes incoming core navigation revisions and caches all unified surfaces; it does not reconstruct this projection for repeated Tab input, editor content deltas, or find-only deltas.
+A topology/rest snapshot or active editor change reconciles retained history; retained storage is O(P + T) for P projects and T unified surfaces.
+Projection follows the existing tab strip and indexes source tabs instead of searching the retained list once per strip entry.
+Editor source indexing is per checkout, so reconciliation is O(T + C*E), with C checkouts and E retained editor tabs; this cost is outside repeated key input.
+Starting a gesture snapshots its relevant MRU in O(P) or O(Tproject); every subsequent step changes one index in O(1), with no core dispatch until commit.
+Only the active cycle publishes once per changed highlight; repeated cancellation and a one-item cycle publish no cycle change.
+The existing cycle presentation has a dedicated observable owner read only by the overlay; preview steps send no shell-wide notification and therefore do not rebuild the retained sidebar or tab strip.
+The overlay projects at most nine rows through cached identity lookups, regardless of retained list size.
+The synthetic-key release check has one replaceable timer; repeated key-up cannot queue unbounded commits.
+
+Regression owners are `RecentNavigationTests` (2, 9, and 10,000 retained entries over 20,000 input steps, bounded visible rows, deletion convergence), `RecentNavigationIntegrationTests` (actual core restoration and notification counts), and `PaneShortcutSettingsTests` (modifier ownership and release).
+Native verification must additionally exercise both directions, modifier hold/release, Escape, project restoration across checkouts, and terminal/file/diff/Browser surfaces in the isolated fixture.
+Report those native checks as unverified if the sole-running-instance gate blocks launching the dev bundle; deterministic tests do not prove native event delivery or Korean text legibility.
+
 ### Regression ownership and honest coverage
 
 | Boundary | Automated owner | What remains outside that test |

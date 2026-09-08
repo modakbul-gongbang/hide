@@ -24,8 +24,8 @@ struct HideHintTests {
         let cases: [(Set<PaneShortcut.Modifier>, Set<String>)] = [
             ([.command], ["search", "new_chat", "toggle_sidebar_view", "toggle_left_sidebar", "new_tab", "close-a", "tab-1"]),
             ([.command, .shift], ["new_workspace", "toggle_right_panel", "pane-a"]),
-            ([.control], ["agent-1"]), ([.command, .option], ["zoom-a"]),
-            ([.option], []), ([.shift], []), ([.control, .command], []),
+            ([.option], ["agent-1"]), ([.command, .option], ["zoom-a"]),
+            ([.control], []), ([.shift], []), ([.control, .command], []),
         ]
         for (modifiers, expected) in cases {
             var state = HideHintState()
@@ -39,7 +39,7 @@ struct HideHintTests {
         state.advance(to: 1)
         let binding = PaneShortcut(key: "x", modifiers: [.control])
         let result = HideHintTarget.exposed(among: targets(), state: state, bindings: [.closePane: binding], focusedPaneID: "b", activeTabID: "a")
-        #expect(Set(result.map(\.id)) == ["agent-1", "pane-b"])
+        #expect(Set(result.map(\.id)) == ["pane-b"])
         #expect(HideCommand.pane(.closePane).displayString(bindings: [.closePane: binding]) == binding.displayString)
     }
 

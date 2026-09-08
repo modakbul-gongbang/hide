@@ -1555,12 +1555,6 @@ impl Runtime {
         self.editor_tab_history.clear();
     }
 
-    fn editor_tab_matches_focused_context(&self, tab: &EditorTabSnapshot) -> bool {
-        self.snapshot.navigator.focused_workspace_id.as_deref() == Some(tab.workspace_id.as_str())
-            && self.snapshot.navigator.focused_checkout_id.as_deref()
-                == Some(tab.checkout_id.as_str())
-    }
-
     fn sync_active_editor_document(&mut self) {
         self.snapshot.editor.document =
             self.snapshot
@@ -8542,6 +8536,7 @@ impl Runtime {
                     .tabs
                     .iter()
                     .find(|tab| tab.id == payload.tab_id)
+                    .cloned()
                 else {
                     self.set_error(
                         "file.focus_failed",
@@ -8550,17 +8545,45 @@ impl Runtime {
                     );
                     return true;
                 };
-                if !self.editor_tab_matches_focused_context(tab) {
-                    self.set_error(
-                        "editor.invalid_context",
-                        "An editor tab can only be focused in its workspace and checkout",
-                        false,
-                    );
+                let Some(checkout) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.id == tab.workspace_id)
+                    .and_then(|workspace| {
+                        workspace
+                            .checkouts
+                            .iter()
+                            .find(|checkout| checkout.id == tab.checkout_id)
+                    })
+                    .cloned()
+                else {
+                    self.set_error("editor.invalid_context", "The editor tab's project or checkout is no longer available. Selection was kept.", false);
                     return true;
-                }
+                };
+                // Validate the document/diff before moving any selection. One
+                // event restores the surface and its context, including MRU
+                // visits across checkouts; no intermediate terminal frame.
                 if let Err(message) = self.activate_editor_tab(&payload.tab_id) {
                     self.set_error("editor.focus_failed", message, false);
+                    return true;
                 }
+                let pane_id = checkout.active_tab_id.as_deref().and_then(|id| {
+                    let first = checkout
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id.as_deref() == Some(id))
+                        .and_then(|tab| tab.panes.first())
+                        .map(|pane| pane.id.clone());
+                    self.tab_focus_pane_id(id, first)
+                });
+                self.snapshot.navigator.focused_workspace_id = Some(tab.workspace_id);
+                self.snapshot.navigator.focused_checkout_id = Some(tab.checkout_id);
+                self.snapshot.navigator.root_path = Some(checkout.path);
+                self.select_terminal_pane(pane_id);
+                self.operator_focused_pane_id = None;
+                self.refresh_pane_read_state();
                 self.persist_current_ui_state();
                 true
             }
@@ -14484,6 +14507,69 @@ mod tests {
         }))
         .expect("file open event");
         assert!(runtime.dispatch_json(&event));
+    }
+
+    #[test]
+    fn recent_navigation_restores_file_and_diff_across_projects_atomically() {
+        for diff in [false, true] {
+            let (mut runtime, checkout_id, directory) = strip_checkout("recent-surface");
+            let file = directory.join("notes.md");
+            if diff {
+                runtime.show_diff_tab(
+                    "workspace:order",
+                    &checkout_id,
+                    &file.to_string_lossy(),
+                    false,
+                );
+            } else {
+                open_file(&mut runtime, &checkout_id, &file);
+            }
+            let tab_id = runtime.snapshot.editor.active_tab_id.clone().unwrap();
+            runtime.snapshot.navigator.focused_workspace_id = Some("other-project".into());
+            runtime.snapshot.navigator.focused_checkout_id = Some("other-checkout".into());
+            runtime.deactivate_editor_tab();
+            let event = serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "file_focus", "payload": {"tab_id": tab_id}
+            })).unwrap();
+            assert!(runtime.dispatch_json(&event));
+            assert_eq!(
+                runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+                Some("workspace:order")
+            );
+            assert_eq!(
+                runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+                Some(checkout_id.as_str())
+            );
+            assert_eq!(
+                runtime.snapshot.editor.active_tab_id.as_deref(),
+                Some(tab_id.as_str())
+            );
+            assert_eq!(runtime.snapshot.editor.document.is_some(), !diff);
+            if diff {
+                assert_eq!(
+                    runtime.snapshot.changes.selected_path.as_deref(),
+                    Some(file.to_str().unwrap())
+                );
+            }
+            let previous = runtime.snapshot.editor.active_tab_id.clone();
+            let invalid = serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "file_focus", "payload": {"tab_id": "deleted-tab"}
+            })).unwrap();
+            assert!(runtime.dispatch_json(&invalid));
+            assert_eq!(runtime.snapshot.editor.active_tab_id, previous);
+            assert_eq!(
+                runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+                "file.focus_failed"
+            );
+            runtime.snapshot.navigator.workspaces.clear();
+            assert!(runtime.dispatch_json(&event));
+            assert_eq!(runtime.snapshot.editor.active_tab_id, previous);
+            assert_eq!(
+                runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+                "editor.invalid_context"
+            );
+            std::fs::remove_dir_all(directory).unwrap();
+        }
     }
 
     #[test]

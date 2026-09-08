@@ -104,15 +104,7 @@ struct ShellView: View {
                         .accessibilityIdentifier("right-panel")
                 }
             }
-            if let cycle = model.agentSwitcherCycle {
-                AgentSwitcherOverlay(cycle: cycle, agents: model.agents)
-            } else if let cycle = model.tabSwitcherCycle {
-                TabSwitcherOverlay(
-                    cycle: cycle,
-                    tabs: model.unifiedTabs,
-                    checkoutLabel: model.focusedCheckout?.label
-                )
-            }
+            RecentNavigationOverlay(model: model, presentation: model.recentNavigation)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
@@ -295,117 +287,103 @@ private struct WorktreeCreationSheet: View {
     }
 }
 
-private struct AgentSwitcherOverlay: View {
-    let cycle: AgentSwitcherCycle
-    let agents: [SidebarAgent]
+private struct RecentNavigationOverlay: View {
+    let model: ShellModel
+    @ObservedObject var presentation: RecentNavigationPresentation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-            Text("RECENT AGENTS")
-                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                .foregroundStyle(HideTheme.muted)
-            ForEach(cycle.paneIDs, id: \.self) { paneID in
-                if let agent = agents.first(where: { $0.paneID == paneID }) {
-                    HStack(spacing: HideTheme.spacingMD) {
-                        if let mark = AgentMark.image(for: agent.agentKind) {
-                            Image(nsImage: mark)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 19, height: 19)
-                        }
-                        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                            Text(agent.summary)
-                                .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                            Text("\(agent.contextLabel) · \(paneID)")
-                                .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                                .foregroundStyle(HideTheme.secondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, HideTheme.spacingMD)
-                    .frame(height: 44)
-                    .background(
-                        paneID == cycle.selectedPaneID ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                    )
-                }
-            }
+        if let cycle = presentation.projectCycle {
+            RecentSwitcherOverlay(
+                title: "RECENT PROJECTS", command: .recentProject,
+                rows: cycle.visibleIDs.compactMap { id in
+                    guard let project = model.recentProjects[id] else { return nil }
+                    return RecentSwitcherRow(id: id, title: project.workspace.label,
+                        detail: model.recentProjectDetail(id), symbol: "folder")
+                }, selectedID: cycle.selectedProjectID,
+                identifier: "project-mru-switcher"
+            )
+        } else if let cycle = presentation.tabCycle {
+            RecentSwitcherOverlay(
+                title: "RECENT TABS", command: .recentTab,
+                rows: cycle.visibleIDs.compactMap { id in
+                    guard let surface = model.recentSurfaces[id] else { return nil }
+                    return RecentSwitcherRow(id: id, title: surface.item.label,
+                        detail: surface.checkoutLabel, symbol: surface.symbol, dirty: surface.item.dirty)
+                }, selectedID: cycle.selectedTabID,
+                identifier: "tab-mru-switcher"
+            )
         }
-        .padding(HideTheme.spacingMD)
-        .frame(width: 360)
-        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
-        .overlay {
-            RoundedRectangle(cornerRadius: HideTheme.radiusLarge).stroke(HideTheme.divider)
-        }
-        .accessibilityIdentifier("agent-mru-switcher")
     }
 }
 
-private struct TabSwitcherOverlay: View {
-    let cycle: TabSwitcherCycle
-    let tabs: [ShellTabItem]
-    let checkoutLabel: String?
+private struct RecentSwitcherRow: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let symbol: String
+    var dirty = false
+}
+
+/// Both navigation levels share the existing panel, typography and keycaps.
+/// The model exposes at most nine rows around the highlight, even in a large session.
+private struct RecentSwitcherOverlay: View {
+    let title: String
+    let command: ShellMenuCommand
+    let rows: [RecentSwitcherRow]
+    let selectedID: String
+    let identifier: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-            Text("RECENT TABS")
-                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                .foregroundStyle(HideTheme.muted)
-            ForEach(cycle.tabIDs, id: \.self) { tabID in
-                if let tab = tabs.first(where: { $0.id == tabID }) {
-                    HStack(spacing: HideTheme.spacingMD) {
-                        Image(systemName: icon(for: tab))
-                            .hideFont(size: HideTheme.Typography.title, weight: .semibold)
+            HStack {
+                Text(title)
+                    .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                    .foregroundStyle(HideTheme.muted)
+                Spacer()
+                HideKeycap(command: .menu(command))
+            }
+            ForEach(rows) { row in
+                HStack(spacing: HideTheme.spacingMD) {
+                    Image(systemName: row.symbol)
+                        .hideFont(size: HideTheme.Typography.title, weight: .semibold)
+                        .foregroundStyle(HideTheme.secondary)
+                        .frame(width: HideTheme.checkoutIconWidth)
+                    VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                        Text(row.title)
+                            .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(row.detail)
+                            .hideFont(size: HideTheme.Typography.caption)
                             .foregroundStyle(HideTheme.secondary)
-                            .frame(width: 19, height: 19)
-                        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                            Text(tab.label)
-                                .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                                .lineLimit(1)
-                            Text(detail(for: tab))
-                                .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                                .foregroundStyle(HideTheme.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        if tab.dirty {
-                            Circle()
-                                .fill(HideTheme.secondary)
-                                .frame(width: 5, height: 5)
-                        }
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    .padding(.horizontal, HideTheme.spacingMD)
-                    .frame(height: 44)
-                    .background(
-                        tabID == cycle.selectedTabID ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                    )
+                    Spacer()
+                    if row.dirty {
+                        Image(systemName: "circle.fill")
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.secondary)
+                            .accessibilityLabel("Unsaved changes")
+                    }
                 }
+                .padding(.horizontal, HideTheme.spacingMD)
+                .frame(height: HideTheme.formControlHeight)
+                .background(
+                    row.id == selectedID ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(row.id == selectedID ? .isSelected : [])
             }
         }
         .padding(HideTheme.spacingMD)
-        .frame(width: 360)
+        .frame(width: HideTheme.Hint.tooltipMaxWidth)
         .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
         .overlay {
             RoundedRectangle(cornerRadius: HideTheme.radiusLarge).stroke(HideTheme.divider)
         }
-        .accessibilityIdentifier("tab-mru-switcher")
-    }
-
-    private func icon(for tab: ShellTabItem) -> String {
-        switch tab.kind {
-        case .herdr: "terminal"
-        case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
-        }
-    }
-
-    private func detail(for tab: ShellTabItem) -> String {
-        let kind = switch tab.kind {
-        case .herdr: "Terminal"
-        case .editor(let tab): tab.kind == .diff ? "Diff" : "File"
-        }
-        guard let checkoutLabel, !checkoutLabel.isEmpty else { return kind }
-        return "\(kind) · \(checkoutLabel)"
+        .accessibilityIdentifier(identifier)
     }
 }
 

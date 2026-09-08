@@ -92,7 +92,7 @@ extension SidebarAgent {
 }
 
 /// Direct-select numbering for the sidebar. The number is the agent's
-/// position in the list the visible view shows, so ⌃1 always reaches the first
+/// position in the list the visible view shows, so ⌥1 always reaches the first
 /// row the user can see.
 ///
 /// The Agents view numbers the runtime's whole agent projection. The Projects
@@ -120,7 +120,7 @@ enum AgentShortcutNumbering {
         }
     }
 
-    /// Only the first nine agents get a number: ⌃0 is not a tenth slot, it is
+    /// Only the first nine agents get a number: ⌥0 is not a tenth slot, it is
     /// a different key, and a two-digit chord is not a shortcut anyone reaches
     /// for without looking.
     static let capacity = 9

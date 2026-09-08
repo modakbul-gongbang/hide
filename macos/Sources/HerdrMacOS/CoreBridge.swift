@@ -15,6 +15,8 @@ private let coreChangeCallback: @convention(c) (UnsafeMutableRawPointer?) -> Voi
 /// past this value to the terminal views, so chunk-only updates leave it
 /// untouched.
 struct CoreSnapshot {
+    // Local projection cursor: content-only edits/find updates do not rebuild MRU.
+    var navigationRevision: UInt64 = 0
     let schemaVersion: UInt32
     let navigator: CoreNavigatorSnapshot
     let zoomed: String?
@@ -44,6 +46,7 @@ struct CoreSnapshot {
         find: CorePaneFindSnapshot
     ) -> CoreSnapshot {
         CoreSnapshot(
+            navigationRevision: navigationRevision &+ ((editor.map { $0.tabs != self.editor.tabs || $0.activeTabID != self.editor.activeTabID } ?? false) ? 1 : 0),
             schemaVersion: schemaVersion,
             navigator: navigator,
             zoomed: zoomed,
@@ -100,8 +103,8 @@ extension CoreSnapshot {
     /// The core owns the focused pane, so its own field is the whole answer:
     /// a click has to move the ring on its own frame rather than on Herdr's
     /// confirming event. Callers used to reach for a layout's focused pane
-    /// when this was nil, and the order drifted between them - the agent
-    /// recency list read the layout first and so pointed at the pane Herdr
+    /// when this was nil, and the order drifted between them - the recent
+    /// navigation list read the layout first and so pointed at the pane Herdr
     /// last confirmed instead of the pane just clicked. That stand-in never
     /// worked in any case: the layout it read was found by looking this same
     /// field up in each layout's pane list, so it was nil in exactly the case
@@ -3059,6 +3062,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     /// it. Only rest-section changes reach here; chunk-only deltas never
     /// touch the published snapshot.
     private func apply(composed decoded: CoreSnapshot) {
+        var decoded = decoded
+        decoded.navigationRevision = (snapshot?.navigationRevision ?? 0) &+ 1
         if decoded.status.herdr.state != lastLoggedHerdrState {
             lastLoggedHerdrState = decoded.status.herdr.state
             HideLaunchTrace.mark("herdr.status", detail: decoded.status.herdr.state)

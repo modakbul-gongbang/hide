@@ -187,7 +187,7 @@ private func presentationAgent(
     )
 
     #expect(agentsView.map(\.paneID) == ["pane-1", "pane-2", "pane-3", "pane-4"])
-    // ⌃1 in the Projects view is the checkout's first agent, not the global first.
+    // ⌥1 in the Projects view is the checkout's first agent, not the global first.
     #expect(projectsView.map(\.paneID) == ["pane-3", "pane-4"])
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-3", in: projectsView) == 1)
     #expect(AgentShortcutNumbering.number(ofPaneID: "pane-1", in: projectsView) == nil)

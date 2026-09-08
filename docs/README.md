@@ -9,6 +9,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Question | Read | Executable authority or enforcement |
 | --- | --- | --- |
 | Architecture, ownership, integration boundaries, working rules | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `macos/`, relevant local rules |
+| Recent project and unified-surface navigation | [DESIGN.md](../DESIGN.md#recent-navigation-in-the-native-shell), [input cost and regression owners](PERFORMANCE_TESTING.md#two-level-recent-navigation-cost-contract) | `AgentMRU.swift`, `ShellModel.swift`, shortcut registry and navigation tests |
 | Product UI and design tokens | [DESIGN.md: In-Product Components](../DESIGN.md#in-product-components) | `HideTheme.swift`, component checks and design tests |
 | Icon button roles, hit areas, interaction states, and reuse | [DESIGN.md: Icon buttons and badges](../DESIGN.md#icon-buttons-and-badges) | `HideIconButton.swift`, `HideTheme.IconButton`, component checks |
 | Required CI and delivery gates | [CONTRIBUTING.md](../CONTRIBUTING.md) | `.github/workflows/pr.yml` and `design-contract.yml` |

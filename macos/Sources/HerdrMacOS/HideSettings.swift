@@ -752,6 +752,14 @@ private struct HideShortcutSettings: View {
             }
         }
 
+        HideSettingsGroup(title: "Recent navigation", note: "Hold the modifier to cycle. Release to select; Escape keeps the current surface.") {
+            ForEach([ShellMenuCommand.recentTab, .previousRecentTab, .recentProject, .previousRecentProject]) { command in
+                HideSettingsRow(label: command.title) {
+                    HideKeycap(command: .menu(command))
+                }
+            }
+        }
+
         HideSettingsGroup(title: "Direct selection") {
             HideSettingsRow(label: "Select tab 1-9") {
                 HideKeycapGroup(commands: [.tab(1), .label("…"), .tab(9)])

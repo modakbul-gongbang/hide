@@ -931,6 +931,27 @@ Fixed content geometry remains in its named Layout tokens rather than changing w
 | `{rounded.radiusLarge}` | Search input and larger cards |
 | `{rounded.radiusExtraLarge}` | Container vocabulary |
 
+### Recent navigation in the native shell
+
+Control+Tab and Control+Shift+Tab cycle all unified surfaces inside the selected project in recent-use order.
+This includes terminal, Browser plugin, file/editor, and diff tabs across every checkout in that project.
+Option+Tab and Option+Shift+Tab cycle projects globally and restore each project's last used surface.
+Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
+Menu actions commit immediately.
+Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
+
+The project identity is `CoreWorkspaceSnapshot.id`, scoped by device, following the sidebar's Project > Workspace > Agents hierarchy.
+Its checkouts are workspaces in that hierarchy, so two checkouts of one repository share a project cycle and a tab history.
+Herdr workspaces contributing tabs to those checkouts do not create separate Hide projects.
+The existing core catalog determines grouping; navigation does not infer it from display labels or directory names.
+
+Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
+Project rows show the last surface and checkout; tab rows show their checkout and surface type.
+History is session-local and retains only existing projects and surfaces.
+A deleted highlight moves to the next surviving entry without reordering the held cycle and reports the change.
+If none survives, cancel with a visible diagnostic and keep the core's current selection.
+Empty projects show “No open tabs”; a project without an available checkout reports that it cannot be selected.
+
 ### Keycaps, hint chips, and tooltips
 
 `HideKeycap.swift` owns every shortcut glyph.
