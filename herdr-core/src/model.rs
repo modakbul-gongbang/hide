@@ -1318,6 +1318,17 @@ pub struct TaskOperationSnapshot {
 /// One repository's worktrees.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectWorktreesSnapshot {
+    pub github: GithubStatusSnapshot,
+    pub pull_requests: Vec<PullRequestSnapshot>,
+    pub pull_request_window: String,
+    pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
+    pub history: Option<crate::worktrees::history::GitHistorySnapshot>,
+    pub shared_git_path: Option<String>,
+    pub shared_git_disk: DiskUsageSnapshot,
+    pub disk_total_bytes: Option<u64>,
+    pub disk_confirmed_bytes: Option<u64>,
+    pub linked_disk_bytes: Option<u64>,
+    pub disk_unavailable_reason: Option<String>,
     pub base_branch: Option<String>,
     pub base_source: String,
     pub base_branch_fallback: Option<String>,
@@ -1367,6 +1378,7 @@ pub struct DiskUsageSnapshot {
 /// and whether the worktree may be removed.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CheckoutCardSnapshot {
+    pub inspected_checkout_path: Option<String>,
     /// Absent when nothing is selected, or when the selection is a remote
     /// checkout - remote worktree management is out of scope, so no card.
     pub checkout_id: Option<String>,

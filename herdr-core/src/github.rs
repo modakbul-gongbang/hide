@@ -32,7 +32,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 /// Every pull request `gh` will return in one call. Past this, older pull
 /// requests are simply absent and their branches read as having none; the
 /// limit is stated here so the risk is findable from the code that takes it.
-const PULL_REQUEST_LIMIT: &str = "200";
+pub(crate) const PULL_REQUEST_LIMIT: &str = "200";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GithubProjectRequest {

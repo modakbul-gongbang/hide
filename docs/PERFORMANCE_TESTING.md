@@ -347,7 +347,7 @@ Use a qualified verdict when coverage is bounded: “no whole-body blanking obse
 Project activity and checkout-pane context reuse canonical agent projection, current topology and cached worktree HEAD metadata.
 The existing single `git log -1` read now returns timestamp and subject together; no timer or additional Git subprocess is introduced.
 A changed projection indexes agents and visits retained panes once, then sorts projects and each project's checkouts by cached keys.
-Cost is O(agents + panes + projects log projects + sum(checkouts log checkouts)); selected Overview context visits retained topology once and renders only the selected checkout's pane rows.
+Cost is O(agents + panes + projects log projects + sum(checkouts log checkouts)); Overview reads the existing checkout/agent aggregation and does not duplicate pane rows.
 No work is scheduled by hover or by an unchanged agent-list tick.
 Identical catalog snapshots settle to the same ordering and revision, so the shell receives no redundant navigator update.
 
@@ -360,3 +360,30 @@ Standalone unit runtimes without a worker context retain synchronous persistence
 Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, and the two `removing_registration_*` tests.
 Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, and successful versus in-use registration removal.
 Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove native responsiveness.
+
+### Project history, disk and cleanup
+
+Only the selected open Overview project requests a bounded history read through WorktreeReader.
+One `git log` includes all real worktree HEADs and known main/base refs, retaining ordered parents, decorations, shallow boundaries and a continuation frontier outside the 512-commit window.
+Overview-only request changes reuse the worker's catalog cache; closing Overview and unchanged ticks perform no extra Git commands.
+Graph geometry rebuilds when history or checkout HEAD identities change; agent status updates do not recompute ancestry.
+Linear chains fold around worktree/ref boundaries; rendering is bounded by the history window and retained worktree count.
+List rows use the existing lazy native scrolling and search keyboard patterns.
+
+Disk reuses DiskReader, triggered by opening Git/Overview or explicit refresh, with one inflight read and coalesced pending input.
+The filesystem walk counts `st_blocks * 512`, partitions nested checkout/shared-Git roots by longest ownership, and deduplicates `(device, inode)` across components.
+It counts a symlink's own allocation without following it and rejects alias roots rather than escaping the declared boundary.
+It is bounded to thirty seconds and one million visited/pending entries per request; failed or incomplete components have no total and remain visible beside a confirmed subtotal.
+This is allocated disk accounting, not physical reclaim estimation for APFS clones.
+Opening or refreshing replaces the measurement; no timer, hover or per-row subprocess measures disk.
+
+Cleanup uses the existing action worker context with one active review/removal, never the Runtime mutex, for Git, disk and fresh schema-decoded Herdr snapshots.
+Cleanup protects both launch `cwd` and current `foreground_cwd` from the generated snapshot contract; it does not change navigation projection policy.
+Review reads are non-mutating; confirmation rechecks each target immediately before `git worktree remove` without force.
+Git and Herdr have no shared atomic filesystem transaction: a state change after the last Herdr check cannot be reserved against by this contract.
+The UI therefore describes a fresh eligibility check rather than a permanent unused guarantee; Git independently refuses dirty or locked removal.
+A stale, missing or failed check is caller-visible and never becomes permission to delete.
+Completed intents are retained until dismissal; duplicate confirmation does no work, and retry through a fresh review excludes already removed targets.
+
+Regression owners include `overview_inspection_does_not_focus_or_repeat_publish`, `overview_history_preserves_real_merge_parents_and_reads_all_heads_once`, `overview_close_and_idle_do_not_run_additional_git_commands`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
+Native acceptance additionally covers Tree/List inspection versus explicit focus, narrow Korean/English wrapping, unknown/partial summaries, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.

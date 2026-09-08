@@ -101,9 +101,26 @@ pub(crate) fn snapshot(
     Ok(convert_snapshot(snapshot))
 }
 
-pub(crate) fn snapshot_response(
+pub(crate) fn snapshot_response(value: Value) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
+    decode_snapshot_response(value).map(convert_snapshot)
+}
+
+/// Cleanup protects both the launch directory and any current foreground
+/// directory, without changing the navigation projection's ownership policy.
+pub(crate) fn cleanup_usage_paths(value: Value) -> Result<Vec<Option<String>>, SessionFetchError> {
+    let snapshot = decode_snapshot_response(value)?;
+    let mut paths = Vec::new();
+    for (cwd, foreground) in snapshot.panes.into_iter().map(|p| (p.cwd, p.foreground_cwd))
+        .chain(snapshot.agents.into_iter().map(|a| (a.cwd, a.foreground_cwd))) {
+        if cwd.is_none() && foreground.is_none() { paths.push(None); }
+        paths.extend(cwd.into_iter().chain(foreground).map(Some));
+    }
+    Ok(paths)
+}
+
+fn decode_snapshot_response(
     value: Value,
-) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
+) -> Result<res::SessionSnapshot, SessionFetchError> {
     validate_snapshot(
         value
             .get("snapshot")
@@ -112,7 +129,7 @@ pub(crate) fn snapshot_response(
     let response: res::ResponseResult = serde_json::from_value(value)
         .map_err(|e| malformed(format!("snapshot projection is malformed: {e}")))?;
     match response {
-        res::ResponseResult::SessionSnapshot { snapshot } => Ok(convert_snapshot(snapshot)),
+        res::ResponseResult::SessionSnapshot { snapshot } => Ok(snapshot),
         _ => Err(malformed("response is missing snapshot")),
     }
 }
@@ -1198,6 +1215,18 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn cleanup_preserves_launch_and_foreground_usage_and_unknown_paths() {
+        let mut value = empty_snapshot();
+        value["panes"] = json!([
+            {"pane_id":"w1:p1", "surface":{"kind":"terminal","attach":{"terminal_id":"fixture-terminal","protocol":HERDR_PROTOCOL_REVISION,"transport":"herdr_client","host":{"host_id":"fixture-host","session_id":"fixture"}}}, "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1,
+             "cwd":"/fixture/main", "foreground_cwd":"/fixture/linked/subdir"},
+            {"pane_id":"w1:p2", "surface":{"kind":"terminal","attach":{"terminal_id":"fixture-terminal","protocol":HERDR_PROTOCOL_REVISION,"transport":"herdr_client","host":{"host_id":"fixture-host","session_id":"fixture"}}}, "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1}
+        ]);
+        let paths = cleanup_usage_paths(json!({"type":"session_snapshot", "snapshot": value})).unwrap();
+        assert_eq!(paths, vec![Some("/fixture/main".into()), Some("/fixture/linked/subdir".into()), None]);
     }
 
     #[test]

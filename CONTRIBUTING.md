@@ -58,7 +58,8 @@ The separate `design-contract.yml` workflow runs `check-hide-theme-literals.sh` 
 
 Read [PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md#verification-layers-and-current-ci-coverage) for the three verification layers and review policy.
 The Rust/Swift suites include deterministic performance-related regression tests, including bitmap repaint and cache retention, but CI does not currently launch and drive Hide with a live Herdr server.
-Native typing, drag, wheel, focus, compositor, and controlled latency/RSS comparisons remain isolated local QA.
+Native typing, drag, wheel, focus, compositor, project Tree/List and destructive cleanup review, and controlled latency/RSS comparisons remain isolated local QA.
+Cleanup deletion tests must use a private fixture root; never use an operator project as a cleanup target.
 The guide's maintenance policy requires affected native scenarios for input/rendering/lifecycle changes and matched measurements for performance claims; this is review-required evidence, not a branch-protection check today.
 Record completed and unrun checks in the PR's Evidence section; a green `verify` result alone does not prove native responsiveness.
 

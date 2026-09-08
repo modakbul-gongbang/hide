@@ -872,6 +872,7 @@ struct CoreDiskUsage: Decodable, Equatable {
 
 /// What the summary card needs that a checkout row does not already carry.
 struct CoreCheckoutCard: Decodable, Equatable {
+    var inspectedCheckoutPath: String? = nil
     let checkoutID: String?
     let github: CoreGithubStatus
     let disk: CoreDiskUsage
@@ -888,6 +889,7 @@ struct CoreCheckoutCard: Decodable, Equatable {
     )
 
     enum CodingKeys: String, CodingKey {
+        case inspectedCheckoutPath = "inspected_checkout_path"
         case checkoutID = "checkout_id"
         case github
         case disk
@@ -914,6 +916,7 @@ struct CoreCheckoutCard: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        inspectedCheckoutPath = try container.decodeIfPresent(String.self, forKey: .inspectedCheckoutPath)
         checkoutID = try container.decodeIfPresent(String.self, forKey: .checkoutID)
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         disk = try container.decodeIfPresent(CoreDiskUsage.self, forKey: .disk) ?? .empty

@@ -8,6 +8,9 @@
 //! with many worktrees costs wall time on that thread and never coordinator
 //! latency.
 
+#[path = "git_history.rs"]
+pub(crate) mod history;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,6 +25,7 @@ use crate::reader::BackgroundRead;
 /// What to describe: one entry per project the navigator is showing.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorktreeRequest {
+    pub overview_root: Option<PathBuf>,
     pub projects: Vec<WorktreeProjectRequest>,
     /// Bumped when something invalidates every answer at once - a worktree
     /// removal, most of all. A changed request is always due, so this is how
@@ -56,9 +60,27 @@ pub struct WorktreeReader {
 
 impl WorktreeReader {
     pub fn new() -> Self {
+        let cache = std::sync::Mutex::new(None::<(ObservedRequest, WorktreeCatalogSnapshot, Vec<PathBuf>)>);
         Self {
-            inner: BackgroundRead::on_change(Duration::ZERO, |request: &ObservedRequest| {
-                let mut catalog = read(&request.0);
+            inner: BackgroundRead::on_change(Duration::ZERO, move |request: &ObservedRequest| {
+                let mut base_key = request.clone();
+                base_key.0.overview_root = None;
+                let cached = cache.lock().unwrap().clone();
+                let reused = cached.as_ref().is_some_and(|(key, _, _)| *key == base_key);
+                let mut catalog = if reused { cached.as_ref().unwrap().1.clone() } else { read(&request.0) };
+                for project in &mut catalog.projects {
+                    if request.0.overview_root.as_deref() == Some(Path::new(&project.root_path)) {
+                        let mut heads: Vec<_> = project.worktrees.iter().filter_map(|w| w.head_sha.clone()).collect();
+                        if project.branches.iter().any(|b| b == "main") { heads.push("refs/heads/main".into()); }
+                        if let Some(base) = &project.base_branch {
+                            if project.branches.contains(base) { heads.push(format!("refs/heads/{base}")); }
+                            else if project.default_branch.as_ref() == Some(base) { heads.push(format!("refs/remotes/origin/{base}")); }
+                        }
+                        heads.sort(); heads.dedup();
+                        project.history = Some(history::read(Path::new(&project.root_path), &heads, project.shared_git_path.as_deref().map(Path::new)));
+                    }
+                }
+                if reused { return (catalog, cached.unwrap().2); }
                 let mut paths = Vec::new();
                 for row in catalog.projects.iter_mut().flat_map(|p| &mut p.worktrees) {
                     let root = PathBuf::from(&row.path);
@@ -90,6 +112,9 @@ impl WorktreeReader {
                 }
                 paths.sort();
                 paths.dedup();
+                let mut base_catalog = catalog.clone();
+                for project in &mut base_catalog.projects { project.history = None; }
+                *cache.lock().unwrap() = Some((base_key, base_catalog, paths.clone()));
                 (catalog, paths)
             }),
             known_paths: Vec::new(),
@@ -376,6 +401,8 @@ fn read_project(
         worktrees.insert(0, main);
     }
     ProjectWorktreesSnapshot {
+        shared_git_path: git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .ok().map(|value| value.trim().to_owned()),
         root_path,
         default_branch,
         branches,
@@ -384,6 +411,7 @@ fn read_project(
         base_branch,
         base_branch_fallback,
         base_source,
+        ..Default::default()
     }
 }
 
@@ -781,7 +809,16 @@ fn main_worktree(path: &Path) -> Option<PathBuf> {
     PathBuf::from(common).parent().map(Path::to_path_buf)
 }
 
-fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
+#[cfg(test)]
+static GIT_CALL_COUNTS: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+fn git_call_count(root: &Path, command: &str) -> usize {
+    GIT_CALL_COUNTS.lock().unwrap().iter().filter(|(path, cmd)| path == root && cmd == command).count()
+}
+
+pub(crate) fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
+    #[cfg(test)]
+    GIT_CALL_COUNTS.lock().unwrap().push((cwd.to_owned(), arguments.first().unwrap_or(&"").to_string()));
     let output = Command::new("git")
         .arg("--no-optional-locks")
         .arg("-C")

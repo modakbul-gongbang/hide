@@ -1046,14 +1046,47 @@ Raised Needs You and Done groups retain their status ordering above Projects.
 The right panel starts with Overview, followed by Explorer, Changes, and Git.
 The compact section selector uses text labels on one line without a competing checkout title.
 Existing saved section selections survive; new state starts on Overview.
-Overview alone owns the shared checkout summary: branch, ahead/behind, PR health, recent commit, and connected Herdr panes.
-It uses the existing summary components, text ladder and spacing tokens; each connected pane is a focus action with pane ID, current status, title, optional session ID and live parent ID.
-The latest commit is the checkout's current HEAD, not a claim that a current pane authored it.
+Overview is project-scoped: a compact Project Summary, Tree/List worktree inspection, and a selected-workspace inspector.
+Project Summary shows the existing GitHub result, Allocated on disk, and a separate Clean up merged worktrees entry.
+GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
+The popover states the lookup window and preserves loading, no recent PRs, authentication, unavailable and stale results.
+
+Tree draws actual Git parent edges for all project worktree HEADs and the known main/base refs.
+Commit parent order is preserved, including merges; named refs and worktree attachments stay visible when linear ancestry is folded.
+A window holds at most 512 commits; actual parent IDs beyond it form a continuation frontier, never a fabricated root or branch.
+Shallow boundaries and unavailable history are explicit, and a missing or unborn HEAD has no invented attachment.
+Tree may scroll horizontally when concurrent lanes exceed panel width.
+List reuses the search keyboard pattern and Needs You, Done, Working, Seen ordering, with stable path ties and an explicit empty state.
+Both modes share one core-owned inspector selection; switching modes, filtering, inspecting and scrolling never changes the terminal's pane, tab, checkout focus or read state.
+Only explicit Open workspace or Open/Return agent actions change workspace or pane focus.
+View changes switches the section for the currently open workspace; another inspected workspace must first be opened.
+
+The inspector puts the branch, short folder name, current representative agent and status, changed files and PR before collapsed latest-commit details.
+The live pane list is not repeated.
+Absolute paths and commit IDs are selectable secondary details; the latest commit describes the checkout HEAD, not the pane that authored it.
 The pinned Herdr contract offers lifetime-scoped display metadata and agent lineage but no persistent commit-authoring relation, so Hide neither adds Git trailers nor renames branches.
-Retired or moved panes leave the checkout context on the next topology projection; a retired parent ID is omitted.
+Retired or moved panes leave the current context on the next topology projection; a retired parent ID is omitted.
 Remote Overview explicitly reports that local Git context is unavailable.
 Explorer contains file navigation only, with no checkout summary above it.
 Changes and Git keep their existing responsibilities.
+
+Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.
+Nested roots belong to the longest matching root; hard links share one inode allocation, and descendant symlinks are not followed.
+An incomplete component has no total; the UI separates the confirmed subtotal from unavailable target measurements.
+Allocated blocks are not a promise of reclaimable space, particularly for APFS clones.
+
+Cleanup opens a review sheet with separate Available and Excluded groups, exact branch and folder, allocated size or failure, and target-specific exclusion reasons.
+Nothing is preselected and Remove is disabled until a user explicitly checks an eligible folder.
+Main/current, dirty/untracked, live-pane use, locked, nested, detached, unknown and not-confirmed-merged targets are excluded.
+Only clean, unused linked worktrees merged into local main can be removed, without force; branches and history remain.
+Confirm rechecks current Git and Herdr state before each target and refuses changed state with Review again recovery.
+Completion lists individual removed/refused outcomes; repeating the same completed intent does not repeat removal.
+Review and cancel perform no filesystem mutations.
+This file deletion flow is separate from registration removal.
+
+Overview geometry uses named `HideTheme.Overview` tokens: a 64pt minimum rail, 14pt lane spacing, 12pt inset, 16pt node offset, 6pt nodes, 28pt commit rows, 76pt worktree rows and 236pt row content.
+The cleanup sheet uses the existing 440pt worktree dialog width and a 560pt height with a scrolling list.
+Colors, typography, spacing, corners, status marks and tooltip/accessibility help come from the shared shell system.
 
 Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
 The action is offered only for registered projects and retains its existing confirmation.
@@ -1062,7 +1095,7 @@ A completed removal disappears from the core snapshot and a repeated request is 
 Save failures remain caller-visible; normal no-op results never become alerts.
 
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
-The Git section retains its existing open/refresh trigger, while the sidebar popover and project menu can explicitly refresh one repository.
+Git and the selected Overview project retain their open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
 All triggers share the existing bounded background reader, authentication and cache.
 Explorer and Changes do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
@@ -1074,7 +1107,7 @@ The ruler clips all drawing to its own bounds, and text loaded into an initially
 Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.
 Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
-Existing controls retain their accessibility contracts; Overview adds named section, commit and pane targets.
+Existing controls retain their accessibility contracts; Overview adds named section, inspection, graph, search, explicit focus and cleanup targets.
 
 ### Enforcement
 

@@ -328,6 +328,7 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
     git(&repo.0, &["commit", "-m", "tracked"]).unwrap();
     let mut reader = WorktreeReader::new();
     let mut request = WorktreeRequest {
+        overview_root: None,
         projects: vec![WorktreeProjectRequest {
             root_path: repo.0.clone(),
             bases: BTreeMap::new(),
@@ -357,4 +358,53 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
     assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
     request.generation += 1;
     assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
+}
+
+#[test]
+fn overview_history_preserves_real_merge_parents_and_reads_all_heads_once() {
+    let repo = Repository::new();
+    let feature = repo.linked("feature");
+    git(&feature, &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Feature"]).unwrap();
+    let feature_head = git(&feature, &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+    git(&repo.0, &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Main"]).unwrap();
+    let first_parent = git(&repo.0, &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+    git(&repo.0, &["-c", "commit.gpgsign=false", "merge", "--no-ff", "feature", "-m", "Merge"]).unwrap();
+    let merge = git(&repo.0, &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+    let mut heads = vec![merge.clone(), feature_head.clone()];
+    for _ in 0..24 { heads.push(first_parent.clone()); }
+    let before = git_call_count(&repo.0, "log");
+    let value = history::read(&repo.0, &heads, Some(&repo.0.join(".git")));
+    assert_eq!(git_call_count(&repo.0, "log") - before, 1, "One project history read, independent of worktree count");
+    assert!(value.unavailable_reason.is_none());
+    assert_eq!(value.commits.iter().find(|c| c.sha == merge).unwrap().parents, [first_parent, feature_head]);
+    assert!(value.continuation.is_empty());
+    assert!(!value.truncated);
+    let invalid = history::read(&repo.0, &["refs/heads/no-such-branch".into()], Some(&repo.0.join(".git")));
+    assert!(invalid.unavailable_reason.is_some());
+    assert!(invalid.commits.is_empty());
+}
+
+#[test]
+fn overview_close_and_idle_do_not_run_additional_git_commands() {
+    let repo = Repository::new();
+    let root = std::fs::canonicalize(&repo.0).unwrap();
+    let mut reader = WorktreeReader::new();
+    let mut request = WorktreeRequest { overview_root: Some(root.clone()),
+        projects: vec![WorktreeProjectRequest { root_path: root.clone(), bases: BTreeMap::new(), base_override: None }], generation: 0 };
+    let settle = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
+        for _ in 0..1000 {
+            if let Some(value) = reader.read_if_due(request.clone()) { return value; }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("Reader did not settle");
+    };
+    let value = settle(&mut reader, &request);
+    assert!(value.projects[0].history.as_ref().is_some_and(|h| !h.commits.is_empty()));
+    // Path discovery's existing content generation needs one settling pass.
+    for _ in 0..300 { reader.read_if_due(request.clone()); std::thread::sleep(Duration::from_millis(2)); }
+    let before = git_call_count(&root, "log");
+    request.overview_root = None;
+    settle(&mut reader, &request);
+    for _ in 0..100 { reader.read_if_due(request.clone()); }
+    assert_eq!(git_call_count(&root, "log"), before);
 }
