@@ -294,6 +294,19 @@ enum PaneKeyEventPolicy {
         .command, .control, .option, .shift,
     ]
 
+    /// Option-only menu equivalents can be claimed by the focused native
+    /// responder. Route numbered navigation before text interpretation, using
+    /// the same physical-key registry as the other shell shortcuts.
+    static func agentSelectionNumber(_ event: NSEvent) -> Int? {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection(chordModifiers) == .option,
+              let key = PetHotkey.name(for: event.keyCode),
+              let number = Int(key),
+              HideCommand.agent(number).shortcut(bindings: [:])?.matches(event) == true
+        else { return nil }
+        return number
+    }
+
     /// Cmd+E is an app-level navigation command. Intercepting it before the
     /// responder chain prevents a focused file editor from claiming macOS's
     /// default "Use Selection for Find" equivalent instead.

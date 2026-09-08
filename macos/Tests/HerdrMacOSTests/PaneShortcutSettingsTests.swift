@@ -5,6 +5,34 @@ import Testing
 
 @Suite("Pane shortcut settings")
 struct PaneShortcutSettingsTests {
+    @Test func optionNumbersNavigateBeforeNativeTextInterpretation() {
+        let keyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
+        for (index, code) in keyCodes.enumerated() {
+            let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [.option, .capsLock],
+                timestamp: 0, windowNumber: 0, context: nil,
+                characters: "한", charactersIgnoringModifiers: "한",
+                isARepeat: false, keyCode: code)!
+            #expect(PaneKeyEventPolicy.agentSelectionNumber(event) == index + 1)
+        }
+        for modifiers: NSEvent.ModifierFlags in [[], .control, .command, [.option, .shift], [.option, .command]] {
+            let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: 0, context: nil,
+                characters: "1", charactersIgnoringModifiers: "1",
+                isARepeat: false, keyCode: 18)!
+            #expect(PaneKeyEventPolicy.agentSelectionNumber(event) == nil)
+        }
+        for (type, code): (NSEvent.EventType, UInt16) in [(.keyUp, 18), (.keyDown, 29), (.keyDown, 48)] {
+            let event = NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: .option,
+                timestamp: 0, windowNumber: 0, context: nil,
+                characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: code)!
+            #expect(PaneKeyEventPolicy.agentSelectionNumber(event) == nil)
+        }
+    }
+
     @Test func wheelModifiersUseTheHostProtocolBits() {
         #expect(PaneScrollPolicy.modifiers([.shift, .control, .option, .command]) == 15)
         #expect(PaneScrollPolicy.modifiers([.capsLock, .numericPad]) == 0)

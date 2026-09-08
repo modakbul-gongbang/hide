@@ -95,6 +95,12 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil
             }
+            if let number = PaneKeyEventPolicy.agentSelectionNumber(event) {
+                MainActor.assumeIsolated {
+                    self.model.selectAgent(shortcutNumber: number)
+                }
+                return nil
+            }
             // The reverse chord is checked first: it is the forward chord plus
             // Shift, so testing forward first would swallow it.
             if PaneKeyEventPolicy.isTabSwitcherRetreat(event) {

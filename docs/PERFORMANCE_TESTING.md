@@ -69,8 +69,9 @@ Only the active cycle publishes once per changed highlight; repeated cancellatio
 The existing cycle presentation has a dedicated observable owner read only by the overlay; preview steps send no shell-wide notification and therefore do not rebuild the retained sidebar or tab strip.
 The overlay projects at most nine rows through cached identity lookups, regardless of retained list size.
 The synthetic-key release check has one replaceable timer; repeated key-up cannot queue unbounded commits.
+Numbered agent routing checks event type and modifiers before one physical-key lookup; unrelated text input does not scan the agent list or publish navigation state.
 
-Regression owners are `RecentNavigationTests` (2, 9, and 10,000 retained entries over 20,000 input steps, bounded visible rows, deletion convergence), `RecentNavigationIntegrationTests` (actual core restoration and notification counts), and `PaneShortcutSettingsTests` (modifier ownership and release).
+Regression owners are `RecentNavigationTests` (2, 9, and 10,000 retained entries over 20,000 input steps, bounded visible rows, deletion convergence), `RecentNavigationIntegrationTests` (actual core restoration and notification counts), and `PaneShortcutSettingsTests` (physical numbered keys, modifier ownership and release).
 Native verification must additionally exercise both directions, modifier hold/release, Escape, project restoration across checkouts, and terminal/file/diff/Browser surfaces in the isolated fixture.
 Report those native checks as unverified if the sole-running-instance gate blocks launching the dev bundle; deterministic tests do not prove native event delivery or Korean text legibility.
 
