@@ -14,7 +14,7 @@ enum HideCommand: Hashable {
         case .menu(let command): command.shortcut
         case .pane(let command): bindings[command] ?? command.defaultShortcut
         case .tab(let number): (1...9).contains(number) ? PaneShortcut(key: String(number), modifiers: [.command]) : nil
-        case .agent(let number): (1...9).contains(number) ? PaneShortcut(key: String(number), modifiers: [.control]) : nil
+        case .agent(let number): (1...9).contains(number) ? PaneShortcut(key: String(number), modifiers: [.option]) : nil
         case .label: nil
         }
     }

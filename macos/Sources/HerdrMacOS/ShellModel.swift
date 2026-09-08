@@ -128,6 +128,37 @@ struct ShellTabItem: Identifiable {
     var contextLabel: String? = nil
 }
 
+/// Only the overlay subscribes to held-key presentation changes. The shell's
+/// retained sidebar and strip are not invalidated for each preview step.
+@MainActor
+final class RecentNavigationPresentation: ObservableObject {
+    @Published var projectCycle: ProjectSwitcherCycle?
+    @Published var tabCycle: TabSwitcherCycle?
+}
+
+struct RecentProject: Identifiable {
+    let id: String
+    let deviceID: String
+    let workspace: CoreWorkspaceSnapshot
+}
+
+struct RecentSurface: Identifiable {
+    let id: String
+    let projectID: String
+    let deviceID: String
+    let workspaceID: String
+    let checkoutID: String
+    let checkoutLabel: String
+    let item: ShellTabItem
+
+    var symbol: String {
+        switch item.kind {
+        case .herdr(let tab): tab.panes.contains { $0.content != .terminal } ? "globe" : "terminal"
+        case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
+        }
+    }
+}
+
 /// Resolves the core's ordered tab strip into what the strip draws.
 ///
 /// The order is the core's and is used as given. This maps each entry onto the
@@ -145,12 +176,14 @@ enum ShellTabStrip {
         agents: [SidebarAgent] = []
     ) -> [ShellTabItem] {
         let agentsByPane = Dictionary(uniqueKeysWithValues: agents.map { ($0.paneID, $0) })
+        let tabsByID = Dictionary(uniqueKeysWithValues: herdrTabs.compactMap { tab in tab.id.map { ($0, tab) } })
+        let editorByID = Dictionary(uniqueKeysWithValues: editorTabs.map { ($0.id, $0) })
         return strip.compactMap { entry in
             switch entry.kind {
             case .herdr:
                 // The core builds the strip from the same tabs it publishes,
                 // so an entry always has one to point at.
-                guard let tab = herdrTabs.first(where: { $0.id == entry.sourceID })
+                guard let tab = tabsByID[entry.sourceID]
                 else { return nil }
                 let pane = tab.panes.first { $0.id == focusedPaneIDsByTab[entry.sourceID] }
                 let agent = pane.flatMap { agentsByPane[$0.id] }
@@ -170,7 +203,7 @@ enum ShellTabStrip {
                     contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(title)" }
                 )
             case .file:
-                guard let tab = editorTabs.first(where: { $0.id == entry.sourceID })
+                guard let tab = editorByID[entry.sourceID]
                 else { return nil }
                 return ShellTabItem(
                     id: entry.id,
@@ -180,7 +213,7 @@ enum ShellTabStrip {
                     kind: .editor(tab)
                 )
             case .diff:
-                guard let tab = editorTabs.first(where: { $0.id == entry.sourceID })
+                guard let tab = editorByID[entry.sourceID]
                 else { return nil }
                 return ShellTabItem(
                     id: entry.id,
@@ -196,7 +229,7 @@ enum ShellTabStrip {
 
 /// Direct-select numbering for the tab strip. The number is the tab's
 /// position in the strip as drawn, so ⌘1 always reaches the leftmost tab.
-/// It mirrors `AgentShortcutNumbering`, which does the same for Control and
+/// It mirrors `AgentShortcutNumbering`, which does the same for Option and
 /// the agent rows.
 enum TabShortcutNumbering {
     /// Only the first nine tabs get a number: ⌘0 is not a tenth slot, it is a
@@ -292,8 +325,15 @@ final class ShellModel: ObservableObject {
     @Published var showFileSearch = false { didSet { refreshHintSheetState() } }
     @Published var showSettings = false { didSet { refreshHintSheetState() } }
     @Published var showPetDashboard = false
-    @Published private(set) var agentSwitcherCycle: AgentSwitcherCycle?
-    @Published private(set) var tabSwitcherCycle: TabSwitcherCycle?
+    let recentNavigation = RecentNavigationPresentation()
+    private(set) var projectSwitcherCycle: ProjectSwitcherCycle? {
+        get { recentNavigation.projectCycle }
+        set { recentNavigation.projectCycle = newValue }
+    }
+    private(set) var tabSwitcherCycle: TabSwitcherCycle? {
+        get { recentNavigation.tabCycle }
+        set { recentNavigation.tabCycle = newValue }
+    }
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
     @Published var worktreeToDelete: CoreGitWorktree?
     @Published var deleteWorktreeBranch = false
@@ -340,7 +380,14 @@ final class ShellModel: ObservableObject {
     private var lastRemoteDevice: CoreDeviceSnapshot?
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
-    private var agentMRU = AgentMRU()
+    private var projectMRU = ProjectMRU()
+    private(set) var recentProjects: [String: RecentProject] = [:]
+    private(set) var recentSurfaces: [String: RecentSurface] = [:]
+    private var observedNavigationRevision: UInt64?
+    private var observedNavigationDevice: String?
+    private var currentProjectID: String?
+    private var currentSurfaceID: String?
+    private var tabCycleProjectID: String?
     private var shortcutHintTask: Task<Void, Never>?
     private var tabMRU = TabMRU()
 
@@ -357,17 +404,15 @@ final class ShellModel: ObservableObject {
         )
         paneShortcuts = shortcutResolution.bindings
         shortcutDiagnostic = shortcutResolution.diagnostic ?? Self.uiStateDiagnostic(core.snapshot)
-        observeAgentFocus(in: core.snapshot)
         remote.ingest(core.snapshot?.status.remote ?? [])
-        observeTabFocus()
+        observeNavigation(in: core.snapshot)
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             self.observeWorktreeRemoval(in: snapshot)
             self.observeTaskOperation(in: snapshot)
             self.observeForkFailure(in: snapshot)
-            self.observeAgentFocus(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
-            self.observeTabFocus()
+            self.observeNavigation(in: snapshot)
             self.settleCheckoutStart()
             self.objectWillChange.send()
         }
@@ -1015,8 +1060,8 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    /// ⌃1…⌃9 select the nth agent in the same order the sidebar lists them.
-    /// The agents ⌃1-⌃9 reach, in the order the visible sidebar view lists
+    /// ⌥1…⌥9 select the nth agent in the same order the sidebar lists them.
+    /// The agents ⌥1-⌥9 reach, in the order the visible sidebar view lists
     /// them: the whole agent list in the Agents view, the raised rows and expanded
     /// lineage trees in the Projects view.
     var shortcutAgents: [SidebarAgent] {
@@ -1090,116 +1135,227 @@ final class ShellModel: ObservableObject {
         core.listRemoteFiles(targetID: targetID, rootPath: path)
     }
 
-    func beginOrAdvanceAgentSwitcher() {
+    func recentProjectDetail(_ id: String) -> String {
+        guard let surfaceID = tabMRU.tabIDs(in: id).first, let surface = recentSurfaces[surfaceID] else {
+            return "No open tabs"
+        }
+        return "\(surface.checkoutLabel) · \(surface.item.label)"
+    }
+
+    func beginOrAdvanceProjectSwitcher() { stepProjectSwitcher(.forward) }
+    func beginOrRetreatProjectSwitcher() { stepProjectSwitcher(.backward) }
+
+    private func stepProjectSwitcher(_ direction: RecentSwitcherDirection) {
         cancelTabSwitcher()
-        observeAgentFocus(in: core.snapshot)
-        if agentSwitcherCycle != nil {
-            agentSwitcherCycle?.advance()
+        if var cycle = projectSwitcherCycle {
+            if direction == .forward { cycle.advance() } else { cycle.retreat() }
+            if cycle.selectedProjectID != projectSwitcherCycle?.selectedProjectID { projectSwitcherCycle = cycle }
             return
         }
-        agentSwitcherCycle = AgentSwitcherCycle(
-            originalPaneID: focusedPaneID,
-            paneIDs: agentMRU.paneIDs
-        )
-    }
-
-    /// Option+Shift+Tab. Opening the switcher with the reverse chord starts at
-    /// the least recent agent, which is where walking backwards from the
-    /// current one arrives.
-    func beginOrRetreatAgentSwitcher() {
-        cancelTabSwitcher()
-        observeAgentFocus(in: core.snapshot)
-        if agentSwitcherCycle != nil {
-            agentSwitcherCycle?.retreat()
+        guard let cycle = ProjectSwitcherCycle(
+            originalProjectID: currentProjectID, projectIDs: projectMRU.projectIDs, direction: direction
+        ) else {
+            // An empty or single-item history is an ordinary no-op.
             return
         }
-        agentSwitcherCycle = AgentSwitcherCycle(
-            originalPaneID: focusedPaneID,
-            paneIDs: agentMRU.paneIDs,
-            direction: .backward
-        )
+        projectSwitcherCycle = cycle
     }
 
-    func commitAgentSwitcher() {
-        guard let cycle = agentSwitcherCycle else { return }
-        defer { agentSwitcherCycle = nil }
-        let available = Set(agents.map(\.paneID))
-        guard let paneID = cycle.committedPaneID(availablePaneIDs: available),
-              let agent = agents.first(where: { $0.paneID == paneID })
-        else { return }
-        selectAgent(agent)
-    }
-
-    func cancelAgentSwitcher() {
-        agentSwitcherCycle = nil
-    }
-
-    private func observeAgentFocus(in snapshot: CoreSnapshot?) {
-        let currentAgents = snapshot?.navigator.agents ?? []
-        agentMRU.observe(
-            focusedPaneID: snapshot?.focusedPaneID,
-            availablePaneIDs: currentAgents.map(\.paneID)
-        )
-    }
-
-    func beginOrAdvanceTabSwitcher() {
-        cancelAgentSwitcher()
-        observeTabFocus()
-        if tabSwitcherCycle != nil {
-            tabSwitcherCycle?.advance()
+    func commitProjectSwitcher() {
+        guard let cycle = projectSwitcherCycle else { return }
+        cancelProjectSwitcher()
+        guard let project = recentProjects[cycle.selectedProjectID] else {
+            HideLaunchTrace.mark("navigation.project.commit_recovered", detail: "reason=project_removed outcome=selection_kept")
             return
         }
-        tabSwitcherCycle = TabSwitcherCycle(
-            originalTabID: unifiedTabs.first(where: { $0.active })?.id,
-            tabIDs: tabMRU.tabIDs
-        )
-    }
-
-    /// Control+Shift+Tab walks the checkout-local recent tab order backwards.
-    func beginOrRetreatTabSwitcher() {
-        cancelAgentSwitcher()
-        observeTabFocus()
-        if tabSwitcherCycle != nil {
-            tabSwitcherCycle?.retreat()
+        guard let surfaceID = tabMRU.tabIDs(in: project.id).first,
+              let surface = recentSurfaces[surfaceID] else {
+            // An empty project remains navigable without inventing a terminal.
+            guard let checkout = project.workspace.checkouts.first else {
+                HideLaunchTrace.mark("navigation.project.commit_recovered", detail: "reason=workspace_removed outcome=selection_kept")
+                return
+            }
+            guard selectNavigationDevice(project.deviceID) else { return }
+            if project.deviceID == "local" {
+                core.focusCheckout(workspaceID: project.workspace.id, checkoutID: checkout.id)
+            } else {
+                remote.focus(workspaceID: project.workspace.id, checkoutID: checkout.id)
+                core.focusRemoteWorkspace(targetID: project.deviceID, workspaceID: project.workspace.id)
+            }
             return
         }
-        tabSwitcherCycle = TabSwitcherCycle(
-            originalTabID: unifiedTabs.first(where: { $0.active })?.id,
-            tabIDs: tabMRU.tabIDs,
-            direction: .backward
-        )
+        focusRecentSurface(surface)
+    }
+
+    func cancelProjectSwitcher() {
+        if projectSwitcherCycle != nil { projectSwitcherCycle = nil }
+    }
+
+    func beginOrAdvanceTabSwitcher() { stepTabSwitcher(.forward) }
+    func beginOrRetreatTabSwitcher() { stepTabSwitcher(.backward) }
+
+    private func stepTabSwitcher(_ direction: RecentSwitcherDirection) {
+        cancelProjectSwitcher()
+        if var cycle = tabSwitcherCycle {
+            if direction == .forward { cycle.advance() } else { cycle.retreat() }
+            if cycle.selectedTabID != tabSwitcherCycle?.selectedTabID { tabSwitcherCycle = cycle }
+            return
+        }
+        guard let projectID = currentProjectID,
+              let cycle = TabSwitcherCycle(originalTabID: currentSurfaceID,
+                  tabIDs: tabMRU.tabIDs(in: projectID), direction: direction) else {
+            // Keep the current surface without interrupting keyboard input.
+            return
+        }
+        tabCycleProjectID = projectID
+        tabSwitcherCycle = cycle
     }
 
     func commitTabSwitcher() {
         guard let cycle = tabSwitcherCycle else { return }
-        defer { tabSwitcherCycle = nil }
-        let tabs = unifiedTabs
-        let available = Set(tabs.map(\.id))
-        guard let tabID = cycle.committedTabID(availableTabIDs: available),
-              let tab = tabs.first(where: { $0.id == tabID })
-        else { return }
-        focusUnifiedTab(tab)
+        let projectID = tabCycleProjectID
+        cancelTabSwitcher()
+        guard projectID == currentProjectID,
+              let surface = recentSurfaces[cycle.selectedTabID], surface.projectID == projectID else {
+            HideLaunchTrace.mark("navigation.tab.commit_recovered", detail: "reason=context_changed outcome=selection_kept")
+            return
+        }
+        focusRecentSurface(surface)
     }
 
     func cancelTabSwitcher() {
-        tabSwitcherCycle = nil
+        if tabSwitcherCycle != nil { tabSwitcherCycle = nil }
+        tabCycleProjectID = nil
     }
 
-    private func observeTabFocus() {
-        let tabs = unifiedTabs
-        tabMRU.observe(
-            contextID: tabSwitcherContextID,
-            focusedTabID: tabs.first(where: { $0.active })?.id,
-            availableTabIDs: tabs.map(\.id)
-        )
+    private func reportNavigationNotice(_ message: String) {
+        if interactionNotice != message { interactionNotice = message }
     }
 
-    private var tabSwitcherContextID: String? {
-        guard let checkout = focusedCheckout else { return nil }
-        let deviceID = isRemoteContext
-            ? remote.navigation?.deviceID ?? "remote"
-            : "local"
-        return "\(deviceID):\(checkout.workspaceID):\(checkout.id)"
+    private func selectNavigationDevice(_ deviceID: String) -> Bool {
+        let selected = activeRemoteDevice?.id ?? "local"
+        guard selected != deviceID else { return true }
+        guard let device = devices.first(where: { $0.id == deviceID }) else {
+            reportNavigationNotice("The selected project's device is unavailable. Selection was kept.")
+            return false
+        }
+        selectDevice(device)
+        return (activeRemoteDevice?.id ?? "local") == deviceID
+    }
+
+    private func focusRecentSurface(_ surface: RecentSurface) {
+        guard surface.id != currentSurfaceID else { return }
+        guard selectNavigationDevice(surface.deviceID) else { return }
+        switch surface.item.kind {
+        case .herdr(let tab):
+            guard let tabID = tab.id else {
+                reportNavigationNotice("The selected tab has no runtime identity. Selection was kept.")
+                return
+            }
+            if surface.deviceID == "local" {
+                core.focusTab(workspaceID: surface.workspaceID, checkoutID: surface.checkoutID, tabID: tabID)
+            } else {
+                remote.focus(workspaceID: surface.workspaceID, checkoutID: surface.checkoutID,
+                    tabID: tabID, paneID: tab.panes.first?.id)
+                core.focusRemoteTab(targetID: surface.deviceID, tabID: tabID)
+            }
+        case .editor(let tab): core.focusFileTab(tab.id)
+        }
+    }
+
+    /// Consume the incoming snapshot, not CoreBridge.snapshot: Published sends
+    /// its new value before assigning the property. Reading the property here
+    /// would record the previous frame's focus and miss the last visit.
+    private func observeNavigation(in snapshot: CoreSnapshot?) {
+        guard let snapshot else { return }
+        let selectedDevice = activeRemoteDevice?.id ?? "local"
+        guard snapshot.navigationRevision != observedNavigationRevision || selectedDevice != observedNavigationDevice else { return }
+        observedNavigationRevision = snapshot.navigationRevision
+        observedNavigationDevice = selectedDevice
+        var projects: [String: RecentProject] = [:]
+        var surfaces: [String: RecentSurface] = [:]
+        var projectOrder: [String] = []
+        currentProjectID = nil
+        currentSurfaceID = nil
+        var contexts: [(String, [CoreWorkspaceSnapshot], String?, String?, String?, [CoreEditorTabSnapshot],
+                        [String: String], [SidebarAgent], String?)] = [
+            ("local", snapshot.navigator.workspaces, snapshot.navigator.focusedWorkspaceID,
+             snapshot.navigator.focusedCheckoutID, snapshot.editor.activeTabID, snapshot.editor.tabs,
+             Dictionary(uniqueKeysWithValues: snapshot.paneLayouts.map { ($0.tabID, $0.focusedPaneID) }),
+             snapshot.navigator.agents, snapshot.focusedPaneID)
+        ]
+        for status in snapshot.status.remote {
+            guard let session = status.session else { continue }
+            let navigation = remote.navigation?.deviceID == status.targetID ? remote.navigation : nil
+            contexts.append((status.targetID, session.workspaces,
+                navigation?.focusedWorkspaceID ?? session.focusedWorkspaceID,
+                navigation?.focusedCheckoutID ?? session.focusedCheckoutID, nil, [],
+                Dictionary(uniqueKeysWithValues: (navigation?.paneLayouts ?? session.paneLayouts).map { ($0.tabID, $0.focusedPaneID) }),
+                navigation?.agents ?? session.agents, navigation?.focusedPaneID ?? session.focusedPaneID))
+        }
+        for (deviceID, workspaces, focusedWorkspaceID, focusedCheckoutID, activeFileID, editorTabs,
+             layoutPaneIDs, contextAgents, focusedPaneID) in contexts {
+            var paneIDs = layoutPaneIDs
+            let agentsByPane = Dictionary(uniqueKeysWithValues: contextAgents.map { ($0.paneID, $0) })
+            for workspace in workspaces {
+                let projectID = "\(deviceID):\(workspace.id)"
+                projects[projectID] = RecentProject(id: projectID, deviceID: deviceID, workspace: workspace)
+                projectOrder.append(projectID)
+                let selected = deviceID == selectedDevice && workspace.id == focusedWorkspaceID
+                if selected { currentProjectID = projectID }
+                var available: [String] = []
+                for checkout in workspace.checkouts {
+                    let isFocused = selected && checkout.id == focusedCheckoutID
+                    let activeTabID = deviceID != "local" && isFocused
+                        ? remote.navigation?.focusedTabID : checkout.activeTabID
+                    // Match the tab strip: core-owned focus wins while its
+                    // layout confirmation is pending. Index agents once per
+                    // device, then pass only this checkout's panes.
+                    if isFocused, let activeTabID, let focusedPaneID { paneIDs[activeTabID] = focusedPaneID }
+                    let checkoutAgents = checkout.tabs.flatMap(\.panes).compactMap { agentsByPane[$0.id] }
+                    let tabs = ShellTabStrip.items(strip: checkout.strip, herdrTabs: checkout.tabs,
+                        editorTabs: editorTabs, activeHerdrTabID: activeTabID,
+                        activeFileTabID: activeFileID, focusedPaneIDsByTab: paneIDs, agents: checkoutAgents)
+                    if tabs.count != checkout.strip.count {
+                        HideLaunchTrace.mark("navigation.tabs.reconciled", detail: "reason=missing_content removed_count=\(checkout.strip.count - tabs.count) revision=\(snapshot.navigationRevision)")
+                    }
+                    for item in tabs {
+                        let id = "\(projectID):\(checkout.id):\(item.id)"
+                        available.append(id)
+                        surfaces[id] = RecentSurface(id: id, projectID: projectID, deviceID: deviceID,
+                            workspaceID: workspace.id, checkoutID: checkout.id, checkoutLabel: checkout.label, item: item)
+                        if isFocused && item.active { currentSurfaceID = id }
+                    }
+                }
+                tabMRU.observe(contextID: projectID, focusedTabID: selected ? currentSurfaceID : nil,
+                    availableTabIDs: available)
+            }
+        }
+        recentProjects = projects
+        recentSurfaces = surfaces
+        tabMRU.retainContexts(Set(projectOrder))
+        projectMRU.observe(focusedProjectID: currentProjectID, availableProjectIDs: projectOrder)
+        if var cycle = projectSwitcherCycle {
+            let original = cycle
+            if !cycle.reconcile(available: Set(projectOrder)) {
+                cancelProjectSwitcher()
+                HideLaunchTrace.mark("navigation.project.cycle_cancelled", detail: "reason=all_removed outcome=selection_kept revision=\(snapshot.navigationRevision)")
+            } else if original != cycle {
+                projectSwitcherCycle = cycle
+                HideLaunchTrace.mark("navigation.projects.reconciled", detail: "removed_count=\(original.projectIDs.count - cycle.projectIDs.count) revision=\(snapshot.navigationRevision)")
+            }
+        }
+        if var cycle = tabSwitcherCycle {
+            let original = cycle
+            let available = tabCycleProjectID.map { Set(tabMRU.tabIDs(in: $0)) } ?? []
+            if tabCycleProjectID != currentProjectID || !cycle.reconcile(available: available) {
+                cancelTabSwitcher()
+                HideLaunchTrace.mark("navigation.tab.cycle_cancelled", detail: "reason=context_changed outcome=selection_kept revision=\(snapshot.navigationRevision)")
+            } else if original != cycle {
+                tabSwitcherCycle = cycle
+                HideLaunchTrace.mark("navigation.tabs.reconciled", detail: "reason=removed removed_count=\(original.tabIDs.count - cycle.tabIDs.count) revision=\(snapshot.navigationRevision)")
+            }
+        }
     }
 
     func toggleWorkspace(_ workspace: CoreWorkspaceSnapshot) {
@@ -1232,7 +1388,6 @@ final class ShellModel: ObservableObject {
         guard let workspace = workspaceToRemove else { return }
         core.removeWorkspace(workspace.id)
         workspaceToRemove = nil
-        interactionNotice = "Workspace removed from Hide. Its folder, repository, and worktrees were not changed."
     }
 
     func worktree(for path: String) -> CoreGitWorktree? {
@@ -1633,12 +1788,10 @@ final class ShellModel: ObservableObject {
             label: label.trimmingCharacters(in: .whitespacesAndNewlines),
             sshAlias: trimmedAlias
         )
-        interactionNotice = "Device registration requested. Hide will use your existing SSH environment."
     }
 
     func removeDevice(_ device: CoreDeviceSnapshot) {
         core.removeDevice(device.id)
-        interactionNotice = "Device removed from Hide. The remote host and its sessions were not changed."
     }
 
     func testDevice(_ device: CoreDeviceSnapshot) {
@@ -1647,7 +1800,6 @@ final class ShellModel: ObservableObject {
         if device.sshAlias != nil {
             remote.refresh(targetID: device.id, label: device.label)
         }
-        interactionNotice = "Connection test requested for \(device.label). Authentication remains owned by SSH."
     }
 
     func retryRemote() {
@@ -1662,7 +1814,6 @@ final class ShellModel: ObservableObject {
     private func startTerminal(for checkout: CoreCheckoutSnapshot, focusHerdr: Bool) {
         guard pendingCheckoutStarts.insert(checkout.id).inserted else {
             checkoutStartState = .starting
-            interactionNotice = "A terminal is already starting for this checkout."
             return
         }
         guard let runtime = core.runtimeSelection else {
@@ -2037,9 +2188,6 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("tab.close_shortcut.herdr", detail: tabID)
             requestTabClose(tab)
         case .nothingToClose:
-            interactionNotice = focusedWorkspace == nil
-                ? "There is no open tab to close. Create a workspace to start one."
-                : "There is no open tab to close. Create a pane to start one."
             HideLaunchTrace.mark(
                 "tab.close_shortcut.nothing_to_close",
                 detail: focusedWorkspace == nil ? "no_workspace" : "workspace_without_tabs"

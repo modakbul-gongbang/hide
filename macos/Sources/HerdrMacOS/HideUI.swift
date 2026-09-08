@@ -104,15 +104,7 @@ struct ShellView: View {
                         .accessibilityIdentifier("right-panel")
                 }
             }
-            if let cycle = model.agentSwitcherCycle {
-                AgentSwitcherOverlay(cycle: cycle, agents: model.agents)
-            } else if let cycle = model.tabSwitcherCycle {
-                TabSwitcherOverlay(
-                    cycle: cycle,
-                    tabs: model.unifiedTabs,
-                    checkoutLabel: model.focusedCheckout?.label
-                )
-            }
+            RecentNavigationOverlay(model: model, presentation: model.recentNavigation)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
@@ -295,117 +287,113 @@ private struct WorktreeCreationSheet: View {
     }
 }
 
-private struct AgentSwitcherOverlay: View {
-    let cycle: AgentSwitcherCycle
-    let agents: [SidebarAgent]
+private struct RecentNavigationOverlay: View {
+    let model: ShellModel
+    @ObservedObject var presentation: RecentNavigationPresentation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-            Text("RECENT AGENTS")
-                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                .foregroundStyle(HideTheme.muted)
-            ForEach(cycle.paneIDs, id: \.self) { paneID in
-                if let agent = agents.first(where: { $0.paneID == paneID }) {
-                    HStack(spacing: HideTheme.spacingMD) {
-                        if let mark = AgentMark.image(for: agent.agentKind) {
-                            Image(nsImage: mark)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 19, height: 19)
-                        }
-                        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                            Text(agent.summary)
-                                .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                            Text("\(agent.contextLabel) · \(paneID)")
-                                .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                                .foregroundStyle(HideTheme.secondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, HideTheme.spacingMD)
-                    .frame(height: 44)
-                    .background(
-                        paneID == cycle.selectedPaneID ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                    )
-                }
-            }
+        if let cycle = presentation.projectCycle {
+            RecentSwitcherOverlay(
+                title: "RECENT PROJECTS", command: .recentProject,
+                rows: cycle.visibleIDs.compactMap { id in
+                    guard let project = model.recentProjects[id] else { return nil }
+                    return RecentSwitcherRow(id: id, title: project.workspace.label,
+                        detail: model.recentProjectDetail(id), symbol: "folder")
+                }, selectedID: cycle.selectedProjectID,
+                identifier: "project-mru-switcher"
+            )
+        } else if let cycle = presentation.tabCycle {
+            RecentSwitcherOverlay(
+                title: "RECENT PANELS", command: .recentTab,
+                rows: cycle.visibleIDs.compactMap { id in
+                    guard let surface = model.recentSurfaces[id] else { return nil }
+                    return RecentSwitcherRow(id: id, title: surface.item.label,
+                        detail: surface.checkoutLabel, symbol: surface.symbol, dirty: surface.item.dirty,
+                        agent: surface.item.focusedAgent)
+                }, selectedID: cycle.selectedTabID,
+                identifier: "tab-mru-switcher"
+            )
         }
-        .padding(HideTheme.spacingMD)
-        .frame(width: 360)
-        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
-        .overlay {
-            RoundedRectangle(cornerRadius: HideTheme.radiusLarge).stroke(HideTheme.divider)
-        }
-        .accessibilityIdentifier("agent-mru-switcher")
     }
 }
 
-private struct TabSwitcherOverlay: View {
-    let cycle: TabSwitcherCycle
-    let tabs: [ShellTabItem]
-    let checkoutLabel: String?
+private struct RecentSwitcherRow: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let symbol: String
+    var dirty = false
+    var agent: SidebarAgent? = nil
+}
+
+/// Both navigation levels share the existing panel, typography and keycaps.
+/// The model exposes at most nine rows around the highlight, even in a large session.
+private struct RecentSwitcherOverlay: View {
+    let title: String
+    let command: ShellMenuCommand
+    let rows: [RecentSwitcherRow]
+    let selectedID: String
+    let identifier: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-            Text("RECENT TABS")
-                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                .foregroundStyle(HideTheme.muted)
-            ForEach(cycle.tabIDs, id: \.self) { tabID in
-                if let tab = tabs.first(where: { $0.id == tabID }) {
-                    HStack(spacing: HideTheme.spacingMD) {
-                        Image(systemName: icon(for: tab))
-                            .hideFont(size: HideTheme.Typography.title, weight: .semibold)
-                            .foregroundStyle(HideTheme.secondary)
-                            .frame(width: 19, height: 19)
-                        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                            Text(tab.label)
-                                .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                                .lineLimit(1)
-                            Text(detail(for: tab))
-                                .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+            HStack {
+                Text(title)
+                    .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                    .foregroundStyle(HideTheme.muted)
+                Spacer()
+                HideKeycap(command: .menu(command))
+            }
+            ForEach(rows) { row in
+                HStack(spacing: HideTheme.spacingMD) {
+                    Group {
+                        if let agent = row.agent {
+                            AgentBadge(agentKind: agent.agentKind,
+                                stateColor: HideTheme.secondary,
+                                size: HideTheme.checkoutIconWidth)
+                        } else {
+                            Image(systemName: row.symbol)
+                                .hideFont(size: HideTheme.Typography.title, weight: .semibold)
                                 .foregroundStyle(HideTheme.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        if tab.dirty {
-                            Circle()
-                                .fill(HideTheme.secondary)
-                                .frame(width: 5, height: 5)
                         }
                     }
-                    .padding(.horizontal, HideTheme.spacingMD)
-                    .frame(height: 44)
-                    .background(
-                        tabID == cycle.selectedTabID ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                    )
+                    .frame(width: HideTheme.checkoutIconWidth)
+                    VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                        Text(row.title)
+                            .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(row.detail)
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    if row.dirty {
+                        Image(systemName: "circle.fill")
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.secondary)
+                            .accessibilityLabel("Unsaved changes")
+                    }
                 }
+                .padding(.horizontal, HideTheme.spacingMD)
+                .frame(height: HideTheme.formControlHeight)
+                .background(
+                    row.id == selectedID ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(row.id == selectedID ? .isSelected : [])
             }
         }
         .padding(HideTheme.spacingMD)
-        .frame(width: 360)
+        .frame(width: HideTheme.Hint.tooltipMaxWidth)
         .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
         .overlay {
             RoundedRectangle(cornerRadius: HideTheme.radiusLarge).stroke(HideTheme.divider)
         }
-        .accessibilityIdentifier("tab-mru-switcher")
-    }
-
-    private func icon(for tab: ShellTabItem) -> String {
-        switch tab.kind {
-        case .herdr: "terminal"
-        case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
-        }
-    }
-
-    private func detail(for tab: ShellTabItem) -> String {
-        let kind = switch tab.kind {
-        case .herdr: "Terminal"
-        case .editor(let tab): tab.kind == .diff ? "Diff" : "File"
-        }
-        guard let checkoutLabel, !checkoutLabel.isEmpty else { return kind }
-        return "\(kind) · \(checkoutLabel)"
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -1555,6 +1543,10 @@ private struct AgentNavigatorRow: View {
     private var density: AgentRowDensity { showsWorkspace ? .prominent : .compact }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var shortcutVisible: Bool {
+        model.shortcutHintState.reveals(.agent(1), bindings: model.paneShortcuts)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
             HStack(spacing: HideTheme.spacingNone) {
@@ -1582,7 +1574,7 @@ private struct AgentNavigatorRow: View {
                     density: density,
                     isFocused: model.focusedPaneID == agent.paneID,
                     shortcutNumber: model.agentShortcutNumber(paneID: agent.paneID),
-                    shortcutVisible: model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.control],
+                    shortcutVisible: shortcutVisible,
                     action: { model.selectAgent(agent) }
                 )
             }
@@ -1607,7 +1599,7 @@ private struct AgentNavigatorRow: View {
         }
         .padding(.leading, showsWorkspace ? HideTheme.spacingNone : HideTheme.lineageInset(depth: agent.lineageDepth))
 
-        .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.control]))
+        .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (shortcutVisible))
         .accessibilityIdentifier("hide-agent-\(agent.id)")
         .hideTooltip(agent.summary, command: model.agentShortcutNumber(paneID: agent.paneID).map(HideCommand.agent), inline: true)
     }
@@ -2440,6 +2432,7 @@ private struct HideSearchSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.hideAccent) private var accent
     @State private var query = ""
+    @State private var selection = HideSearchSelection()
 
     private var agentGroups: [HideSearchAgentGroup] {
         HideSearchPresentation.agentGroups(
@@ -2468,6 +2461,9 @@ private struct HideSearchSheet: View {
     }
 
     var body: some View {
+        let groups = agentGroups
+        let checkouts = checkoutEntries
+        let resultIDs = (groups.flatMap(\.entries) + checkouts).map(\.id)
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 Image(systemName: "magnifyingglass")
@@ -2475,7 +2471,9 @@ private struct HideSearchSheet: View {
                 TextField("Search agents and workspaces", text: $query)
                     .textFieldStyle(.plain)
                     .hideFont(size: HideTheme.Typography.headline)
-                    .onSubmit { if let first = entries.first { route(first) } }
+                    .hideSearchKeyboard(selection: $selection, resultIDs: resultIDs,
+                        activate: activateSelected, dismiss: { dismiss() })
+                    .accessibilityIdentifier("hide-search-query")
                 Text("ESC")
                     .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
@@ -2483,40 +2481,46 @@ private struct HideSearchSheet: View {
             .padding(HideTheme.spacingLG)
             .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
             .padding(HideTheme.spacingLG)
-            ScrollView {
-                LazyVStack(spacing: HideTheme.spacingXXS) {
-                    ForEach(agentGroups) { group in
-                        Text("\(group.workspace) > AGENTS")
-                            .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                            .foregroundStyle(HideTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, HideTheme.spacingMD)
-                            .padding(.top, HideTheme.spacingSM)
-                        ForEach(group.entries) { entry in
-                            searchButton(entry)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: HideTheme.spacingXXS) {
+                        ForEach(groups) { group in
+                            Text("\(group.workspace) > AGENTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(group.entries) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if !checkouts.isEmpty {
+                            Text("WORKSPACES > CHECKOUTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(checkouts) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if resultIDs.isEmpty {
+                            Text("No matching agents or workspaces")
+                                .hideFont(size: HideTheme.Typography.subhead)
+                                .foregroundStyle(HideTheme.secondary)
+                                .padding(HideTheme.spacingXXL)
                         }
                     }
-                    if !checkoutEntries.isEmpty {
-                        Text("WORKSPACES > CHECKOUTS")
-                            .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                            .foregroundStyle(HideTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, HideTheme.spacingMD)
-                            .padding(.top, HideTheme.spacingSM)
-                        ForEach(checkoutEntries) { entry in
-                            searchButton(entry)
-                        }
-                    }
-                    if entries.isEmpty {
-                        Text("No matching agents or workspaces")
-                            .hideFont(size: HideTheme.Typography.subhead)
-                            .foregroundStyle(HideTheme.secondary)
-                            .padding(HideTheme.spacingXXL)
-                    }
+                    .padding(.horizontal, HideTheme.spacingLG)
                 }
-                .padding(.horizontal, HideTheme.spacingLG)
+                .onChange(of: selection.selectedID) { _, id in
+                    if let id { proxy.scrollTo(id, anchor: .center) }
+                }
             }
         }
+        .accessibilityIdentifier("hide-search-sheet")
         .frame(width: HideTheme.searchSheetSize.width, height: HideTheme.searchSheetSize.height)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
@@ -2538,16 +2542,39 @@ private struct HideSearchSheet: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text("↵").foregroundStyle(HideTheme.muted)
+                Text("↵")
+                    .foregroundStyle(HideTheme.muted)
+                    .opacity(selection.selectedID == entry.id ? 1 : 0)
             }
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.spacingSM)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .background(
+            selection.selectedID == entry.id ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+        )
+        .accessibilityAddTraits(selection.selectedID == entry.id ? .isSelected : [])
+        .accessibilityValue(selection.selectedID == entry.id ? "Selected" : "Not selected")
+        .accessibilityIdentifier("hide-search-result-\(entry.id)")
+        .id(entry.id)
+    }
+
+    private func activateSelected() {
+        guard let entry = selection.entry(in: entries) else {
+            selection.reconcile(entries.map(\.id))
+            return
+        }
+        route(entry)
     }
 
     private func route(_ entry: HideSearchEntry) {
+        // A result may retire between its last render and the click/Return.
+        guard let entry = entries.first(where: { $0.id == entry.id }) else {
+            selection.reconcile(entries.map(\.id))
+            return
+        }
         switch entry.kind {
         case let .agent(agent): model.selectAgent(agent)
         case let .checkout(_, checkout): model.selectCheckout(checkout)

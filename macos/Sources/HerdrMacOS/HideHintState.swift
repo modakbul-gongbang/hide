@@ -24,6 +24,10 @@ struct HideHintState: Equatable {
 
     mutating func clear() { self = Self() }
 
+    func reveals(_ command: HideCommand, bindings: [PaneCommand: PaneShortcut]) -> Bool {
+        revealed && command.shortcut(bindings: bindings)?.modifiers == modifiers
+    }
+
     static func modifiers(in flags: NSEvent.ModifierFlags) -> Set<PaneShortcut.Modifier> {
         var result: Set<PaneShortcut.Modifier> = []
         if flags.contains(.command) { result.insert(.command) }
@@ -62,7 +66,7 @@ struct HideHintTarget: Hashable {
             case .tab, .agent: break
             case .label: return false
             }
-            return target.command.shortcut(bindings: bindings)?.modifiers == state.modifiers
+            return state.reveals(target.command, bindings: bindings)
         })
     }
 }

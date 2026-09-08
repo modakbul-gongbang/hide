@@ -87,7 +87,8 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
     }
 
     var keyEquivalent: KeyEquivalent {
-        key == "return" ? .return : KeyEquivalent(Character(key))
+        if key == "tab" { return .tab }
+        return key == "return" ? .return : KeyEquivalent(Character(key))
     }
 
     var eventModifiers: EventModifiers {
@@ -110,6 +111,7 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
         if modifiers.contains(.option) { expectedFlags.insert(.option) }
         if modifiers.contains(.shift) { expectedFlags.insert(.shift) }
         guard relevantFlags == expectedFlags else { return false }
+        if key == "tab" { return event.keyCode == 48 }
         if key == "return" {
             return event.keyCode == 36 || event.keyCode == 76
         }
@@ -193,7 +195,9 @@ struct PaneShortcutResolution: Equatable, Sendable {
 }
 
 enum PaneShortcutPolicy {
-    private static let reserved = Set([
+    private static let reserved = Set(ShellMenuCommand.allCases.map { $0.shortcut.canonical })
+        .union((1...9).flatMap { ["command+\($0)", "option+\($0)"] })
+        .union([
         "command+,",
         "command+q",
         "command+h",
@@ -290,6 +294,19 @@ enum PaneKeyEventPolicy {
         .command, .control, .option, .shift,
     ]
 
+    /// Option-only menu equivalents can be claimed by the focused native
+    /// responder. Route numbered navigation before text interpretation, using
+    /// the same physical-key registry as the other shell shortcuts.
+    static func agentSelectionNumber(_ event: NSEvent) -> Int? {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection(chordModifiers) == .option,
+              let key = PetHotkey.name(for: event.keyCode),
+              let number = Int(key),
+              HideCommand.agent(number).shortcut(bindings: [:])?.matches(event) == true
+        else { return nil }
+        return number
+    }
+
     /// Cmd+E is an app-level navigation command. Intercepting it before the
     /// responder chain prevents a focused file editor from claiming macOS's
     /// default "Use Selection for Find" equivalent instead.
@@ -299,50 +316,46 @@ enum PaneKeyEventPolicy {
             && event.modifierFlags.intersection(chordModifiers) == .command
     }
 
-    /// Control+Tab walks the most recently used agents across every project.
-    /// It has the lighter chord because it is the switch reached for most;
-    /// the checkout-local tab switcher sits on Option+Tab.
-    static func isAgentSwitcherAdvance(_ event: NSEvent) -> Bool {
-        event.type == .keyDown
-            && event.keyCode == 48
-            && event.modifierFlags.intersection(chordModifiers) == .control
+    /// Option cycles projects globally; Control cycles every surface in the
+    /// current project. The registry also supplies menus, hints and settings.
+    static func isProjectSwitcherAdvance(_ event: NSEvent) -> Bool {
+        ShellMenuCommand.recentProject.shortcut.matches(event)
     }
 
-    /// Control+Shift+Tab, the reverse of the chord above. Shift is the only
-    /// added modifier, so Command or Option still falls through to whatever
-    /// owns that chord.
-    static func isAgentSwitcherRetreat(_ event: NSEvent) -> Bool {
-        event.type == .keyDown
-            && event.keyCode == 48
-            && event.modifierFlags.intersection(chordModifiers) == [.control, .shift]
+    static func isProjectSwitcherRetreat(_ event: NSEvent) -> Bool {
+        ShellMenuCommand.previousRecentProject.shortcut.matches(event)
     }
 
     static func isTabSwitcherAdvance(_ event: NSEvent) -> Bool {
-        event.type == .keyDown
-            && event.keyCode == 48
-            && event.modifierFlags.intersection(chordModifiers) == .option
+        ShellMenuCommand.recentTab.shortcut.matches(event)
     }
 
-    /// Option+Shift+Tab is the reverse checkout-local tab chord. Command or
-    /// Control keeps ownership of its own shortcut instead of being swallowed.
     static func isTabSwitcherRetreat(_ event: NSEvent) -> Bool {
-        event.type == .keyDown
-            && event.keyCode == 48
-            && event.modifierFlags.intersection(chordModifiers) == [.option, .shift]
+        ShellMenuCommand.previousRecentTab.shortcut.matches(event)
     }
 
-    /// Accessibility synthesizers can emit the Tab key pair with Option in
-    /// each event but omit the later Option flagsChanged event. The global
-    /// modifier state is authoritative for that release fallback. A physical
-    /// user holding Option keeps the switcher open and continues cycling.
-    static func shouldCommitTabSwitcherAfterKeyUp(
-        _ event: NSEvent,
-        currentModifiers: NSEvent.ModifierFlags
-    ) -> Bool {
-        event.type == .keyUp
-            && event.keyCode == 48
-            && !currentModifiers.contains(.option)
+    static func isTabSwitcherRelease(_ event: NSEvent) -> Bool {
+        event.type == .flagsChanged && !event.modifierFlags.contains(.control)
     }
+
+    static func isProjectSwitcherRelease(_ event: NSEvent) -> Bool {
+        event.type == .flagsChanged && !event.modifierFlags.contains(.option)
+    }
+
+    /// Some accessibility synthesizers omit flagsChanged after the Tab pair.
+    /// Physical holds remain open until the corresponding global flag clears.
+    static func shouldCommitTabSwitcherAfterKeyUp(
+        _ event: NSEvent, currentModifiers: NSEvent.ModifierFlags
+    ) -> Bool {
+        event.type == .keyUp && event.keyCode == 48 && !currentModifiers.contains(.control)
+    }
+
+    static func shouldCommitProjectSwitcherAfterKeyUp(
+        _ event: NSEvent, currentModifiers: NSEvent.ModifierFlags
+    ) -> Bool {
+        event.type == .keyUp && event.keyCode == 48 && !currentModifiers.contains(.option)
+    }
+
 }
 
 enum PaneMenuPolicy {

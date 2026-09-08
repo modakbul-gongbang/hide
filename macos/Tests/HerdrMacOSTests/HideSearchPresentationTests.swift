@@ -101,3 +101,38 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         [.agent(paneID: "pane-2")],
     ])
 }
+
+@Test func searchKeyboardSelectionRoutesHighlightedResultAndReconcilesRetirement() throws {
+    let rows = ["a", "b", "c"].map { id in
+        HideSearchEntry(id: id, title: id, subtitle: id, kind: .agent(searchAgent(paneID: id)))
+    }
+    var selection = HideSearchSelection()
+    selection.reconcile(rows.map(\.id))
+    #expect(selection.entry(in: rows)?.route == .agent(paneID: "a"))
+    selection.move(.down, among: rows.map(\.id))
+    #expect(selection.entry(in: rows)?.route == .agent(paneID: "b"))
+    selection.move(.up, among: rows.map(\.id))
+    #expect(selection.selectedID == "a")
+    selection.move(.up, among: rows.map(\.id))
+    #expect(selection.selectedID == "a")
+    for _ in 0..<1000 { selection.move(.down, among: rows.map(\.id)) }
+    #expect(selection.selectedID == "c")
+    // Return cannot dispatch a row that disappeared before reconciliation.
+    #expect(selection.entry(in: Array(rows.prefix(2))) == nil)
+    selection.reconcile(["a", "b"])
+    #expect(selection.selectedID == "a")
+    selection.move(.down, among: ["a", "b"])
+    selection.reconcile(["b", "a"])
+    #expect(selection.selectedID == "b")
+
+    let filtered = HideSearchEntry.filtered(rows, query: "no matching result")
+    selection.reconcile(filtered.map(\.id))
+    for _ in 0..<1000 {
+        selection.move(.down, among: [])
+        selection.move(.up, among: [])
+    }
+    #expect(selection.selectedID == nil)
+    #expect(selection.entry(in: filtered) == nil)
+    selection.reconcile(["a"])
+    #expect(selection.selectedID == "a")
+}

@@ -16,6 +16,7 @@ enum MainWindowPresentation {
 final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     let model: ShellModel
     private var mainWindow: NSWindow?
+    private var switcherReleaseProbe: Timer?
     private var petWindowController: PetWindowController?
     private var petMenuBarController: PetMenuBarController?
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
@@ -94,6 +95,12 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil
             }
+            if let number = PaneKeyEventPolicy.agentSelectionNumber(event) {
+                MainActor.assumeIsolated {
+                    self.model.selectAgent(shortcutNumber: number)
+                }
+                return nil
+            }
             // The reverse chord is checked first: it is the forward chord plus
             // Shift, so testing forward first would swallow it.
             if PaneKeyEventPolicy.isTabSwitcherRetreat(event) {
@@ -108,72 +115,63 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil
             }
-            if PaneKeyEventPolicy.isAgentSwitcherRetreat(event) {
+            if PaneKeyEventPolicy.isProjectSwitcherRetreat(event) {
                 MainActor.assumeIsolated {
-                    self.model.beginOrRetreatAgentSwitcher()
+                    self.model.beginOrRetreatProjectSwitcher()
                 }
                 return nil
             }
-            if PaneKeyEventPolicy.isAgentSwitcherAdvance(event) {
+            if PaneKeyEventPolicy.isProjectSwitcherAdvance(event) {
                 MainActor.assumeIsolated {
-                    self.model.beginOrAdvanceAgentSwitcher()
+                    self.model.beginOrAdvanceProjectSwitcher()
                 }
                 return nil
             }
             let activeSwitchers = MainActor.assumeIsolated {
                 (
-                    agent: self.model.agentSwitcherCycle != nil,
+                    project: self.model.projectSwitcherCycle != nil,
                     tab: self.model.tabSwitcherCycle != nil
                 )
             }
-            if event.type == .keyUp,
-               event.keyCode == 48,
-               activeSwitchers.tab
-            {
-                // A real Option release arrives as flagsChanged below. Some
-                // accessibility synthesizers omit that event, so re-check the
-                // authoritative global flags after their chord finishes.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                    guard let self, self.model.tabSwitcherCycle != nil else { return }
-                    let globalModifiers = NSEvent.ModifierFlags(
-                        rawValue: UInt(CGEventSource.flagsState(.combinedSessionState).rawValue)
-                    )
-                    if PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
-                        event,
-                        currentModifiers: globalModifiers
-                    ) {
-                        self.model.commitTabSwitcher()
+            if event.type == .keyUp, event.keyCode == 48,
+               activeSwitchers.tab || activeSwitchers.project {
+                // One replaceable release probe for synthetic chords. Repeated
+                // keyUp events cannot accumulate delayed commits.
+                self.switcherReleaseProbe?.invalidate()
+                let probe = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                    guard let self else { return }
+                    let flags = NSEvent.ModifierFlags(
+                        rawValue: UInt(CGEventSource.flagsState(.combinedSessionState).rawValue))
+                    MainActor.assumeIsolated {
+                        if PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(event, currentModifiers: flags) {
+                            self.model.commitTabSwitcher()
+                        }
+                        if PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(event, currentModifiers: flags) {
+                            self.model.commitProjectSwitcher()
+                        }
                     }
                 }
+                self.switcherReleaseProbe = probe
                 return nil
             }
-            if event.type == .keyDown,
-               event.keyCode == 53,
-               activeSwitchers.agent || activeSwitchers.tab
-            {
+            if event.type == .keyDown, event.keyCode == 53,
+               activeSwitchers.project || activeSwitchers.tab {
+                self.switcherReleaseProbe?.invalidate()
                 MainActor.assumeIsolated {
-                    self.model.cancelAgentSwitcher()
+                    self.model.cancelProjectSwitcher()
                     self.model.cancelTabSwitcher()
                 }
                 return nil
             }
-            if event.type == .flagsChanged,
-               activeSwitchers.tab,
-               !event.modifierFlags.contains(.option)
-            {
+            if event.type == .flagsChanged {
                 MainActor.assumeIsolated {
-                    self.model.commitTabSwitcher()
+                    if activeSwitchers.tab && PaneKeyEventPolicy.isTabSwitcherRelease(event) {
+                        self.model.commitTabSwitcher()
+                    }
+                    if activeSwitchers.project && PaneKeyEventPolicy.isProjectSwitcherRelease(event) {
+                        self.model.commitProjectSwitcher()
+                    }
                 }
-                return nil
-            }
-            if event.type == .flagsChanged,
-               activeSwitchers.agent,
-               !event.modifierFlags.contains(.control)
-            {
-                MainActor.assumeIsolated {
-                    self.model.commitAgentSwitcher()
-                }
-                return nil
             }
             if UnifiedTabShortcutPolicy.isClose(event) {
                 MainActor.assumeIsolated {
@@ -303,7 +301,8 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     #endif
 
     func applicationDidResignActive(_ notification: Notification) {
-        model.cancelAgentSwitcher()
+        switcherReleaseProbe?.invalidate()
+        model.cancelProjectSwitcher()
         model.cancelTabSwitcher()
         // Command-Tab releases Command while another app is frontmost, so the
         // flagsChanged release never reaches this monitor and the keycap hints
@@ -444,6 +443,11 @@ struct ShellCommands: Commands {
         }
 
         CommandMenu("Navigate") {
+            menuButton(.recentTab) { model.beginOrAdvanceTabSwitcher(); model.commitTabSwitcher() }
+            menuButton(.previousRecentTab) { model.beginOrRetreatTabSwitcher(); model.commitTabSwitcher() }
+            menuButton(.recentProject) { model.beginOrAdvanceProjectSwitcher(); model.commitProjectSwitcher() }
+            menuButton(.previousRecentProject) { model.beginOrRetreatProjectSwitcher(); model.commitProjectSwitcher() }
+            Divider()
             // Titles stay static so the menu does not rebuild on every
             // snapshot tick; an empty slot is a no-op inside the model.
             ForEach(1...TabShortcutNumbering.capacity, id: \.self) { number in
@@ -459,7 +463,7 @@ struct ShellCommands: Commands {
                 Button("Select Agent \(number)") {
                     model.selectAgent(shortcutNumber: number)
                 }
-                .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .control)
+                .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .option)
             }
 
             Divider()

@@ -12,6 +12,10 @@ import SwiftUI
 /// Per-pane commands are not here: they are user-rebindable and live in
 /// `PaneCommand`, which owns its own defaults and its own settings surface.
 enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
+    case recentTab = "recent_tab"
+    case previousRecentTab = "previous_recent_tab"
+    case recentProject = "recent_project"
+    case previousRecentProject = "previous_recent_project"
     case newTab = "new_tab"
     case newChat = "new_chat"
     case newWorkspace = "new_workspace"
@@ -27,6 +31,10 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .recentTab: "Next Recent Panel in Project"
+        case .previousRecentTab: "Previous Recent Panel in Project"
+        case .recentProject: "Next Recent Project"
+        case .previousRecentProject: "Previous Recent Project"
         case .newTab: "New Tab"
         case .newChat: "New Chat"
         case .newWorkspace: "New Workspace"
@@ -42,6 +50,10 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
 
     var shortcut: PaneShortcut {
         switch self {
+        case .recentTab: PaneShortcut(key: "tab", modifiers: [.control])
+        case .previousRecentTab: PaneShortcut(key: "tab", modifiers: [.control, .shift])
+        case .recentProject: PaneShortcut(key: "tab", modifiers: [.option])
+        case .previousRecentProject: PaneShortcut(key: "tab", modifiers: [.option, .shift])
         case .newTab: PaneShortcut(key: "t", modifiers: [.command])
         case .newChat: PaneShortcut(key: "n", modifiers: [.command])
         case .newWorkspace: PaneShortcut(key: "n", modifiers: [.command, .shift])

@@ -931,6 +931,48 @@ Fixed content geometry remains in its named Layout tokens rather than changing w
 | `{rounded.radiusLarge}` | Search input and larger cards |
 | `{rounded.radiusExtraLarge}` | Container vocabulary |
 
+### Recent navigation in the native shell
+
+Control+Tab and Control+Shift+Tab cycle all unified surfaces inside the selected project in recent-use order.
+This includes terminal, Browser plugin, file/editor, and diff tabs across every checkout in that project.
+The overlay is named “Recent Panels”: a single Control+Tab returns to the actually previous surface, including a file view, and repeated chords toggle between the last two surfaces.
+Holding Control while pressing Tab again walks older visits rather than tab-strip or agent-list order.
+Option+Tab and Option+Shift+Tab cycle projects globally and restore each project's last used surface.
+Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
+Menu actions commit immediately.
+Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
+Agent number hints follow the command registry: reveal only during an exact Option hold, ignoring Caps Lock, and clear on release or a suppressing sheet.
+Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.
+With no other project or tab available, navigation keeps the current selection without a modal.
+Selecting an empty project shows its existing empty state; closing an empty strip or reselecting a checkout whose terminal is starting requires no acknowledgement.
+Automatic MRU pruning and concurrent selection recovery use structured diagnostics without a modal.
+Workspace and device registration changes and connection-test requests use their existing list or status presentation.
+Invalid runtime identities, unavailable devices, and failed operations remain visible, and destructive decisions retain their confirmations.
+
+The project identity is `CoreWorkspaceSnapshot.id`, scoped by device, following the sidebar's Project > Workspace > Agents hierarchy.
+Its checkouts are workspaces in that hierarchy, so two checkouts of one repository share a project cycle and a tab history.
+Herdr workspaces contributing tabs to those checkouts do not create separate Hide projects.
+The existing core catalog determines grouping; navigation does not infer it from display labels or directory names.
+
+Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
+Project rows show the last surface and checkout; tab rows show their checkout and surface type.
+Recent Panels uses the same focused-pane agent brand mark as the tab strip, including Claude Code and Codex; file, diff and unassociated terminal surfaces keep their type icons.
+History is session-local and retains only existing projects and surfaces.
+A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
+If none survives, cancel with a structured recovery trace and keep the core's current selection.
+Empty projects show “No open tabs”; a project without an available checkout keeps the current selection and records the recovery.
+
+### Search keyboard navigation
+
+Command+K opens agent/workspace search and Command+P opens file search with the same focused query field and first-result selection behavior.
+Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
+Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
+The selected row uses the existing accent emphasis fill and scrolls into view.
+Filtering preserves a surviving selection by identity; a retired selection moves to the first remaining result.
+Empty results have no selection, and arrows or Return require no modal acknowledgement.
+A stale result is checked against the live result set before execution.
+File search never executes results from a previous query or checkout while its asynchronous index is updating.
+
 ### Keycaps, hint chips, and tooltips
 
 `HideKeycap.swift` owns every shortcut glyph.
