@@ -2422,6 +2422,8 @@ private struct HideSearchSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.hideAccent) private var accent
     @State private var query = ""
+    @State private var selection = HideSearchSelection()
+    @FocusState private var queryFocused: Bool
 
     private var agentGroups: [HideSearchAgentGroup] {
         HideSearchPresentation.agentGroups(
@@ -2450,6 +2452,9 @@ private struct HideSearchSheet: View {
     }
 
     var body: some View {
+        let groups = agentGroups
+        let checkouts = checkoutEntries
+        let resultIDs = (groups.flatMap(\.entries) + checkouts).map(\.id)
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 Image(systemName: "magnifyingglass")
@@ -2457,7 +2462,15 @@ private struct HideSearchSheet: View {
                 TextField("Search agents and workspaces", text: $query)
                     .textFieldStyle(.plain)
                     .hideFont(size: HideTheme.Typography.headline)
-                    .onSubmit { if let first = entries.first { route(first) } }
+                    .focused($queryFocused)
+                    .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
+                        guard press.modifiers.intersection([.command, .control, .option, .shift]).isEmpty,
+                              (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return .ignored }
+                        selection.move(press.key == .downArrow ? .down : .up, among: resultIDs)
+                        return .handled
+                    }
+                    .onSubmit { activateSelected() }
+                    .accessibilityIdentifier("hide-search-query")
                 Text("ESC")
                     .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                     .foregroundStyle(HideTheme.muted)
@@ -2465,40 +2478,52 @@ private struct HideSearchSheet: View {
             .padding(HideTheme.spacingLG)
             .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
             .padding(HideTheme.spacingLG)
-            ScrollView {
-                LazyVStack(spacing: HideTheme.spacingXXS) {
-                    ForEach(agentGroups) { group in
-                        Text("\(group.workspace) > AGENTS")
-                            .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                            .foregroundStyle(HideTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, HideTheme.spacingMD)
-                            .padding(.top, HideTheme.spacingSM)
-                        ForEach(group.entries) { entry in
-                            searchButton(entry)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: HideTheme.spacingXXS) {
+                        ForEach(groups) { group in
+                            Text("\(group.workspace) > AGENTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(group.entries) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if !checkouts.isEmpty {
+                            Text("WORKSPACES > CHECKOUTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(checkouts) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if resultIDs.isEmpty {
+                            Text("No matching agents or workspaces")
+                                .hideFont(size: HideTheme.Typography.subhead)
+                                .foregroundStyle(HideTheme.secondary)
+                                .padding(HideTheme.spacingXXL)
                         }
                     }
-                    if !checkoutEntries.isEmpty {
-                        Text("WORKSPACES > CHECKOUTS")
-                            .hideFont(size: HideTheme.Typography.caption, weight: .bold)
-                            .foregroundStyle(HideTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, HideTheme.spacingMD)
-                            .padding(.top, HideTheme.spacingSM)
-                        ForEach(checkoutEntries) { entry in
-                            searchButton(entry)
-                        }
-                    }
-                    if entries.isEmpty {
-                        Text("No matching agents or workspaces")
-                            .hideFont(size: HideTheme.Typography.subhead)
-                            .foregroundStyle(HideTheme.secondary)
-                            .padding(HideTheme.spacingXXL)
-                    }
+                    .padding(.horizontal, HideTheme.spacingLG)
                 }
-                .padding(.horizontal, HideTheme.spacingLG)
+                .onChange(of: selection.selectedID) { _, id in
+                    if let id { proxy.scrollTo(id, anchor: .center) }
+                }
             }
         }
+        .onAppear {
+            selection.reconcile(resultIDs)
+            queryFocused = true
+        }
+        .onChange(of: resultIDs) { _, ids in selection.reconcile(ids) }
+        .onExitCommand { dismiss() }
+        .accessibilityIdentifier("hide-search-sheet")
         .frame(width: HideTheme.searchSheetSize.width, height: HideTheme.searchSheetSize.height)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
@@ -2520,21 +2545,69 @@ private struct HideSearchSheet: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text("↵").foregroundStyle(HideTheme.muted)
+                Text("↵")
+                    .foregroundStyle(HideTheme.muted)
+                    .opacity(selection.selectedID == entry.id ? 1 : 0)
             }
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.spacingSM)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .background(
+            selection.selectedID == entry.id ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+        )
+        .accessibilityAddTraits(selection.selectedID == entry.id ? .isSelected : [])
+        .accessibilityValue(selection.selectedID == entry.id ? "Selected" : "Not selected")
+        .accessibilityIdentifier("hide-search-result-\(entry.id)")
+        .id(entry.id)
+    }
+
+    private func activateSelected() {
+        guard let entry = selection.entry(in: entries) else {
+            selection.reconcile(entries.map(\.id))
+            return
+        }
+        route(entry)
     }
 
     private func route(_ entry: HideSearchEntry) {
+        // A result may retire between its last render and the click/Return.
+        guard let entry = entries.first(where: { $0.id == entry.id }) else {
+            selection.reconcile(entries.map(\.id))
+            return
+        }
         switch entry.kind {
         case let .agent(agent): model.selectAgent(agent)
         case let .checkout(_, checkout): model.selectCheckout(checkout)
         }
         dismiss()
+    }
+}
+
+/// Search owns only a selected result identity; the live projection owns rows.
+struct HideSearchSelection {
+    private(set) var selectedID: String?
+
+    mutating func reconcile(_ ids: [String]) {
+        if let selectedID, ids.contains(selectedID) { return }
+        selectedID = ids.first
+    }
+
+    mutating func move(_ direction: MoveCommandDirection, among ids: [String]) {
+        guard direction == .up || direction == .down else { return }
+        guard !ids.isEmpty else { selectedID = nil; return }
+        guard let selectedID, let index = ids.firstIndex(of: selectedID) else {
+            self.selectedID = ids.first
+            return
+        }
+        self.selectedID = ids[direction == .down ? min(index + 1, ids.count - 1) : max(index - 1, 0)]
+    }
+
+    func entry(in entries: [HideSearchEntry]) -> HideSearchEntry? {
+        guard let selectedID else { return nil }
+        return entries.first { $0.id == selectedID }
     }
 }
 

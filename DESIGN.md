@@ -959,6 +959,16 @@ A deleted highlight moves to the next surviving entry without reordering the hel
 If none survives, cancel with a structured recovery trace and keep the core's current selection.
 Empty projects show “No open tabs”; a project without an available checkout keeps the current selection and records the recovery.
 
+### Search keyboard navigation
+
+Command+K opens the agent/workspace search with its query field focused and its first result selected.
+Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
+Return executes the highlighted result through the existing agent or checkout selection action; Escape closes the sheet.
+The selected row uses the existing accent emphasis fill and scrolls into view.
+Filtering preserves a surviving selection by identity; a retired selection moves to the first remaining result.
+Empty results have no selection, and arrows or Return require no modal acknowledgement.
+A stale result is checked against the live result set before execution.
+
 ### Keycaps, hint chips, and tooltips
 
 `HideKeycap.swift` owns every shortcut glyph.
