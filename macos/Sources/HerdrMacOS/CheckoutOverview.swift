@@ -38,8 +38,8 @@ struct CheckoutOverview: View {
 
     var body: some View {
         if model.isRemoteContext {
-            ContentUnavailableView("Overview is local only", systemImage: "externaldrive",
-                                   description: Text("Git context is read on this Mac."))
+            HideEmptyState("Overview is local only", systemImage: "externaldrive",
+                           description: Text("Git context is read on this Mac."))
         } else if let workspace {
             VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                 HStack(alignment: .top, spacing: HideTheme.spacingSM) {
@@ -104,7 +104,7 @@ struct CheckoutOverview: View {
                             workspaceRow(row)
                         }
                     } else {
-                        ContentUnavailableView("No Git history", systemImage: "folder", description: Text("This project is a folder. Use List to inspect its workspaces."))
+                        HideEmptyState("No Git history", systemImage: "folder", description: Text("This project is a folder. Use List to inspect its workspaces."))
                     }
                 }
                 Divider()
@@ -121,8 +121,8 @@ struct CheckoutOverview: View {
             }
             .onChange(of: workspace.id) { _, _ in query = "" }
         } else {
-            ContentUnavailableView("No workspace", systemImage: "folder",
-                                   description: Text("Choose a workspace to see its context."))
+            HideEmptyState("No workspace", systemImage: "folder",
+                           description: Text("Choose a workspace to see its context."))
         }
     }
 

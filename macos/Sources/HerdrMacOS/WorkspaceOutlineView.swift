@@ -128,23 +128,32 @@ private final class WorkspaceOutlineRowView: NSTableRowView {
 
     override func drawBackground(in dirtyRect: NSRect) {
         if isSelected {
-            HideTheme.Native.primary.withAlphaComponent(HideTheme.Opacity.subtleFill).setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4).fill()
+            drawRowBackground(opacity: HideTheme.Opacity.selectedFill)
         } else if isHovered {
-            HideTheme.Native.primary.withAlphaComponent(HideTheme.Opacity.subtleFill).setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 4, yRadius: 4).fill()
+            drawRowBackground(opacity: HideTheme.Opacity.subtleFill)
         }
 
         guard level > 0 else { return }
         HideTheme.Native.primary.withAlphaComponent(HideTheme.Opacity.subtleFill).setStroke()
         for depth in 0..<level {
-            let x = CGFloat(14 + depth * 8) + 0.5
+            let x = HideTheme.checkoutIconWidth
+                + CGFloat(depth) * HideTheme.spacingSM
+                + HideTheme.Layout.hairlineWidth / 2
             let guide = NSBezierPath()
             guide.move(to: NSPoint(x: x, y: bounds.minY))
             guide.line(to: NSPoint(x: x, y: bounds.maxY))
-            guide.lineWidth = 1
+            guide.lineWidth = HideTheme.Layout.hairlineWidth
             guide.stroke()
         }
+    }
+
+    private func drawRowBackground(opacity: Double) {
+        HideTheme.Native.primary.withAlphaComponent(opacity).setFill()
+        NSBezierPath(
+            roundedRect: bounds.insetBy(dx: HideTheme.spacingXS, dy: HideTheme.Layout.hairlineWidth),
+            xRadius: HideTheme.radiusExtraSmall,
+            yRadius: HideTheme.radiusExtraSmall
+        ).fill()
     }
 }
 

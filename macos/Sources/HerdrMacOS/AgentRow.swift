@@ -183,6 +183,7 @@ struct AgentRow: View {
     var shortcutNumber: Int?
     var shortcutVisible = true
     let action: () -> Void
+    @Environment(\.hidePetAppearance) private var petAppearance
 
     /// Work the agent started that is still running. It is background noise
     /// next to the agent's own state, so it stays muted.
@@ -202,74 +203,100 @@ struct AgentRow: View {
         return "\(failed) failed"
     }
 
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: density.iconSpacing) {
-                AgentStatusMark(symbol: presentation.symbol, color: presentation.statusColor)
-                AgentBadge(
-                    agentKind: presentation.agentKind,
-                    stateColor: presentation.statusColor,
-                    size: density.badgeSize
-                )
-                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                    HStack(spacing: style.contentSpacing) {
-                        Text(presentation.title)
-                            .hideFont(size: HideTheme.Typography.body, weight: density.titleWeight)
-                            .foregroundStyle(style.titleColor)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        if let shortcutNumber {
-                            HideKeycap(command: .agent(shortcutNumber))
-                                .opacity(shortcutVisible ? 1 : 0)
-                        }
-                        Text(presentation.elapsed)
-                            .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+    private var rowContent: some View {
+        HStack(alignment: .top, spacing: density.iconSpacing) {
+            AgentStatusMark(symbol: presentation.symbol, color: presentation.statusColor)
+            AgentBadge(
+                agentKind: presentation.agentKind,
+                stateColor: presentation.statusColor,
+                size: density.badgeSize
+            )
+            VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                HStack(spacing: style.contentSpacing) {
+                    Text(presentation.title)
+                        .hideFont(size: HideTheme.Typography.body, weight: density.titleWeight)
+                        .foregroundStyle(style.titleColor)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let shortcutNumber {
+                        HideKeycap(command: .agent(shortcutNumber))
+                            .opacity(shortcutVisible ? 1 : 0)
+                    }
+                    Text(presentation.elapsed)
+                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                        .foregroundStyle(style.muted)
+                }
+                if let detail = presentation.detail {
+                    Text(detail)
+                        .hideFont(size: HideTheme.Typography.caption)
+                        .foregroundStyle(style.secondary)
+                        .lineLimit(2)
+                }
+                HStack(spacing: style.contentSpacing) {
+                    Text(presentation.statusLabel)
+                        .hideFont(size: HideTheme.Typography.micro, weight: .medium)
+                        .foregroundStyle(presentation.statusColor)
+                    if let qualifier = presentation.qualifier {
+                        Text(qualifier)
+                            .hideFont(size: HideTheme.Typography.micro)
                             .foregroundStyle(style.muted)
+                            .lineLimit(1)
                     }
-                    if let detail = presentation.detail {
-                        Text(detail)
-                            .hideFont(size: HideTheme.Typography.caption)
-                            .foregroundStyle(style.secondary)
-                            .lineLimit(2)
+                    if let ambientLabel {
+                        Text(ambientLabel)
+                            .hideFont(size: HideTheme.Typography.micro)
+                            .foregroundStyle(style.muted)
+                            .lineLimit(1)
                     }
-                    HStack(spacing: style.contentSpacing) {
-                        Text(presentation.statusLabel)
+                    if let failedLabel {
+                        Text(failedLabel)
                             .hideFont(size: HideTheme.Typography.micro, weight: .medium)
-                            .foregroundStyle(presentation.statusColor)
-                        if let qualifier = presentation.qualifier {
-                            Text(qualifier)
-                                .hideFont(size: HideTheme.Typography.micro)
-                                .foregroundStyle(style.muted)
-                                .lineLimit(1)
-                        }
-                        if let ambientLabel {
-                            Text(ambientLabel)
-                                .hideFont(size: HideTheme.Typography.micro)
-                                .foregroundStyle(style.muted)
-                                .lineLimit(1)
-                        }
-                        if let failedLabel {
-                            Text(failedLabel)
-                                .hideFont(size: HideTheme.Typography.micro, weight: .medium)
-                                .foregroundStyle(HideTheme.danger)
-                                .lineLimit(1)
-                        }
+                            .foregroundStyle(HideTheme.danger)
+                            .lineLimit(1)
                     }
                 }
             }
-            .padding(.leading, density.leadingPadding)
-            .padding(.trailing, density.trailingPadding)
-            .padding(.vertical, density.verticalPadding)
-            .background(
-                isFocused ? HideTheme.panel : .clear,
-                in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.leading, density.leadingPadding)
+        .padding(.trailing, density.trailingPadding)
+        .padding(.vertical, density.verticalPadding)
+        .background(
+            isFocused ? HideTheme.panel : .clear,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private var rowAccessibilityValue: String {
+        var values = [isFocused ? "Selected" : "Not selected"]
+        if let detail = presentation.detail { values.append(detail) }
+        if let qualifier = presentation.qualifier { values.append(qualifier) }
+        if !presentation.elapsed.isEmpty { values.append(presentation.elapsed) }
+        if let ambientLabel { values.append(ambientLabel) }
+        if let failedLabel { values.append(failedLabel) }
+        return values.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private var rowButton: some View {
+        if petAppearance {
+            Button(action: action) {
+                rowContent
+            }
+            .buttonStyle(.plain)
+        } else {
+            Button(action: action) {
+                rowContent
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+        }
+    }
+
+    var body: some View {
+        rowButton
         .accessibilityLabel(
             "\(presentation.title), \(presentation.agentKind), \(presentation.statusLabel)"
         )
-        .accessibilityValue(isFocused ? "Selected" : "Not selected")
+        .accessibilityValue(rowAccessibilityValue)
     }
 }

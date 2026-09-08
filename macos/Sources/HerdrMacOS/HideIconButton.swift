@@ -92,6 +92,7 @@ private struct HideIconButtonStyle: ButtonStyle {
                     ))
             }
             .contentShape(Rectangle())
+            .hideControlFocus(cornerRadius: HideTheme.radiusMedium)
             .opacity(!isEnabled ? HideTheme.Opacity.disabled
                 : (configuration.isPressed ? HideTheme.Opacity.secondary : 1))
             .onHover { hovering in

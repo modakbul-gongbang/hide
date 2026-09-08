@@ -64,7 +64,7 @@ struct RightPanel: View {
                 }
             )
         } else {
-            ContentUnavailableView {
+            HideEmptyState {
                 Label("No workspace", systemImage: "folder")
             } description: {
                 Text("Choose New Workspace to browse local files.")
@@ -78,7 +78,7 @@ struct RightPanel: View {
     @ViewBuilder
     private var remoteFileTree: some View {
         if let fileError = model.remote.fileError {
-            ContentUnavailableView {
+            HideEmptyState {
                 Label("Remote files unavailable", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(fileError)
@@ -86,7 +86,7 @@ struct RightPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(ShellMetrics.panelPadding)
         } else if activeRoot == nil {
-            ContentUnavailableView {
+            HideEmptyState {
                 Label("Remote checkout has no path", systemImage: "externaldrive")
             } description: {
                 Text(model.remote.message)
@@ -105,7 +105,7 @@ struct RightPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("remote-files-loading")
         } else if model.remote.files.isEmpty {
-            ContentUnavailableView {
+            HideEmptyState {
                 Label("No remote files", systemImage: "folder")
             } description: {
                 Text("The selected remote checkout has no visible top-level files.")
@@ -275,7 +275,7 @@ private struct ChangesGroupHeader: View {
             .frame(height: 20)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HideInteractiveButtonStyle())
         .accessibilityIdentifier("changes-group-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
         .accessibilityLabel("\(title), \(count) files")
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -326,7 +326,7 @@ private struct ChangedFileRow: View {
                     .padding(.horizontal, HideTheme.spacingXS)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HideInteractiveButtonStyle())
         .hideTooltip(entry.relativePath)
         .accessibilityIdentifier(committed ? "committed-file-\(entry.relativePath)" : "changed-file-\(entry.relativePath)")
         .accessibilityLabel(accessibilityLabel)
@@ -358,7 +358,7 @@ private struct ChangesNotice: View {
     let message: String
 
     var body: some View {
-        ContentUnavailableView {
+        HideEmptyState {
             Label(title, systemImage: systemImage)
         } description: {
             Text(message)

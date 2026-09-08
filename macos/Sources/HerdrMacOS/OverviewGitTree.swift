@@ -98,7 +98,8 @@ struct OverviewGitTree<RowContent: View>: View {
                 } else {
                     VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                         if !expanded.isEmpty {
-                            Button("Fold history") { expanded.removeAll(); rebuild() }.buttonStyle(.plain)
+                            Button("Fold history") { expanded.removeAll(); rebuild() }
+                                .buttonStyle(HideTextButtonStyle(appearance: .quiet))
                         }
                         if history?.shallowBoundaries?.isEmpty == false {
                             Text("Shallow history · earlier ancestry is unavailable").foregroundStyle(HideTheme.secondary)
@@ -156,7 +157,7 @@ struct OverviewGitTree<RowContent: View>: View {
                                     } else if !row.folded.isEmpty {
                                         Button { expanded.insert(row.id); rebuild() } label: {
                                             Label(row.subject, systemImage: "ellipsis")
-                                        }.buttonStyle(.plain).foregroundStyle(HideTheme.secondary)
+                                        }.buttonStyle(HideInteractiveButtonStyle()).foregroundStyle(HideTheme.secondary)
                                             .frame(height: row.height).hideTooltip("Expand \(row.folded.count) commits")
                                     } else {
                                         Text(row.decorations.isEmpty ? row.subject : "\(row.decorations.replacingOccurrences(of: "refs/heads/", with: "").replacingOccurrences(of: "refs/remotes/", with: "")) · \(row.subject)").lineLimit(1).foregroundStyle(HideTheme.muted)

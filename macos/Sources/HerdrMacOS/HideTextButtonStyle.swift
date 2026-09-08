@@ -68,23 +68,26 @@ private struct HideTextButtonBody<Label: View>: View {
     let density: HideTextButtonStyle.Density
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.hideAccent) private var accent
     @State private var isHovered = false
 
     private var isDestructive: Bool { role == .destructive }
 
     private var foreground: Color {
+        if !isEnabled { return HideTheme.muted }
         if isDestructive, appearance != .prominent { return HideTheme.danger }
         return appearance == .prominent ? HideTheme.background : HideTheme.primary
     }
 
     private var background: Color {
+        if !isEnabled, appearance == .prominent { return HideTheme.elevated }
         switch appearance {
         case .quiet:
             return .clear
         case .standard:
             return HideTheme.elevated
         case .prominent:
-            return isDestructive ? HideTheme.danger : HideTheme.accent
+            return isDestructive ? HideTheme.danger : accent
         }
     }
 

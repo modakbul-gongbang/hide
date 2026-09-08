@@ -849,7 +849,7 @@ The primary branch mismatch keeps its migration action as a warning icon beside 
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
 New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
-`HideFormPicker` owns both compact and stacked menu presentations, and `HideSettingsField` owns text inputs.
+`HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
 Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
 The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
@@ -939,12 +939,20 @@ The native controls are not replaced with gesture-only drawings.
 
 | Component | Appearance and geometry | State contract |
 | --- | --- | --- |
-| `HideTextButtonStyle` | Quiet, standard and prominent appearances; compact 24pt / body 11, regular 36pt / title 13; radius 6 | Standard uses elevated fill and divider; quiet has no resting container; prominent uses the neutral accent; destructive role uses danger; hover, pressed, focus and disabled remain visible |
+| `HideTextButtonStyle` | Quiet, standard and prominent appearances; compact 24pt / body 11, regular 36pt / title 13; radius 6 | Standard uses elevated fill and divider; quiet has no resting container; prominent uses the current accent; destructive role uses danger; disabled prominent actions use the elevated surface and muted label; hover, pressed and focus remain visible |
 | `HideChoiceGroup` tabs | Subhead 12; single-line labels, 4pt horizontal padding and 8pt gaps; transparent base; selected primary label and 2pt bottom indicator | Selection never adds a pill to section tabs; hover and keyboard focus remain distinct from selection |
 | `HideChoiceGroup` segmented | Contained choices on sidebar, 2pt inset, divider border, radius 6, elevated selected choice | Tree/List changes only inspection mode; selected choice and group label are accessible |
-| `HideSearchField` | 36pt height, elevated fill, radius 6, 8pt gap, magnifier and 24pt clear action | Existing `HideSearchKeyboard` is the only focus owner; a local focus observation drives the neutral outline; native IME and search keyboard behavior remain intact |
+| `HideSearchField` | Shared input surface, 36pt height, radius 6, 8pt gap, magnifier and 24pt clear action | Existing `HideSearchKeyboard` is the only focus owner; a local focus observation drives the neutral outline; native IME and search keyboard behavior remain intact |
 | `HideCheckboxStyle` | 16pt mark inside a compact hit area; neutral checked fill and check mark | Toggle owns checked state and accessibility; unchecked, checked, disabled, hover and focus are distinguishable |
 | `HideDisclosureStyle` | Subhead 12 label, compact row, chevron and shared quiet interaction treatment | DisclosureGroup owns expansion; visible label and expanded state remain accessible, and collapsed content is absent |
+
+`HideInputSurface` owns text-input typography, horizontal inset, elevated fill, neutral border, focused outline and disabled appearance at compact 24pt or regular 36pt minimum height.
+It is a presentation modifier and does not install focus, submit, selection or keyboard handlers.
+Search retains `HideSearchKeyboard` as its only focus owner; address, form and composer inputs retain their existing native editing bindings.
+`HideMenuChipLabel` owns compact menu-trigger typography, chevron, surface and border; the native Menu retains activation and selected menu-item semantics.
+`HideEmptyState` owns the shell's empty/unavailable heading, decorative icon, explanation, wrapping and accessibility grouping using real caller-provided content.
+Its optional semantic emphasis colors the heading and icon for warnings and failures while keeping the explanation readable.
+Standalone Pet/dashboard content and operating-system menu/alert presentation retain their explicit platform exceptions.
 
 `HideTheme.Control` owns compactHeight 24, regularHeight 36, checkboxSize 16 and tabIndicatorHeight 2.
 All controls use the existing spacing, corner and surface tokens; hover uses subtleFill, pressed uses secondary opacity, and disabled uses disabled opacity.
@@ -952,6 +960,14 @@ A disabled control cannot activate, and destructive meaning comes from the Butto
 Pending operations keep their existing explicit progress labels and disabled actions; shared styles do not invent pending or error state.
 Hover and focus observations are local to the affected control and never dispatch core events or publish shell state.
 The duplicate toolbar and destructive button styles are retired into `HideTextButtonStyle`.
+Settings tabs, sidebar mode choices and right-panel sections use `HideChoiceGroup`; the central work-tab strip preserves drag/close/MRU behavior and uses shared interaction feedback for its selection action.
+The sidebar opts into equal-width choices and supplies option-specific command tooltips; equal width covers each choice's background and hit area, not only its layout slot.
+Cmd+K, file search and Overview reuse `HideSearchField`, including its clear action and the same keyboard selection behavior.
+Main-shell worktree review and settings Boolean controls use `HideCheckboxStyle`; a checkbox inside an operating-system Menu retains native menu semantics.
+Changes, sidebar and tab rows retain their domain layout but reuse `HideInteractiveButtonStyle` for hover, pressed, focus and disabled feedback.
+Shell actions use shared text/icon styles, including destructive roles, editor conflict recovery and composer submission.
+The old unreferenced checkout-summary renderer is retired; Overview remains the active project context composition.
+
 Project summary rows, Git rails, worktree rows and inspector composition remain owned by Overview instead of becoming general-purpose domain components.
 
 ### Recent navigation in the native shell
@@ -1165,10 +1181,11 @@ Geometry, color, typography and spacing are selected through existing tokens and
 
 The machine-readable control policy is `scripts/design-control-policy.json`.
 Its exact paths identify approved owners, existing legacy uses and platform exceptions, with a reason and count for each detected construct.
-The policy retains existing empty views, native control invocations with shared appearances, settings switches and enumerated input fields.
+The policy records native control invocations inside shared owners, the Pet dashboard empty-state exception and native menu controls.
+Remaining input invocations are owned wrappers or the composer/address editing boundary, each with the shared input surface.
 Overview's stock segmented Picker, cleanup's stock checkbox appearance and obsolete toolbar/destructive styles have no retained allowance.
 TextField, SecureField and TextEditor invocations are counted as well: new input controls belong in a documented shared owner, while enumerated existing fields remain legacy uses.
-These allowances preserve existing behavior without claiming every legacy appearance is the desired final design.
+An allowance permits a specific native behavior boundary; it does not permit a caller to invent another appearance.
 A new occurrence, an unlisted style implementation, or a new source file using these constructs fails the check, including in nested directories.
 When an occurrence is removed, reduce its allowance in the same reviewed change so old exceptions cannot silently become spare capacity.
 Do not regenerate or increase allowances just to make CI pass.

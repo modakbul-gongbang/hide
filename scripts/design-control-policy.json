@@ -1,99 +1,18 @@
 {
   "version": 1,
   "files": {
-    "CheckoutOverview.swift": {
-      "kind": "legacy",
-      "reason": "Existing empty views and disclosure invocation retained; disclosure appearance is owned by HideDisclosureStyle. Stock segmented Picker was removed.",
-      "rules": {
-        "control:ContentUnavailableView": 3,
-        "control:DisclosureGroup": 1
-      }
-    },
-    "EditorViewerOverlay.swift": {
-      "kind": "legacy",
-      "reason": "Existing editor empty state; outside Overview migration scope.",
-      "rules": {
-        "control:ContentUnavailableView": 1
-      }
-    },
-    "HideFormPicker.swift": {
-      "kind": "owner",
-      "reason": "Owns form menu picker appearance while retaining platform menu selection.",
-      "rules": {
-        "control:Picker": 2,
-        "native-style:pickerStyle:menu": 1
-      }
-    },
-    "HideIconButton.swift": {
-      "kind": "owner",
-      "reason": "Owns shared icon button appearance and interaction feedback.",
-      "rules": {
-        "implementation:ButtonStyle": 1
-      }
-    },
-    "HideSettings.swift": {
-      "kind": "legacy",
-      "reason": "Existing settings switch and text input retained; obsolete local destructive button style was removed.",
-      "rules": {
-        "control:TextField": 1,
-        "control:Toggle": 1,
-        "native-style:toggleStyle:switch": 1
-      }
-    },
-    "HideTextButtonStyle.swift": {
-      "kind": "owner",
-      "reason": "Owns shared form and sheet text button appearance.",
-      "rules": {
-        "implementation:ButtonStyle": 1
-      }
-    },
-    "HideUI.swift": {
-      "kind": "legacy",
-      "reason": "Existing shell toggle, empty views and input controls retained with exact counts; obsolete toolbar button style was removed.",
-      "rules": {
-        "control:Toggle": 2,
-        "native-style:toggleStyle:checkbox": 1,
-        "control:ContentUnavailableView": 4,
-        "control:TextEditor": 1,
-        "control:TextField": 1
-      }
-    },
-    "MergedWorktreeCleanup.swift": {
-      "kind": "legacy",
-      "reason": "Existing Toggle invocation uses HideCheckboxStyle; stock checkbox appearance was removed.",
-      "rules": {
-        "control:Toggle": 1
-      }
-    },
-    "RightPanel.swift": {
-      "kind": "legacy",
-      "reason": "Existing Explorer empty states retained; no panel implementation changes.",
-      "rules": {
-        "control:ContentUnavailableView": 5
-      }
-    },
-    "ShellView.swift": {
-      "kind": "platform",
-      "reason": "Existing pet switch and borderless shell control; pet exception retained with exact counts.",
-      "rules": {
-        "native-style:buttonStyle:borderless": 1,
-        "control:Toggle": 1,
-        "native-style:toggleStyle:switch": 1
-      }
-    },
-    "WorkspaceFileSearch.swift": {
-      "kind": "legacy",
-      "reason": "Existing file-search input and error view retained with exact counts.",
-      "rules": {
-        "control:TextField": 1,
-        "control:ContentUnavailableView": 1
-      }
-    },
     "BrowserPaneView.swift": {
       "kind": "legacy",
-      "reason": "Existing browser address field retains its current behavior; new input usage requires an owner.",
+      "reason": "The browser address field keeps native editing and uses the shared compact input surface.",
       "rules": {
         "control:TextField": 1
+      }
+    },
+    "CheckoutOverview.swift": {
+      "kind": "legacy",
+      "reason": "The disclosure invocation retains native expansion semantics; its appearance is owned by HideDisclosureStyle.",
+      "rules": {
+        "control:DisclosureGroup": 1
       }
     },
     "HideCheckboxStyle.swift": {
@@ -105,7 +24,7 @@
     },
     "HideChoiceGroup.swift": {
       "kind": "owner",
-      "reason": "Owns mode choice buttons and selected-state appearance.",
+      "reason": "Owns mode choices and section tabs with their selected-state appearance.",
       "rules": {
         "implementation:ButtonStyle": 1
       }
@@ -117,18 +36,87 @@
         "implementation:DisclosureGroupStyle": 1
       }
     },
-    "HideInteractiveButtonStyle.swift": {
+    "HideEmptyState.swift": {
       "kind": "owner",
-      "reason": "Owns shared hover, press and keyboard focus feedback.",
+      "reason": "Owns empty, unavailable and failed-state presentation for the shell.",
+      "rules": {}
+    },
+    "HideFormPicker.swift": {
+      "kind": "owner",
+      "reason": "Owns the form menu picker while retaining native menu selection behaviour.",
+      "rules": {
+        "control:Picker": 1
+      }
+    },
+    "HideIconButton.swift": {
+      "kind": "owner",
+      "reason": "Owns shared icon button appearance and interaction feedback.",
       "rules": {
         "implementation:ButtonStyle": 1
       }
     },
+    "HideInputSurface.swift": {
+      "kind": "owner",
+      "reason": "Owns the shared surface, focus outline and disabled treatment for native text inputs.",
+      "rules": {}
+    },
+    "HideInteractiveButtonStyle.swift": {
+      "kind": "owner",
+      "reason": "Owns shared hover, press and keyboard focus feedback for quiet interactive rows.",
+      "rules": {
+        "implementation:ButtonStyle": 1
+      }
+    },
+    "HideMenuChipLabel.swift": {
+      "kind": "owner",
+      "reason": "Owns compact menu trigger labels and their neutral surface treatment.",
+      "rules": {}
+    },
     "HideSearchField.swift": {
       "kind": "owner",
-      "reason": "Owns shared search input appearance, focus and keyboard handling.",
+      "reason": "Owns the shared search input, focus and keyboard handling.",
       "rules": {
         "control:TextField": 1
+      }
+    },
+    "HideSettings.swift": {
+      "kind": "legacy",
+      "reason": "The existing settings checkbox and text field retain native semantics while using shared appearances.",
+      "rules": {
+        "control:TextField": 1,
+        "control:Toggle": 1
+      }
+    },
+    "HideTextButtonStyle.swift": {
+      "kind": "owner",
+      "reason": "Owns shared form and sheet text button appearance.",
+      "rules": {
+        "implementation:ButtonStyle": 1
+      }
+    },
+    "HideUI.swift": {
+      "kind": "legacy",
+      "reason": "The shell keeps one intentional PetDashboard system empty state and a native text editor; migrated controls use shared owners.",
+      "rules": {
+        "control:Toggle": 2,
+        "control:ContentUnavailableView": 1,
+        "control:TextEditor": 1
+      }
+    },
+    "MergedWorktreeCleanup.swift": {
+      "kind": "legacy",
+      "reason": "The existing Toggle invocation uses HideCheckboxStyle while retaining its cleanup semantics.",
+      "rules": {
+        "control:Toggle": 1
+      }
+    },
+    "ShellView.swift": {
+      "kind": "platform",
+      "reason": "The existing Pet switch and borderless platform control retain native behaviour; shell selectors use HideChoiceGroup.",
+      "rules": {
+        "native-style:buttonStyle:borderless": 1,
+        "control:Toggle": 1,
+        "native-style:toggleStyle:switch": 1
       }
     }
   }

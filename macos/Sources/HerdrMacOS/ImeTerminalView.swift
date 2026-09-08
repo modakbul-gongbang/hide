@@ -171,10 +171,13 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
 
         let targets = bar.styleTargets
         targets.field.textColor = HideTheme.Native.primary
-        targets.field.font = NSFont.systemFont(ofSize: 11)
+        targets.field.font = HideTheme.nativeFont(size: HideTheme.Typography.body)
         targets.summary.textColor = HideTheme.Native.secondary
+        targets.summary.font = HideTheme.nativeFont(size: HideTheme.Typography.micro)
         for button in targets.buttons {
             button.contentTintColor = HideTheme.Native.secondary
+            button.bezelStyle = .inline
+            button.isBordered = false
         }
     }
 

@@ -346,6 +346,9 @@ Use a qualified verdict when coverage is bounded: “no whole-body blanking obse
 
 Shared control hover, pressed and keyboard-focus appearance stays in local SwiftUI state.
 `HideSearchField` observes the existing search keyboard modifier's focus instead of creating another focus owner.
+The shared input surface and empty-state renderer add no timers, tasks, I/O or core state.
+Row hover/focus remains local to visible controls, and native sidebar/outline scrolling is retained.
+Search migration retains its existing filtering and result-ID reconciliation cost; it does not add another search index or per-keystroke subprocess.
 These visual transitions neither dispatch runtime events nor mark the snapshot rest payload dirty.
 Choice controls publish only a changed selection; repeated activation of the selected option has no action.
 Their work scales with the small visible choice set, not the retained project catalog.

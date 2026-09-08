@@ -13,13 +13,24 @@ struct GitWorktreesView: View {
                     .hideFont(size: HideTheme.Typography.body, weight: .medium)
                     .hideTooltip(project?.baseBranchFallback ?? "Base source: \(project?.baseSource ?? "unavailable")")
                 Spacer(minLength: HideTheme.spacingNone)
-                Button { model.core.dispatch(kind: "git_worktrees_refresh", payload: [:]) } label: {
-                    if loading { ProgressView().controlSize(.small) }
-                    else { Image(systemName: HideTheme.GitIcon.refresh) }
+                ZStack {
+                    HideIconButton(
+                        systemImage: HideTheme.GitIcon.refresh,
+                        help: loading ? "Refreshing worktrees, disk usage and pull requests" : "Refresh worktrees, disk usage and pull requests",
+                        accessibilityLabel: loading ? "Refreshing worktrees, disk usage and pull requests" : "Refresh worktrees, disk usage and pull requests",
+                        variant: .toolbar
+                    ) {
+                        model.core.dispatch(kind: "git_worktrees_refresh", payload: [:])
+                    }
+                    .opacity(loading ? 0 : 1)
+                    .disabled(loading || model.isRemoteContext)
+                    if loading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(loading || model.isRemoteContext)
-                .hideTooltip("Refresh worktrees, disk usage and pull requests")
                 .accessibilityIdentifier("git-worktrees-refresh")
             }
             .foregroundStyle(HideTheme.secondary)
@@ -138,14 +149,15 @@ private struct GitWorktreeRow: View {
             Text(category).foregroundStyle(HideTheme.warning)
                 .hideTooltip(worktree.github.unavailableReason ?? category)
         } else if let request = worktree.pullRequest {
-            Button {
+            HideIconButton(
+                image: CheckoutCardPresentation.pullRequestIcon(request),
+                imageSize: HideTheme.PullRequest.iconSize,
+                color: CheckoutCardPresentation.pullRequestColor(request),
+                help: "PR #\(request.number): \(CheckoutCardPresentation.badgeLabel(request.badge, review: request.review))",
+                variant: .toolbar
+            ) {
                 if let url = URL(string: request.url) { NSWorkspace.shared.open(url) }
-            } label: {
-                CheckoutCardPresentation.pullRequestIcon(request).resizable()
-                    .frame(width: HideTheme.PullRequest.iconSize, height: HideTheme.PullRequest.iconSize)
-                    .foregroundStyle(CheckoutCardPresentation.pullRequestColor(request))
-            }.buttonStyle(.plain)
-                .hideTooltip("PR #\(request.number): \(CheckoutCardPresentation.badgeLabel(request.badge, review: request.review))")
+            }
         } else if let reason = worktree.github.unavailableReason {
             Image(systemName: HideTheme.GitIcon.unavailable).foregroundStyle(HideTheme.warning).hideTooltip(reason)
         } else {

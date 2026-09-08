@@ -2,14 +2,19 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 
-// Product-side AC11 proof stays inside the worktree. The run's declared
-// bookkeeping deliverables and registered bytes prove rules/INDEX membership
-// through the harness, which owns that separate record-root boundary.
+// Product-side enforcement stays inside the worktree. The workflow must bind
+// the same unified checker and its real regression tests; the commands below
+// are deliberately executed so a stale or weakened binding fails closed.
 const workflow = fs.readFileSync('.github/workflows/design-contract.yml', 'utf8');
 assert(workflow.includes('pull_request:') && workflow.includes('push:'), 'CI must cover review and main');
-for (const script of ['check-hide-theme-literals.sh', 'check-hide-components.sh']) {
-  assert(workflow.split('\n').some(line => line.trim() === 'bash scripts/' + script),
-    'Missing CI invocation for ' + script);
-  process.stdout.write(execFileSync('bash', ['scripts/' + script], {encoding: 'utf8'}));
+const workflowCommands = [
+  'node scripts/check-design-contract.mjs',
+  'node --test scripts/tests/design-controls.test.mjs',
+];
+const workflowLines = workflow.split(/\r?\n/).map(line => line.trim());
+for (const command of workflowCommands) {
+  assert(workflowLines.includes(command), 'Missing CI invocation for ' + command);
 }
-console.log('Product enforcement and CI binding PASS; registered bookkeeping proves invariant membership');
+execFileSync(process.execPath, ['scripts/check-design-contract.mjs'], {stdio: 'inherit'});
+execFileSync(process.execPath, ['--test', 'scripts/tests/design-controls.test.mjs'], {stdio: 'inherit'});
+console.log('Product enforcement and CI binding PASS');

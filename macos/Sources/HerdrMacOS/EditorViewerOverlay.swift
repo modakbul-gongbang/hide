@@ -113,7 +113,9 @@ struct EditorViewerOverlay: View {
             Label("This file changed on disk. Your draft is preserved.", systemImage: "exclamationmark.triangle.fill")
             HStack {
                 Button("Reload disk version") { model.core.resolveConflict("reload") }
+                    .buttonStyle(HideTextButtonStyle(appearance: .quiet))
                 Button("Keep editing") { model.core.resolveConflict("keep_editing") }
+                    .buttonStyle(HideTextButtonStyle(appearance: .quiet))
             }
             Text("Opened \(conflict.openedModifiedAt), disk \(conflict.diskModifiedAt)")
                 .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
@@ -135,11 +137,11 @@ struct EditorViewerOverlay: View {
     }
 
     private func unavailable(title: String, message: String) -> some View {
-        ContentUnavailableView {
-            Label(title, systemImage: "doc.text.magnifyingglass")
-        } description: {
-            Text(message)
-        }
+        HideEmptyState(
+            title,
+            systemImage: "doc.text.magnifyingglass",
+            description: Text(message)
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(ShellMetrics.panelPadding)
     }

@@ -148,8 +148,10 @@ struct ShellView: View {
                 HStack {
                     Spacer()
                     Button("Cancel") { model.branchMigration = nil }
+                        .buttonStyle(HideTextButtonStyle())
                         .keyboardShortcut(.cancelAction)
                     Button("Move branch", action: model.confirmBranchMigration)
+                        .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                         .keyboardShortcut(.defaultAction)
                 }
             }
@@ -175,12 +177,15 @@ struct ShellView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if worktree.deletionGate.canDeleteBranch {
                     Toggle("Also delete local branch \(worktree.branch ?? "")", isOn: $model.deleteWorktreeBranch)
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(HideCheckboxStyle())
                 }
                 HStack {
                     Spacer()
-                    Button("Cancel") { model.worktreeToDelete = nil }.keyboardShortcut(.cancelAction)
+                    Button("Cancel") { model.worktreeToDelete = nil }
+                        .buttonStyle(HideTextButtonStyle())
+                        .keyboardShortcut(.cancelAction)
                     Button(worktree.deletionGate.buttonLabel, role: .destructive, action: model.confirmDeleteWorktree)
+                        .buttonStyle(HideTextButtonStyle())
                 }
             }
             .padding(HideTheme.spacingXL)
@@ -676,7 +681,7 @@ private struct NewChatRow: View {
             .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HideInteractiveButtonStyle())
         .accessibilityIdentifier("hide-new-chat")
     }
 }
@@ -711,7 +716,7 @@ private struct ScratchSection: View {
             .padding(.bottom, HideTheme.spacingSM)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HideInteractiveButtonStyle())
         .accessibilityLabel(scratch.expanded ? "Collapse Scratch" : "Expand Scratch")
         .accessibilityIdentifier("hide-scratch-header")
 
@@ -768,7 +773,7 @@ private struct ScratchRow: View {
                 .frame(maxWidth: .infinity, minHeight: 28)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HideInteractiveButtonStyle())
             .accessibilityIdentifier("hide-scratch-tab-\(tab.id)")
         }
     }
@@ -778,37 +783,20 @@ private struct SidebarContentPicker: View {
     @EnvironmentObject private var model: ShellModel
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXXS) {
-            ForEach(SidebarContent.allCases) { content in
-                Button {
-                    model.showSidebarContent(content)
-                } label: {
-                    HStack(spacing: HideTheme.spacingSM) {
-                        Image(systemName: content.systemImage)
-                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                        Text(content.title)
-                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                    }
-                    .foregroundStyle(
-                        model.sidebarContent == content ? HideTheme.primary : HideTheme.muted
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 26)
-                    .background(
-                        model.sidebarContent == content ? HideTheme.elevated : Color.clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                    )
-                }
-                .buttonStyle(.plain)
-                .hideTooltip("Show \(content.title)", command: .menu(.toggleSidebarView))
-                .accessibilityIdentifier("hide-sidebar-view-\(content.rawValue)")
-            }
-        }
-        .padding(HideTheme.spacingXS)
-        .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
-        .overlay {
-            RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-        }
+        HideChoiceGroup(
+            label: "Sidebar view",
+            values: SidebarContent.allCases,
+            selection: Binding(
+                get: { model.sidebarContent },
+                set: { model.showSidebarContent($0) }
+            ),
+            title: { $0.title },
+            appearance: .segmented,
+            identifier: { "hide-sidebar-view-\($0.rawValue)" },
+            optionHelp: { "Show \($0.title)" },
+            optionHelpCommand: { _ in .menu(.toggleSidebarView) },
+            equalWidth: true
+        )
         .padding(.horizontal, HideTheme.spacingMD)
         .padding(.bottom, HideTheme.spacingSM)
         .accessibilityIdentifier("hide-sidebar-view-switcher")
@@ -834,7 +822,7 @@ private struct SidebarCommandBar: View {
                 .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
                 .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HideInteractiveButtonStyle())
             .accessibilityLabel("Search projects and agents")
             .hideTooltip(ShellMenuCommand.search.title, command: .menu(.search), inline: true)
 
@@ -951,24 +939,20 @@ private struct SidebarUtilityBar: View {
                 }
                 .frame(minWidth: 30, minHeight: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HideInteractiveButtonStyle())
             .hideTooltip("Weekly provider usage")
             .accessibilityLabel("Weekly provider usage")
             .popover(isPresented: $showingUsage, arrowEdge: .bottom) {
                 HideUsagePopover(usages: usages)
             }
 
-            Button {
-                model.showSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-                    .foregroundStyle(HideTheme.secondary)
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .hideTooltip("Settings")
-            .accessibilityLabel("Settings")
+            HideIconButton(
+                systemImage: "gearshape",
+                help: "Settings",
+                accessibilityLabel: "Settings",
+                variant: .toolbar,
+                action: { model.showSettings = true }
+            )
         }
         .padding(.horizontal, HideTheme.spacingMD)
         .padding(.vertical, HideTheme.spacingSM)
@@ -1135,19 +1119,14 @@ private struct HideBrandHeader: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .hideTooltip(model.isRemoteContext ? model.remote.targetLabel : (model.core.runtimeSelection?.version ?? "offline"))
-            Button {
-                model.toggleLeftSidebar()
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .frame(
-                        width: HideTheme.Layout.panelCollapseControlSize,
-                        height: HideTheme.Layout.panelCollapseControlSize
-                    )
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(HideTheme.secondary)
-            .hideTooltip("Hide left sidebar", command: .menu(.toggleLeftSidebar))
-            .accessibilityLabel("Hide left sidebar")
+            HideIconButton(
+                systemImage: "sidebar.left",
+                help: "Hide left sidebar",
+                accessibilityLabel: "Hide left sidebar",
+                variant: .toolbar,
+                command: .menu(.toggleLeftSidebar),
+                action: model.toggleLeftSidebar
+            )
             .accessibilityIdentifier("hide-toggle-left-sidebar")
         }
         // The wordmark starts after the traffic lights rather than under them.
@@ -1255,7 +1234,7 @@ private struct WorkspaceNavigatorRow: View {
                     .frame(maxWidth: .infinity, minHeight: 34)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HideInteractiveButtonStyle())
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
@@ -1446,7 +1425,7 @@ private struct CheckoutNavigatorRow: View {
             } label: {
                 Color.clear.contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HideInteractiveButtonStyle())
             .hideTooltip(presentation.detailTooltip)
             .accessibilityIdentifier("hide-checkout-\(checkout.id)")
             .accessibilityLabel(CheckoutCardPresentation.rowAccessibilityLabel(
@@ -1559,7 +1538,7 @@ private struct AgentNavigatorRow: View {
                         Image(systemName: agent.lineageCollapsed ? "chevron.right" : "chevron.down")
                             .foregroundStyle(HideTheme.muted)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HideInteractiveButtonStyle())
                     .frame(width: HideTheme.lineageChevronWidth)
                     .opacity(agent.lineageChildPaneIDs.isEmpty ? 0 : 1)
                     .disabled(agent.lineageChildPaneIDs.isEmpty)
@@ -1729,7 +1708,7 @@ private struct HideTabStrip: View {
                                         .frame(height: HideTheme.Layout.tabStripHeight)
                                         .contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(HideInteractiveButtonStyle())
                                     .hideTooltip([tab.contextLabel ?? tab.label, tab.focusedAgent.map { AgentStatusPresentation(agent: $0, connected: model.agentsConnected).label }].compactMap { $0 }.joined(separator: " · "), command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
 
                                     HideIconButton(
@@ -1951,7 +1930,7 @@ private struct HideTabCanvas: View {
                         onFocus: { model.focusPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) }
                     ) {
-                        ContentUnavailableView("Pane unavailable", systemImage: "exclamationmark.triangle", description: Text(reason))
+                        HideEmptyState("Pane unavailable", systemImage: "exclamationmark.triangle", description: Text(reason))
                     }
                 case .terminal:
                     PaneTerminalCell(
@@ -1995,12 +1974,11 @@ private struct PaneProjectionUnavailableState: View {
     @Environment(\.hideAccent) private var accent
 
     var body: some View {
-        ContentUnavailableView {
+        HideEmptyState(emphasis: accent) {
             Label("Pane layout unavailable", systemImage: "exclamationmark.triangle")
         } description: {
             Text(notice)
         }
-        .foregroundStyle(accent)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
         .accessibilityIdentifier("pane-layout-unavailable")
@@ -2011,12 +1989,11 @@ private struct MissingTerminalPaneCell: View {
     let paneID: String
 
     var body: some View {
-        ContentUnavailableView {
+        HideEmptyState(emphasis: HideTheme.danger) {
             Label("Terminal pane unavailable", systemImage: "exclamationmark.triangle")
         } description: {
             Text("Hide received layout for \(paneID) without matching pane metadata.")
         }
-        .foregroundStyle(HideTheme.danger)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.panel)
         .accessibilityIdentifier("missing-terminal-pane-\(paneID)")
@@ -2178,7 +2155,6 @@ private struct HideStatusBar: View {
 private struct ChatComposerSheet: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.hideAccent) private var accent
     @State private var message = ""
     @State private var provider: AgentProvider = .claude
     @State private var bypassWarnings = false
@@ -2235,7 +2211,7 @@ private struct ChatComposerSheet: View {
                     }
                 }
             } label: {
-                ComposerChipLabel(icon: "tray", title: whereLabel)
+                HideMenuChipLabel(title: whereLabel, image: Image(systemName: "tray"))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -2246,10 +2222,10 @@ private struct ChatComposerSheet: View {
                     Button(device.label) { model.composerDeviceID = device.id }
                 }
             } label: {
-                ComposerChipLabel(
-                    icon: "desktopcomputer",
+                HideMenuChipLabel(
                     title: model.devices.first(where: { $0.id == model.composerDeviceID })?.label
-                        ?? "This Mac"
+                        ?? "This Mac",
+                    image: Image(systemName: "desktopcomputer")
                 )
             }
             .menuStyle(.borderlessButton)
@@ -2263,11 +2239,17 @@ private struct ChatComposerSheet: View {
                 Divider()
                 Toggle("Pass the CLI bypass flag", isOn: $bypassWarnings)
             } label: {
-                ComposerChipLabel(
-                    icon: "sparkles",
-                    title: provider.rawValue.capitalized,
-                    markKind: provider.rawValue
-                )
+                if let mark = AgentMark.image(for: provider.rawValue, side: HideTheme.agentMarkWidth) {
+                    HideMenuChipLabel(
+                        title: provider.rawValue.capitalized,
+                        image: Image(nsImage: mark)
+                    )
+                } else {
+                    HideMenuChipLabel(
+                        title: provider.rawValue.capitalized,
+                        image: Image(systemName: "sparkles")
+                    )
+                }
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -2290,18 +2272,8 @@ private struct ChatComposerSheet: View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
             TextEditor(text: $message)
                 .focused($messageFocused)
-                .hideFont(size: HideTheme.Typography.title)
-                .foregroundStyle(HideTheme.primary)
                 .scrollContentBackground(.hidden)
-                .padding(HideTheme.spacingSM)
-                .background(
-                    HideTheme.elevated,
-                    in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: HideTheme.radiusLarge)
-                        .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-                }
+                .hideInputSurface(focused: messageFocused)
                 .overlay(alignment: .topLeading) {
                     if message.isEmpty {
                         Text("Ask anything")
@@ -2350,15 +2322,8 @@ private struct ChatComposerSheet: View {
                             .opacity(HideTheme.Opacity.secondary)
                     }
                 }
-                .foregroundStyle(canSend ? HideTheme.background : HideTheme.muted)
-                .padding(.horizontal, HideTheme.spacingMD)
-                .frame(height: 28)
-                .background(
-                    canSend ? accent : HideTheme.elevated,
-                    in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HideTextButtonStyle(appearance: .prominent))
             .disabled(!canSend)
             .keyboardShortcut(.return, modifiers: .command)
             .accessibilityIdentifier("hide-composer-send")
@@ -2372,45 +2337,6 @@ private struct ChatComposerSheet: View {
             message: message,
             bypassWarnings: bypassWarnings
         )
-    }
-}
-
-/// One composer chip. The three read as one control strip, so they are drawn
-/// once here rather than three times with drifting padding.
-private struct ComposerChipLabel: View {
-    /// How big the agent mark is drawn. It is applied to the image rather than
-    /// to a frame around it, because this label is a `Menu`'s and AppKit sizes
-    /// it from the NSImage.
-    private static let markSide: CGFloat = 12
-
-    let icon: String
-    let title: String
-    /// The agent kind whose mark replaces `icon`, on the chip that names one.
-    var markKind: String?
-
-    var body: some View {
-        HStack(spacing: HideTheme.spacingXS) {
-            if let markKind, let mark = AgentMark.image(for: markKind, side: Self.markSide) {
-                Image(nsImage: mark)
-                    .interpolation(.high)
-            } else {
-                Image(systemName: icon)
-                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-            }
-            Text(title)
-                .hideFont(size: HideTheme.Typography.body, weight: .medium)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                .foregroundStyle(HideTheme.muted)
-        }
-        .foregroundStyle(HideTheme.secondary)
-        .padding(.horizontal, HideTheme.spacingMD)
-        .frame(height: 26)
-        .background(HideTheme.elevated, in: Capsule())
-        .overlay {
-            Capsule().stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-        }
     }
 }
 
@@ -2453,20 +2379,18 @@ private struct HideSearchSheet: View {
         let resultIDs = (groups.flatMap(\.entries) + checkouts).map(\.id)
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(accent)
-                TextField("Search agents and workspaces", text: $query)
-                    .textFieldStyle(.plain)
-                    .hideFont(size: HideTheme.Typography.headline)
-                    .hideSearchKeyboard(selection: $selection, resultIDs: resultIDs,
-                        activate: activateSelected, dismiss: { dismiss() })
-                    .accessibilityIdentifier("hide-search-query")
-                Text("ESC")
-                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
+                HideSearchField(
+                    placeholder: "Search agents and workspaces",
+                    text: $query,
+                    selection: $selection,
+                    resultIDs: resultIDs,
+                    activate: activateSelected,
+                    dismiss: { dismiss() }
+                )
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("hide-search-query")
+                HideKeycap(command: .label("Esc"), emphasized: false)
             }
-            .padding(HideTheme.spacingLG)
-            .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusLarge))
             .padding(HideTheme.spacingLG)
             ScrollViewReader { proxy in
                 ScrollView {
@@ -2537,7 +2461,7 @@ private struct HideSearchSheet: View {
             .padding(.vertical, HideTheme.spacingSM)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HideInteractiveButtonStyle())
         .background(
             selection.selectedID == entry.id ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
             in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)

@@ -13,6 +13,9 @@ struct HideChoiceGroup<Value: Hashable>: View {
     let title: (Value) -> String
     let appearance: HideChoiceGroupAppearance
     let identifier: (Value) -> String
+    let optionHelp: ((Value) -> String)?
+    let optionHelpCommand: ((Value) -> HideCommand?)?
+    let equalWidth: Bool
 
     init(
         label: String,
@@ -20,7 +23,10 @@ struct HideChoiceGroup<Value: Hashable>: View {
         selection: Binding<Value>,
         title: @escaping (Value) -> String,
         appearance: HideChoiceGroupAppearance = .segmented,
-        identifier: @escaping (Value) -> String = { _ in "" }
+        identifier: @escaping (Value) -> String = { _ in "" },
+        optionHelp: ((Value) -> String)? = nil,
+        optionHelpCommand: ((Value) -> HideCommand?)? = nil,
+        equalWidth: Bool = false
     ) {
         self.label = label
         self.values = values
@@ -28,26 +34,18 @@ struct HideChoiceGroup<Value: Hashable>: View {
         self.title = title
         self.appearance = appearance
         self.identifier = identifier
+        self.optionHelp = optionHelp
+        self.optionHelpCommand = optionHelpCommand
+        self.equalWidth = equalWidth
     }
 
     var body: some View {
         HStack(spacing: appearance == .tabs ? HideTheme.spacingSM : HideTheme.spacingXXS) {
             ForEach(values, id: \.self) { value in
-                Button {
-                    guard selection != value else { return }
-                    selection = value
-                } label: {
-                    Text(title(value))
-                        .fixedSize()
-                }
-                .buttonStyle(HideChoiceButtonStyle(
-                    appearance: appearance,
-                    isSelected: selection == value
-                ))
-                .accessibilityIdentifier(identifier(value))
-                .accessibilityAddTraits(selection == value ? .isSelected : [])
+                optionButton(value)
             }
         }
+        .frame(maxWidth: equalWidth ? .infinity : nil)
         .padding(appearance == .segmented ? HideTheme.spacingXXS : HideTheme.spacingNone)
         .background {
             if appearance == .segmented {
@@ -65,18 +63,44 @@ struct HideChoiceGroup<Value: Hashable>: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
     }
+
+    @ViewBuilder
+    private func optionButton(_ value: Value) -> some View {
+        let button = Button {
+            guard selection != value else { return }
+            selection = value
+        } label: {
+            Text(title(value))
+                .fixedSize()
+        }
+        .buttonStyle(HideChoiceButtonStyle(
+            appearance: appearance,
+            isSelected: selection == value,
+            equalWidth: equalWidth
+        ))
+        .accessibilityIdentifier(identifier(value))
+        .accessibilityAddTraits(selection == value ? .isSelected : [])
+
+        if let optionHelp {
+            button.hideTooltip(optionHelp(value), command: optionHelpCommand?(value))
+        } else {
+            button
+        }
+    }
 }
 
 private struct HideChoiceButtonStyle: ButtonStyle {
     let appearance: HideChoiceGroupAppearance
     let isSelected: Bool
+    let equalWidth: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         HideChoiceButtonBody(
             label: configuration.label,
             isPressed: configuration.isPressed,
             appearance: appearance,
-            isSelected: isSelected
+            isSelected: isSelected,
+            equalWidth: equalWidth
         )
     }
 }
@@ -86,6 +110,7 @@ private struct HideChoiceButtonBody<Label: View>: View {
     let isPressed: Bool
     let appearance: HideChoiceGroupAppearance
     let isSelected: Bool
+    let equalWidth: Bool
 
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovered = false
@@ -104,6 +129,7 @@ private struct HideChoiceButtonBody<Label: View>: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, appearance == .tabs ? HideTheme.spacingXS : HideTheme.spacingSM)
             .frame(minHeight: HideTheme.Control.compactHeight)
+            .frame(maxWidth: equalWidth ? .infinity : nil)
             .background {
                 if appearance == .segmented, isSelected {
                     RoundedRectangle(cornerRadius: HideTheme.radiusSmall)

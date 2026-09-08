@@ -14,13 +14,17 @@ function fixture(t, git = false) {
   for (const file of ['check-design-contract.mjs', 'check-design-controls.mjs', 'check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'swift-source-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', file), path.join(root, 'scripts', file));
   // Minimal source fixtures exercise checker CLI behavior without depending on
   // whichever product UI happens to be present or being edited in the repo.
-  for (const owner of ['HideTheme', 'HideKeycap', 'HideBalloon', 'HideIconButton', 'HideBadge', 'HideFormPicker', 'HideTextButtonStyle', 'HideChoiceGroup', 'HideSearchField', 'HideCheckboxStyle', 'HideDisclosureStyle', 'HideInteractiveButtonStyle']) {
+  for (const owner of ['HideTheme', 'HideKeycap', 'HideBalloon', 'HideIconButton', 'HideBadge', 'HideFormPicker', 'HideTextButtonStyle', 'HideChoiceGroup', 'HideSearchField', 'HideInputSurface', 'HideCheckboxStyle', 'HideDisclosureStyle', 'HideInteractiveButtonStyle', 'HideEmptyState', 'HideMenuChipLabel']) {
     write(root, owner + '.swift', `struct ${owner} {}`);
   }
-  for (const name of ['HideUI', 'HideSettings', 'CheckoutSummaryCard', 'RightPanel', 'ShellView']) {
+  for (const name of ['HideUI', 'HideSettings']) {
     write(root, name + '.swift', 'Text("Fixture").hideTooltip("Fixture")\n'.repeat(name === 'HideUI' ? 24 : 1));
   }
-  write(root, 'CheckoutOverview.swift', 'Picker("Project view", selection: $mode) {}');
+  write(root, 'RightPanel.swift', 'PanelHeader(sections: PanelHeader.Sections(active: section, select: select))\nText("Fixture").hideTooltip("Fixture")');
+  write(root, 'ShellView.swift', 'HideChoiceGroup(label: "Right panel section")\n' + 'Text("Fixture").hideTooltip("Fixture")');
+  write(root, 'HideUI.swift', 'HideChoiceGroup(label: "Sidebar view")\n' + 'Text("Fixture").hideTooltip("Fixture")'.repeat(24));
+  write(root, 'HideSettings.swift', 'HideChoiceGroup(label: "Settings section")\n' + 'Text("Fixture").hideTooltip("Fixture")');
+  write(root, 'CheckoutOverview.swift', 'HideChoiceGroup(label: "Project view")\nPicker("Project view", selection: $mode) {}\nText("Fixture").hideTooltip("Fixture")');
   fs.writeFileSync(path.join(root, 'scripts/design-control-policy.json'), JSON.stringify({version: 1, files: {
     'CheckoutOverview.swift': {kind: 'legacy', reason: 'Fixture legacy control', rules: {'control:Picker': 1}},
   }}));
@@ -64,6 +68,52 @@ test('nested source cannot evade literal and duplicate component ownership check
   write(root, 'Nested/HideTheme.swift', 'struct HideKeycap {}\nText("bad").padding(99)');
   assert.notEqual(run(root, 'check-hide-theme-literals.mjs').status, 0);
   assert.match(run(root, 'check-hide-components.mjs').stderr, /duplicates HideKeycap/);
+});
+
+test('migrated selector, input, checkbox and empty-state surfaces fail on real caller regressions', t => {
+  const baseline = fixture(t);
+  assert.equal(run(baseline, 'check-hide-components.mjs').status, 0);
+
+  const selector = fixture(t);
+  const selectorFile = path.join(selector, 'macos/Sources/HerdrMacOS/ShellView.swift');
+  fs.writeFileSync(selectorFile, fs.readFileSync(selectorFile, 'utf8').replace('HideChoiceGroup', 'LocalChoiceGroup'));
+  const selectorResult = run(selector, 'check-hide-components.mjs');
+  assert.notEqual(selectorResult.status, 0);
+  assert.match(selectorResult.stderr, /ShellView\.swift: known selector surface must use HideChoiceGroup/);
+
+  const panel = fixture(t);
+  const panelFile = path.join(panel, 'macos/Sources/HerdrMacOS/RightPanel.swift');
+  fs.writeFileSync(panelFile, fs.readFileSync(panelFile, 'utf8').replace('sections: PanelHeader.Sections', 'title: "Local tabs"'));
+  const panelResult = run(panel, 'check-hide-components.mjs');
+  assert.notEqual(panelResult.status, 0);
+  assert.match(panelResult.stderr, /RightPanel\.swift: pass its section choices through PanelHeader\.Sections/);
+
+  const input = fixture(t);
+  const inputFile = path.join(input, 'macos/Sources/HerdrMacOS/BrowserPaneView.swift');
+  write(input, 'BrowserPaneView.swift', 'TextField("Address", text: $query)\n    .hideInputSurface(compact: true)');
+  fs.writeFileSync(inputFile, fs.readFileSync(inputFile, 'utf8').replace(/\n\s*\.hideInputSurface\([^\n]*\)/, ''));
+  const inputResult = run(input, 'check-hide-components.mjs');
+  assert.notEqual(inputResult.status, 0);
+  assert.match(inputResult.stderr, /BrowserPaneView\.swift: native text input must use HideInputSurface/);
+
+  const checkbox = fixture(t);
+  fs.appendFileSync(path.join(checkbox, 'macos/Sources/HerdrMacOS/HideUI.swift'), '\nToggle("Legacy checkbox", isOn: $value).toggleStyle(.checkbox)\n');
+  const checkboxResult = run(checkbox, 'check-hide-components.mjs');
+  assert.notEqual(checkboxResult.status, 0);
+  assert.match(checkboxResult.stderr, /Known checkbox surface: use HideCheckboxStyle/);
+
+  const empty = fixture(t);
+  fs.appendFileSync(path.join(empty, 'macos/Sources/HerdrMacOS/RightPanel.swift'), '\nContentUnavailableView("Legacy empty", systemImage: "xmark")\n');
+  const emptyResult = run(empty, 'check-hide-components.mjs');
+  assert.notEqual(emptyResult.status, 0);
+  assert.match(emptyResult.stderr, /RightPanel\.swift: use HideEmptyState instead of ContentUnavailableView/);
+});
+
+test('plain Button remains allowed when it is not a migrated shared control', t => {
+  const root = fixture(t);
+  write(root, 'AllowedButton.swift', 'Button("Menu action") {}.buttonStyle(.plain)');
+  const result = run(root, 'check-hide-components.mjs');
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('staged hook rejects staged violations despite a clean working copy, and ignores unstaged violations', t => {

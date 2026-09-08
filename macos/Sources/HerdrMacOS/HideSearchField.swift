@@ -9,7 +9,6 @@ struct HideSearchField: View {
     let activate: () -> Void
     let dismiss: () -> Void
     @State private var isFocused = false
-    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         HStack(spacing: HideTheme.spacingSM) {
@@ -25,17 +24,6 @@ struct HideSearchField: View {
                 HideIconButton(systemImage: "xmark", help: "Clear search", variant: .toolbar) { text = "" }
             }
         }
-        .hideFont(size: HideTheme.Typography.title)
-        .foregroundStyle(HideTheme.primary)
-        .padding(.horizontal, HideTheme.spacingSM)
-        .frame(minHeight: HideTheme.Control.regularHeight)
-        .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-        .overlay {
-            RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                .stroke(isFocused && isEnabled ? HideTheme.primary : HideTheme.divider,
-                        lineWidth: HideTheme.Layout.hairlineWidth)
-                .allowsHitTesting(false)
-        }
-        .opacity(isEnabled ? 1 : HideTheme.Opacity.disabled)
+        .hideInputSurface(focused: isFocused)
     }
 }
