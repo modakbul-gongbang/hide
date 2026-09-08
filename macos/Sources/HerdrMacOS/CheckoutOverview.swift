@@ -53,7 +53,7 @@ struct CheckoutOverview: View {
                     Picker("Project view", selection: $mode) {
                         Text("Tree").tag("Tree")
                         Text("List").tag("List")
-                    }.pickerStyle(.segmented).fixedSize()
+                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
                     .accessibilityIdentifier("overview-view-mode")
                 }.padding(HideTheme.spacingMD)
                 summary
@@ -277,7 +277,7 @@ struct CheckoutOverview: View {
                 } else {
                     HStack {
                         Button("Open workspace") {
-                            model.core.dispatch(kind: "git_worktree_open", payload: ["checkout_path": selected.path])
+                            model.selectCheckout(selected)
                         }.disabled(selected.worktree == nil || !selected.exists)
                         Button("Start agent…") { model.openComposer(checkoutID: selected.id) }
                     }

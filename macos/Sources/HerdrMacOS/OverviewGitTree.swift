@@ -120,11 +120,15 @@ struct OverviewGitTree<RowContent: View>: View {
                                 let point = CGPoint(x: HideTheme.Overview.laneInset + CGFloat(row.lane) * HideTheme.Overview.laneSpacing,
                                                     y: row.y + HideTheme.Overview.nodeOffset)
                                 if !row.checkouts.isEmpty {
+                                    let junctionX = graph.width - HideTheme.Overview.laneInset
                                     for offset in row.checkouts.indices {
                                         var attachment = Path()
                                         attachment.move(to: point)
-                                        attachment.addLine(to: CGPoint(x: graph.width, y: row.y + HideTheme.Overview.nodeOffset
-                                            + CGFloat(offset) * HideTheme.Overview.workspaceHeight))
+                                        attachment.addLine(to: CGPoint(x: junctionX, y: point.y))
+                                        let targetY = row.y + HideTheme.Overview.nodeOffset
+                                            + CGFloat(offset) * HideTheme.Overview.workspaceHeight
+                                        attachment.addLine(to: CGPoint(x: junctionX, y: targetY))
+                                        attachment.addLine(to: CGPoint(x: graph.width, y: targetY))
                                         context.stroke(attachment, with: .color(HideTheme.muted),
                                             style: StrokeStyle(lineWidth: HideTheme.Layout.hairlineWidth, dash: [HideTheme.spacingXS]))
                                     }
