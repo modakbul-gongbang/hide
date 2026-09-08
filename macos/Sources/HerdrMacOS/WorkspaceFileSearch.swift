@@ -114,6 +114,10 @@ struct WorkspaceFileSearchSheet: View {
     @State private var query = ""
     @State private var paths: [String] = []
     @State private var matches: [WorkspaceFileSearchMatch] = []
+    @State private var selection = HideSearchSelection()
+    @State private var matchedQuery: String?
+    @State private var loadedRoot: URL?
+    @State private var indexRevision: UInt64 = 0
     @State private var error: String?
     @State private var loading = true
 
@@ -121,14 +125,21 @@ struct WorkspaceFileSearchSheet: View {
         model.focusedCheckout.map { URL(fileURLWithPath: $0.path, isDirectory: true) }
     }
 
+    private var currentMatches: [WorkspaceFileSearchMatch] {
+        !loading && loadedRoot == root && matchedQuery == query ? matches : []
+    }
+
     var body: some View {
+        let rows = currentMatches
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 Image(systemName: "doc.text.magnifyingglass").foregroundStyle(HideTheme.accent)
                 TextField("Open file in selected checkout", text: $query)
                     .textFieldStyle(.plain)
                     .hideFont(size: HideTheme.Typography.headline)
-                    .onSubmit { open(matches.first) }
+                    .hideSearchKeyboard(selection: $selection, resultIDs: rows.map(\.id),
+                        activate: { open(selection.entry(in: currentMatches)) }, dismiss: { dismiss() })
+                    .accessibilityIdentifier("hide-file-search-query")
                 if loading { ProgressView().controlSize(.small) }
                 Text("ESC")
                     .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
@@ -144,27 +155,51 @@ struct WorkspaceFileSearchSheet: View {
             if let error {
                 ContentUnavailableView("File index unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
             } else {
-                ScrollView {
-                    LazyVStack(spacing: HideTheme.spacingXXS) {
-                        ForEach(matches) { match in
-                            Button { open(match) } label: {
-                                HStack(spacing: HideTheme.spacingSM) {
-                                    SetiFileIconView(url: (root ?? URL(fileURLWithPath: "/")).appendingPathComponent(match.relativePath), size: 13)
-                                    Text(match.relativePath)
-                                        .hideFont(size: HideTheme.Typography.subhead, design: .monospaced)
-                                        .foregroundStyle(HideTheme.primary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer()
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: HideTheme.spacingXXS) {
+                            ForEach(rows) { match in
+                                Button { open(match) } label: {
+                                    HStack(spacing: HideTheme.spacingSM) {
+                                        if let root {
+                                            SetiFileIconView(url: root.appendingPathComponent(match.relativePath), size: 13)
+                                        }
+                                        Text(match.relativePath)
+                                            .hideFont(size: HideTheme.Typography.subhead, design: .monospaced)
+                                            .foregroundStyle(HideTheme.primary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer()
+                                        Text("↵")
+                                            .foregroundStyle(HideTheme.muted)
+                                            .opacity(selection.selectedID == match.id ? 1 : 0)
+                                    }
+                                    .padding(.horizontal, HideTheme.spacingMD)
+                                    .padding(.vertical, HideTheme.spacingSM)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.horizontal, HideTheme.spacingMD)
-                                .padding(.vertical, HideTheme.spacingSM)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .background(
+                                    selection.selectedID == match.id ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
+                                )
+                                .accessibilityAddTraits(selection.selectedID == match.id ? .isSelected : [])
+                                .accessibilityValue(selection.selectedID == match.id ? "Selected" : "Not selected")
+                                .accessibilityIdentifier("hide-file-search-result-\(match.id)")
+                                .id(match.id)
                             }
-                            .buttonStyle(.plain)
+                            if !loading && rows.isEmpty {
+                                Text(query.isEmpty ? "No files in this checkout" : "No matching files")
+                                    .hideFont(size: HideTheme.Typography.subhead)
+                                    .foregroundStyle(HideTheme.secondary)
+                                    .padding(HideTheme.spacingXXL)
+                            }
                         }
+                        .padding(.horizontal, HideTheme.spacingLG)
                     }
-                    .padding(.horizontal, HideTheme.spacingLG)
+                    .onChange(of: selection.selectedID) { _, id in
+                        if let id { proxy.scrollTo(id, anchor: .center) }
+                    }
                 }
             }
         }
@@ -172,26 +207,51 @@ struct WorkspaceFileSearchSheet: View {
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
         .task(id: root) { await load() }
-        .task(id: query) { matches = await WorkspaceFileSearchIndex.matches(paths: paths, query: query) }
+        .task(id: query) { await updateMatches() }
     }
 
     private func load() async {
+        loading = true
+        error = nil
+        loadedRoot = nil
+        paths = []
+        matches = []
+        indexRevision &+= 1
         guard let root else {
             error = "The selected checkout path is unavailable."
             loading = false
             return
         }
         do {
-            paths = try await WorkspaceFileSearchIndex.load(root: root)
-            matches = await WorkspaceFileSearchIndex.matches(paths: paths, query: query)
+            let indexed = try await WorkspaceFileSearchIndex.load(root: root)
+            guard !Task.isCancelled, root == self.root else { return }
+            paths = indexed
+            loadedRoot = root
+            indexRevision &+= 1
+            await updateMatches()
         } catch {
+            guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
+        guard !Task.isCancelled, root == self.root else { return }
         loading = false
     }
 
+    private func updateMatches() async {
+        let requestedQuery = query
+        let revision = indexRevision
+        let results = await WorkspaceFileSearchIndex.matches(paths: paths, query: requestedQuery)
+        // A cancelled query or a replaced index cannot restore stale rows.
+        guard !Task.isCancelled, requestedQuery == query, revision == indexRevision else { return }
+        matchedQuery = requestedQuery
+        matches = results
+    }
+
     private func open(_ match: WorkspaceFileSearchMatch?) {
-        guard let root, let match else { return }
+        guard let root, let match, currentMatches.contains(where: { $0.id == match.id }) else {
+            selection.reconcile(currentMatches.map(\.id))
+            return
+        }
         model.openFile(root.appendingPathComponent(match.relativePath))
         dismiss()
     }

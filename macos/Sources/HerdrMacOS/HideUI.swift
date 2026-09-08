@@ -2423,7 +2423,6 @@ private struct HideSearchSheet: View {
     @Environment(\.hideAccent) private var accent
     @State private var query = ""
     @State private var selection = HideSearchSelection()
-    @FocusState private var queryFocused: Bool
 
     private var agentGroups: [HideSearchAgentGroup] {
         HideSearchPresentation.agentGroups(
@@ -2462,14 +2461,8 @@ private struct HideSearchSheet: View {
                 TextField("Search agents and workspaces", text: $query)
                     .textFieldStyle(.plain)
                     .hideFont(size: HideTheme.Typography.headline)
-                    .focused($queryFocused)
-                    .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
-                        guard press.modifiers.intersection([.command, .control, .option, .shift]).isEmpty,
-                              (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return .ignored }
-                        selection.move(press.key == .downArrow ? .down : .up, among: resultIDs)
-                        return .handled
-                    }
-                    .onSubmit { activateSelected() }
+                    .hideSearchKeyboard(selection: $selection, resultIDs: resultIDs,
+                        activate: activateSelected, dismiss: { dismiss() })
                     .accessibilityIdentifier("hide-search-query")
                 Text("ESC")
                     .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
@@ -2517,12 +2510,6 @@ private struct HideSearchSheet: View {
                 }
             }
         }
-        .onAppear {
-            selection.reconcile(resultIDs)
-            queryFocused = true
-        }
-        .onChange(of: resultIDs) { _, ids in selection.reconcile(ids) }
-        .onExitCommand { dismiss() }
         .accessibilityIdentifier("hide-search-sheet")
         .frame(width: HideTheme.searchSheetSize.width, height: HideTheme.searchSheetSize.height)
         .background(HideTheme.panel)
@@ -2583,31 +2570,6 @@ private struct HideSearchSheet: View {
         case let .checkout(_, checkout): model.selectCheckout(checkout)
         }
         dismiss()
-    }
-}
-
-/// Search owns only a selected result identity; the live projection owns rows.
-struct HideSearchSelection {
-    private(set) var selectedID: String?
-
-    mutating func reconcile(_ ids: [String]) {
-        if let selectedID, ids.contains(selectedID) { return }
-        selectedID = ids.first
-    }
-
-    mutating func move(_ direction: MoveCommandDirection, among ids: [String]) {
-        guard direction == .up || direction == .down else { return }
-        guard !ids.isEmpty else { selectedID = nil; return }
-        guard let selectedID, let index = ids.firstIndex(of: selectedID) else {
-            self.selectedID = ids.first
-            return
-        }
-        self.selectedID = ids[direction == .down ? min(index + 1, ids.count - 1) : max(index - 1, 0)]
-    }
-
-    func entry(in entries: [HideSearchEntry]) -> HideSearchEntry? {
-        guard let selectedID else { return nil }
-        return entries.first { $0.id == selectedID }
     }
 }
 

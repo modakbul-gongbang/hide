@@ -963,13 +963,14 @@ Empty projects show “No open tabs”; a project without an available checkout 
 
 ### Search keyboard navigation
 
-Command+K opens the agent/workspace search with its query field focused and its first result selected.
+Command+K opens agent/workspace search and Command+P opens file search with the same focused query field and first-result selection behavior.
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
-Return executes the highlighted result through the existing agent or checkout selection action; Escape closes the sheet.
+Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
 The selected row uses the existing accent emphasis fill and scrolls into view.
 Filtering preserves a surviving selection by identity; a retired selection moves to the first remaining result.
 Empty results have no selection, and arrows or Return require no modal acknowledgement.
 A stale result is checked against the live result set before execution.
+File search never executes results from a previous query or checkout while its asynchronous index is updating.
 
 ### Keycaps, hint chips, and tooltips
 
