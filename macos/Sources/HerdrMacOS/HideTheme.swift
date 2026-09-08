@@ -174,14 +174,20 @@ enum HideTheme {
 
     /// Git section and lineage geometry, shared by the sidebar's agent tree and
     /// the worktree list so the two indent the same way.
+    /// Semantic PR colors follow GitHub's dark status palette, independent of chrome.
+    enum PullRequest {
+        static let open = color(for: "#3FB950")
+        static let merged = color(for: "#A371F7")
+        static let closed = color(for: "#F85149")
+        static let draft = color(for: "#9198A1")
+        static let iconSize: CGFloat = checkoutIconWidth
+    }
     enum GitIcon {
         static let refresh = "arrow.clockwise"
         static let merged = "checkmark.circle"
         static let unmerged = "circle"
         static let dirty = "circle.fill"
         static let clean = "checkmark"
-        static let pullMerged = "arrow.triangle.merge"
-        static let pullClosed = "xmark.circle"
         static let unavailable = "exclamationmark.circle"
         static let noPullRequest = "minus.circle"
     }

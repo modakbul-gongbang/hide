@@ -141,8 +141,9 @@ private struct GitWorktreeRow: View {
             Button {
                 if let url = URL(string: request.url) { NSWorkspace.shared.open(url) }
             } label: {
-                Image(systemName: request.badge == .merged ? HideTheme.GitIcon.pullMerged : request.badge == .closed ? HideTheme.GitIcon.pullClosed : HideTheme.gitPullRequestIcon)
-                    .foregroundStyle(CheckoutCardPresentation.badgeColor(request.badge, review: request.review))
+                CheckoutCardPresentation.pullRequestIcon(request).resizable()
+                    .frame(width: HideTheme.PullRequest.iconSize, height: HideTheme.PullRequest.iconSize)
+                    .foregroundStyle(CheckoutCardPresentation.pullRequestColor(request))
             }.buttonStyle(.plain)
                 .hideTooltip("PR #\(request.number): \(CheckoutCardPresentation.badgeLabel(request.badge, review: request.review))")
         } else if let reason = worktree.github.unavailableReason {

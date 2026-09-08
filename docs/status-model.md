@@ -215,3 +215,11 @@ Missing `gh`, logged-out authentication, network errors and rate limits use the 
 
 The sidebar tree projection additionally indexes physical pane ownership when forming root rows and direct-select candidates.
 This is linear in the visited project panes and agent projection per recomputation, with no queue or asynchronous work; repeated hover values do not trigger it.
+
+### Pull request visual states
+
+PR lifecycle uses the GitHub convention: Open is green, Merged purple, Closed red, and Draft gray.
+The sidebar and popover share one color mapping and the matching Octicon; the State text and accessibility label preserve meaning without relying on color.
+A merged or closed result takes precedence over an old draft flag.
+Glyphs match the 14pt branch icon inside the existing 24pt trailing control, aligned with Workspace disclosure.
+CI colors remain separate from PR lifecycle, so Merged does not imply Passing.
