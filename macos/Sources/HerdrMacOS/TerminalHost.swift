@@ -61,7 +61,7 @@ struct TerminalHost: NSViewRepresentable {
         terminal.nativeForegroundColor = HideTheme.Native.primary
         terminal.nativeBackgroundColor = HideTheme.Native.background
         terminal.linkReporting = .implicit
-        terminal.linkHighlightMode = .hover
+        terminal.linkHighlightMode = .hoverWithModifier
         // The bidi pass was 30% of the draw for a pane streaming an agent's
         // TUI (151 of 507 draw samples, 2026-09-04), and nothing this shell
         // shows is right-to-left. Legacy left-to-right returns from the

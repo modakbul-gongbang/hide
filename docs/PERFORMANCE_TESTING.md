@@ -316,6 +316,16 @@ Do not weaken an externally promised deadline to make a flaky test pass.
 
 ## 7. Regression gates, cleanup, and verdict
 
+### Terminal link activation
+
+Links activate only on Command+Click, using SwiftTerm's existing `hoverWithModifier` policy.
+Unmodified pointer movement does not resolve implicit links or advertise link activation.
+The change adds no pointer state, timer, snapshot publication or consumer fan-out; link work stays bounded by the visible row and existing hover state.
+Ordinary clicks keep delayed replay, ordinary drags keep local selection, and Option+drag keeps the mouse-aware application route.
+`TerminalLinkActivationTests` drives the real AppKit terminal host with implicit and OSC 8 links and observes activation, replay and selection.
+The test fails against the previous hover policy; its maintenance cost is one native fixture with no provider or timing dependency.
+Native QA must additionally inspect modifier press/release, cursor and highlight on the isolated candidate.
+
 Use the existing suite wrappers, then the applicable gates in [CONTRIBUTING.md](../CONTRIBUTING.md):
 
 ```sh
