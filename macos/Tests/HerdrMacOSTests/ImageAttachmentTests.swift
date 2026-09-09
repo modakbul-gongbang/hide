@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 @Suite("Local image attachment resources", .serialized)
 @MainActor
 struct ImageAttachmentTests {
-    @Test func dropPreparationAndRemovalRoundTripThroughTheCoreSnapshot() async throws {
+    @Test(arguments: [0, 1, 2]) func dropPreparationAndExactRemovalRoundTripThroughTheCoreSnapshot(removedIndex: Int) async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("image-bridge-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -21,15 +21,28 @@ struct ImageAttachmentTests {
         // Status-only fixture agents need not own a layout leaf. Drop on the actual focused terminal.
         let pane = try #require(bridge.snapshot?.focusedPaneID)
         #expect(bridge.snapshot?.navigator.agents.contains { $0.paneID == pane && ["claude", "codex"].contains($0.agentKind) } == true)
-        bridge.stageImages([source], paneID: pane)
-        try await eventually { bridge.snapshot?.terminal.attachments?.first { $0.paneID == pane }?.items.first?.state == "awaiting_prompt" }
-        let item = try #require(bridge.snapshot?.terminal.attachments?.first { $0.paneID == pane }?.items.first)
-        let path = try #require(item.path)
-        #expect(path != source.path)
-        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data(contentsOf: source))
-        bridge.attachmentAction("remove", paneID: pane, id: item.id)
-        try await eventually { bridge.snapshot?.terminal.attachments?.first { $0.paneID == pane }?.items.isEmpty == true }
-        try await eventually { !FileManager.default.fileExists(atPath: path) }
+        bridge.stageImages([source, source, source], paneID: pane)
+        try await eventually {
+            let items = bridge.snapshot?.terminal.attachments?.first { $0.paneID == pane }?.items ?? []
+            return items.count == 3 && items.allSatisfy { $0.state == "pending" }
+        }
+        let items = try #require(bridge.snapshot?.terminal.attachments?.first { $0.paneID == pane }?.items)
+        let removed = items[removedIndex]
+        let paths = try items.map { try #require($0.path) }
+        #expect(Set(items.map(\.id)).count == 3)
+        for path in paths {
+            #expect(path != source.path)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data(contentsOf: source))
+        }
+        bridge.attachmentAction("remove", paneID: pane, id: removed.id)
+        bridge.attachmentAction("remove", paneID: pane, id: removed.id)
+        let remaining = items.filter { $0.id != removed.id }
+        try await eventually { bridge.snapshot?.terminal.attachments?.first { $0.paneID == pane }?.items.map(\.id) == remaining.map(\.id) }
+        try await eventually { !FileManager.default.fileExists(atPath: paths[removedIndex]) }
+        for item in remaining {
+            #expect(FileManager.default.fileExists(atPath: try #require(item.path)))
+            #expect(!item.handoffStarted)
+        }
         #expect(FileManager.default.fileExists(atPath: source.path))
     }
 
@@ -92,7 +105,7 @@ struct ImageAttachmentTests {
         files.accept(request, paneID: pane, bridge: bridge)
         try await eventually {
             files.reconcile(bridge.snapshot?.terminal.attachments ?? [], bridge: bridge)
-            return bridge.snapshot?.terminal.attachments?.first?.items.allSatisfy { $0.state == "awaiting_prompt" } == true
+            return bridge.snapshot?.terminal.attachments?.first?.items.allSatisfy { $0.state == "pending" } == true
                 && bridge.snapshot?.terminal.attachments?.first?.items.count == 2
         }
         let images = try #require(bridge.snapshot?.terminal.attachments?.first?.items)
@@ -121,7 +134,7 @@ struct ImageAttachmentTests {
         let model = ShellModel(core: CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path]))
         let items = (1...4).map { CoreImageAttachment(id: "image-\($0)", name: "한글 image \($0).png", path: nil,
-            state: "handoff_unconfirmed", message: "Check the native composer", provider: "codex") }
+            state: "pending", message: "Not sent", provider: "codex") }
         let tooltips = HideTooltipController()
         let wide = NSHostingView(rootView: ImageAttachmentGrid(items: items, remove: { _ in }).environmentObject(model).environmentObject(tooltips).frame(width: 400))
         let narrow = NSHostingView(rootView: ImageAttachmentGrid(items: items, remove: { _ in }).environmentObject(model).environmentObject(tooltips).frame(width: 170))

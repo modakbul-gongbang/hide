@@ -7,7 +7,6 @@ impl Runtime {
         let pane_id = intent.pane_id.clone();
         let id = intent.id.clone();
         let changed = self.reduce_attachment(intent);
-        let changed = self.advance_attachment_handoffs(&pane_id) || changed;
         if changed {
             let state = self
                 .snapshot
@@ -85,7 +84,6 @@ impl Runtime {
                     items: Vec::new(),
                     notice: None,
                     following_bottom: None,
-                    return_required: false,
                     viewport_message: Some("Checking terminal viewport".to_owned()),
                 });
             }
@@ -155,6 +153,8 @@ impl Runtime {
                 if item.state != State::Loading {
                     return false;
                 }
+                // A fresh preparation result supersedes an earlier Enter refusal.
+                shelf.notice = None;
                 if let Some(error) = intent.error {
                     item.state = State::Failed;
                     item.message = error.chars().take(1024).collect();
@@ -162,9 +162,9 @@ impl Runtime {
                     intent.path.filter(|path| attachments::paste(path).is_ok())
                 {
                     item.path = Some(path);
-                    item.state = State::AwaitingPrompt;
+                    item.state = State::Pending;
                     item.message =
-                        "Waiting for the active prompt; handoff will start automatically"
+                        "Not sent. Remove with X, or press Enter to add to the provider prompt."
                             .to_owned();
                 } else {
                     item.state = State::Failed;
@@ -175,7 +175,64 @@ impl Runtime {
             _ => false,
         }
     }
-    /// One ordered handoff per stable ID to the active pane; scroll state controls presentation.
+    /// The only attachment hook in ordinary input. All non-Enter bytes pass unchanged.
+    /// First Enter hands off pending images without submitting; a later Enter is ordinary input.
+    pub(super) fn intercept_attachment_enter(&mut self, pane_id: &str, bytes_base64: &str) -> bool {
+        // Canonical base64 for a single carriage return, as sent by SwiftTerm.
+        // No decode, allocation, collection scan or publication for other input.
+        if bytes_base64 != "DQ==" {
+            return false;
+        }
+        let Some(shelf) = self
+            .snapshot
+            .terminal
+            .attachments
+            .iter_mut()
+            .find(|s| s.pane_id == pane_id)
+        else {
+            return false;
+        };
+        if !shelf
+            .items
+            .iter()
+            .any(|item| !item.handoff_started || item.state == State::Queued)
+        {
+            return false;
+        }
+        let reason = if shelf.items.iter().any(|item| item.state == State::Queued) {
+            Some(
+                "Image handoff is still queued. Check the provider's image indicators before pressing Enter again.",
+            )
+        } else if self.snapshot.ui_state.selected_pane_id.as_deref() != Some(pane_id)
+            || shelf.following_bottom != Some(true)
+            || !self
+                .attachment_support
+                .available
+                .get(pane_id)
+                .is_some_and(|state| state.0 && state.1)
+        {
+            Some("Return to the prompt before adding these images. Nothing was submitted.")
+        } else if shelf.items.iter().any(|item| item.state == State::Loading) {
+            Some("Images are still preparing. Press Enter again when ready; nothing was submitted.")
+        } else if shelf
+            .items
+            .iter()
+            .any(|item| !item.handoff_started && item.state == State::Failed)
+        {
+            Some("Remove the failed images before continuing. Nothing was submitted.")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            shelf.notice = Some(reason.to_owned());
+        } else {
+            shelf.notice = None;
+            self.advance_attachment_handoffs(pane_id);
+        }
+        true
+    }
+
+    /// One explicitly requested ordered handoff per stable ID to the active pane.
     /// A failed/partial write is never automatically retried.
     fn advance_attachment_handoffs(&mut self, pane_id: &str) -> bool {
         if self.snapshot.ui_state.selected_pane_id.as_deref() != Some(pane_id)
@@ -211,7 +268,7 @@ impl Runtime {
             if item.state == State::Loading {
                 break;
             }
-            if item.state != State::AwaitingPrompt {
+            if item.state != State::Pending {
                 continue;
             }
             changed = true;
@@ -231,12 +288,6 @@ impl Runtime {
             };
             match result {
                 Ok(()) => {
-                    shelf.return_required |= shelf.following_bottom == Some(false)
-                        || !self
-                            .attachment_support
-                            .available
-                            .get(pane_id)
-                            .is_some_and(|state| state.1);
                     item.handoff_started = true;
                     item.state = State::Queued;
                     item.message =
@@ -264,14 +315,16 @@ impl Runtime {
         sent: &crate::model::TerminalInputSent,
     ) -> Option<bool> {
         if let Some(id) = &sent.attachment_id {
-            if let Some(item) = self
+            if let Some(shelf) = self
                 .snapshot
                 .terminal
                 .attachments
                 .iter_mut()
                 .find(|shelf| shelf.pane_id == pane_id)
-                .and_then(|shelf| shelf.items.iter_mut().find(|item| &item.id == id))
             {
+                let Some(item) = shelf.items.iter_mut().find(|item| &item.id == id) else {
+                    return Some(false);
+                };
                 if item.state != crate::attachments::State::Queued {
                     return Some(false);
                 }
@@ -287,6 +340,9 @@ impl Runtime {
                     "component": "image_attachment", "kind": "attachment.transport_result",
                     "pane_id": pane_id, "attachment_id": id, "state": item.state,
                 }));
+                if !shelf.items.iter().any(|item| item.state == State::Queued) {
+                    shelf.notice = None;
+                }
                 return Some(true);
             }
             return Some(false);
@@ -435,7 +491,6 @@ impl Runtime {
         }
         shelf.following_bottom = following;
         shelf.viewport_message = message;
-        self.advance_attachment_handoffs(pane_id);
         true
     }
 
@@ -474,9 +529,6 @@ impl Runtime {
             .unwrap();
         let succeeded = result.is_ok();
         shelf.following_bottom = None;
-        if succeeded {
-            shelf.return_required = false;
-        }
         shelf.viewport_message = Some(match result {
             Ok(()) => "Returning to the terminal prompt".to_owned(),
             Err(error) => error,

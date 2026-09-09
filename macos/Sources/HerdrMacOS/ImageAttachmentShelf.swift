@@ -7,9 +7,8 @@ struct CoreAttachmentShelf: Decodable, Equatable {
     let notice: String?
     let followingBottom: Bool?
     let viewportMessage: String?
-    var returnRequired: Bool = false
     enum CodingKeys: String, CodingKey { case paneID = "pane_id", items, notice
-        case followingBottom = "following_bottom", viewportMessage = "viewport_message", returnRequired = "return_required" }
+        case followingBottom = "following_bottom", viewportMessage = "viewport_message" }
 }
 
 struct CoreImageAttachment: Decodable, Equatable, Identifiable {
@@ -20,9 +19,11 @@ struct CoreImageAttachment: Decodable, Equatable, Identifiable {
     let message: String
     let provider: String?
     var removalError: String? = nil
+    var handoffStarted: Bool = false
     enum CodingKeys: String, CodingKey {
         case id, name, path, state, message, provider
         case removalError = "removal_error"
+        case handoffStarted = "handoff_started"
     }
 }
 
@@ -35,7 +36,7 @@ struct ImageAttachmentShelf: View {
 
     var body: some View {
         if let shelf, !shelf.items.isEmpty || shelf.notice != nil {
-            if shelf.returnRequired || shelf.followingBottom != true || !viewport.followingBottom {
+            if shelf.followingBottom != true || !viewport.followingBottom {
                 collapsed(shelf)
             } else {
                 VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
@@ -50,7 +51,9 @@ struct ImageAttachmentShelf: View {
                         Text("\(failure.name): \(failure.message)").hideFont(size: HideTheme.Typography.caption)
                             .foregroundStyle(HideTheme.warning).fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Hide handoff status. Check images in the provider prompt before Enter.")
+                        Text(shelf.items.contains { !$0.handoffStarted }
+                            ? "Not sent. X removes an image. Enter adds the remaining images to the prompt."
+                            : "Check the provider's image indicators, then press Enter to send. Images already handed off must be edited in the provider prompt.")
                             .hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -65,7 +68,7 @@ struct ImageAttachmentShelf: View {
     }
     private func collapsed(_ shelf: CoreAttachmentShelf) -> some View {
         let visible = shelf.items
-        let pending = visible.filter { ["loading", "awaiting_prompt", "queued"].contains($0.state) }.count
+        let pending = visible.filter { ["loading", "pending", "queued"].contains($0.state) }.count
         let failures = visible.filter { $0.state == "failed" }.count
         let receipts = visible.filter { $0.state == "handoff_unconfirmed" }.count
         let label = [pending > 0 ? "\(pending) images pending" : nil,
@@ -123,8 +126,10 @@ struct ImageAttachmentGrid: View {
             ForEach(items) { item in
                 ZStack(alignment: .topTrailing) {
                     AttachmentThumbnail(path: item.path)
-                    HideIconButton(systemImage: "xmark", help: "Remove \(item.name) from prompt", variant: .imageOverlay) {
-                        remove(item)
+                    if !item.handoffStarted {
+                        HideIconButton(systemImage: "xmark", help: "Remove \(item.name) before sending", variant: .imageOverlay) {
+                            remove(item)
+                        }
                     }
                 }
                     .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
@@ -132,7 +137,7 @@ struct ImageAttachmentGrid: View {
                         if item.state == "loading" || item.state == "queued" {
                             ProgressView().controlSize(.small).padding(HideTheme.spacingXXS)
                         } else {
-                            Image(systemName: item.state == "failed" || item.removalError != nil ? "exclamationmark.triangle" : "clock")
+                            Image(systemName: item.state == "failed" || item.removalError != nil ? "exclamationmark.triangle" : (item.handoffStarted ? "clock" : "photo"))
                                 .foregroundStyle(item.state == "failed" || item.removalError != nil ? HideTheme.warning : HideTheme.secondary)
                                 .padding(HideTheme.spacingXXS).accessibilityHidden(true)
                         }

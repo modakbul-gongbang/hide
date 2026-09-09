@@ -7946,6 +7946,9 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
+                if self.intercept_attachment_enter(&payload.pane_id, &payload.bytes_base64) {
+                    return true;
+                }
                 if self.live.is_some()
                     || self.remote_terminals.keys().any(|target_id| {
                         remote_pane_source_id(target_id, &payload.pane_id).is_some()
@@ -12351,107 +12354,227 @@ mod tests {
     }
 
     #[test]
-    fn image_attachments_auto_handoff_and_exact_removal_failures_converge() {
+    fn image_cancellation_precedes_explicit_handoff_and_preserves_other_input() {
         use crate::attachments::State;
         for kind in ["claude", "codex", "unknown"] {
-            let mut runtime = runtime();
-            let pane = "w-image:p1";
-            runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
-                workspace_id: "w-image".to_owned(), tab_id: "w-image:t1".to_owned(),
-                focused_pane_id: pane.to_owned(), zoomed: false,
-                root: PaneLayoutNodeSnapshot::Pane { pane_id: pane.to_owned() },
-            }];
-            runtime.snapshot.ui_state.selected_pane_id = Some(pane.to_owned());
-            runtime.terminal_sessions.insert(pane.to_owned(), TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control));
-            runtime.terminal_session_generations.insert(pane.to_owned(), 1);
-            let payload = serde_json::from_value(serde_json::json!({"agents": [{"pane_id": pane, "agent": kind, "state_change_seq": 1}]})).unwrap();
-            runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
-            let event = |action: &str, id: &str, bottom: bool| serde_json::to_vec(&serde_json::json!({
-                "schema_version": SCHEMA_VERSION, "kind": "attachment", "payload": {
-                    "action": action, "id": id, "pane_id": pane, "name": "image.png",
-                    "path": format!("/tmp/{id}.png"), "following_bottom": bottom, "active": bottom
+            for removed in ["first", "middle", "last"] {
+                let mut runtime = runtime();
+                let pane = "w-image:p1";
+                runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
+                    workspace_id: "w-image".to_owned(),
+                    tab_id: "w-image:t1".to_owned(),
+                    focused_pane_id: pane.to_owned(),
+                    zoomed: false,
+                    root: PaneLayoutNodeSnapshot::Pane {
+                        pane_id: pane.to_owned(),
+                    },
+                }];
+                runtime.snapshot.ui_state.selected_pane_id = Some(pane.to_owned());
+                runtime.terminal_sessions.insert(
+                    pane.to_owned(),
+                    TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
+                );
+                runtime
+                    .terminal_session_generations
+                    .insert(pane.to_owned(), 1);
+                let payload = serde_json::from_value(serde_json::json!({"agents": [{"pane_id": pane, "agent": kind, "state_change_seq": 1}]})).unwrap();
+                runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
+                let event = |action: &str, id: &str, active: bool| {
+                    serde_json::to_vec(&serde_json::json!({
+                    "schema_version": SCHEMA_VERSION, "kind": "attachment", "payload": {
+                        "action": action, "id": id, "pane_id": pane, "name": "image.png",
+                        "path": format!("/tmp/{id}.png"), "following_bottom": active, "active": active
+                    }
+                })).unwrap()
+                };
+                let key = |bytes: &[u8]| {
+                    serde_json::to_vec(&serde_json::json!({
+                        "schema_version": SCHEMA_VERSION, "kind": "key", "payload": {
+                            "pane_id": pane, "bytes_base64": live::encode_base64(bytes)
+                        }
+                    }))
+                    .unwrap()
+                };
+                for id in ["first", "middle", "last"] {
+                    runtime.dispatch_json(&event("stage", id, true));
+                    assert!(!runtime.dispatch_json(&event("stage", id, true)));
                 }
-            })).unwrap();
-            for id in ["first", "middle", "last"] {
-                assert!(runtime.dispatch_json(&event("stage", id, false)));
-                assert!(!runtime.dispatch_json(&event("stage", id, false)));
+                runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
+                runtime.dispatch_json(&event("viewport", "viewport", true));
+                runtime.dispatch_json(&event("prepared", "last", true));
+                runtime.dispatch_json(&key(b"\r"));
+                assert!(
+                    runtime.terminal_sessions[pane]
+                        .test_written_lines()
+                        .is_empty(),
+                    "Enter during loading/invalid preparation submits nothing"
+                );
+                for id in ["middle", "first"] {
+                    runtime.dispatch_json(&event("prepared", id, true));
+                }
+                assert!(
+                    runtime.terminal_sessions[pane]
+                        .test_written_lines()
+                        .is_empty(),
+                    "preparation never delivers before cancellation is possible"
+                );
+                if kind != "unknown" {
+                    assert!(runtime.snapshot.terminal.attachments[0].notice.is_none(), "completed preparation clears a stale loading refusal");
+                }
+                let text = "KEEP 한글\nEnglish".as_bytes();
+                runtime.dispatch_json(&key(text));
+                assert_eq!(
+                    live::decode_base64(
+                        &runtime
+                            .snapshot
+                            .terminal
+                            .chunks
+                            .last()
+                            .unwrap()
+                            .bytes_base64
+                    )
+                    .unwrap(),
+                    text
+                );
+                assert!(runtime.dispatch_json(&event("remove", removed, true)));
+                assert!(!runtime.dispatch_json(&event("remove", removed, true)));
+                assert!(
+                    !runtime.dispatch_json(&event("prepared", removed, true)),
+                    "late preparation cannot resurrect cancellation"
+                );
+                let expected: Vec<_> = ["first", "middle", "last"]
+                    .into_iter()
+                    .filter(|id| *id != removed)
+                    .collect();
+                assert_eq!(
+                    runtime.snapshot.terminal.attachments[0]
+                        .items
+                        .iter()
+                        .map(|item| item.id.as_str())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                if kind == "unknown" {
+                    runtime.dispatch_json(&key(b"\r"));
+                    assert!(
+                        runtime.terminal_sessions[pane]
+                            .test_written_lines()
+                            .is_empty()
+                    );
+                    assert!(
+                        runtime.snapshot.terminal.attachments[0]
+                            .notice
+                            .as_ref()
+                            .unwrap()
+                            .contains("failed")
+                    );
+                    continue;
+                }
+                assert!(
+                    runtime.snapshot.terminal.attachments[0]
+                        .items
+                        .iter()
+                        .all(|item| item.state == State::Pending)
+                );
+                runtime.snapshot.ui_state.selected_pane_id = Some("other-pane".to_owned());
+                runtime.dispatch_json(&key(b"\r"));
+                assert!(
+                    runtime.terminal_sessions[pane]
+                        .test_written_lines()
+                        .is_empty(),
+                    "a stale pane cannot deliver"
+                );
+                runtime.snapshot.ui_state.selected_pane_id = Some(pane.to_owned());
+                runtime.snapshot.terminal.attachments[0].following_bottom = Some(false);
+                runtime.dispatch_json(&key(b"\r"));
+                assert!(
+                    runtime.terminal_sessions[pane]
+                        .test_written_lines()
+                        .is_empty(),
+                    "return to prompt before handoff"
+                );
+                runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
+                runtime.dispatch_json(&key(b"\r"));
+                let lines = runtime.terminal_sessions[pane].test_written_lines();
+                assert_eq!(lines.len(), 2);
+                for (line, id) in lines.iter().zip(&expected) {
+                    let line: serde_json::Value = serde_json::from_str(line).unwrap();
+                    assert_eq!(
+                        live::decode_base64(line["bytes"].as_str().unwrap()).unwrap(),
+                        format!("\x1b[200~\"/tmp/{id}.png\"\x1b[201~").as_bytes()
+                    );
+                }
+                // Queue completion is not provider acceptance. Never append an automatic Enter.
+                runtime.dispatch_json(&key(b"\r"));
+                assert!(
+                    runtime.terminal_sessions[pane]
+                        .test_written_lines()
+                        .is_empty()
+                );
+                for id in &expected {
+                    let sent = crate::model::TerminalInputSent {
+                        id: 0,
+                        milliseconds: 1.0,
+                        attachment_id: Some((*id).to_owned()),
+                        outcome: if kind == "claude" && removed == "middle" { "failed" } else { "completed" }.to_owned(),
+                    };
+                    assert!(!runtime.ingest_terminal_input_sent(pane, 2, sent.clone()));
+                    assert!(runtime.ingest_terminal_input_sent(pane, 1, sent.clone()));
+                    assert!(!runtime.ingest_terminal_input_sent(pane, 1, sent));
+                }
+                assert!(runtime.snapshot.terminal.attachments[0].notice.is_none());
+                if kind == "claude" && removed == "middle" {
+                    assert!(runtime.snapshot.terminal.attachments[0].items.iter().all(|item| item.state == State::Failed && item.handoff_started && item.path.is_some()));
+                }
+                for _ in 0..100 {
+                    assert!(!runtime.dispatch_json(&event("viewport", "viewport", true)));
+                }
+                assert!(
+                    runtime.terminal_sessions[pane]
+                        .test_written_lines()
+                        .is_empty()
+                );
+                let chunks = runtime.snapshot.terminal.chunks.len();
+                runtime.dispatch_json(&key(b"\r"));
+                assert_eq!(
+                    runtime.snapshot.terminal.chunks.len(),
+                    chunks + 1,
+                    "the operator's later Enter retains the normal input path"
+                );
+                assert_eq!(
+                    live::decode_base64(
+                        &runtime
+                            .snapshot
+                            .terminal
+                            .chunks
+                            .last()
+                            .unwrap()
+                            .bytes_base64
+                    )
+                    .unwrap(),
+                    b"\r"
+                );
+                assert!(
+                    runtime.dispatch_json(&event("remove", expected[0], true)),
+                    "already handed off cannot be silently dismissed"
+                );
+                assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 2);
+                for id in ["capacity-one", "capacity-two", "overflow"] {
+                    runtime.dispatch_json(&event("stage", id, true));
+                }
+                assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 4);
+                assert!(runtime.snapshot.terminal.attachments[0].notice.as_ref().unwrap().contains("limit"));
+                for id in ["capacity-one", "capacity-two"] {
+                    runtime.dispatch_json(&event("remove", id, true));
+                }
+                runtime.dispatch_json(&event("stage", "cancel-loading", true));
+                assert!(runtime.dispatch_json(&event("remove", "cancel-loading", true)));
+                assert!(!runtime.dispatch_json(&event("prepared", "cancel-loading", true)));
+                runtime.retain_terminal_pane_state(|_| false);
+                assert!(runtime.snapshot.terminal.attachments.is_empty());
+                runtime.panes_closing.insert(pane.to_owned());
+                assert!(!runtime.dispatch_json(&event("prepared", "cancel-loading", true)));
             }
-            runtime.dispatch_json(&event("viewport", "viewport", false));
-            runtime.dispatch_json(&event("prepared", "middle", false));
-            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "inactive view cannot deliver");
-            runtime.snapshot.terminal.attachments[0].following_bottom = Some(false);
-            runtime.dispatch_json(&event("prepared", "last", false));
-            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "inactive view keeps preparations");
-            runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
-            runtime.dispatch_json(&event("viewport", "viewport", false));
-            runtime.dispatch_json(&event("prepared", "last", false));
-            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "inactive view keeps all preparations");
-            runtime.snapshot.ui_state.selected_pane_id = Some("another-pane".to_owned());
-            runtime.dispatch_json(&event("viewport", "viewport", true));
-            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "pane switch keeps prepared images without delivering");
-            runtime.snapshot.ui_state.selected_pane_id = Some(pane.to_owned());
-            runtime.snapshot.terminal.attachments[0].following_bottom = Some(false);
-            runtime.dispatch_json(&event("viewport", "viewport", true));
-            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "later preparations must wait for the first image");
-            runtime.dispatch_json(&event("prepared", "first", false));
-            let lines = runtime.terminal_sessions[pane].test_written_lines();
-            if kind == "unknown" {
-                assert!(lines.is_empty());
-                assert!(runtime.snapshot.terminal.attachments[0].items.iter().all(|i| i.state == State::Failed));
-                assert!(runtime.dispatch_json(&event("remove", "first", true)));
-                assert!(!runtime.dispatch_json(&event("remove", "first", true)));
-                continue;
-            }
-            assert_eq!(lines.len(), 3);
-            assert!(runtime.snapshot.terminal.attachments[0].return_required, "handoff while away keeps the chip collapsed despite host input reset");
-            for (line, id) in lines.iter().zip(["first", "middle", "last"]) {
-                let line: serde_json::Value = serde_json::from_str(line).unwrap();
-                assert_eq!(live::decode_base64(line["bytes"].as_str().unwrap()).unwrap(), format!("\x1b[200~\"/tmp/{id}.png\"\x1b[201~").as_bytes());
-            }
-            let before = runtime.snapshot.terminal.attachments[0].items.clone();
-            for id in ["first", "middle", "last"] {
-                assert!(!runtime.dispatch_json(&event("prepared", id, true)));
-                // Failure preserves the exact item and other items, even during transport.
-                assert!(runtime.dispatch_json(&event("remove", id, true)));
-                assert!(!runtime.dispatch_json(&event("remove", id, true)));
-                let item = runtime.snapshot.terminal.attachments[0].items.iter().find(|i| i.id == id).unwrap();
-                assert_eq!(item.state, State::Queued);
-                assert!(item.removal_error.as_ref().unwrap().contains("no stable attachment-ID"));
-                let sent = crate::model::TerminalInputSent { id: 0, milliseconds: 1.0, attachment_id: Some(id.to_owned()), outcome: "completed".to_owned() };
-                assert!(!runtime.ingest_terminal_input_sent(pane, 2, sent.clone()), "stale transport cannot acknowledge");
-                assert!(runtime.ingest_terminal_input_sent(pane, 1, sent.clone()));
-                assert!(!runtime.ingest_terminal_input_sent(pane, 1, sent));
-                assert!(!runtime.dispatch_json(&event("remove", id, true)));
-            }
-            for (old, item) in before.iter().zip(&runtime.snapshot.terminal.attachments[0].items) {
-                assert_eq!(old.id, item.id);
-                assert_eq!(old.path, item.path, "unsynchronized removal cannot release the private copy");
-                assert_eq!(item.state, State::HandoffUnconfirmed);
-            }
-            for _ in 0..100 {
-                assert!(!runtime.dispatch_json(&event("viewport", "viewport", true)));
-            }
-            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "retries/removal never type or repeat attachment input");
-            runtime.dispatch_json(&event("stage", "cancel", true));
-            runtime.dispatch_json(&event("stage", "over-limit", true));
-            assert!(runtime.snapshot.terminal.attachments[0].notice.is_some());
-            assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 4);
-            assert!(runtime.dispatch_json(&event("remove", "cancel", true)));
-            assert!(!runtime.dispatch_json(&event("prepared", "cancel", true)), "late decoder cannot resurrect a canceled image");
-            // Preparation automatically delivers at bottom without a separate action.
-            runtime.dispatch_json(&event("stage", "next", true));
-            runtime.dispatch_json(&event("prepared", "next", true));
-            assert_eq!(runtime.terminal_sessions[pane].test_written_lines().len(), 1);
-            assert!(runtime.retain_terminal_session_state(|_| false));
-            let item = runtime.snapshot.terminal.attachments[0].items.last().unwrap();
-            assert_eq!(item.state, State::Failed);
-            assert!(item.message.contains("partial"));
-            assert!(runtime.dispatch_json(&event("remove", "next", true)));
-            assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 4, "partial transport keeps the image too");
-            runtime.retain_terminal_pane_state(|_| false);
-            assert!(runtime.snapshot.terminal.attachments.is_empty());
-            runtime.panes_closing.insert(pane.to_owned());
-            assert!(!runtime.dispatch_json(&event("prepared", "next", true)));
         }
     }
 

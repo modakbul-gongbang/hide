@@ -11,7 +11,6 @@ pub struct Shelf {
     pub notice: Option<String>,
     pub following_bottom: Option<bool>,
     pub viewport_message: Option<String>,
-    pub return_required: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -31,7 +30,7 @@ pub struct Attachment {
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Loading,
-    AwaitingPrompt,
+    Pending,
     Queued,
     HandoffUnconfirmed,
     Failed,
@@ -103,8 +102,14 @@ pub fn provider_delivery(kind: Option<&str>, path: &str) -> Result<Vec<u8>, &'st
 /// after an uncertain result. Never emit them on behalf of a local thumbnail ID.
 pub fn provider_removal_failure(kind: Option<&str>) -> &'static str {
     match kind {
-        Some("claude") => "Cannot remove this image from Claude Code: no stable attachment-ID removal contract is available. Remove it in the native composer. Hide keeps this thumbnail and copy because removal cannot be confirmed.",
-        Some("codex") => "Cannot remove this image from Codex: no stable attachment-ID removal contract is available. Remove it in the native composer. Hide keeps this thumbnail and copy because removal cannot be confirmed.",
-        _ => "Cannot confirm removal from this provider. Hide keeps this thumbnail and copy; inspect the native composer.",
+        Some("claude") => {
+            "Cannot remove this image from Claude Code: no stable attachment-ID removal contract is available. Remove it in the native composer. Hide keeps this thumbnail and copy because removal cannot be confirmed."
+        }
+        Some("codex") => {
+            "Cannot remove this image from Codex: no stable attachment-ID removal contract is available. Remove it in the native composer. Hide keeps this thumbnail and copy because removal cannot be confirmed."
+        }
+        _ => {
+            "Cannot confirm removal from this provider. Hide keeps this thumbnail and copy; inspect the native composer."
+        }
     }
 }
