@@ -310,9 +310,8 @@ mod tests {
             .find(|entry| entry.port == port)
             .expect("the listener this test just opened should be reported");
         assert_eq!(Path::new(found.cwd.as_str()), cwd.as_path());
-        assert_eq!(
+        assert!(
             attributed_ports(&cwd.to_string_lossy(), &read.entries).contains(&port),
-            true,
             "a listener in the pane's own directory is attributed to it"
         );
 

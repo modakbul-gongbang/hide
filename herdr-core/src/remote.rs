@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
-use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -2073,35 +2072,33 @@ impl RusshRemoteClient {
         )
     }
 
-    fn connect(
+    async fn connect(
         &self,
         handler: KnownHostHandler,
-    ) -> impl Future<Output = RemoteResult<Handle<KnownHostHandler>>> + Send + '_ {
-        async move {
-            let config = client::Config {
-                inactivity_timeout: Some(SSH_OPERATION_TIMEOUT),
-                keepalive_interval: Some(Duration::from_secs(5)),
-                ..client::Config::default()
-            };
-            let mut session = client::connect(
-                Arc::new(config),
-                (self.host.hostname.as_str(), self.host.port),
-                handler,
+    ) -> RemoteResult<Handle<KnownHostHandler>> {
+        let config = client::Config {
+            inactivity_timeout: Some(SSH_OPERATION_TIMEOUT),
+            keepalive_interval: Some(Duration::from_secs(5)),
+            ..client::Config::default()
+        };
+        let mut session = client::connect(
+            Arc::new(config),
+            (self.host.hostname.as_str(), self.host.port),
+            handler,
+        )
+        .await
+        .map_err(|error| {
+            remote_error(
+                "remote-connect",
+                &self.host.host_id,
+                RemoteStage::Ssh,
+                error,
+                true,
+                false,
             )
-            .await
-            .map_err(|error| {
-                remote_error(
-                    "remote-connect",
-                    &self.host.host_id,
-                    RemoteStage::Ssh,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            authenticate(&mut session, &self.host).await?;
-            Ok(session)
-        }
+        })?;
+        authenticate(&mut session, &self.host).await?;
+        Ok(session)
     }
 
     fn sftp_read(&self, path: &str) -> RemoteResult<Vec<u8>> {
@@ -3132,8 +3129,8 @@ impl RemotePtySession {
             })?
             .take();
         let mut first_error = None;
-        if let Some(channel) = channel {
-            if let Err(error) = self.runtime.block_on(channel.eof()) {
+        if let Some(channel) = channel
+            && let Err(error) = self.runtime.block_on(channel.eof()) {
                 first_error = Some(remote_error(
                     "remote-pty-close",
                     &self.endpoint.pane_id,
@@ -3143,7 +3140,6 @@ impl RemotePtySession {
                     false,
                 ));
             }
-        }
         let session = self
             .session
             .lock()
@@ -3158,13 +3154,13 @@ impl RemotePtySession {
                 )
             })?
             .take();
-        if let Some(session) = session {
-            if let Err(error) = self.runtime.block_on(session.disconnect(
+        if let Some(session) = session
+            && let Err(error) = self.runtime.block_on(session.disconnect(
                 Disconnect::ByApplication,
                 "PTY closed",
                 "en",
-            )) {
-                if first_error.is_none() {
+            ))
+                && first_error.is_none() {
                     first_error = Some(remote_error(
                         "remote-pty-close",
                         &self.endpoint.pane_id,
@@ -3174,8 +3170,6 @@ impl RemotePtySession {
                         false,
                     ));
                 }
-            }
-        }
         first_error.map_or(Ok(()), Err)
     }
 }

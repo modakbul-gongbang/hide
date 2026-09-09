@@ -121,13 +121,12 @@ impl Drop for HerdrCore {
         self._session_sync.take();
         self._remote_session_sync.clear();
         let worker = { lock_recover(&self.runtime).take_state_save_worker() };
-        if let Some(worker) = worker {
-            if worker.join().is_err() {
+        if let Some(worker) = worker
+            && worker.join().is_err() {
                 crate::diagnostic!(
                     serde_json::json!({"component":"ui_state", "kind":"save.join_failed"})
                 );
             }
-        }
     }
 }
 

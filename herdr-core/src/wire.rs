@@ -165,13 +165,12 @@ fn convert_snapshot(snapshot: res::SessionSnapshot) -> (HostScope, u64, Projecti
 }
 
 pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
-    if let Some(kind) = value.get("type").and_then(Value::as_str) {
-        if kind != "agent_list" {
+    if let Some(kind) = value.get("type").and_then(Value::as_str)
+        && kind != "agent_list" {
             return Err(malformed(format!(
                 "agent.list returned unexpected result type {kind:?}"
             )));
         }
-    }
     let response: res::ResponseResult = serde_json::from_value(value)
         .map_err(|e| malformed(format!("agent.list response is malformed: {e}")))?;
     match response {
@@ -390,7 +389,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         ev::EventData::WorkspaceClosed { workspace_id, .. } => (
             "workspace_closed",
             ReplicaEvent::WorkspaceClosed {
-                workspace_id: workspace_id,
+                workspace_id,
             },
         ),
         ev::EventData::WorkspaceRenamed {
@@ -400,8 +399,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "workspace_renamed",
             ReplicaEvent::WorkspaceRenamed {
-                label: label,
-                workspace_id: workspace_id,
+                label,
+                workspace_id,
             },
         ),
         ev::EventData::WorkspaceMoved {
@@ -413,7 +412,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
             "workspace_moved",
             ReplicaEvent::WorkspaceMoved {
                 insert_index: insert_index as usize,
-                workspace_id: workspace_id,
+                workspace_id,
                 workspaces: workspaces.into_iter().map(Into::into).collect(),
             },
         ),
@@ -424,14 +423,14 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "workspace_reordered",
             ReplicaEvent::WorkspaceReordered {
-                workspace_ids: workspace_ids,
+                workspace_ids,
                 workspaces: workspaces.into_iter().map(Into::into).collect(),
             },
         ),
         ev::EventData::WorkspaceFocused { workspace_id, .. } => (
             "workspace_focused",
             ReplicaEvent::WorkspaceFocused {
-                workspace_id: workspace_id,
+                workspace_id,
             },
         ),
         ev::EventData::WorktreeCreated { workspace, .. } => (
@@ -454,7 +453,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
             "worktree_removed",
             ReplicaEvent::WorktreeRemoved {
                 workspace: workspace.map(Into::into),
-                workspace_id: workspace_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabCreated { tab, .. } => {
@@ -467,8 +466,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "tab_closed",
             ReplicaEvent::TabClosed {
-                tab_id: tab_id,
-                workspace_id: workspace_id,
+                tab_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabRenamed {
@@ -479,9 +478,9 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "tab_renamed",
             ReplicaEvent::TabRenamed {
-                label: label,
-                tab_id: tab_id,
-                workspace_id: workspace_id,
+                label,
+                tab_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabMoved {
@@ -494,9 +493,9 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
             "tab_moved",
             ReplicaEvent::TabMoved {
                 insert_index: insert_index as usize,
-                tab_id: tab_id,
+                tab_id,
                 tabs: tabs.into_iter().map(Into::into).collect(),
-                workspace_id: workspace_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabFocused {
@@ -506,8 +505,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "tab_focused",
             ReplicaEvent::TabFocused {
-                tab_id: tab_id,
-                workspace_id: workspace_id,
+                tab_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneCreated { pane, .. } => (
@@ -521,8 +520,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_closed",
             ReplicaEvent::PaneClosed {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneUpdated { pane, .. } => (
@@ -536,8 +535,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_focused",
             ReplicaEvent::PaneFocused {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneExited {
@@ -547,8 +546,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_exited",
             ReplicaEvent::PaneExited {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneAgentDetected {
@@ -558,8 +557,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_agent_detected",
             ReplicaEvent::PaneAgentDetected {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::LayoutUpdated { layout, .. } => (

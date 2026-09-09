@@ -471,7 +471,7 @@ fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
         let previous = year - 1;
         previous / 4 - previous / 100 + previous / 400
     };
-    let leap = |year: u64| year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = |year: u64| year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let leaps = leap_days_before(year) - leap_days_before(1970);
     let leap_day_this_year = u64::from(leap(year) && month > 2);
     365 * (year - 1970) + leaps + CUMULATIVE[(month - 1) as usize] + leap_day_this_year + day - 1

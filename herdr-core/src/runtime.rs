@@ -9120,9 +9120,7 @@ impl Runtime {
                     // terminal.scroll takes. SGR has bits for shift, alt and
                     // control only, so command (bit 8) is dropped here on
                     // purpose: a TUI has no way to receive it.
-                    let flags = (payload.modifiers & 1) * 4
-                        | (payload.modifiers & 2) * 8
-                        | (payload.modifiers & 4) * 2;
+                    let flags = ((payload.modifiers & 1) * 4) | ((payload.modifiers & 2) * 8) | ((payload.modifiers & 4) * 2);
                     let bytes =
                         format!("\x1b[<{flags};{column};{row}M\x1b[<{flags};{column};{row}m");
                     self.write_terminal_control(
