@@ -7,6 +7,7 @@ impl Runtime {
         let pane_id = intent.pane_id.clone();
         let id = intent.id.clone();
         let changed = self.reduce_attachment(intent);
+        let changed = self.advance_attachment_handoffs(&pane_id) || changed;
         if changed {
             let state = self
                 .snapshot
@@ -42,6 +43,26 @@ impl Runtime {
         if matches!(intent.action, Action::ReturnToPrompt) {
             return self.return_attachment_prompt(&intent.pane_id);
         }
+        if matches!(intent.action, Action::Viewport) {
+            if self
+                .snapshot
+                .terminal
+                .attachments
+                .iter()
+                .any(|s| s.pane_id == intent.pane_id)
+            {
+                // Presentation availability is not provider/composer authority.
+                // Keep it private: only actual handoff/state changes publish rest.
+                self.attachment_support.available.insert(
+                    intent.pane_id,
+                    (
+                        intent.active == Some(true),
+                        intent.following_bottom == Some(true),
+                    ),
+                );
+            }
+            return false;
+        }
         let provider = self
             .snapshot
             .navigator
@@ -64,6 +85,7 @@ impl Runtime {
                     items: Vec::new(),
                     notice: None,
                     following_bottom: None,
+                    return_required: false,
                     viewport_message: Some("Checking terminal viewport".to_owned()),
                 });
             }
@@ -74,15 +96,9 @@ impl Runtime {
             if shelf.items.iter().any(|item| item.id == intent.id) {
                 return false;
             }
-            if total >= attachments::TOTAL_LIMIT
-                || shelf
-                    .items
-                    .iter()
-                    .filter(|item| item.state != State::Dismissed)
-                    .count()
-                    >= attachments::PER_PANE_LIMIT
+            if total >= attachments::TOTAL_LIMIT || shelf.items.len() >= attachments::PER_PANE_LIMIT
             {
-                let notice = Some("Attachment limit reached: 4 visible per pane, 16 retained across open panes. Handed-off copies stay until their pane closes.".to_owned());
+                let notice = Some("Attachment limit reached: 4 per pane, 16 retained across open panes. Handed-off copies stay until their pane closes.".to_owned());
                 if shelf.notice == notice {
                     return false;
                 }
@@ -97,6 +113,7 @@ impl Runtime {
                 id: intent.id, name: intent.name.unwrap_or_else(|| "Local image".to_owned()).chars().take(512).collect(),
                 path: None, state: if supported { State::Loading } else { State::Failed },
                 message: if supported { "Preparing a private image copy" } else { "Image handoff is unavailable: Herdr must identify this local pane as Claude Code or Codex." }.to_owned(),
+                handoff_started: false, removal_error: None,
                 provider: provider.as_ref().map(|pair| pair.0.clone()), agent_id: provider.map(|pair| pair.1),
             });
             if supported {
@@ -117,26 +134,20 @@ impl Runtime {
             return false;
         };
         if matches!(intent.action, Action::Remove) {
-            if matches!(shelf.items[index].state, State::Queued | State::Dismissed) {
-                return false;
-            }
-            if matches!(
-                shelf.items[index].state,
-                State::HandoffUnconfirmed | State::Failed
-            ) && shelf.items[index].path.is_some()
-            {
-                shelf.items[index].state = State::Dismissed;
+            let item = &mut shelf.items[index];
+            if item.handoff_started {
+                let error = Some(
+                    attachments::provider_removal_failure(item.provider.as_deref()).to_owned(),
+                );
+                if item.removal_error == error {
+                    return false;
+                }
+                item.removal_error = error;
             } else {
                 shelf.items.remove(index);
             }
             shelf.notice = None;
             return true;
-        }
-        if matches!(intent.action, Action::Send) && shelf.following_bottom != Some(true) {
-            let message = Some("Return to the prompt before attaching an image.".to_owned());
-            let changed = shelf.viewport_message != message;
-            shelf.viewport_message = message;
-            return changed;
         }
         let item = &mut shelf.items[index];
         match intent.action {
@@ -151,49 +162,98 @@ impl Runtime {
                     intent.path.filter(|path| attachments::paste(path).is_ok())
                 {
                     item.path = Some(path);
-                    item.state = State::Ready;
-                    item.message = "Ready to attach to the prompt".to_owned();
+                    item.state = State::AwaitingPrompt;
+                    item.message =
+                        "Waiting for the active prompt; handoff will start automatically"
+                            .to_owned();
                 } else {
                     item.state = State::Failed;
                     item.message = "The prepared image has no safe local path.".to_owned();
                 }
                 true
             }
-            Action::Send => {
-                if item.state != State::Ready {
-                    return false;
-                }
-                if provider != item.provider.clone().zip(item.agent_id.clone()) {
-                    item.state = State::Failed;
-                    item.message =
-                        "The pane's provider changed. Remove this image and drop it again."
-                            .to_owned();
-                    return true;
-                }
-                let result = match (self.terminal_sessions.get(&intent.pane_id), item.path.as_deref()) {
-                    (Some(session), Some(path)) if session.mode == TerminalSessionMode::Control => {
-                        attachments::provider_delivery(item.provider.as_deref(), path).map_err(str::to_owned).and_then(|bytes| session.write_bytes(&bytes, Some(crate::model::TerminalInputTrace {
-                            id: 0, started_ns: crate::live::monotonic_ns(), attachment_id: Some(item.id.clone()),
-                        })))
-                    }
-                    _ => Err("Terminal control is unavailable or read-only. Reconnect, then remove and drop the image again.".to_owned()),
-                };
-                match result {
-                    Ok(()) => {
-                        item.state = State::Queued;
-                        item.message =
-                            "Waiting for terminal transport; provider receipt is unconfirmed"
-                                .to_owned();
-                    }
-                    Err(message) => {
-                        item.state = State::Failed;
-                        item.message = message;
-                    }
-                }
-                true
-            }
             _ => false,
         }
+    }
+    /// One ordered handoff per stable ID to the active pane; scroll state controls presentation.
+    /// A failed/partial write is never automatically retried.
+    fn advance_attachment_handoffs(&mut self, pane_id: &str) -> bool {
+        if self.snapshot.ui_state.selected_pane_id.as_deref() != Some(pane_id)
+            || self.panes_closing.contains(pane_id)
+            || !self
+                .attachment_support
+                .available
+                .get(pane_id)
+                .is_some_and(|state| state.0)
+        {
+            return false;
+        }
+        let provider = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == pane_id)
+            .map(|agent| (agent.agent_kind.clone(), agent.id.clone()));
+        let Some(shelf) = self
+            .snapshot
+            .terminal
+            .attachments
+            .iter_mut()
+            .find(|s| s.pane_id == pane_id)
+        else {
+            return false;
+        };
+
+        let mut changed = false;
+        // Preserve drop order even if an asynchronous preparation completes later.
+        for item in &mut shelf.items {
+            if item.state == State::Loading {
+                break;
+            }
+            if item.state != State::AwaitingPrompt {
+                continue;
+            }
+            changed = true;
+            if provider != item.provider.clone().zip(item.agent_id.clone()) {
+                item.state = State::Failed;
+                item.message =
+                    "The pane's provider changed. Remove this image and drop it again.".to_owned();
+                continue;
+            }
+            let result = match (self.terminal_sessions.get(pane_id), item.path.as_deref()) {
+                (Some(session), Some(path)) if session.mode == TerminalSessionMode::Control => {
+                    attachments::provider_delivery(item.provider.as_deref(), path).map_err(str::to_owned).and_then(|bytes| session.write_bytes(&bytes, Some(crate::model::TerminalInputTrace {
+                        id: 0, started_ns: crate::live::monotonic_ns(), attachment_id: Some(item.id.clone()),
+                    })))
+                }
+                _ => Err("Terminal control is unavailable or read-only. Reconnect, then remove and drop the image again.".to_owned()),
+            };
+            match result {
+                Ok(()) => {
+                    shelf.return_required |= shelf.following_bottom == Some(false)
+                        || !self
+                            .attachment_support
+                            .available
+                            .get(pane_id)
+                            .is_some_and(|state| state.1);
+                    item.handoff_started = true;
+                    item.state = State::Queued;
+                    item.message =
+                        "Waiting for terminal transport; provider receipt is unconfirmed"
+                            .to_owned();
+                }
+                Err(message) => {
+                    item.state = State::Failed;
+                    item.message = message;
+                }
+            }
+            crate::diagnostics::emit(serde_json::json!({
+                "component": "image_attachment", "kind": "attachment.handoff",
+                "pane_id": pane_id, "attachment_id": item.id, "state": item.state,
+            }));
+        }
+        changed
     }
 }
 
@@ -253,6 +313,7 @@ impl Runtime {
 #[derive(Default)]
 pub(super) struct Support {
     generation: u64,
+    available: std::collections::HashMap<String, (bool, bool)>,
     watches: std::collections::HashMap<String, (u64, crate::viewport::Watch)>,
 }
 
@@ -263,6 +324,9 @@ impl Runtime {
             .attachments
             .retain(|shelf| keep(&shelf.pane_id));
         self.attachment_support.watches.retain(|pane, _| keep(pane));
+        self.attachment_support
+            .available
+            .retain(|pane, _| keep(pane));
     }
 
     fn observe_attachment_viewport(&mut self, pane_id: &str) {
@@ -362,7 +426,7 @@ impl Runtime {
             Ok(true) => (Some(true), None),
             Ok(false) => (
                 Some(false),
-                Some("Return to the prompt before attaching an image.".to_owned()),
+                Some("Return to the prompt to review images in the native composer.".to_owned()),
             ),
             Err(error) => (None, Some(format!("Viewport unavailable: {error}"))),
         };
@@ -371,6 +435,7 @@ impl Runtime {
         }
         shelf.following_bottom = following;
         shelf.viewport_message = message;
+        self.advance_attachment_handoffs(pane_id);
         true
     }
 
@@ -409,6 +474,9 @@ impl Runtime {
             .unwrap();
         let succeeded = result.is_ok();
         shelf.following_bottom = None;
+        if succeeded {
+            shelf.return_required = false;
+        }
         shelf.viewport_message = Some(match result {
             Ok(()) => "Returning to the terminal prompt".to_owned(),
             Err(error) => error,

@@ -1,3 +1,4 @@
+import AppKit
 import CHerdrCore
 import Foundation
 
@@ -2784,16 +2785,22 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_close", payload: ["tab_id": tabID])
     }
 
+    func pasteImages(_ board: NSPasteboard, paneID: String) -> Bool {
+        attachmentFiles.paste(board, paneID: paneID, bridge: self)
+    }
+
     func stageImages(_ urls: [URL], paneID: String) {
         attachmentFiles.stage(urls, paneID: paneID, bridge: self)
     }
 
     func attachmentAction(_ action: String, paneID: String, id: String, name: String? = nil,
-                          path: String? = nil, error: String? = nil) {
+                          path: String? = nil, error: String? = nil, followingBottom: Bool? = nil, active: Bool? = nil) {
         var payload: [String: Any] = ["action": action, "pane_id": paneID, "id": id]
         if let name { payload["name"] = name }
         if let path { payload["path"] = path }
         if let error { payload["error"] = error }
+        if let followingBottom { payload["following_bottom"] = followingBottom }
+        if let active { payload["active"] = active }
         dispatch(kind: "attachment", payload: payload)
     }
 

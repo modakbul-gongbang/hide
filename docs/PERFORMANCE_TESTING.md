@@ -414,26 +414,32 @@ OS image drag enters through the terminal's existing AppKit destination, with on
 It adds no work to ordinary mouse movement, keyboard input, wheel routing, selection or terminal frame parsing.
 A separate local viewport observation performs an O(1) public scroll-state read after feed, size and scroll callbacks.
 It retains one Boolean pair, one weak view and at most one pending main-queue publication per terminal; unchanged state wakes no view consumer.
-Only that pane's shelf/chip observes this local signal.
+Only that pane's shelf/chip and attachment composition observe this local signal.
 Because ordinary wheel history belongs to Herdr, the attachment feature also retains at most sixteen pane-scoped viewport observers until their panes close.
 Each observer opens the existing scoped scroll subscription and reads `pane.get` once at bootstrap; no recurring socket query, subprocess, provider parsing or work under the runtime mutex is added.
 Reader cancellation is bounded by the 500 ms read timeout, and repeated numeric offsets while away publish no rest change.
 The generated `pane.scroll_changed` event is separate from sequenced topology events and is decoded only at `wire.rs`.
-Unknown/failed observation collapses the shelf and blocks image handoff; Return to prompt uses the existing ordered writer's empty-input reset and starts a fresh observation.
+Unknown/failed observation collapses the shelf; automatic handoff can proceed in the active pane while the explicit return-required chip remains collapsed; Return to prompt uses the existing ordered writer's empty-input reset and starts a fresh observation.
 The core observes actual bottom transitions through the existing rest publication; this adds at most a departure and return publication per gesture, not one per wheel or output frame.
 The core retains at most four visible images per pane and sixteen image intents/copies across live panes; late decoder results cannot recreate removed items.
 A single native decoder serializes bounded reads of at most 20 MiB plus one byte and ImageIO thumbnails of at most 192 pixels, rejecting inputs over 40 million pixels.
 This work and temporary-file cleanup run outside the core mutex and main-thread pointer path.
+Command+V adds one pasteboard type classification at the existing paste entrypoint, never per key or frame.
+At most five clipboard items are materialized so the fifth can report the four-image limit; each image has the same bounded validation/private-copy pipeline as drag.
+The OS pasteboard read is synchronous at the paste boundary; decode/conversion and file I/O remain on the serial decoder.
+Preparation releases its held clipboard data, while one request sequence watermark deduplicates ingress with constant retained state.
+The composition forwards active-view and local-bottom changes only; availability alone never publishes a core rest revision.
+Automatic handoff scans at most four pane intents and the existing agent metadata, reuses the ordered writer and emits no provider-query subprocess or transcript parsing.
 The shelf introduces real terminal geometry changes only when its visible content changes; native QA must exercise resize and scroll while it appears and disappears.
 
-Each stage, prepare result, handoff and transport result publishes one actual state transition in the existing revisioned rest section.
+Each stage, prepare/automatic-handoff result and transport result publishes one actual state transition in the existing revisioned rest section.
 The rest consumers observe those infrequent transitions; ordinary PTY chunks do not republish the shelf or decode images.
-Repeated stage/send/completion/removal intents without a change publish nothing and never repeat terminal input.
+Repeated stage/preparation/availability/completion/removal intents without a change publish nothing and never repeat terminal input.
 The transport completion carries a local attachment correlation through the existing writer, with no new Herdr wire method or provider-output consumer.
 It is consumed as shelf state rather than appended as terminal bytes or a synthetic transcript message.
 
-The core attachment regression observes no bytes during preparation, one bracketed path during handoff, separate queue/completion states, stale-generation refusal, cancellation, capacity and retirement.
-The resource regression checks private copy byte equality, unchanged originals, actual PNG/JPEG thumbnails and invalid/oversized input failures.
+The core attachment regression observes automatic ordered bracketed paths without Enter, deferral across pane switches, handoff while away with a retained collapsed chip, separate queue/completion states, stale-generation refusal, exact removal failure/retry preserving IDs/copies, cancellation, capacity and retirement.
+The resource regression checks private copy byte equality, unchanged originals, PNG/JPEG and clipboard TIFF conversion, image-versus-text/mixed clipboard routing, monotonic ingress deduplication after cancellation, actual adaptive grid row growth and invalid/oversized failures.
 The socket viewport regression observes a real subscription's initial state, 100 changing offsets, return and disconnect, checking that only bottom transitions and explicit failure reach its caller.
 `TerminalViewportSignalTests` uses an offscreen real AppKit terminal to check local history, 200 output feeds while away, return/focus, alternate buffer and 20,000 unchanged observations with no extra view publications.
 Native QA separately compares Claude's fixed composer and Codex's scrollable composer, rapid wheel/output, drop while away and pending persistence across pane switches.

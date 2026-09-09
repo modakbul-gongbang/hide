@@ -11,6 +11,7 @@ pub struct Shelf {
     pub notice: Option<String>,
     pub following_bottom: Option<bool>,
     pub viewport_message: Option<String>,
+    pub return_required: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -22,17 +23,18 @@ pub struct Attachment {
     pub message: String,
     pub provider: Option<String>,
     pub agent_id: Option<String>,
+    pub handoff_started: bool,
+    pub removal_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Loading,
-    Ready,
+    AwaitingPrompt,
     Queued,
     HandoffUnconfirmed,
     Failed,
-    Dismissed,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +45,8 @@ pub struct Intent {
     pub name: Option<String>,
     pub path: Option<String>,
     pub error: Option<String>,
+    pub following_bottom: Option<bool>,
+    pub active: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,7 +55,7 @@ pub enum Action {
     Stage,
     Prepared,
     Remove,
-    Send,
+    Viewport,
     ReturnToPrompt,
 }
 
@@ -92,5 +96,15 @@ pub fn provider_delivery(kind: Option<&str>, path: &str) -> Result<Vec<u8>, &'st
     match kind {
         Some("claude" | "codex") => paste(path),
         _ => Err("No verified image composer handoff is available for this provider."),
+    }
+}
+
+/// Cursor-relative delete keys cannot identify an arbitrary attachment or converge
+/// after an uncertain result. Never emit them on behalf of a local thumbnail ID.
+pub fn provider_removal_failure(kind: Option<&str>) -> &'static str {
+    match kind {
+        Some("claude") => "Cannot remove this image from Claude Code: no stable attachment-ID removal contract is available. Remove it in the native composer. Hide keeps this thumbnail and copy because removal cannot be confirmed.",
+        Some("codex") => "Cannot remove this image from Codex: no stable attachment-ID removal contract is available. Remove it in the native composer. Hide keeps this thumbnail and copy because removal cannot be confirmed.",
+        _ => "Cannot confirm removal from this provider. Hide keeps this thumbnail and copy; inspect the native composer.",
     }
 }

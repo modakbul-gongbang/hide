@@ -6,27 +6,54 @@ import UniformTypeIdentifiers
 @MainActor
 final class ImageAttachmentFiles {
     private struct Pending {
-        let source: URL
+        var source: ImageAttachmentSource?
         let paneID: String
         var started = false
     }
+    struct Request {
+        fileprivate let sequence: UInt64
+        fileprivate let sources: [ImageAttachmentSource]
+    }
+    private var issued: UInt64 = 0
+    private var accepted: UInt64 = 0
+    private let identity = UUID().uuidString
     private var pending: [String: Pending] = [:]
     private let decoder = AttachmentImageDecoder()
     private let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hide-attachments-\(UUID())", isDirectory: true)
 
     deinit { LocalAttachmentImage.removeResources(directory) }
 
-    func stage(_ urls: [URL], paneID: String, bridge: CoreBridge) {
-        // A fifth intent reports the per-pane limit through the authoritative shelf.
-        for url in urls.prefix(5) {
-            let id = UUID().uuidString
+    // Ingress is serialized on the main actor. A repeated/older request is a no-op,
+    // including after cancellation. Two deliberate pastes create two new requests.
+    // One sequence watermark bounds deduplication without retaining clipboard data.
+    func request(_ sources: [ImageAttachmentSource]) -> Request {
+        issued += 1
+        return Request(sequence: issued, sources: sources)
+    }
+
+    func accept(_ request: Request, paneID: String, bridge: CoreBridge) {
+        guard request.sequence > accepted else { return }
+        accepted = request.sequence
+        // A fifth intent reports the authoritative four-image pane limit.
+        for (index, source) in request.sources.prefix(5).enumerated() {
+            let id = "\(identity)-\(request.sequence)-\(index)"
             let canPrepare = pending.count < 20
-            if canPrepare { pending[id] = Pending(source: url, paneID: paneID) }
-            bridge.attachmentAction("stage", paneID: paneID, id: id, name: url.lastPathComponent)
+            if canPrepare { pending[id] = Pending(source: source, paneID: paneID) }
+            bridge.attachmentAction("stage", paneID: paneID, id: id, name: source.name)
             if !canPrepare {
                 bridge.attachmentAction("prepared", paneID: paneID, id: id, error: "Image preparation capacity is full. Remove an attachment and try again.")
             }
         }
+    }
+
+    func stage(_ urls: [URL], paneID: String, bridge: CoreBridge) {
+        accept(request(urls.map(ImageAttachmentSource.file)), paneID: paneID, bridge: bridge)
+    }
+
+    func paste(_ board: NSPasteboard, paneID: String, bridge: CoreBridge) -> Bool {
+        guard let sources = ImageAttachmentClipboard.capture(board) else { return false }
+        accept(request(sources), paneID: paneID, bridge: bridge)
+        return true
     }
 
     func reconcile(_ shelves: [CoreAttachmentShelf], bridge: CoreBridge) {
@@ -39,11 +66,11 @@ final class ImageAttachmentFiles {
         }
         for shelf in shelves {
             for item in shelf.items where item.state == "loading" {
-                guard var entry = pending[item.id], !entry.started else { continue }
+                guard var entry = pending[item.id], !entry.started, let source = entry.source else { continue }
                 entry.started = true
+                entry.source = nil
                 pending[item.id] = entry
                 let destination = directory.appendingPathComponent(item.id, isDirectory: true)
-                let source = entry.source
                 let decoder = decoder
                 Task { [weak self, weak bridge] in
                     let result = await decoder.prepare(source, in: destination)
@@ -68,8 +95,14 @@ final class ImageAttachmentFiles {
 }
 
 private actor AttachmentImageDecoder {
-    func prepare(_ source: URL, in destination: URL) -> Result<URL, Error> {
-        Result { try LocalAttachmentImage.prepare(source, in: destination) }
+    func prepare(_ source: ImageAttachmentSource, in destination: URL) -> Result<URL, Error> {
+        Result {
+            switch source {
+            case .file(let url): try LocalAttachmentImage.prepare(url, in: destination)
+            case .bitmap(let data): try LocalAttachmentImage.prepareBitmap(data, in: destination)
+            case .failure(let reason): throw LocalAttachmentImage.Failure(errorDescription: reason)
+            }
+        }
     }
 }
 
@@ -91,6 +124,29 @@ enum LocalAttachmentImage {
         }
     }
 
+    static func prepareBitmap(_ data: Data, in destination: URL) throws -> URL {
+        guard !data.isEmpty, data.count <= maximumBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= maximumPixels / height,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw Failure(errorDescription: "Clipboard image must be decodable, at most 20 MiB and 40 million pixels.")
+        }
+        // AppKit screenshots commonly offer TIFF. Normalize only clipboard bytes;
+        // dropped/file-URL originals continue through the byte-preserving path.
+        let png = NSMutableData()
+        guard let output = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil) else {
+            throw Failure(errorDescription: "Clipboard image could not be converted to PNG.")
+        }
+        CGImageDestinationAddImage(output, image, nil)
+        guard CGImageDestinationFinalize(output), png.length <= maximumBytes else {
+            throw Failure(errorDescription: "Clipboard PNG could not be encoded within the 20 MiB limit.")
+        }
+        return try prepareData(png as Data, in: destination)
+    }
+
     static func prepare(_ source: URL, in destination: URL) throws -> URL {
         guard source.isFileURL else { throw Failure(errorDescription: "Only local PNG and JPEG files can be attached.") }
         let access = source.startAccessingSecurityScopedResource()
@@ -103,6 +159,10 @@ enum LocalAttachmentImage {
         let handle = try FileHandle(forReadingFrom: source)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+        return try prepareData(data, in: destination)
+    }
+
+    private static func prepareData(_ data: Data, in destination: URL) throws -> URL {
         guard data.count <= maximumBytes,
               let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(imageSource) as String?,

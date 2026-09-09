@@ -60,6 +60,9 @@ struct TerminalHost: NSViewRepresentable {
             onFocus()
             bridge?.stageImages(urls, paneID: paneID)
         }
+        terminal.onImagePaste = { [weak bridge] board in
+            bridge?.pasteImages(board, paneID: paneID) ?? false
+        }
         terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
         terminal.terminalDisplayTick = { [weak coordinator = context.coordinator] period in
             TerminalLatency.displayPeriod(period, paneID: paneID)

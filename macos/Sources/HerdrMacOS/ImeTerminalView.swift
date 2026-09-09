@@ -131,6 +131,12 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
     var onImageDrop: (([URL]) -> Void)?
+    var onImagePaste: ((NSPasteboard) -> Bool)?
+
+    override func paste(_ sender: Any) {
+        guard onImagePaste?(NSPasteboard.general) != true else { return }
+        super.paste(sender)
+    }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ? .copy : []

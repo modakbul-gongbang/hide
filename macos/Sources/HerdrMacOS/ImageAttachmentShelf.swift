@@ -7,8 +7,9 @@ struct CoreAttachmentShelf: Decodable, Equatable {
     let notice: String?
     let followingBottom: Bool?
     let viewportMessage: String?
+    var returnRequired: Bool = false
     enum CodingKeys: String, CodingKey { case paneID = "pane_id", items, notice
-        case followingBottom = "following_bottom", viewportMessage = "viewport_message" }
+        case followingBottom = "following_bottom", viewportMessage = "viewport_message", returnRequired = "return_required" }
 }
 
 struct CoreImageAttachment: Decodable, Equatable, Identifiable {
@@ -18,7 +19,13 @@ struct CoreImageAttachment: Decodable, Equatable, Identifiable {
     let state: String
     let message: String
     let provider: String?
+    var removalError: String? = nil
+    enum CodingKeys: String, CodingKey {
+        case id, name, path, state, message, provider
+        case removalError = "removal_error"
+    }
 }
+
 
 struct ImageAttachmentShelf: View {
     @EnvironmentObject private var model: ShellModel
@@ -27,36 +34,24 @@ struct ImageAttachmentShelf: View {
     private var shelf: CoreAttachmentShelf? { model.core.snapshot?.terminal.attachments?.first { $0.paneID == paneID } }
 
     var body: some View {
-        if let shelf, shelf.items.contains(where: { $0.state != "dismissed" }) || shelf.notice != nil {
-            if shelf.followingBottom != true || !viewport.followingBottom {
+        if let shelf, !shelf.items.isEmpty || shelf.notice != nil {
+            if shelf.returnRequired || shelf.followingBottom != true || !viewport.followingBottom {
                 collapsed(shelf)
             } else {
                 VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
-                    ForEach(shelf.items.filter { $0.state != "dismissed" }) { item in
-                        HStack(spacing: HideTheme.spacingSM) {
-                            AttachmentThumbnail(path: item.path)
-                            VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                                Text(item.name).hideFont(size: HideTheme.Typography.body, weight: .medium).lineLimit(1).truncationMode(.middle)
-                                Text(item.message).hideFont(size: HideTheme.Typography.caption).foregroundStyle(item.state == "failed" ? HideTheme.warning : HideTheme.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            if item.state == "loading" || item.state == "queued" { ProgressView().controlSize(.small) }
-                            if item.state == "ready" {
-                                HideIconButton(systemImage: "plus.message", help: "Attach image to prompt; does not press Enter", variant: .toolbar) {
-                                    // Recheck synchronous local state, including scroll events
-                                    // whose coalesced view publication has not run yet.
-                                    guard viewport.currentFollowingBottom else { return }
-                                    model.focusPane(paneID)
-                                    model.core.focusTerminal(paneID: paneID)
-                                    model.core.attachmentAction("send", paneID: paneID, id: item.id)
-                                }
-                            }
-                            HideIconButton(systemImage: "xmark", help: (item.state == "handoff_unconfirmed" || (item.state == "failed" && item.path != nil)) ? "Dismiss receipt; check the provider prompt separately" : "Remove attachment", variant: .toolbar) {
-                                model.core.attachmentAction("remove", paneID: paneID, id: item.id)
-                            }
-                            .disabled(item.state == "queued")
-                        }
-                        .accessibilityIdentifier("image-attachment-\(item.state)")
+                    ImageAttachmentGrid(items: shelf.items) { item in
+                        model.core.attachmentAction("remove", paneID: paneID, id: item.id)
+                    }
+                    if let removal = shelf.items.first(where: { $0.removalError != nil }), let reason = removal.removalError {
+                        Text("\(removal.name): \(reason)").hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.warning).fixedSize(horizontal: false, vertical: true)
+                    } else if let failure = shelf.items.first(where: { $0.state == "failed" }) {
+                        Text("\(failure.name): \(failure.message)").hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.warning).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Hide handoff status. Check images in the provider prompt before Enter.")
+                            .hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if let notice = shelf.notice { Text(notice).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning) }
                 }
@@ -68,8 +63,8 @@ struct ImageAttachmentShelf: View {
         }
     }
     private func collapsed(_ shelf: CoreAttachmentShelf) -> some View {
-        let visible = shelf.items.filter { $0.state != "dismissed" }
-        let pending = visible.filter { ["loading", "ready", "queued"].contains($0.state) }.count
+        let visible = shelf.items
+        let pending = visible.filter { ["loading", "awaiting_prompt", "queued"].contains($0.state) }.count
         let failures = visible.filter { $0.state == "failed" }.count
         let receipts = visible.filter { $0.state == "handoff_unconfirmed" }.count
         let label = [pending > 0 ? "\(pending) images pending" : nil,
@@ -94,6 +89,9 @@ struct ImageAttachmentShelf: View {
             if let notice = shelf.notice {
                 Text(notice).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning).lineLimit(1)
                     .hideTooltip(notice)
+            } else if let reason = visible.compactMap(\.removalError).first {
+                Text(reason).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning).lineLimit(1)
+                    .hideTooltip(reason)
             } else if let failure = visible.first(where: { $0.state == "failed" }) {
                 Text(failure.message).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning).lineLimit(1)
                     .hideTooltip(failure.message)
@@ -102,18 +100,49 @@ struct ImageAttachmentShelf: View {
                     .hideTooltip(message)
             }
             Spacer(minLength: HideTheme.spacingXS)
-            HideIconButton(systemImage: "xmark", help: "Remove pending images and dismiss Hide receipts", variant: .toolbar) {
-                for item in visible where item.state != "queued" {
-                    model.core.attachmentAction("remove", paneID: paneID, id: item.id)
-                }
-            }
-            .disabled(visible.allSatisfy { $0.state == "queued" })
+
         }
         .padding(.horizontal, HideTheme.spacingSM)
         .background(HideTheme.panel)
         .accessibilityIdentifier("image-attachment-return-to-prompt")
     }
 
+}
+
+/// A bounded adaptive grid uses actual available width; every preview stays square.
+/// The remove control addresses the stable intent, never a terminal cell/index.
+struct ImageAttachmentGrid: View {
+    let items: [CoreImageAttachment]
+    let remove: (CoreImageAttachment) -> Void
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: HideTheme.Attachment.thumbnailSize,
+                                              maximum: HideTheme.Attachment.thumbnailSize), spacing: HideTheme.spacingSM)],
+                  alignment: .leading, spacing: HideTheme.spacingSM) {
+            ForEach(items) { item in
+                ZStack(alignment: .topTrailing) {
+                    AttachmentThumbnail(path: item.path)
+                    HideIconButton(systemImage: "xmark", help: "Remove \(item.name) from prompt", variant: .toolbar) {
+                        remove(item)
+                    }
+                }
+                    .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
+                    .overlay(alignment: .bottomLeading) {
+                        if item.state == "loading" || item.state == "queued" {
+                            ProgressView().controlSize(.small).padding(HideTheme.spacingXXS)
+                        } else {
+                            Image(systemName: item.state == "failed" || item.removalError != nil ? "exclamationmark.triangle" : "clock")
+                                .foregroundStyle(item.state == "failed" || item.removalError != nil ? HideTheme.warning : HideTheme.secondary)
+                                .padding(HideTheme.spacingXXS).accessibilityHidden(true)
+                        }
+                    }
+                    .hideTooltip("\(item.name): \(item.removalError ?? item.message)")
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("\(item.name): \(item.removalError ?? item.message)")
+                    .accessibilityIdentifier("image-attachment-\(item.state)")
+            }
+        }
+    }
 }
 
 private struct AttachmentThumbnail: View {
@@ -142,6 +171,18 @@ struct AttachmentTerminalContent: View {
     let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
 
+    private var availability: Bool {
+        model.core.snapshot?.focusedPaneID == paneID
+    }
+    private var hasShelf: Bool {
+        model.core.snapshot?.terminal.attachments?.contains { $0.paneID == paneID } == true
+    }
+    private func publishAvailability(_ available: Bool) {
+        guard hasShelf else { return }
+        model.core.attachmentAction("viewport", paneID: paneID, id: "viewport",
+            followingBottom: viewport.currentFollowingBottom, active: available)
+    }
+
     var body: some View {
         VStack(spacing: HideTheme.spacingNone) {
             TerminalHost(bridge: model.core, paneID: paneID, textScale: textScale,
@@ -149,5 +190,10 @@ struct AttachmentTerminalContent: View {
                 .accessibilityLabel("SwiftTerm terminal for \(paneID)")
             ImageAttachmentShelf(paneID: paneID, viewport: viewport)
         }
+        .onAppear { publishAvailability(availability) }
+        .onChange(of: availability) { publishAvailability($0) }
+        .onChange(of: viewport.followingBottom) { _ in publishAvailability(availability) }
+        .onChange(of: hasShelf) { _ in publishAvailability(availability) }
+        .onDisappear { publishAvailability(false) }
     }
 }

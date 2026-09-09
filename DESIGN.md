@@ -1259,47 +1259,77 @@ Native screenshots remain necessary to approve toolbar spacing, font fallback an
 
 ## Local image attachment shelf
 
-A local image drop targets the terminal pane that received the OS drag, regardless of keyboard focus.
-The shelf is a pane-owned input/transport surface adjacent to the terminal bottom, never an overlay anchored to terminal cells or scrollback.
-Expanded content requires both Herdr host viewport and SwiftTerm local viewport to be following bottom.
-When either is away or unknown, a compact pane-chrome chip shows the actual pending/receipt count and Return to prompt, with removal and explicit failure help.
-Capacity refusals remain visible in the collapsed chip, with the complete reason available through the shared tooltip and accessibility help.
-A drop while scrolled back prepares the image but cannot deliver it until the viewport returns.
-The chip is a keyboard-accessible button that focuses the terminal, returns local scroll to bottom and requests Herdr's existing empty-input scroll reset without typing or pressing Enter.
-Hide waits for viewport confirmation before expanding; the provider-native composer indicator remains the only proof of a native attachment.
-The current contract has no composer rectangle or input-enabled state, so Hide reserves its own layout space rather than covering or claiming to sit inside the provider input area.
-It shows the actual filename, a 40-point preview, preparation/transport status, removal and an explicit Attach to prompt action.
-There is no automatic Enter, upload, provider-accepted checkmark or Image Sent claim.
-The operator checks the provider's own pending prompt before submitting it.
+Local image drag and Command+V into the active terminal are two ingress adapters to one core attachment lifecycle and native private-file service.
+A drag focuses its actual receiving pane; paste targets the terminal first responder.
+Image paste is captured before ordinary terminal text handling, using the OS pasteboard's image/file-URL types.
+Plain text and non-image paste retain the existing SwiftTerm paste path without rewriting bytes.
+An image item may offer alternative bitmap/text representations of the same image; it becomes one intent.
+Separate mixed image and non-image clipboard items are refused with an explicit shelf reason and no terminal input, so text cannot silently disappear.
+Invalid advertised image data also stays in the attachment failure path rather than becoming pasted text.
+File-URL image paste uses the same validation and byte-preserving copy path as drop.
+Screenshot/bitmap paste validates decoded dimensions, normalizes to a private PNG and uses the same preview and lifetime service.
 
-Core attachment intents own loading, ready, queued, handoff-unconfirmed, failed and dismissed states.
-Only Herdr-identified local Claude Code and Codex panes enable handoff; unknown providers receive an explicit shelf failure.
-The selected provider identity is checked again at handoff, and unavailable/read-only terminal control produces a shelf failure.
-The native shell owns OS file access, ImageIO validation and private temporary copies; it does not infer agent state from terminal output.
-A writer completion means the existing terminal-control transport accepted a write to its input pipe, not that the PTY or provider accepted an image.
-Failures after a write may be partial and explicitly ask the operator to inspect the prompt before retrying.
-The same intent cannot send twice, and automatic retries are forbidden once handoff starts.
+A valid preparation automatically hands off to the active pane's provider composer through the existing ordered writer.
+There is no separate Attach action or automatic Enter.
+A pane switch before preparation finishes preserves the intent and waits until that pane is active again.
+The handoff rechecks the provider identity selected from Herdr's agent metadata and refuses changed or unsupported providers and read-only/unavailable control.
+The operator checks the provider's native image indicator before submitting; writer completion alone cannot prove provider acceptance.
+No upload, provider-accepted checkmark or Image Sent claim is rendered.
 
-The initial supported formats are decoded PNG and JPEG, no larger than 20 MiB or 40 million pixels.
-Other formats, folders, empty, oversized, missing and undecodable files fail in the shelf.
-Files outside registered checkouts are allowed only through the operator's explicit local drop; a bounded read creates a private copy and leaves the original unchanged.
-Up to four visible attachments can belong to one pane, with sixteen retained copies across open panes.
-Preparation is serial and cancellation ignores late completion without recreating an intent.
-Switching panes preserves the shelf; closing its pane retires it and releases its copies.
-Removing an unsubmitted attachment removes it from Hide; dismissing a handoff receipt does not remove anything from the provider prompt.
-Handed-off copies remain until pane close or application exit, because the current contract cannot tell when the provider has finished reading them.
-Those copies still count toward the total limit, and the capacity notice explains that boundary.
-No attachment state is restored on application restart.
+The Hide-owned shelf reserves layout space adjacent to the terminal bottom, never covers active input or pins anything into raw scrollback.
+The user's selected grid structure uses 72-point square previews, adaptive columns and existing small spacing, corner and surface tokens.
+Additional items accumulate across rows without stretching the squares.
+Each tile has a shared Remove icon control, preparation/transport indicator and filename/status tooltip with identical accessibility help.
+A correlated removal or preparation failure is readable beneath the grid; ordinary handoff guidance appears once for the shelf.
+Filename/status labels include Korean and English; narrow geometry and complete tooltip/help text remain required native review surfaces.
 
-The pinned Herdr contract has no attachment acceptance, correlated provider turn or semantic transcript anchor/lifecycle.
-A future authoritative sent thumbnail needs those upstream facts, including when referenced bytes may be released.
-Terminal-cell coordinates and ANSI/string matching cannot supply that authority.
-Provider-native image markers may differ or duplicate a local preview, so Hide's receipt always stays outside the provider transcript.
-The local provider matrix covers pending image recognition, single/multiple image understanding and transcript text; native rendering and OS drag remain separate QA boundaries.
+Expanded content requires both Herdr host viewport and SwiftTerm local viewport to follow bottom.
+Away or unknown state uses a compact pane-chrome count chip and Return to prompt.
+Automatic handoff is permitted while scrolled away, but the chip stays collapsed until the operator explicitly returns, even if transport input resets Herdr scrollback.
+It never implies attachment to a visible offscreen composer.
+Return to prompt focuses terminal input, restores local bottom and sends the pinned control stream's empty-input scroll reset, without Enter or typed characters.
+The shelf expands after viewport confirmation.
+Capacity refusals and delivery/removal failures remain visible in the chip, with full shared tooltip/accessibility help.
+The contract has no composer rectangle, editable-mode guarantee or input-enabled state; viewport observations are not a substitute for those facts.
 
-The feature is composed at `AttachmentTerminalContent`; its remaining hooks are OS drop, typed core intent/snapshot, read-only viewport observation, and the existing ordered writer's completion/retirement port.
-`attachments.rs` contains provider-neutral state and the small delivery adapter selected from Herdr agent metadata.
-`ImageAttachmentFiles.swift` owns OS resources, while `ImageAttachmentShelf.swift` owns Hide presentation.
-`viewport.rs` consumes only generated pane-target/scroll contracts at `wire.rs`; it has no provider or attachment parsing.
-`TerminalViewportSignal.swift` reads SwiftTerm public viewport state and publishes only local bottom transitions.
-No feature code is added to SwiftTerm's rendering, ANSI parser or provider TUI source.
+Core intents own loading, awaiting-active-prompt, queued, handoff-unconfirmed and failed delivery states, plus a separate correlated removal error.
+The same stable ID cannot hand off twice; completion, duplicate preparation and removal retries converge without repeated terminal input.
+Ingress uses one monotonic request watermark per file service: repeated or older handling cannot create another attachment, including after local cancellation.
+Each intentional new drop or Command+V creates a new request, even when clipboard contents are unchanged.
+Multiple images keep their ingress order, including when preparations complete out of order.
+A writer completion means the control transport accepted a write to its input pipe, not that the PTY/provider accepted an image.
+Partial/failed writes never automatically retry and retain their private copies.
+
+Removing an image before handoff cancels that exact intent and releases its private files; late preparation cannot recreate it.
+After handoff starts, both verified provider adapters explicitly refuse synchronized removal because neither exposes stable attachment-ID removal and acknowledgement at the current boundary.
+The thumbnail and its private copy remain, including after repeated removal requests or manual editing inside the provider.
+The failure tells the operator to remove it in the native composer and explains why Hide cannot confirm that edit.
+No guessed cursor movement, Delete/Backspace sequence, ANSI parsing or hidden receipt dismissal is used.
+Provider-native keyboard deletion exists, but its target depends on cursor position, selection and mutable composer order; replaying it cannot satisfy exact-ID removal or preserve arbitrary prompt text safely.
+
+Decoded local PNG/JPEG inputs are limited to 20 MiB and 40 million pixels.
+Clipboard bitmaps obey the same input/dimension limits and their normalized PNG must also fit 20 MiB.
+Other file formats, folders, empty, missing, oversized and undecodable inputs fail in the shelf.
+Outside-checkout files require an explicit operator drop/paste; originals are never changed.
+At most four images belong to one pane, with sixteen retained intents/copies across open panes.
+Preparation is serial and hands off only in ingress order; decoded clipboard bytes are released after preparation.
+Pane switching preserves state; pane close retires it and releases copies.
+Handed-off copies remain until pane close or application exit because provider byte-release lifecycle is unobservable.
+No attachment state is restored on app restart.
+
+Hide authoritatively mirrors only drag/paste intents that cross its boundary, private-copy state and ordered transport outcomes.
+Attachments/removals created wholly inside provider UI are unobservable until provider/Herdr exposes attachment events.
+The smallest synchronization contract needs a composer identity/revision, idempotent attach/remove keyed by a client intent, a stable native attachment ID and authoritative acknowledgement that preserves prompt text and other attachments.
+Safe byte release and sent receipts additionally need provider release/turn lifecycle and a semantic transcript anchor.
+These are missing capabilities, not proposed or assumed Herdr method names.
+
+Pinned interactive fixtures verify bracketed image paste and cursor-relative first/middle/last deletion for Codex 0.153.4 and Claude Code 2.1.265.
+Both retain the other native indicators and mixed Korean/English prompt text; Codex renumbers local markers and Claude retains marker numbers.
+Model color responses prove the remaining images for all Codex cases and Claude's first-image deletion case.
+Claude's other two submissions returned provider API failures, so their model image access remains unverified separately from the native composer observations.
+OS drop/paste geometry, actual Command+V dispatch and screen rendering remain distinct human QA boundaries.
+
+The detachable module map is `attachments.rs` for neutral state and provider adapter, `runtime/attachment_intents.rs` for transitions, `ImageAttachmentIngress.swift` for OS clipboard classification, `ImageAttachmentFiles.swift` for private resources, and `ImageAttachmentShelf.swift` for Hide presentation and terminal composition.
+Its few external hooks are OS drag/paste interception, typed core intent/snapshot, read-only viewport availability, and the existing ordered writer completion/retirement port.
+`viewport.rs` reads generated scroll contracts through `wire.rs`; `TerminalViewportSignal.swift` reads SwiftTerm public viewport state and publishes only bottom transitions.
+No attachment knowledge is added to SwiftTerm rendering, key routing or ANSI parsing, and no provider TUI is patched.
