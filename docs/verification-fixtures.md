@@ -48,6 +48,21 @@ Stop only the recorded fixture process to exercise disconnect/recovery; never st
 Write that file under the run directory.
 The receipt records the controller's belief; a real screenshot and native interaction must corroborate visible claims.
 
+## Scripted Herdr workspace fixtures
+
+Each script stands up a throwaway Herdr workspace on a server it starts itself, fills it with the state one scenario needs, and tears the whole thing down again.
+They are inputs for a native run, not evidence: read the isolation requirements in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) before running one, and never point one at the operator's server.
+None of them run in CI.
+
+| Fixture | Stands up |
+| --- | --- |
+| [agent-attention-fixture.sh](../scripts/agent-attention-fixture.sh) | Two tabs in a checkout that is its own repository, filled to cover the four attention groups and the blocked transition |
+| [tab-verification-fixture.sh](../scripts/tab-verification-fixture.sh) | One workspace holding three Herdr tabs, for the tab strip |
+| [view-state-fixture.sh](../scripts/view-state-fixture.sh) | Panes with checkable scrollback, the outside-focus path, and the missing-runtime launch |
+| [scratch-verification-fixture.sh](../scripts/scratch-verification-fixture.sh) | The Scratch surface on an isolated server |
+| [hide-paths-fixture.sh](../scripts/hide-paths-fixture.sh) | The path-and-tab scenarios, one per scenario card |
+| [e2e-fixture.sh](../scripts/e2e-fixture.sh) | A private GitHub repository with the worktrees, branches and pull request state the project panel reads |
+
 ## Real Herdr fixtures and terminal inputs
 
 [herdr-ide-fixture.rs](../herdr-core/src/bin/herdr-ide-fixture.rs) offers plan, create, status, and cleanup operations for prefixed verification workspaces.

@@ -29,7 +29,8 @@ Screenshots, traces, sample output, run logs, browser profiles, and verification
 This rule exists because they were: `docs/verification/`, `docs/screenshots/`, and the spike `evidence/` directories grew to 660 files and 123 MB, and a Chrome profile committed under `spikes/integrated-preflight/` carried cookies and a symlink naming the workstation. A later scan for leaked identity passed because it read text and skipped images, while 184 screenshots showed the home directory and hostname in plain sight.
 
 - Write run artifacts under `agents/runs/<slug>/`. That whole namespace is local-only, so nothing there can reach a commit by accident.
-- Never add a path under `docs/verification/`, `docs/screenshots/`, or `spikes/*/evidence/`. They are gitignored; do not force past it.
+- Never add a path under `docs/verification/`, `docs/screenshots/`, or `spikes/*/evidence/`. They are gitignored, and `check-no-workstation-identity.sh` refuses them even when a `git add -f` walks past the ignore rule. It refuses a tracked browser profile file by shape too, because the text scan cannot see one.
+- Removing such a path from the working tree does not remove it from a clone. The 2026-08 evidence tree is still reachable from `origin/main`; treat anything that was in it, cookies included, as public.
 - When a document needs to cite evidence, state the finding and how it was measured. Do not commit the artifact so a path can be linked.
 - A verification claim is proven to the person reading the run, not to the repository. The receipt and the run directory are where it lives.
 
@@ -184,4 +185,4 @@ When the existing system does not cover a case, say so and propose the addition;
 `DESIGN.md` also records the Raycast public design references and their MIT attribution context.
 
 The native shell components live in `macos/Sources/HerdrMacOS/`: `HideTheme.swift` defines tokens, `HideKeycap.swift` draws registry-derived shortcuts, `HideBalloon.swift` draws tooltips and hint chips, `HideIconButton.swift` owns icon controls, `HideBadge.swift` owns labels, and `HideOverlay.swift` attaches the shared renderer to window content.
-Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception; run `scripts/check-hide-theme-literals.sh` and `scripts/check-hide-components.sh` before delivery.
+Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception; run `node scripts/check-design-contract.mjs` before delivery, which is the same entrypoint `design-contract.yml` runs.

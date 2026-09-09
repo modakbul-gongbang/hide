@@ -65,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Test performance measurement semantics
-        run: python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Structural checks
         run: |
           bash scripts/check-harness-ignore-anchor.sh
@@ -73,6 +73,11 @@ jobs:
           bash scripts/check-capability-readers-off-lock.sh
           bash scripts/check-terminal-row-cache.sh
           bash scripts/check-no-workstation-identity.sh
+          bash scripts/check-git-worktree-presentation.sh
+          bash scripts/check-git-worktree-states.sh
+          bash scripts/check-worktree-base-policy.sh
+          bash scripts/check-worktree-catalog-presentation.sh
+          bash scripts/check-worktree-removal-boundary.sh
           zsh scripts/check-herdr-pin-single-source.sh
       - name: Fetch the pinned Herdr runtime
         id: herdr
