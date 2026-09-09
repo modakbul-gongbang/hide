@@ -1,4 +1,3 @@
-mod attachment_intents;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -1086,7 +1085,6 @@ enum ValidatedEvent {
     FileClose(FileTabPayload),
     FileDraft(FileDraftPayload),
     FileView(FileViewPayload),
-    Attachment(crate::attachments::Intent),
     FileSave(FileSavePayload),
     FileConflict(FileConflictPayload),
     UiStateUpdate(UiStateUpdatePayload),
@@ -1180,7 +1178,6 @@ pub struct Runtime {
     state_save_worker: Option<thread::JoinHandle<()>>,
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
-    attachment_support: attachment_intents::Support,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
     remote_file_transports: HashMap<String, RusshSftpTransport>,
@@ -1448,7 +1445,6 @@ impl Runtime {
             state_path,
             remote_targets,
             live: None,
-            attachment_support: Default::default(),
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),
             remote_file_transports: HashMap::new(),
@@ -3679,7 +3675,6 @@ impl Runtime {
         self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
         self.terminal_view_sizes.retain(|pane_id, _| keep(pane_id));
         self.panes_closing.retain(|pane_id| keep(pane_id));
-        self.retain_attachment_panes(&keep);
         before != self.terminal_state_len()
     }
 
@@ -3687,7 +3682,6 @@ impl Runtime {
     /// and so its sizes, stays known.
     fn retain_terminal_session_state(&mut self, keep: impl Fn(&str) -> bool) -> bool {
         let before = self.terminal_state_len();
-        let attachments_changed = self.release_attachment_transports(&keep);
         self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
         self.terminal_session_generations
             .retain(|pane_id, _| keep(pane_id));
@@ -3699,7 +3693,7 @@ impl Runtime {
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         self.panes_scrolled_before_size
             .retain(|pane_id| keep(pane_id));
-        attachments_changed || before != self.terminal_state_len()
+        before != self.terminal_state_len()
     }
 
     /// Every pane-keyed terminal map, counted together so a retain pass can
@@ -3715,7 +3709,6 @@ impl Runtime {
             + self.panes_awaiting_size.len()
             + self.panes_scrolled_before_size.len()
             + self.panes_closing.len()
-            + self.snapshot.terminal.attachments.len()
     }
 
     fn reconcile_remote_terminal_selection(&mut self) -> bool {
@@ -6943,7 +6936,6 @@ impl Runtime {
             return false;
         }
         let _ended_session = self.terminal_sessions.remove(pane_id);
-        self.release_attachment_transports(|id| id != pane_id);
         let attempt = self
             .terminal_session_lifecycles
             .get(pane_id)
@@ -7946,9 +7938,6 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
-                if self.intercept_attachment_enter(&payload.pane_id, &payload.bytes_base64) {
-                    return true;
-                }
                 if self.live.is_some()
                     || self.remote_terminals.keys().any(|target_id| {
                         remote_pane_source_id(target_id, &payload.pane_id).is_some()
@@ -8977,7 +8966,6 @@ impl Runtime {
                 self.persist_current_ui_state();
                 true
             }
-            ValidatedEvent::Attachment(payload) => self.handle_attachment(payload),
             ValidatedEvent::FileView(payload) => {
                 let Some(tab) = self
                     .snapshot
@@ -10220,7 +10208,6 @@ impl Runtime {
         if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
         }
-        if let Some(changed) = self.attachment_transport_result(pane_id, &sent) { return changed; }
         self.append_terminal_chunk(pane_id.to_owned(), String::new());
         self.snapshot
             .terminal
@@ -10455,7 +10442,6 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_close" => decode!(FileTabPayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_view" => decode!(FileViewPayload, FileView),
-        "attachment" => decode!(crate::attachments::Intent, Attachment),
         "file_save" => decode!(FileSavePayload, FileSave),
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
@@ -12351,243 +12337,6 @@ mod tests {
         assert!(runtime.dispatch_json(&unrelated));
         assert_eq!(runtime.snapshot().ui_state.last_agent_kind, "codex");
         assert!(runtime.snapshot().ui_state.last_agent_bypass);
-    }
-
-    #[test]
-    fn image_cancellation_precedes_explicit_handoff_and_preserves_other_input() {
-        use crate::attachments::State;
-        for kind in ["claude", "codex", "unknown"] {
-            for removed in ["first", "middle", "last"] {
-                let mut runtime = runtime();
-                let pane = "w-image:p1";
-                runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
-                    workspace_id: "w-image".to_owned(),
-                    tab_id: "w-image:t1".to_owned(),
-                    focused_pane_id: pane.to_owned(),
-                    zoomed: false,
-                    root: PaneLayoutNodeSnapshot::Pane {
-                        pane_id: pane.to_owned(),
-                    },
-                }];
-                runtime.snapshot.ui_state.selected_pane_id = Some(pane.to_owned());
-                runtime.terminal_sessions.insert(
-                    pane.to_owned(),
-                    TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
-                );
-                runtime
-                    .terminal_session_generations
-                    .insert(pane.to_owned(), 1);
-                let payload = serde_json::from_value(serde_json::json!({"agents": [{"pane_id": pane, "agent": kind, "state_change_seq": 1}]})).unwrap();
-                runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
-                let event = |action: &str, id: &str, active: bool| {
-                    serde_json::to_vec(&serde_json::json!({
-                    "schema_version": SCHEMA_VERSION, "kind": "attachment", "payload": {
-                        "action": action, "id": id, "pane_id": pane, "name": "image.png",
-                        "path": format!("/tmp/{id}.png"), "following_bottom": active, "active": active
-                    }
-                })).unwrap()
-                };
-                let key = |bytes: &[u8]| {
-                    serde_json::to_vec(&serde_json::json!({
-                        "schema_version": SCHEMA_VERSION, "kind": "key", "payload": {
-                            "pane_id": pane, "bytes_base64": live::encode_base64(bytes)
-                        }
-                    }))
-                    .unwrap()
-                };
-                for id in ["first", "middle", "last"] {
-                    runtime.dispatch_json(&event("stage", id, true));
-                    assert!(!runtime.dispatch_json(&event("stage", id, true)));
-                }
-                runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
-                runtime.dispatch_json(&event("viewport", "viewport", true));
-                runtime.dispatch_json(&event("prepared", "last", true));
-                runtime.dispatch_json(&key(b"\r"));
-                assert!(
-                    runtime.terminal_sessions[pane]
-                        .test_written_lines()
-                        .is_empty(),
-                    "Enter during loading/invalid preparation submits nothing"
-                );
-                for id in ["middle", "first"] {
-                    runtime.dispatch_json(&event("prepared", id, true));
-                }
-                assert!(
-                    runtime.terminal_sessions[pane]
-                        .test_written_lines()
-                        .is_empty(),
-                    "preparation never delivers before cancellation is possible"
-                );
-                if kind != "unknown" {
-                    assert!(runtime.snapshot.terminal.attachments[0].notice.is_none(), "completed preparation clears a stale loading refusal");
-                }
-                let text = "KEEP 한글\nEnglish".as_bytes();
-                runtime.dispatch_json(&key(text));
-                assert_eq!(
-                    live::decode_base64(
-                        &runtime
-                            .snapshot
-                            .terminal
-                            .chunks
-                            .last()
-                            .unwrap()
-                            .bytes_base64
-                    )
-                    .unwrap(),
-                    text
-                );
-                runtime.snapshot.terminal.attachments[0].following_bottom = None;
-                runtime.dispatch_json(&key(b"\r"));
-                assert!(runtime.snapshot.terminal.attachments[0].notice.as_ref().unwrap().contains("Remove"),
-                    "an unavailable viewport must expose cancellation as a recovery path");
-                assert!(runtime.dispatch_json(&event("remove", removed, true)));
-                assert!(!runtime.dispatch_json(&event("remove", removed, true)));
-                assert!(
-                    !runtime.dispatch_json(&event("prepared", removed, true)),
-                    "late preparation cannot resurrect cancellation"
-                );
-                let expected: Vec<_> = ["first", "middle", "last"]
-                    .into_iter()
-                    .filter(|id| *id != removed)
-                    .collect();
-                assert_eq!(
-                    runtime.snapshot.terminal.attachments[0]
-                        .items
-                        .iter()
-                        .map(|item| item.id.as_str())
-                        .collect::<Vec<_>>(),
-                    expected
-                );
-                runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
-                if kind == "unknown" {
-                    runtime.dispatch_json(&key(b"\r"));
-                    assert!(
-                        runtime.terminal_sessions[pane]
-                            .test_written_lines()
-                            .is_empty()
-                    );
-                    assert!(
-                        runtime.snapshot.terminal.attachments[0]
-                            .notice
-                            .as_ref()
-                            .unwrap()
-                            .contains("failed")
-                    );
-                    runtime.snapshot.terminal.attachments[0].following_bottom = None;
-                    for id in &expected { runtime.dispatch_json(&event("remove", id, true)); }
-                    let chunks = runtime.snapshot.terminal.chunks.len();
-                    runtime.dispatch_json(&key(b"\r"));
-                    assert_eq!(runtime.snapshot.terminal.chunks.len(), chunks + 1,
-                        "cancelling the remaining images restores Enter even while viewport is unavailable");
-                    assert_eq!(live::decode_base64(&runtime.snapshot.terminal.chunks.last().unwrap().bytes_base64).unwrap(), b"\r");
-                    continue;
-                }
-                assert!(
-                    runtime.snapshot.terminal.attachments[0]
-                        .items
-                        .iter()
-                        .all(|item| item.state == State::Pending)
-                );
-                runtime.snapshot.ui_state.selected_pane_id = Some("other-pane".to_owned());
-                runtime.dispatch_json(&key(b"\r"));
-                assert!(
-                    runtime.terminal_sessions[pane]
-                        .test_written_lines()
-                        .is_empty(),
-                    "a stale pane cannot deliver"
-                );
-                runtime.snapshot.ui_state.selected_pane_id = Some(pane.to_owned());
-                runtime.snapshot.terminal.attachments[0].following_bottom = Some(false);
-                runtime.dispatch_json(&key(b"\r"));
-                assert!(
-                    runtime.terminal_sessions[pane]
-                        .test_written_lines()
-                        .is_empty(),
-                    "return to prompt before handoff"
-                );
-                runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
-                runtime.dispatch_json(&key(b"\r"));
-                let lines = runtime.terminal_sessions[pane].test_written_lines();
-                assert_eq!(lines.len(), 2);
-                for (line, id) in lines.iter().zip(&expected) {
-                    let line: serde_json::Value = serde_json::from_str(line).unwrap();
-                    assert_eq!(
-                        live::decode_base64(line["bytes"].as_str().unwrap()).unwrap(),
-                        format!("\x1b[200~\"/tmp/{id}.png\"\x1b[201~").as_bytes()
-                    );
-                }
-                // Queue completion is not provider acceptance. Never append an automatic Enter.
-                runtime.dispatch_json(&key(b"\r"));
-                assert!(
-                    runtime.terminal_sessions[pane]
-                        .test_written_lines()
-                        .is_empty()
-                );
-                for id in &expected {
-                    let sent = crate::model::TerminalInputSent {
-                        id: 0,
-                        milliseconds: 1.0,
-                        attachment_id: Some((*id).to_owned()),
-                        outcome: if kind == "claude" && removed == "middle" { "failed" } else { "completed" }.to_owned(),
-                    };
-                    assert!(!runtime.ingest_terminal_input_sent(pane, 2, sent.clone()));
-                    assert!(runtime.ingest_terminal_input_sent(pane, 1, sent.clone()));
-                    assert!(!runtime.ingest_terminal_input_sent(pane, 1, sent));
-                }
-                assert!(runtime.snapshot.terminal.attachments[0].notice.is_none());
-                if kind == "claude" && removed == "middle" {
-                    assert!(runtime.snapshot.terminal.attachments[0].items.iter().all(|item| item.state == State::Failed && item.handoff_started && item.path.is_some()));
-                }
-                for _ in 0..100 {
-                    assert!(!runtime.dispatch_json(&event("viewport", "viewport", true)));
-                }
-                assert!(
-                    runtime.terminal_sessions[pane]
-                        .test_written_lines()
-                        .is_empty()
-                );
-                let chunks = runtime.snapshot.terminal.chunks.len();
-                runtime.dispatch_json(&key(b"\r"));
-                assert_eq!(
-                    runtime.snapshot.terminal.chunks.len(),
-                    chunks + 1,
-                    "the operator's later Enter retains the normal input path"
-                );
-                assert_eq!(
-                    live::decode_base64(
-                        &runtime
-                            .snapshot
-                            .terminal
-                            .chunks
-                            .last()
-                            .unwrap()
-                            .bytes_base64
-                    )
-                    .unwrap(),
-                    b"\r"
-                );
-                assert!(
-                    runtime.dispatch_json(&event("remove", expected[0], true)),
-                    "already handed off cannot be silently dismissed"
-                );
-                assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 2);
-                for id in ["capacity-one", "capacity-two", "overflow"] {
-                    runtime.dispatch_json(&event("stage", id, true));
-                }
-                assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 4);
-                assert!(runtime.snapshot.terminal.attachments[0].notice.as_ref().unwrap().contains("limit"));
-                for id in ["capacity-one", "capacity-two"] {
-                    runtime.dispatch_json(&event("remove", id, true));
-                }
-                runtime.dispatch_json(&event("stage", "cancel-loading", true));
-                assert!(runtime.dispatch_json(&event("remove", "cancel-loading", true)));
-                assert!(!runtime.dispatch_json(&event("prepared", "cancel-loading", true)));
-                runtime.retain_terminal_pane_state(|_| false);
-                assert!(runtime.snapshot.terminal.attachments.is_empty());
-                runtime.panes_closing.insert(pane.to_owned());
-                assert!(!runtime.dispatch_json(&event("prepared", "cancel-loading", true)));
-            }
-        }
     }
 
     /// D8: only the pane's detected kind permits an ordinary click report.

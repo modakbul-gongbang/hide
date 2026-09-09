@@ -130,40 +130,6 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
-    var onImageDrop: (([URL]) -> Void)?
-    var onImagePaste: ((NSPasteboard) -> Bool)?
-
-    // AppKit key equivalents can reach the terminal without invoking paste(_:),
-    // particularly with a TUI keyboard protocol active. Own image Command+V at
-    // both responder entrypoints; non-image chords retain the inherited path.
-    private func captureImagePaste(_ event: NSEvent) -> Bool {
-        guard event.type == .keyDown,
-              event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "v" else { return false }
-        return onImagePaste?(NSPasteboard.general) == true
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if window?.firstResponder === self, captureImagePaste(event) { return true }
-        return super.performKeyEquivalent(with: event)
-    }
-
-    override func paste(_ sender: Any) {
-        guard onImagePaste?(NSPasteboard.general) != true else { return }
-        super.paste(sender)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ? .copy : []
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              !urls.isEmpty, let onImageDrop else { return false }
-        onImageDrop(urls)
-        return true
-    }
-
     var onOrdinaryClick: ((Int, Int, Int) -> Void)?
 
     /// SwiftTerm cannot see this shell's design system, so it hands the bar
@@ -225,7 +191,6 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     }
 
     override func interpretKeyEvents(_ eventArray: [NSEvent]) {
-        if eventArray.count == 1, let event = eventArray.first, captureImagePaste(event) { return }
         composingAtEvent = hasMarkedText()
         plainBackspaceEvent = eventArray.contains { event in
             event.type == .keyDown

@@ -5,18 +5,16 @@ struct HideIconButton: View {
     enum Variant: CaseIterable {
         case standard
         case toolbar
-        /// A persistent contrasting action over arbitrary image content.
-        case imageOverlay
 
         var size: CGSize {
             switch self {
-            case .standard, .imageOverlay: HideTheme.IconButton.standardSize
+            case .standard: HideTheme.IconButton.standardSize
             case .toolbar: HideTheme.IconButton.toolbarSize
             }
         }
 
         var fontSize: CGFloat {
-            self == .toolbar ? HideTheme.Typography.caption : HideTheme.Typography.body
+            self == .standard ? HideTheme.Typography.body : HideTheme.Typography.caption
         }
     }
 
@@ -82,21 +80,16 @@ private struct HideIconButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(color ?? (variant == .imageOverlay || isSelected || (isEnabled && isHovering) ? HideTheme.primary : HideTheme.secondary))
+            .foregroundStyle(color ?? (isSelected || (isEnabled && isHovering) ? HideTheme.primary : HideTheme.secondary))
             .frame(width: variant.size.width, height: variant.size.height)
             .background {
                 RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                    .fill(variant == .imageOverlay ? HideTheme.background
-                        : (variant == .standard ? HideTheme.elevated : Color.clear))
+                    .fill(variant == .standard ? HideTheme.elevated : Color.clear)
                 RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
                     .fill(HideTheme.primary.opacity(
                         isSelected ? HideTheme.Opacity.selectedFill
                             : (isEnabled && isHovering ? HideTheme.Opacity.subtleFill : 0)
                     ))
-                if variant == .imageOverlay {
-                    RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-                        .strokeBorder(HideTheme.secondary, lineWidth: HideTheme.Layout.hairlineWidth)
-                }
             }
             .contentShape(Rectangle())
             .hideControlFocus(cornerRadius: HideTheme.radiusMedium)

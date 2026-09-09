@@ -1047,8 +1047,7 @@ The event monitor observes and returns key events.
 Callers provide the symbol, help text, action, optional selection state, and a role; they do not add size, padding, foreground, background, or button-style overrides.
 `standard` uses `HideTheme.IconButton.standardSize` (32×32pt) with an elevated resting surface.
 `toolbar` uses `HideTheme.IconButton.toolbarSize` (24×24pt) with a transparent resting surface, fitting the 28pt pane header and 32pt tab strip.
-`imageOverlay` uses the standard 32×32pt hit area with a primary icon, opaque background surface and secondary hairline border so arbitrary thumbnail pixels cannot obscure the action.
-All use `radiusMedium`; icon typography is `body` for standard/imageOverlay and `caption` for toolbar, independently of the hit area.
+Both use `radiusMedium`; icon typography is `body` for standard and `caption` for toolbar, independently of the hit area.
 Hover raises foreground contrast and adds `Opacity.subtleFill`; selection uses `Opacity.selectedFill` and the accessibility selected trait.
 Press uses `Opacity.secondary`; disabled uses `Opacity.disabled`, suppresses hover emphasis, and delegates activation blocking to the native Button.
 Hover state stays local to each button; repeated identical hover events publish no state changes, and no runtime dispatch or new timer is added.
@@ -1258,139 +1257,12 @@ These few user-outcome tests retain no mock call graph or exact view hierarchy c
 The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
 Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.
 
-## Local image attachment shelf
+## Terminal image attachment boundary
 
-### Required bidirectional composer behavior
-
-The acceptance criterion is one attachment represented in the native provider composer and the Hide thumbnail grid.
-A valid drop or image paste prepares its private copy and requests attachment immediately, without an Attach action or an extra Enter.
-Native attachment confirmation makes that same image visible in both surfaces; preparation and unconfirmed delivery remain explicit intermediate states.
-Backspace/Delete in the provider composer removes the corresponding Hide thumbnail after an authoritative native change.
-Removing a Hide thumbnail requests removal of exactly that provider attachment, preserving typed text, cursor semantics and every other attachment.
-Submission uses ordinary Enter after native readiness; Enter is not an attachment-delivery action.
-First/middle/last removal, repeated identical images, native undo/history restoration and concurrent edits must retain exact identity.
-A pane switch never redirects an in-flight operation to another composer, and a submitted or replaced draft cannot receive a stale operation.
-The existing square grid and bottom/scroll-away chip layout remain the presentation contract.
-
-The provider composer owns accepted attachment membership.
-Hide owns preparation and operation intent, and renders the provider-confirmed attachment set rather than inferring it from terminal characters or its own writes.
-A transport completion is not attachment confirmation, and a Backspace key is not proof of which object the provider removed.
-
-The required integration capabilities below are an upstream contract gap, not available Herdr methods or a proposed terminal escape sequence:
-
-| Required capability | Caller-observable guarantee |
-| --- | --- |
-| Composer identity, revision and ordered attachment snapshot | Hide can identify the active editable draft and recover the complete current membership after reconnect |
-| Idempotent attachment request correlated with a Hide intent | Native acceptance returns a stable attachment ID; retry does not create another image |
-| Exact removal by native attachment ID | Repeated removal converges, preserves prompt text and other images, and rejects a replaced composer |
-| Ordered native membership changes | Native Backspace/Delete, undo, clear, paste, history restore and submission update Hide without screen parsing |
-| Snapshot/event resynchronization | Lost or reordered notifications cannot silently leave the two surfaces divergent |
-| Native readiness and resource-release lifecycle | Submission cannot race asynchronous image loading, and private copies survive until the provider releases them |
-
-Herdr can relay these capabilities only when the provider exposes them; terminal viewport and PTY bytes do not create composer authority.
-Provider adapters remain narrow and selected from authoritative agent metadata, with explicit unsupported capability results.
-The feature is not accepted for a provider until its real native composer and Hide grid pass bidirectional removal, duplicate/retry and draft-replacement checks.
-Mocks of a hypothetical provider contract cannot establish that capability.
-
-### Current implementation and acceptance gap
-
-The current pinned-provider integration supports image-path handoff and local cancellation before handoff.
-It does not expose native composer membership changes or exact attachment-ID removal.
-Its first-Enter delivery and retained unconfirmed receipts, described below, are existing behavior and do not meet the required bidirectional contract above.
-The new acceptance criterion supersedes approval of that interaction as the final UX.
-An implementation revision must remove that Enter interception and obsolete local-only attachment behavior together with the replacement integration.
-Changing only automatic delivery would leave the native-deletion defect unresolved.
-
-Local image drag and Command+V into the active terminal are two ingress adapters to one core attachment lifecycle and native private-file service.
-A drag focuses its actual receiving pane; paste targets the terminal first responder.
-Image paste is captured at the terminal's Command+V key-equivalent and direct key-down entrypoints as well as the Paste action, using the OS pasteboard's image/file-URL types.
-Only an image paste is consumed there, so a provider's keyboard protocol cannot bypass the attachment ingress.
-Plain text and non-image paste retain the existing SwiftTerm paste path without rewriting bytes.
-An image item may offer alternative bitmap/text representations of the same image; it becomes one intent.
-Separate mixed image and non-image clipboard items are refused with an explicit shelf reason and no terminal input, so text cannot silently disappear.
-Invalid advertised image data also stays in the attachment failure path rather than becoming pasted text.
-File-URL image paste uses the same validation and byte-preserving copy path as drop.
-Screenshot/bitmap paste validates decoded dimensions, normalizes to a private PNG and uses the same preview and lifetime service.
-
-A valid preparation stays pending in Hide so each X can cancel its exact stable intent before any provider input occurs.
-The first Enter in the active, bottom-following terminal hands off the remaining images through the existing ordered writer, without submitting the prompt.
-There is no separate Attach action and no automatic Enter after delivery.
-The operator checks the native image indicators, then presses Enter again to submit through the ordinary terminal input path.
-In the pinned Claude fixture, image paths and Enter in the same input burst submitted the text before images finished preparing; the images appeared in the next composer.
-A separate deliberate Enter after the native indicators appeared submitted both images and the model identified their colors.
-No guessed delay or transport completion is used as a provider-readiness signal.
-Loading, invalid preparation, unknown viewport and a stale or inactive pane consume the first Enter with a visible reason and submit nothing.
-A pane switch preserves the pending intent and never triggers delivery.
-The handoff rechecks the provider identity selected from Herdr's agent metadata and refuses changed or unsupported providers and read-only/unavailable control.
-The operator checks the provider's native image indicator before submitting; writer completion alone cannot prove provider acceptance.
-No upload, provider-accepted checkmark or Image Sent claim is rendered.
-
-The Hide-owned shelf reserves layout space adjacent to the terminal bottom, never covers active input or pins anything into raw scrollback.
-The user's selected grid structure uses 72-point square previews, adaptive columns and existing small spacing, corner and surface tokens.
-Additional items accumulate across rows without stretching the squares.
-Each pending tile has a shared Remove icon control, preparation/transport indicator and filename/status tooltip with identical accessibility help.
-Once handoff starts, the tile becomes a retained transport receipt without an X; Hide cannot authoritatively cancel a native attachment at that point.
-Remove uses the persistent `imageOverlay` role, including its existing hover, press, keyboard focus and disabled feedback.
-A correlated removal or preparation failure is readable beneath the grid; ordinary handoff guidance appears once for the shelf.
-Removal failures show a short recovery instruction below the grid and retain the full provider reason in the shared tooltip/accessibility help.
-Filename/status labels include Korean and English; narrow geometry and complete tooltip/help text remain required native review surfaces.
-
-Expanded content requires both Herdr host viewport and SwiftTerm local viewport to follow bottom.
-Away or unknown state uses a compact pane-chrome count chip and Return to prompt.
-A drop or paste while scrolled away prepares images but keeps them pending under the collapsed chip.
-Return to prompt restores the viewport; the operator can then remove images or press Enter to hand them off.
-It never implies attachment to a visible offscreen composer.
-Return to prompt focuses terminal input, restores local bottom and sends the pinned control stream's empty-input scroll reset, without Enter or typed characters.
-The shelf expands after viewport confirmation.
-Capacity refusals and delivery/removal failures remain visible in the chip, with full shared tooltip/accessibility help.
-The collapsed chip also exposes an image-by-image Remove menu for pending intents, including when viewport observation fails.
-Removing all pending images restores ordinary Enter without submitting or discarding typed text.
-An observation retry starts from the current session event cursor, so a long-lived server with expired history does not permanently block the shelf.
-The contract has no composer rectangle, editable-mode guarantee or input-enabled state; viewport observations are not a substitute for those facts.
-
-Core intents own loading, pending, queued, handoff-unconfirmed and failed delivery states, plus a separate correlated removal error.
-The same stable ID cannot hand off twice; completion, duplicate preparation and removal retries converge without repeated terminal input.
-Ingress uses one monotonic request watermark per file service: repeated or older handling cannot create another attachment, including after local cancellation.
-Each intentional new drop or Command+V creates a new request, even when clipboard contents are unchanged.
-Multiple images keep their ingress order, including when preparations complete out of order.
-A writer completion means the control transport accepted a write to its input pipe, not that the PTY/provider accepted an image.
-Partial/failed writes never automatically retry and retain their private copies.
-
-Removing an image before handoff cancels that exact intent and releases its private files; late preparation cannot recreate it.
-After handoff starts, both verified provider adapters explicitly refuse synchronized removal because neither exposes stable attachment-ID removal and acknowledgement at the current boundary.
-The thumbnail and its private copy remain, including after repeated removal requests or manual editing inside the provider.
-The normal receipt guidance directs later edits to the native composer; a stale direct removal request still returns an explicit failure rather than silently dropping the copy.
-No guessed cursor movement, Delete/Backspace sequence, ANSI parsing or hidden receipt dismissal is used.
-Provider-native keyboard deletion exists, but its target depends on cursor position, selection and mutable composer order; replaying it cannot satisfy exact-ID removal or preserve arbitrary prompt text safely.
-Both pinned TUIs also export image placeholders through their external-editor workflow and remove attachments when those placeholders are removed.
-The exported draft contains display labels, not image paths or client intent IDs; it is not an attachment identity contract.
-Codex relabels the surviving images, so a repeated edit against the same display number can remove another image.
-Claude retains the numbers in the observed workflow, but the export still cannot associate an existing native attachment with a Hide intent authoritatively.
-
-Decoded local PNG/JPEG inputs are limited to 20 MiB and 40 million pixels.
-Clipboard bitmaps obey the same input/dimension limits and their normalized PNG must also fit 20 MiB.
-Other file formats, folders, empty, missing, oversized and undecodable inputs fail in the shelf.
-Outside-checkout files require an explicit operator drop/paste; originals are never changed.
-At most four images belong to one pane, with sixteen retained intents/copies across open panes.
-Preparation is serial and hands off only in ingress order; decoded clipboard bytes are released after preparation.
-Pane switching preserves state; pane close retires it and releases copies.
-Handed-off copies remain until pane close or application exit because provider byte-release lifecycle is unobservable.
-No attachment state is restored on app restart.
-
-Hide authoritatively mirrors only drag/paste intents that cross its boundary, private-copy state and ordered transport outcomes.
-Attachments/removals created wholly inside provider UI are unobservable until provider/Herdr exposes attachment events.
-The smallest synchronization contract needs a composer identity/revision, idempotent attach/remove keyed by a client intent, a stable native attachment ID and authoritative acknowledgement that preserves prompt text and other attachments.
-Safe byte release and sent receipts additionally need provider release/turn lifecycle and a semantic transcript anchor.
-These are missing capabilities, not proposed or assumed Herdr method names.
-
-Pinned interactive fixtures verify bracketed image paste and cursor-relative first/middle/last deletion for Codex 0.153.4 and Claude Code 2.1.265.
-Both retain the other native indicators and mixed Korean/English prompt text; Codex renumbers local markers and Claude retains marker numbers.
-Model color responses prove the remaining images for all Codex cases and Claude's first-image deletion case.
-Claude's other two submissions returned provider API failures, so their model image access remains unverified separately from the native composer observations.
-OS drop/paste geometry, actual Command+V dispatch and screen rendering remain distinct human QA boundaries.
-
-The detachable module map is `attachments.rs` for neutral state and provider adapter, `runtime/attachment_intents.rs` for transitions, `ImageAttachmentIngress.swift` for OS clipboard classification, `ImageAttachmentFiles.swift` for private resources, and `ImageAttachmentShelf.swift` for Hide presentation and terminal composition.
-Its few external hooks are OS drag/paste interception, typed core intent/snapshot, read-only viewport availability, one core Enter handoff port, and the existing ordered writer completion/retirement port.
-`viewport.rs` reads generated scroll contracts through `wire.rs`; `TerminalViewportSignal.swift` reads SwiftTerm public viewport state and publishes only bottom transitions.
-No attachment knowledge is added to SwiftTerm rendering or ANSI parsing, and no provider TUI is patched.
-The ordinary core key handler delegates only a canonical single Enter to the attachment module; all other bytes preserve their existing path.
+Hide does not provide a terminal image shelf or intercept image drag/paste and Enter for attachment delivery.
+Terminal paste and keyboard input use the existing SwiftTerm and ordered-writer paths.
+Provider-native attachment behavior remains owned by the provider; pasting a path is not proof of image acceptance.
+The former shelf was removed because it could not synchronize native attachment deletion or clear confirmed submissions reliably.
+Reintroducing this surface requires a supported provider contract for stable attachment identity, idempotent add/remove, native draft changes and accepted submission events.
+Both surfaces must reflect the same attachment membership, and the shelf must clear only after confirmed submission, preserving items on failure.
+PTY writes, key events and terminal viewport state cannot substitute for that contract.
