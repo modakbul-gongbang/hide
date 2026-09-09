@@ -813,7 +813,11 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         }];
 
-        let catalog = build_catalog(std::slice::from_ref(&registration), &spaces, &no_worktrees());
+        let catalog = build_catalog(
+            std::slice::from_ref(&registration),
+            &spaces,
+            &no_worktrees(),
+        );
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration.id);
@@ -838,7 +842,11 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let occupied = build_catalog(std::slice::from_ref(&registration), &[space], &no_worktrees());
+        let occupied = build_catalog(
+            std::slice::from_ref(&registration),
+            &[space],
+            &no_worktrees(),
+        );
         let released = build_catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
 
         assert_eq!(occupied[0].id, released[0].id);

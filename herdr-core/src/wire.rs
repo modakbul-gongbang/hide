@@ -166,11 +166,12 @@ fn convert_snapshot(snapshot: res::SessionSnapshot) -> (HostScope, u64, Projecti
 
 pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
     if let Some(kind) = value.get("type").and_then(Value::as_str)
-        && kind != "agent_list" {
-            return Err(malformed(format!(
-                "agent.list returned unexpected result type {kind:?}"
-            )));
-        }
+        && kind != "agent_list"
+    {
+        return Err(malformed(format!(
+            "agent.list returned unexpected result type {kind:?}"
+        )));
+    }
     let response: res::ResponseResult = serde_json::from_value(value)
         .map_err(|e| malformed(format!("agent.list response is malformed: {e}")))?;
     match response {
@@ -388,9 +389,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         ),
         ev::EventData::WorkspaceClosed { workspace_id, .. } => (
             "workspace_closed",
-            ReplicaEvent::WorkspaceClosed {
-                workspace_id,
-            },
+            ReplicaEvent::WorkspaceClosed { workspace_id },
         ),
         ev::EventData::WorkspaceRenamed {
             label,
@@ -429,9 +428,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         ),
         ev::EventData::WorkspaceFocused { workspace_id, .. } => (
             "workspace_focused",
-            ReplicaEvent::WorkspaceFocused {
-                workspace_id,
-            },
+            ReplicaEvent::WorkspaceFocused { workspace_id },
         ),
         ev::EventData::WorktreeCreated { workspace, .. } => (
             "worktree_created",

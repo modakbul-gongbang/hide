@@ -2072,10 +2072,7 @@ impl RusshRemoteClient {
         )
     }
 
-    async fn connect(
-        &self,
-        handler: KnownHostHandler,
-    ) -> RemoteResult<Handle<KnownHostHandler>> {
+    async fn connect(&self, handler: KnownHostHandler) -> RemoteResult<Handle<KnownHostHandler>> {
         let config = client::Config {
             inactivity_timeout: Some(SSH_OPERATION_TIMEOUT),
             keepalive_interval: Some(Duration::from_secs(5)),
@@ -2394,14 +2391,14 @@ pub(crate) struct RemoteTerminalProcess {
     shutdown: Box<dyn FnOnce() + Send>,
 }
 
+type RemoteTerminalParts = (
+    Box<dyn Read + Send>,
+    Option<Box<dyn Write + Send>>,
+    Box<dyn FnOnce() + Send>,
+);
+
 impl RemoteTerminalProcess {
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Box<dyn Read + Send>,
-        Option<Box<dyn Write + Send>>,
-        Box<dyn FnOnce() + Send>,
-    ) {
+    pub(crate) fn into_parts(self) -> RemoteTerminalParts {
         (self.reader, self.writer, self.shutdown)
     }
 }
@@ -3130,16 +3127,17 @@ impl RemotePtySession {
             .take();
         let mut first_error = None;
         if let Some(channel) = channel
-            && let Err(error) = self.runtime.block_on(channel.eof()) {
-                first_error = Some(remote_error(
-                    "remote-pty-close",
-                    &self.endpoint.pane_id,
-                    RemoteStage::Cleanup,
-                    format!("PTY EOF failed: {error}"),
-                    true,
-                    false,
-                ));
-            }
+            && let Err(error) = self.runtime.block_on(channel.eof())
+        {
+            first_error = Some(remote_error(
+                "remote-pty-close",
+                &self.endpoint.pane_id,
+                RemoteStage::Cleanup,
+                format!("PTY EOF failed: {error}"),
+                true,
+                false,
+            ));
+        }
         let session = self
             .session
             .lock()
@@ -3160,16 +3158,17 @@ impl RemotePtySession {
                 "PTY closed",
                 "en",
             ))
-                && first_error.is_none() {
-                    first_error = Some(remote_error(
-                        "remote-pty-close",
-                        &self.endpoint.pane_id,
-                        RemoteStage::Cleanup,
-                        error,
-                        true,
-                        false,
-                    ));
-                }
+            && first_error.is_none()
+        {
+            first_error = Some(remote_error(
+                "remote-pty-close",
+                &self.endpoint.pane_id,
+                RemoteStage::Cleanup,
+                error,
+                true,
+                false,
+            ));
+        }
         first_error.map_or(Ok(()), Err)
     }
 }
@@ -3535,6 +3534,10 @@ impl RemoteTunnelRegistry {
 
     pub fn len(&self) -> usize {
         self.leases.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.leases.is_empty()
     }
 }
 
@@ -4464,6 +4467,7 @@ mod tests {
             .unwrap();
         assert_eq!(released.descriptor.state, RemoteTunnelState::Closed);
         assert_eq!(registry.len(), 0);
+        assert!(registry.is_empty());
     }
 
     #[test]

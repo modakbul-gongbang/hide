@@ -45,7 +45,14 @@ mod tests {
     }
 }
 
-#[allow(dead_code)]
+// These types are generated from the pinned external schema. Their names,
+// defaults, and value layout follow that contract rather than local style.
+#[allow(
+    dead_code,
+    clippy::derivable_impls,
+    clippy::enum_variant_names,
+    clippy::large_enum_variant
+)]
 pub(crate) mod wire {
     pub mod request {
         include!(concat!(env!("OUT_DIR"), "/herdr_request.rs"));

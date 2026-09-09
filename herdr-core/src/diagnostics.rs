@@ -4,12 +4,18 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, SyncSender};
+#[cfg(not(test))]
+use std::sync::mpsc;
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[cfg(not(test))]
 const FILE_LIMIT: u64 = 1024 * 1024;
+#[cfg(not(test))]
 const LINE_LIMIT: usize = 64 * 1024;
 static SINK: OnceLock<Mutex<Option<DiagnosticSink>>> = OnceLock::new();
 
@@ -28,6 +34,7 @@ macro_rules! diagnostic {
     };
 }
 
+#[cfg(not(test))]
 pub(crate) fn install(state_path: &Path) -> io::Result<()> {
     let directory = state_path
         .parent()

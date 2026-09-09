@@ -9120,7 +9120,9 @@ impl Runtime {
                     // terminal.scroll takes. SGR has bits for shift, alt and
                     // control only, so command (bit 8) is dropped here on
                     // purpose: a TUI has no way to receive it.
-                    let flags = ((payload.modifiers & 1) * 4) | ((payload.modifiers & 2) * 8) | ((payload.modifiers & 4) * 2);
+                    let flags = ((payload.modifiers & 1) * 4)
+                        | ((payload.modifiers & 2) * 8)
+                        | ((payload.modifiers & 4) * 2);
                     let bytes =
                         format!("\x1b[<{flags};{column};{row}M\x1b[<{flags};{column};{row}m");
                     self.write_terminal_control(
@@ -9941,6 +9943,9 @@ impl Runtime {
         }
     }
 
+    // This keeps the lifecycle and diagnostic fields adjacent at the one
+    // failure boundary instead of splitting a correlated event into builders.
+    #[allow(clippy::too_many_arguments)]
     fn record_terminal_session_failure(
         &mut self,
         pane_id: &str,
@@ -9978,6 +9983,9 @@ impl Runtime {
         }));
     }
 
+    // The worker callback supplies each correlation field independently; a
+    // wrapper would only move this boundary without reducing its inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn ingest_terminal_session_spawn(
         &mut self,
         generation: u64,
@@ -13683,7 +13691,7 @@ mod tests {
 
         runtime.request_terminal_control("w-size:p1");
         assert!(
-            runtime.terminal_sessions.get("w-size:p1").is_none(),
+            !runtime.terminal_sessions.contains_key("w-size:p1"),
             "no session may be started for a pane with no reported size"
         );
         assert!(
