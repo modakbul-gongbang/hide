@@ -1226,12 +1226,11 @@ impl Drop for RusshApiConnection {
             "en",
         )) {
             crate::diagnostic!(serde_json::json!({
-                    "component": "remote_herdr_api",
-                    "kind": "disconnect.failed",
-                    "target": self.client.host.host_id,
-                    "message": error.to_string(),
-                })
-            );
+                "component": "remote_herdr_api",
+                "kind": "disconnect.failed",
+                "target": self.client.host.host_id,
+                "message": error.to_string(),
+            }));
         }
     }
 }
@@ -2501,13 +2500,12 @@ impl RemoteTerminalConnection {
             "en",
         )) {
             crate::diagnostic!(json!({
-                    "component": "remote_terminal_session",
-                    "kind": "disconnect.failed",
-                    "target": self.target_id,
-                    "pane_id": self.pane_id,
-                    "message": error.to_string(),
-                })
-            );
+                "component": "remote_terminal_session",
+                "kind": "disconnect.failed",
+                "target": self.target_id,
+                "pane_id": self.pane_id,
+                "message": error.to_string(),
+            }));
         }
     }
 }

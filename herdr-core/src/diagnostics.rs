@@ -23,7 +23,9 @@ struct DiagnosticSink {
 /// that is not JSON cannot be written; the sink never has to parse its input.
 #[macro_export]
 macro_rules! diagnostic {
-    ($value:expr) => { $crate::diagnostics::emit($value) };
+    ($value:expr) => {
+        $crate::diagnostics::emit($value)
+    };
 }
 
 pub(crate) fn install(state_path: &Path) -> io::Result<()> {

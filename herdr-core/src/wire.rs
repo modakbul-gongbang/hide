@@ -101,7 +101,9 @@ pub(crate) fn snapshot(
     Ok(convert_snapshot(snapshot))
 }
 
-pub(crate) fn snapshot_response(value: Value) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
+pub(crate) fn snapshot_response(
+    value: Value,
+) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
     decode_snapshot_response(value).map(convert_snapshot)
 }
 
@@ -110,17 +112,26 @@ pub(crate) fn snapshot_response(value: Value) -> Result<(HostScope, u64, Project
 pub(crate) fn cleanup_usage_paths(value: Value) -> Result<Vec<Option<String>>, SessionFetchError> {
     let snapshot = decode_snapshot_response(value)?;
     let mut paths = Vec::new();
-    for (cwd, foreground) in snapshot.panes.into_iter().map(|p| (p.cwd, p.foreground_cwd))
-        .chain(snapshot.agents.into_iter().map(|a| (a.cwd, a.foreground_cwd))) {
-        if cwd.is_none() && foreground.is_none() { paths.push(None); }
+    for (cwd, foreground) in snapshot
+        .panes
+        .into_iter()
+        .map(|p| (p.cwd, p.foreground_cwd))
+        .chain(
+            snapshot
+                .agents
+                .into_iter()
+                .map(|a| (a.cwd, a.foreground_cwd)),
+        )
+    {
+        if cwd.is_none() && foreground.is_none() {
+            paths.push(None);
+        }
         paths.extend(cwd.into_iter().chain(foreground).map(Some));
     }
     Ok(paths)
 }
 
-fn decode_snapshot_response(
-    value: Value,
-) -> Result<res::SessionSnapshot, SessionFetchError> {
+fn decode_snapshot_response(value: Value) -> Result<res::SessionSnapshot, SessionFetchError> {
     validate_snapshot(
         value
             .get("snapshot")
@@ -1225,8 +1236,16 @@ mod tests {
              "cwd":"/fixture/main", "foreground_cwd":"/fixture/linked/subdir"},
             {"pane_id":"w1:p2", "surface":{"kind":"terminal","attach":{"terminal_id":"fixture-terminal","protocol":HERDR_PROTOCOL_REVISION,"transport":"herdr_client","host":{"host_id":"fixture-host","session_id":"fixture"}}}, "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1}
         ]);
-        let paths = cleanup_usage_paths(json!({"type":"session_snapshot", "snapshot": value})).unwrap();
-        assert_eq!(paths, vec![Some("/fixture/main".into()), Some("/fixture/linked/subdir".into()), None]);
+        let paths =
+            cleanup_usage_paths(json!({"type":"session_snapshot", "snapshot": value})).unwrap();
+        assert_eq!(
+            paths,
+            vec![
+                Some("/fixture/main".into()),
+                Some("/fixture/linked/subdir".into()),
+                None
+            ]
+        );
     }
 
     #[test]

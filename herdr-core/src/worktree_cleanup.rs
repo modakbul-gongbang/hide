@@ -74,8 +74,10 @@ fn pane_paths(context: &LiveContext) -> Result<Vec<PathBuf>, String> {
         "session.snapshot",
         serde_json::json!({}),
     )?;
-    crate::wire::cleanup_usage_paths(response).map_err(|e| e.message().to_owned())?
-        .iter().map(|cwd| cwd.as_deref())
+    crate::wire::cleanup_usage_paths(response)
+        .map_err(|e| e.message().to_owned())?
+        .iter()
+        .map(|cwd| cwd.as_deref())
         .map(|cwd| {
             let path = cwd.ok_or("A live pane's folder is unknown. Resolve it before cleanup.")?;
             std::fs::canonicalize(path).map_err(|_| {
