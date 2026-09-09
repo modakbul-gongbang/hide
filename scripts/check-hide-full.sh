@@ -1,22 +1,44 @@
 #!/usr/bin/env bash
-# The four full-suite commands are the repository verification contract.
-# Keep the static boundary checks here so AC16 has one fail-closed entrypoint.
+# One fail-closed entrypoint that runs everything CI requires plus the local
+# gates CI cannot run. It is a superset of `verify` and `design-contract`, so a
+# green run here predicts both; the reverse is not true.
+#
+# Keep this list equal to `.github/workflows/pr.yml` and `design-contract.yml`.
+# `scripts/check-hide-design-enforcement.mjs` below fails when the workflow and
+# the checker binding drift apart.
 set -euo pipefail
+cd "$(dirname "$0")/.."
 mkdir -p /tmp/herdr-ide-verify
 exec > >(tee /tmp/herdr-ide-verify/hide-full.log) 2>&1
-cargo test --manifest-path herdr-core/Cargo.toml --target-dir /tmp/herdr-ide-verify/cargo
-cargo build --release --manifest-path herdr-core/Cargo.toml --target-dir /tmp/herdr-ide-verify/cargo
+
+# verify / rust and swift lanes
+cargo test --locked --manifest-path herdr-core/Cargo.toml --target-dir /tmp/herdr-ide-verify/cargo
+cargo build --release --locked --manifest-path herdr-core/Cargo.toml --target-dir /tmp/herdr-ide-verify/cargo
 swift build --package-path macos --scratch-path /tmp/herdr-ide-verify/swift
 swift test --package-path macos --scratch-path /tmp/herdr-ide-verify/swift
-bash scripts/check-capability-readers-off-lock.sh
-bash scripts/check-agent-asset-committed.sh
-bash scripts/check-harness-ignore-anchor.sh
-zsh scripts/check-herdr-pin-single-source.sh
-zsh scripts/check-herdr-contract.sh --schema-only
 bash scripts/check-right-panel-sections.sh
 bash scripts/check-shortcut-contract.sh
-bash scripts/check-hide-theme-literals.sh
-bash scripts/check-hide-components.sh
-bash scripts/check-hide-copy.sh 6b45c64
+
+# verify / repository invariants lane
+python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
+bash scripts/check-harness-ignore-anchor.sh
+bash scripts/check-agent-asset-committed.sh
+bash scripts/check-capability-readers-off-lock.sh
+bash scripts/check-terminal-row-cache.sh
+bash scripts/check-no-workstation-identity.sh
+bash scripts/check-git-worktree-presentation.sh
+bash scripts/check-git-worktree-states.sh
+bash scripts/check-worktree-base-policy.sh
+bash scripts/check-worktree-catalog-presentation.sh
+bash scripts/check-worktree-removal-boundary.sh
+zsh scripts/check-herdr-pin-single-source.sh
+zsh scripts/check-herdr-contract.sh --schema-only
+
+# design-contract workflow
+node scripts/check-design-contract.mjs
+node --test scripts/tests/design-controls.test.mjs
+
+# local only: DESIGN.md lint needs the network, and the enforcement checker
+# asserts the workflow still binds the commands above.
 node scripts/check-hide-design.mjs
 node scripts/check-hide-design-enforcement.mjs

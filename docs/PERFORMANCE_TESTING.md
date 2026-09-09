@@ -270,6 +270,7 @@ Inspect symbolication before calculating mutex-wait ratios; predominantly `???` 
 Long sampling windows under high load have failed to symbolicate in past runs; collect several short valid windows and report rejected windows too.
 State the denominator and thread when reporting a wait fraction, and distinguish waiting on the runtime mutex from time spent holding it.
 During idle observation, inspect snapshot publications, `rest` revisions, attach counts, and git subprocess activity rather than inferring no work from a static UI.
+`bash scripts/measure-git-section-idle.sh` drives that idle observation for the Git section against an isolated server and records the subprocess and publication counts the paragraph above asks for.
 Core diagnostics are mirrored in the app state directory's `Logs/core.jsonl`, with one previous 1 MiB file; copy both into the run evidence before rotation loses the relevant window.
 
 ### Memory and renderer replay
