@@ -1263,6 +1263,7 @@ A local image drop targets the terminal pane that received the OS drag, regardle
 The shelf is a pane-owned input/transport surface adjacent to the terminal bottom, never an overlay anchored to terminal cells or scrollback.
 Expanded content requires both Herdr host viewport and SwiftTerm local viewport to be following bottom.
 When either is away or unknown, a compact pane-chrome chip shows the actual pending/receipt count and Return to prompt, with removal and explicit failure help.
+Capacity refusals remain visible in the collapsed chip, with the complete reason available through the shared tooltip and accessibility help.
 A drop while scrolled back prepares the image but cannot deliver it until the viewport returns.
 The chip is a keyboard-accessible button that focuses the terminal, returns local scroll to bottom and requests Herdr's existing empty-input scroll reset without typing or pressing Enter.
 Hide waits for viewport confirmation before expanding; the provider-native composer indicator remains the only proof of a native attachment.

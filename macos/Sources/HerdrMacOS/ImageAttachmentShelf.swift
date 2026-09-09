@@ -91,7 +91,10 @@ struct ImageAttachmentShelf: View {
             }
             .buttonStyle(HideTextButtonStyle(appearance: .quiet))
             .hideTooltip("Return to prompt and focus terminal input")
-            if let failure = visible.first(where: { $0.state == "failed" }) {
+            if let notice = shelf.notice {
+                Text(notice).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning).lineLimit(1)
+                    .hideTooltip(notice)
+            } else if let failure = visible.first(where: { $0.state == "failed" }) {
                 Text(failure.message).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning).lineLimit(1)
                     .hideTooltip(failure.message)
             } else if let message = shelf.viewportMessage, shelf.followingBottom == nil {
