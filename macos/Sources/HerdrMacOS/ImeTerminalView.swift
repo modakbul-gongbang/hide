@@ -130,6 +130,19 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
+    var onImageDrop: (([URL]) -> Void)?
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty, let onImageDrop else { return false }
+        onImageDrop(urls)
+        return true
+    }
+
     var onOrdinaryClick: ((Int, Int, Int) -> Void)?
 
     /// SwiftTerm cannot see this shell's design system, so it hands the bar

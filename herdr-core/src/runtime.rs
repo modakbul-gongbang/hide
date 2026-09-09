@@ -1,3 +1,4 @@
+mod attachment_intents;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -1085,6 +1086,7 @@ enum ValidatedEvent {
     FileClose(FileTabPayload),
     FileDraft(FileDraftPayload),
     FileView(FileViewPayload),
+    Attachment(crate::attachments::Intent),
     FileSave(FileSavePayload),
     FileConflict(FileConflictPayload),
     UiStateUpdate(UiStateUpdatePayload),
@@ -1178,6 +1180,7 @@ pub struct Runtime {
     state_save_worker: Option<thread::JoinHandle<()>>,
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
+    attachment_support: attachment_intents::Support,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
     remote_file_transports: HashMap<String, RusshSftpTransport>,
@@ -1445,6 +1448,7 @@ impl Runtime {
             state_path,
             remote_targets,
             live: None,
+            attachment_support: Default::default(),
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),
             remote_file_transports: HashMap::new(),
@@ -3675,6 +3679,7 @@ impl Runtime {
         self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
         self.terminal_view_sizes.retain(|pane_id, _| keep(pane_id));
         self.panes_closing.retain(|pane_id| keep(pane_id));
+        self.retain_attachment_panes(&keep);
         before != self.terminal_state_len()
     }
 
@@ -3682,6 +3687,7 @@ impl Runtime {
     /// and so its sizes, stays known.
     fn retain_terminal_session_state(&mut self, keep: impl Fn(&str) -> bool) -> bool {
         let before = self.terminal_state_len();
+        let attachments_changed = self.release_attachment_transports(&keep);
         self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
         self.terminal_session_generations
             .retain(|pane_id, _| keep(pane_id));
@@ -3693,7 +3699,7 @@ impl Runtime {
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         self.panes_scrolled_before_size
             .retain(|pane_id| keep(pane_id));
-        before != self.terminal_state_len()
+        attachments_changed || before != self.terminal_state_len()
     }
 
     /// Every pane-keyed terminal map, counted together so a retain pass can
@@ -3709,6 +3715,7 @@ impl Runtime {
             + self.panes_awaiting_size.len()
             + self.panes_scrolled_before_size.len()
             + self.panes_closing.len()
+            + self.snapshot.terminal.attachments.len()
     }
 
     fn reconcile_remote_terminal_selection(&mut self) -> bool {
@@ -6936,6 +6943,7 @@ impl Runtime {
             return false;
         }
         let _ended_session = self.terminal_sessions.remove(pane_id);
+        self.release_attachment_transports(|id| id != pane_id);
         let attempt = self
             .terminal_session_lifecycles
             .get(pane_id)
@@ -8966,6 +8974,7 @@ impl Runtime {
                 self.persist_current_ui_state();
                 true
             }
+            ValidatedEvent::Attachment(payload) => self.handle_attachment(payload),
             ValidatedEvent::FileView(payload) => {
                 let Some(tab) = self
                     .snapshot
@@ -10208,6 +10217,7 @@ impl Runtime {
         if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;
         }
+        if let Some(changed) = self.attachment_transport_result(pane_id, &sent) { return changed; }
         self.append_terminal_chunk(pane_id.to_owned(), String::new());
         self.snapshot
             .terminal
@@ -10442,6 +10452,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_close" => decode!(FileTabPayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_view" => decode!(FileViewPayload, FileView),
+        "attachment" => decode!(crate::attachments::Intent, Attachment),
         "file_save" => decode!(FileSavePayload, FileSave),
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
@@ -12337,6 +12348,75 @@ mod tests {
         assert!(runtime.dispatch_json(&unrelated));
         assert_eq!(runtime.snapshot().ui_state.last_agent_kind, "codex");
         assert!(runtime.snapshot().ui_state.last_agent_bypass);
+    }
+
+    #[test]
+    fn image_attachment_intents_preserve_delivery_boundaries_and_retirement() {
+        use crate::attachments::State;
+        for kind in ["claude", "codex", "unknown"] {
+            let mut runtime = runtime();
+            let pane = "w-image:p1";
+            runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
+                workspace_id: "w-image".to_owned(), tab_id: "w-image:t1".to_owned(),
+                focused_pane_id: pane.to_owned(), zoomed: false,
+                root: PaneLayoutNodeSnapshot::Pane { pane_id: pane.to_owned() },
+            }];
+            runtime.terminal_sessions.insert(pane.to_owned(), TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control));
+            runtime.terminal_session_generations.insert(pane.to_owned(), 1);
+            let payload = serde_json::from_value(serde_json::json!({"agents": [{"pane_id": pane, "agent": kind, "state_change_seq": 1}]})).unwrap();
+            runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
+            let event = |action: &str, id: &str| serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "attachment", "payload": {
+                    "action": action, "id": id, "pane_id": pane, "name": "image.png", "path": "/tmp/private-image.png"
+                }
+            })).unwrap();
+            assert!(runtime.dispatch_json(&event("stage", "one")));
+            assert!(!runtime.dispatch_json(&event("stage", "one")));
+            if kind == "unknown" {
+                assert_eq!(runtime.snapshot.terminal.attachments[0].items[0].state, State::Failed);
+                runtime.dispatch_json(&event("send", "one"));
+                assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty());
+                continue;
+            }
+            assert!(runtime.dispatch_json(&event("prepared", "one")));
+            runtime.dispatch_json(&event("send", "one"));
+            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "unknown viewport cannot deliver");
+            runtime.snapshot.terminal.attachments[0].following_bottom = Some(false);
+            runtime.dispatch_json(&event("send", "one"));
+            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "scrolled-away prompt cannot receive an image");
+            runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
+            assert_eq!(runtime.snapshot.terminal.attachments[0].items[0].state, State::Ready);
+            assert!(runtime.terminal_sessions[pane].test_written_lines().is_empty(), "preparing never delivers");
+            assert!(runtime.dispatch_json(&event("send", "one")));
+            assert!(!runtime.dispatch_json(&event("send", "one")));
+            assert_eq!(runtime.snapshot.terminal.attachments[0].items[0].state, State::Queued);
+            let lines = runtime.terminal_sessions[pane].test_written_lines();
+            assert_eq!(lines.len(), 1);
+            let line: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+            assert_eq!(live::decode_base64(line["bytes"].as_str().unwrap()).unwrap(), b"\x1b[200~\"/tmp/private-image.png\"\x1b[201~");
+            let sent = crate::model::TerminalInputSent { id: 0, milliseconds: 1.0, attachment_id: Some("one".to_owned()), outcome: "completed".to_owned() };
+            assert!(!runtime.ingest_terminal_input_sent(pane, 2, sent.clone()), "stale transport cannot acknowledge");
+            assert!(runtime.ingest_terminal_input_sent(pane, 1, sent.clone()));
+            assert_eq!(runtime.snapshot.terminal.attachments[0].items[0].state, State::HandoffUnconfirmed);
+            assert!(!runtime.ingest_terminal_input_sent(pane, 1, sent));
+            assert!(!runtime.dispatch_json(&event("send", "one")));
+            assert!(runtime.dispatch_json(&event("remove", "one")));
+            assert!(!runtime.dispatch_json(&event("remove", "one")));
+            assert_eq!(runtime.snapshot.terminal.attachments[0].items[0].state, State::Dismissed, "copy stays valid until pane retirement");
+            for id in ["two", "three", "four", "five", "six"] { runtime.dispatch_json(&event("stage", id)); }
+            assert_eq!(runtime.snapshot.terminal.attachments[0].items.len(), 5);
+            assert!(runtime.snapshot.terminal.attachments[0].notice.is_some());
+            runtime.dispatch_json(&event("remove", "two"));
+            assert!(!runtime.dispatch_json(&event("prepared", "two")), "canceled decoder cannot resurrect an image");
+            runtime.dispatch_json(&event("prepared", "three"));
+            runtime.dispatch_json(&event("send", "three"));
+            assert!(runtime.retain_terminal_session_state(|_| false));
+            let released = runtime.snapshot.terminal.attachments[0].items.iter().find(|item| item.id == "three").unwrap();
+            assert_eq!(released.state, State::Failed);
+            assert!(released.message.contains("partial"));
+            runtime.retain_terminal_pane_state(|_| false);
+            assert!(runtime.snapshot.terminal.attachments.is_empty());
+        }
     }
 
     /// D8: only the pane's detected kind permits an ordinary click report.

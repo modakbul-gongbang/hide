@@ -9,6 +9,7 @@ struct TerminalHost: NSViewRepresentable {
     let textScale: CGFloat
     let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
+    var viewportSignal: TerminalViewportSignal? = nil
     /// False on a retained canvas that is not the one showing. The NSView is
     /// hidden then, which is what makes AppKit skip its display pass; the
     /// frame, and so the PTY size, is untouched.
@@ -51,7 +52,14 @@ struct TerminalHost: NSViewRepresentable {
                 weight: .regular
             )
         )
+        context.coordinator.viewportSignal = viewportSignal
+        viewportSignal?.observe(terminal)
         terminal.hidePaneID = paneID
+        terminal.registerForDraggedTypes([.fileURL])
+        terminal.onImageDrop = { [weak bridge] urls in
+            onFocus()
+            bridge?.stageImages(urls, paneID: paneID)
+        }
         terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
         terminal.terminalDisplayTick = { [weak coordinator = context.coordinator] period in
             TerminalLatency.displayPeriod(period, paneID: paneID)
@@ -102,6 +110,7 @@ struct TerminalHost: NSViewRepresentable {
                     TerminalLatency.begin(.receiveToDraw, paneID: paneID)
                 }
                 terminal.feed(byteArray: bytes[...])
+                viewportSignal?.observe(terminal)
                 // The caret advances on the next layout pass after a feed;
                 // keep an active composition overlay anchored to it.
                 DispatchQueue.main.async { [weak terminal] in
@@ -174,6 +183,7 @@ struct TerminalHost: NSViewRepresentable {
         var onOpenLink: @MainActor @Sendable (String) -> Void
         var registrationID: UUID?
         weak var terminal: TerminalView?
+        weak var viewportSignal: TerminalViewportSignal?
         private var settledSize = SettledTerminalSize()
         private var reportedFirstSize = false
         init(
@@ -198,6 +208,7 @@ struct TerminalHost: NSViewRepresentable {
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
             MainActor.assumeIsolated {
+                viewportSignal?.observe(source)
                 settledSize.report(cols: newCols, rows: newRows)
                 // This updates the frame guard only. It never resizes the PTY.
                 bridge.reportTerminalViewport(paneID: paneID, cols: newCols, rows: newRows, newView: !reportedFirstSize)
@@ -212,7 +223,9 @@ struct TerminalHost: NSViewRepresentable {
 
         func setTerminalTitle(source: TerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-        func scrolled(source: TerminalView, position: Double) {}
+        func scrolled(source: TerminalView, position: Double) {
+            MainActor.assumeIsolated { viewportSignal?.observe(source) }
+        }
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {

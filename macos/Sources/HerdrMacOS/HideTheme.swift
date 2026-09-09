@@ -82,6 +82,9 @@ enum HideTheme {
         static let headline: CGFloat = 17
         static let display: CGFloat = 30
     }
+    enum Attachment {
+        static let thumbnailSize: CGFloat = 40
+    }
     enum Editor {
         static let contentInset = spacingMD
         static let lineNumberColumnWidth: CGFloat = 44

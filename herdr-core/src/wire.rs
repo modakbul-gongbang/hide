@@ -1355,3 +1355,36 @@ mod tests {
         assert!(agents_response(value).is_err());
     }
 }
+
+/// Pane-scoped viewport subscription, distinct from sequenced topology events.
+pub(crate) fn viewport_subscription_params(pane_id: &str) -> Result<Value, String> {
+    params(req::EventsSubscribeParams {
+        after_sequence: 0,
+        subscriptions: vec![req::Subscription::PaneScrollChanged { pane_id: pane_id.to_owned() }],
+    })
+}
+
+pub(crate) fn viewport_target_params(pane_id: &str) -> Result<Value, String> {
+    params(req::PaneTarget { pane_id: pane_id.to_owned() })
+}
+
+pub(crate) fn viewport_response(value: Value, pane_id: &str) -> Result<bool, String> {
+    let response: res::ResponseResult = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    match response {
+        res::ResponseResult::PaneInfo { pane } if pane.pane_id == pane_id => pane.scroll
+            .map(|scroll| scroll.offset_from_bottom == 0)
+            .ok_or_else(|| "Herdr did not supply terminal viewport state.".to_owned()),
+        _ => Err("Viewport response did not identify the requested pane.".to_owned()),
+    }
+}
+
+pub(crate) fn viewport_event(line: &str, pane_id: &str) -> Result<bool, String> {
+    use crate::herdr_contract::wire::subscription_event as sub;
+    let envelope: sub::SubscriptionEventEnvelope = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    match envelope.data {
+        sub::SubscriptionEventData::ScrollChangedEvent(event)
+            if envelope.event == sub::SubscriptionEventKind::PaneScrollChanged && event.pane_id == pane_id =>
+                Ok(event.scroll.offset_from_bottom == 0),
+        _ => Err("Viewport event did not identify the requested pane.".to_owned()),
+    }
+}

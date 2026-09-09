@@ -1782,7 +1782,7 @@ impl TerminalSession {
     }
 }
 
-fn monotonic_ns() -> u64 {
+pub(crate) fn monotonic_ns() -> u64 {
     let mut time = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -1882,6 +1882,7 @@ fn spawn_terminal_control_writer(
                         monotonic_ns().saturating_sub(trace.started_ns) as f64 / 1_000_000.0;
                     let sent = crate::model::TerminalInputSent {
                         id: trace.id,
+                        attachment_id: trace.attachment_id,
                         milliseconds: elapsed,
                         outcome: if result.is_ok() {
                             "completed"

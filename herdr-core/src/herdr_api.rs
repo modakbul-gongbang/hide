@@ -209,6 +209,8 @@ pub(crate) struct Subscription {
 }
 
 impl Subscription {
+    pub(crate) fn read_timeout(&self, timeout: Duration) -> Result<(), ApiError> { self.reader.get_ref().set_read_timeout(Some(timeout)) }
+
     pub fn into_parts(self) -> (Box<dyn BufRead + Send>, Box<dyn ConnectionShutdown>) {
         (Box::new(self.reader), self.shutdown)
     }
@@ -271,17 +273,17 @@ pub(crate) fn subscribe_with_connector(
     subscriptions: &[&str],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
+    subscribe_params(connector, crate::wire::subscription_params(after_sequence, subscriptions)
+        .map_err(ApiError::Malformed)?, timeout)
+}
+
+pub(crate) fn subscribe_params(
+    connector: &dyn ApiConnector, params: Value, timeout: Duration,
+) -> Result<Subscription, ApiError> {
     let mut stream = connector.connect()?;
     stream.set_write_timeout(Some(timeout))?;
     let request_id = "herdr-core:events.subscribe";
-    write_request(
-        stream.as_mut(),
-        request_id,
-        "events.subscribe",
-        crate::wire::subscription_params(after_sequence, subscriptions)
-            .map_err(ApiError::Malformed)?,
-    )?;
-
+    write_request(stream.as_mut(), request_id, "events.subscribe", params)?;
     let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
     let result = response_result(response, request_id)?;
     let ack: SubscriptionStarted = serde_json::from_value(result).map_err(|error| {

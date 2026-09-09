@@ -1948,14 +1948,11 @@ private struct HideTabCanvas: View {
                         onFork: { model.forkPaneFromHeader(pane.id) },
                         onOpenPort: { model.openPanePort($0) }
                     ) {
-                        TerminalHost(
-                            bridge: model.core,
-                            paneID: pane.id,
-                            textScale: model.textScale(for: pane.id),
+                        AttachmentTerminalContent(
+                            paneID: pane.id, textScale: model.textScale(for: pane.id),
                             onFocus: { model.focusPane(pane.id) },
                             onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                         )
-                        .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
                     }
                 }
             } else {

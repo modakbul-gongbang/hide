@@ -1257,12 +1257,14 @@ struct CoreTerminalSnapshot: Decodable {
     let closed: Bool
     let exitCode: Int32?
     let panes: [CoreTerminalPaneSnapshot]
+    var attachments: [CoreAttachmentShelf]? = nil
 
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
         case closed
         case exitCode = "exit_code"
         case panes
+        case attachments
     }
 }
 
@@ -1968,6 +1970,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var pendingTerminalBytes = PendingTerminalBuffer<TerminalDelivery>()
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
+    private lazy var attachmentFiles = ImageAttachmentFiles()
     private var pendingFileSave: Task<Void, Never>?
     private var pendingFileSavePayload: [String: Any]?
     private var commandDevice = CommandDevice.local
@@ -2781,6 +2784,19 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_close", payload: ["tab_id": tabID])
     }
 
+    func stageImages(_ urls: [URL], paneID: String) {
+        attachmentFiles.stage(urls, paneID: paneID, bridge: self)
+    }
+
+    func attachmentAction(_ action: String, paneID: String, id: String, name: String? = nil,
+                          path: String? = nil, error: String? = nil) {
+        var payload: [String: Any] = ["action": action, "pane_id": paneID, "id": id]
+        if let name { payload["name"] = name }
+        if let path { payload["path"] = path }
+        if let error { payload["error"] = error }
+        dispatch(kind: "attachment", payload: payload)
+    }
+
     func setFileView(tabID: String, preview: Bool, wrap: Bool) {
         dispatch(kind: "file_view", payload: ["tab_id": tabID, "markdown_preview": preview, "wrap": wrap])
     }
@@ -3164,6 +3180,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
         let previousFocusedPaneID = snapshot?.focusedPaneID
         snapshot = decoded
+        attachmentFiles.reconcile(decoded.terminal.attachments ?? [], bridge: self)
         bridgeError = routingError
             ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             ?? startupDiagnostic

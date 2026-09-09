@@ -692,6 +692,7 @@ pub struct TerminalSnapshot {
     pub closed: bool,
     pub exit_code: Option<i32>,
     pub panes: Vec<TerminalPaneSnapshot>,
+    pub attachments: Vec<crate::attachments::Shelf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -705,16 +706,20 @@ pub struct TerminalChunk {
     pub input_sent: Option<TerminalInputSent>,
 }
 
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct TerminalInputTrace {
     pub id: u64,
     pub started_ns: u64,
+    #[serde(default)]
+    pub attachment_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalInputSent {
     pub id: u64,
     pub milliseconds: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment_id: Option<String>,
     pub outcome: String,
 }
 
@@ -1611,6 +1616,7 @@ impl Snapshot {
                 closed: false,
                 exit_code: None,
                 panes: Vec::new(),
+                attachments: Vec::new(),
             },
             editor: EditorSnapshot {
                 tabs: Vec::new(),
@@ -1713,6 +1719,7 @@ pub struct RestSections {
     pub terminal_closed: bool,
     pub terminal_exit_code: Option<i32>,
     pub terminal_panes: Vec<TerminalPaneSnapshot>,
+    pub attachments: Vec<crate::attachments::Shelf>,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
@@ -1739,6 +1746,7 @@ impl RestSections {
             terminal_closed: snapshot.terminal.closed,
             terminal_exit_code: snapshot.terminal.exit_code,
             terminal_panes: snapshot.terminal.panes.clone(),
+            attachments: snapshot.terminal.attachments.clone(),
             ui_state: snapshot.ui_state.clone(),
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
@@ -1766,6 +1774,7 @@ impl RestSections {
             && self.terminal_closed == snapshot.terminal.closed
             && self.terminal_exit_code == snapshot.terminal.exit_code
             && self.terminal_panes == snapshot.terminal.panes
+            && self.attachments == snapshot.terminal.attachments
             && self.ui_state == snapshot.ui_state
             && self.ime == snapshot.ime
             && self.status == snapshot.status
@@ -1881,6 +1890,7 @@ impl<'a> RestWire<'a> {
                 closed: rest.terminal_closed,
                 exit_code: rest.terminal_exit_code,
                 panes: &rest.terminal_panes,
+                attachments: &rest.attachments,
             },
             ui_state: &rest.ui_state,
             ime: &rest.ime,
@@ -1896,4 +1906,5 @@ pub struct TerminalMetaWire<'a> {
     pub closed: bool,
     pub exit_code: Option<i32>,
     pub panes: &'a [TerminalPaneSnapshot],
+    pub attachments: &'a [crate::attachments::Shelf],
 }
