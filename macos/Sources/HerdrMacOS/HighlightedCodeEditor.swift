@@ -63,7 +63,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         textView.textColor = HideTheme.Native.primary
         textView.insertionPointColor = HideTheme.Native.primary
         Self.enableFindBar(on: textView)
-        let scrollView = NSScrollView()
+        let scrollView = CodeEditorScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
@@ -217,6 +217,23 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     }
 }
 
+/// AppKit can tile a horizontally growing text document underneath its ruler.
+/// Reserve the ruler's actual geometry in the clip view, including after wrap
+/// changes and find-bar layout, so horizontal scrolling never exposes covered text.
+final class CodeEditorScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        guard rulersVisible, hasVerticalRuler, let ruler = verticalRulerView else { return }
+        let frame = contentView.frame
+        let leading = max(frame.minX, ruler.frame.maxX)
+        let available = NSRect(
+            x: leading, y: frame.minY,
+            width: max(0, frame.maxX - leading), height: frame.height
+        )
+        if frame != available { contentView.frame = available }
+    }
+}
+
 final class CodeLineNumberRulerView: NSRulerView {
     private weak var textView: NSTextView?
     var fontSize: CGFloat
@@ -297,7 +314,9 @@ final class CodeLineNumberRulerView: NSRulerView {
                 withAttributes: attributes
             )
             let next = NSMaxRange(lineRange)
-            if next <= lineRange.location { break }
+            // At EOF without a newline NSString returns the same final line.
+            // Stop before asking for that range again or drawing never ends.
+            if next <= lineRange.location || next >= content.length { break }
             lineRange = content.lineRange(for: NSRange(location: next, length: 0))
             lineNumber += 1
         }

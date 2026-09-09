@@ -1236,6 +1236,8 @@ The core owns mode and source wrapping per open file tab; another tab has indepe
 These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
 The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
 Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
+The native editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
+Core acknowledgement, switching file identity, and explicitly reloading a disk conflict settle that presentation buffer.
 
 Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.
 The document adds theme tokens for a 720-point readable width, 15-point Inter body and 5-point line spacing; Korean uses the font's native fallback and word wrapping.
@@ -1248,6 +1250,9 @@ Extended Markdown has no execution or plugin mechanism; unsupported syntax remai
 A parse failure displays the reason and original source; an empty document offers Edit.
 
 MarkdownDocumentTests checks rendered text, inert HTML/images and actual Inter Korean/English layout at two widths.
+Native editor tests check complete typed and autosaved content, final lines without a newline, and the first glyph remaining outside the line-number ruler across wrap changes and window widths.
+They exercise real AppKit layout and the core file-save boundary, and reproduced missing/reordered characters, a nonterminating EOF draw, and covered leading glyphs before the fixes.
+These few user-outcome tests retain no mock call graph or exact view hierarchy contract.
 The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
 Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.
 

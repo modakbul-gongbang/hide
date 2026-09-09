@@ -7,6 +7,38 @@ import Testing
 
 @Suite("Right panel presentation")
 struct RightPanelPresentationTests {
+    @Test @MainActor func firstEditorCharactersRemainVisibleBesideTheRuler() async throws {
+        let contents = "# Native document\n" + String(repeating: "English 한글 ", count: 60)
+        let host = NSHostingView(rootView: HighlightedCodeEditor(
+            text: .constant(contents), language: "markdown", isEditable: true, textScale: 1
+        ))
+        for (wraps, width) in [(false, 720.0), (true, 420.0), (false, 900.0), (true, 720.0)] {
+            host.rootView = HighlightedCodeEditor(
+                text: .constant(contents), language: "markdown", isEditable: true,
+                textScale: 1, wrapsLines: wraps
+            )
+            host.frame = NSRect(x: 0, y: 0, width: width, height: 480)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+            host.layoutSubtreeIfNeeded()
+            func text(in view: NSView) -> NSTextView? {
+                (view as? NSTextView) ?? view.subviews.lazy.compactMap { text(in: $0) }.first
+            }
+            let view = try #require(text(in: host))
+            let layout = try #require(view.layoutManager)
+            let container = try #require(view.textContainer)
+            layout.ensureLayout(for: container)
+            let first = layout.boundingRect(forGlyphRange: NSRange(location: 0, length: 1), in: container)
+                .offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
+            #expect(view.visibleRect.contains(first), "First character must not sit behind the ruler: glyph \(first), visible \(view.visibleRect), wraps \(wraps)")
+            let scroll = try #require(view.enclosingScrollView)
+            let ruler = try #require(scroll.verticalRulerView)
+            let glyphInHost = view.convert(first, to: host)
+            let rulerInHost = ruler.convert(ruler.bounds, to: host)
+            #expect(glyphInHost.minX >= rulerInHost.maxX, "The ruler must not overlay the first glyph: glyph \(glyphInHost), ruler \(rulerInHost), wraps \(wraps), clip \(scroll.contentView.frame) / \(scroll.contentView.bounds), document \(view.frame)")
+        }
+    }
+
     @Test @MainActor func lineNumberRulerDoesNotPaintOverTheDocument() throws {
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
         let scrollView = NSScrollView(frame: textView.frame)

@@ -5,6 +5,7 @@ struct EditorViewerOverlay: View {
     @EnvironmentObject private var model: ShellModel
     @State private var draft = ""
     @State private var draftTabID: String?
+    @State private var pendingDraftEcho: String?
     @State private var findRequest = 0
     @State private var notice: String?
 
@@ -18,6 +19,7 @@ struct EditorViewerOverlay: View {
             guard model.core.snapshot?.editor.activeTabID == target else { return }
             draftTabID = target
             draft = value
+            pendingDraftEcho = value
             model.core.updateDraft(value)
             model.core.scheduleFileSave(value)
         })
@@ -57,12 +59,23 @@ struct EditorViewerOverlay: View {
         .background(HideTheme.background)
         .accessibilityIdentifier("editor-viewer-overlay")
         .task(id: editor?.activeTabID) {
-            draft = editor?.contentsUTF8 ?? ""
-            draftTabID = editor?.activeTabID
+            if draftTabID != editor?.activeTabID {
+                draft = editor?.contentsUTF8 ?? ""
+                draftTabID = editor?.activeTabID
+                pendingDraftEcho = nil
+            }
             notice = nil
         }
         .onChange(of: editor?.contentsUTF8) { _, contents in
-            if let contents { draft = contents; draftTabID = editor?.activeTabID }
+            guard let contents else { return }
+            // The core can echo an earlier keystroke while AppKit already
+            // holds the next one. Keep that presentation buffer until the
+            // latest edit is acknowledged, without retaining an edit queue.
+            if draftTabID == editor?.activeTabID,
+               let pendingDraftEcho, contents != pendingDraftEcho { return }
+            draft = contents
+            draftTabID = editor?.activeTabID
+            pendingDraftEcho = nil
         }
 
     }
@@ -220,7 +233,10 @@ struct EditorViewerOverlay: View {
         VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
             Label("This file changed on disk. Your draft is preserved.", systemImage: "exclamationmark.triangle.fill")
             HStack {
-                Button("Reload disk version") { model.core.resolveConflict("reload") }
+                Button("Reload disk version") {
+                    pendingDraftEcho = nil
+                    model.core.resolveConflict("reload")
+                }
                     .buttonStyle(HideTextButtonStyle(appearance: .quiet))
                 Button("Keep editing") { model.core.resolveConflict("keep_editing") }
                     .buttonStyle(HideTextButtonStyle(appearance: .quiet))
