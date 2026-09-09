@@ -6,3 +6,9 @@ resolver = "3"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[profile.dev]
+# An agent worktree is built a few times and discarded, so an incremental
+# cache never repays what it costs; what it does instead is grow one cache
+# per worktree. See `Build Output Belongs To Its Worktree` in AGENTS.md.
+incremental = false
