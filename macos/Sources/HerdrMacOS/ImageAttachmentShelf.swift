@@ -43,8 +43,9 @@ struct ImageAttachmentShelf: View {
                         model.core.attachmentAction("remove", paneID: paneID, id: item.id)
                     }
                     if let removal = shelf.items.first(where: { $0.removalError != nil }), let reason = removal.removalError {
-                        Text("\(removal.name): \(reason)").hideFont(size: HideTheme.Typography.caption)
+                        Text("\(removal.name): Remove in the provider prompt. Hide cannot confirm removal.").hideFont(size: HideTheme.Typography.caption)
                             .foregroundStyle(HideTheme.warning).fixedSize(horizontal: false, vertical: true)
+                            .hideTooltip(reason)
                     } else if let failure = shelf.items.first(where: { $0.state == "failed" }) {
                         Text("\(failure.name): \(failure.message)").hideFont(size: HideTheme.Typography.caption)
                             .foregroundStyle(HideTheme.warning).fixedSize(horizontal: false, vertical: true)
@@ -122,7 +123,7 @@ struct ImageAttachmentGrid: View {
             ForEach(items) { item in
                 ZStack(alignment: .topTrailing) {
                     AttachmentThumbnail(path: item.path)
-                    HideIconButton(systemImage: "xmark", help: "Remove \(item.name) from prompt", variant: .toolbar) {
+                    HideIconButton(systemImage: "xmark", help: "Remove \(item.name) from prompt", variant: .imageOverlay) {
                         remove(item)
                     }
                 }

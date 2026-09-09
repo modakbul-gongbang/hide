@@ -1047,7 +1047,8 @@ The event monitor observes and returns key events.
 Callers provide the symbol, help text, action, optional selection state, and a role; they do not add size, padding, foreground, background, or button-style overrides.
 `standard` uses `HideTheme.IconButton.standardSize` (32×32pt) with an elevated resting surface.
 `toolbar` uses `HideTheme.IconButton.toolbarSize` (24×24pt) with a transparent resting surface, fitting the 28pt pane header and 32pt tab strip.
-Both use `radiusMedium`; icon typography is `body` for standard and `caption` for toolbar, independently of the hit area.
+`imageOverlay` uses the standard 32×32pt hit area with a primary icon, opaque background surface and secondary hairline border so arbitrary thumbnail pixels cannot obscure the action.
+All use `radiusMedium`; icon typography is `body` for standard/imageOverlay and `caption` for toolbar, independently of the hit area.
 Hover raises foreground contrast and adds `Opacity.subtleFill`; selection uses `Opacity.selectedFill` and the accessibility selected trait.
 Press uses `Opacity.secondary`; disabled uses `Opacity.disabled`, suppresses hover emphasis, and delegates activation blocking to the native Button.
 Hover state stays local to each button; repeated identical hover events publish no state changes, and no runtime dispatch or new timer is added.
@@ -1280,7 +1281,9 @@ The Hide-owned shelf reserves layout space adjacent to the terminal bottom, neve
 The user's selected grid structure uses 72-point square previews, adaptive columns and existing small spacing, corner and surface tokens.
 Additional items accumulate across rows without stretching the squares.
 Each tile has a shared Remove icon control, preparation/transport indicator and filename/status tooltip with identical accessibility help.
+Remove uses the persistent `imageOverlay` role, including its existing hover, press, keyboard focus and disabled feedback.
 A correlated removal or preparation failure is readable beneath the grid; ordinary handoff guidance appears once for the shelf.
+Removal failures show a short recovery instruction below the grid and retain the full provider reason in the shared tooltip/accessibility help.
 Filename/status labels include Korean and English; narrow geometry and complete tooltip/help text remain required native review surfaces.
 
 Expanded content requires both Herdr host viewport and SwiftTerm local viewport to follow bottom.
@@ -1306,6 +1309,10 @@ The thumbnail and its private copy remain, including after repeated removal requ
 The failure tells the operator to remove it in the native composer and explains why Hide cannot confirm that edit.
 No guessed cursor movement, Delete/Backspace sequence, ANSI parsing or hidden receipt dismissal is used.
 Provider-native keyboard deletion exists, but its target depends on cursor position, selection and mutable composer order; replaying it cannot satisfy exact-ID removal or preserve arbitrary prompt text safely.
+Both pinned TUIs also export image placeholders through their external-editor workflow and remove attachments when those placeholders are removed.
+The exported draft contains display labels, not image paths or client intent IDs; it is not an attachment identity contract.
+Codex relabels the surviving images, so a repeated edit against the same display number can remove another image.
+Claude retains the numbers in the observed workflow, but the export still cannot associate an existing native attachment with a Hide intent authoritatively.
 
 Decoded local PNG/JPEG inputs are limited to 20 MiB and 40 million pixels.
 Clipboard bitmaps obey the same input/dimension limits and their normalized PNG must also fit 20 MiB.
