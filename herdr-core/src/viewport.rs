@@ -24,8 +24,22 @@ pub(crate) fn watch(
     let stop = stopped.clone();
     std::thread::Builder::new().name(format!("pane-viewport-{pane_id}")).spawn(move || {
         let run = || -> Result<(), String> {
-            let subscription = herdr_api::subscribe_params(connector.as_ref(),
-                crate::wire::viewport_subscription_params(&pane_id)?, Duration::from_secs(3)).map_err(|e| e.to_string())?;
+            // The scroll subscription still validates the domain replay cursor.
+            // Cursor zero expires on long-lived servers. Bootstrap exactly as
+            // topology sync does, and retry one eviction race from a fresh snapshot.
+            let mut attempt = 0;
+            let subscription = loop {
+                if stop.load(Ordering::Acquire) { return Ok(()); }
+                let snapshot = herdr_api::request_with_connector(connector.as_ref(), "session.snapshot",
+                    serde_json::json!({}), Duration::from_secs(3)).map_err(|e| e.to_string())?;
+                let cursor = crate::wire::viewport_cursor(snapshot)?;
+                match herdr_api::subscribe_params(connector.as_ref(),
+                    crate::wire::viewport_subscription_params(&pane_id, cursor)?, Duration::from_secs(3)) {
+                    Ok(subscription) => break subscription,
+                    Err(error) if error.code() == Some("event_gap") && attempt == 0 => { attempt += 1; }
+                    Err(error) => return Err(error.to_string()),
+                }
+            };
             subscription.read_timeout(Duration::from_millis(500)).map_err(|e| e.to_string())?;
             // Subscribe before the snapshot so changes during the read remain queued.
             let initial = herdr_api::request_with_connector(connector.as_ref(), "pane.get",
@@ -79,12 +93,28 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
         let (finish, done) = mpsc::channel();
         let server = std::thread::spawn(move || {
+            let (mut bootstrap, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(bootstrap.try_clone().unwrap()).read_line(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+            // A long-lived server no longer retains cursor zero. This is the
+            // actual event_gap response, not a happy-path subscription stub.
+            if request["method"] != "session.snapshot" {
+                writeln!(bootstrap, "{}", json!({"id":request["id"],"error":{"code":"event_gap","message":"fetch session.snapshot and resubscribe after snapshot.event_sequence"}})).unwrap();
+                return;
+            }
+            writeln!(bootstrap, "{}", json!({"id":request["id"],"result":{"type":"session_snapshot","snapshot":{
+                "version":"fixture","protocol":crate::herdr_api::HERDR_PROTOCOL_REVISION,
+                "host":{"host_id":"fixture","session_id":"fixture"},"event_sequence":350096,
+                "workspaces":[],"tabs":[],"panes":[],"layouts":[],"agents":[],"lineage":[]
+            }}})).unwrap();
             let (mut events, _) = listener.accept().unwrap();
             let mut request = String::new();
             BufReader::new(events.try_clone().unwrap())
                 .read_line(&mut request)
                 .unwrap();
             assert!(request.contains("pane.scroll_changed") && request.contains("w1:p1"));
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&request).unwrap()["params"]["after_sequence"], 350096);
             writeln!(events, "{}", json!({"id":"herdr-core:events.subscribe","result":{"type":"subscription_started","host":{"host_id":"fixture","session_id":"fixture"},"sequence":0,"oldest_available_sequence":0}})).unwrap();
             let (mut get, _) = listener.accept().unwrap();
             request.clear();

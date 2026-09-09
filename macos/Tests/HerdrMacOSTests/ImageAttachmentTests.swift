@@ -8,6 +8,41 @@ import UniformTypeIdentifiers
 @Suite("Local image attachment resources", .serialized)
 @MainActor
 struct ImageAttachmentTests {
+    @Test func commandVPasteReachesImageIngressBeforeTerminalKeyboardEncoding() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.setData(Data("fixture bitmap".utf8), forType: .tiff)
+        let terminal = ImeTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
+        let window = NSWindow(contentRect: terminal.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = terminal
+        defer { window.contentView = nil }
+        #expect(window.makeFirstResponder(terminal))
+        var captured: [ImageAttachmentSource] = []
+        terminal.onImagePaste = { _ in
+            guard let images = ImageAttachmentClipboard.capture(board) else { return false }
+            captured += images
+            return true
+        }
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+            characters: "v", charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9))
+        for keyboardMode in ["", "\u{1b}[>31u"] {
+            terminal.feed(text: keyboardMode)
+            #expect(terminal.performKeyEquivalent(with: event), "Image paste must be owned before native TUI keyboard encoding")
+        }
+        #expect(captured.count == 2)
+        terminal.keyDown(with: event)
+        #expect(captured.count == 3, "Direct responder delivery must also capture the image")
+        #expect(window.makeFirstResponder(nil))
+        #expect(!terminal.performKeyEquivalent(with: event), "An inactive pane cannot steal image paste")
+        #expect(captured.count == 3)
+        #expect(window.makeFirstResponder(terminal))
+        board.clearContents()
+        board.setString("Keep 한글 prompt", forType: .string)
+        #expect(!terminal.performKeyEquivalent(with: event), "Text keeps its ordinary responder/menu paste path")
+        #expect(captured.count == 3)
+    }
+
     @Test(arguments: [0, 1, 2]) func dropPreparationAndExactRemovalRoundTripThroughTheCoreSnapshot(removedIndex: Int) async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("image-bridge-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

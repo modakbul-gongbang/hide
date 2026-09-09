@@ -418,7 +418,8 @@ A separate local viewport observation performs an O(1) public scroll-state read 
 It retains one Boolean pair, one weak view and at most one pending main-queue publication per terminal; unchanged state wakes no view consumer.
 Only that pane's shelf/chip and attachment composition observe this local signal.
 Because ordinary wheel history belongs to Herdr, the attachment feature also retains at most sixteen pane-scoped viewport observers until their panes close.
-Each observer opens the existing scoped scroll subscription and reads `pane.get` once at bootstrap; no recurring socket query, subprocess, provider parsing or work under the runtime mutex is added.
+Each observer reads `session.snapshot` for its retained event cursor, opens the existing scoped scroll subscription, and reads `pane.get` once at bootstrap.
+A cursor evicted during bootstrap permits one fresh-snapshot retry; a second failure is caller-visible, with no recurring socket query, subprocess, provider parsing or work under the runtime mutex.
 Reader cancellation is bounded by the 500 ms read timeout, and repeated numeric offsets while away publish no rest change.
 The generated `pane.scroll_changed` event is separate from sequenced topology events and is decoded only at `wire.rs`.
 Unknown/failed observation collapses the shelf and blocks handoff with an explicit notice; Return to prompt uses the existing ordered writer's empty-input reset and starts a fresh observation.
@@ -426,7 +427,9 @@ The core observes actual bottom transitions through the existing rest publicatio
 The core retains at most four visible images per pane and sixteen image intents/copies across live panes; late decoder results cannot recreate removed items.
 A single native decoder serializes bounded reads of at most 20 MiB plus one byte and ImageIO thumbnails of at most 192 pixels, rejecting inputs over 40 million pixels.
 This work and temporary-file cleanup run outside the core mutex and main-thread pointer path.
-Command+V adds one pasteboard type classification at the existing paste entrypoint, never per key or frame.
+Command+V image ownership is checked at AppKit key-equivalent, direct key-down and Paste entrypoints; consuming an image stops further routing of that event.
+Other keys perform only the modifier/key check, with no pasteboard read or publication.
+Plain text falls through to the existing responder path.
 At most five clipboard items are materialized so the fifth can report the four-image limit; each image has the same bounded validation/private-copy pipeline as drag.
 The OS pasteboard read is synchronous at the paste boundary; decode/conversion and file I/O remain on the serial decoder.
 Preparation releases its held clipboard data, while one request sequence watermark deduplicates ingress with constant retained state.
@@ -444,7 +447,8 @@ It is consumed as shelf state rather than appended as terminal bytes or a synthe
 
 `image_cancellation_precedes_explicit_handoff_and_preserves_other_input` observes first/middle/last cancellation, unchanged typed bytes, no delivery from preparation or pane switches, explicit ordered handoff without Enter, loading/away/unsupported refusals, separate queue/completion states, stale-generation refusal, partial-write retention, repeated-intent convergence, capacity and retirement.
 The resource regression checks private copy byte equality, unchanged originals, PNG/JPEG and clipboard TIFF conversion, image-versus-text/mixed clipboard routing, monotonic ingress deduplication after cancellation, actual adaptive grid row growth and invalid/oversized failures.
-The socket viewport regression observes a real subscription's initial state, 100 changing offsets, return and disconnect, checking that only bottom transitions and explicit failure reach its caller.
+The socket viewport regression starts with expired event history and observes initial state, 100 changing offsets, return and disconnect, checking that only bottom transitions and explicit failure reach its caller.
+The AppKit paste regression exercises image Command+V with ordinary and enhanced terminal keyboard modes, direct key-down delivery and text passthrough; clipboard validation remains covered through the real private-file service.
 `TerminalViewportSignalTests` uses an offscreen real AppKit terminal to check local history, 200 output feeds while away, return/focus, alternate buffer and 20,000 unchanged observations with no extra view publications.
 Native QA separately compares Claude's fixed composer and Codex's scrollable composer, rapid wheel/output, drop while away and pending persistence across pane switches.
 These native screen and load checks are required before claiming acceptance; an offscreen geometry fixture is not a screenshot of the candidate.

@@ -12436,6 +12436,10 @@ mod tests {
                     .unwrap(),
                     text
                 );
+                runtime.snapshot.terminal.attachments[0].following_bottom = None;
+                runtime.dispatch_json(&key(b"\r"));
+                assert!(runtime.snapshot.terminal.attachments[0].notice.as_ref().unwrap().contains("Remove"),
+                    "an unavailable viewport must expose cancellation as a recovery path");
                 assert!(runtime.dispatch_json(&event("remove", removed, true)));
                 assert!(!runtime.dispatch_json(&event("remove", removed, true)));
                 assert!(
@@ -12454,6 +12458,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                     expected
                 );
+                runtime.snapshot.terminal.attachments[0].following_bottom = Some(true);
                 if kind == "unknown" {
                     runtime.dispatch_json(&key(b"\r"));
                     assert!(
@@ -12468,6 +12473,13 @@ mod tests {
                             .unwrap()
                             .contains("failed")
                     );
+                    runtime.snapshot.terminal.attachments[0].following_bottom = None;
+                    for id in &expected { runtime.dispatch_json(&event("remove", id, true)); }
+                    let chunks = runtime.snapshot.terminal.chunks.len();
+                    runtime.dispatch_json(&key(b"\r"));
+                    assert_eq!(runtime.snapshot.terminal.chunks.len(), chunks + 1,
+                        "cancelling the remaining images restores Enter even while viewport is unavailable");
+                    assert_eq!(live::decode_base64(&runtime.snapshot.terminal.chunks.last().unwrap().bytes_base64).unwrap(), b"\r");
                     continue;
                 }
                 assert!(

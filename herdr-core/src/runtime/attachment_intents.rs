@@ -211,7 +211,7 @@ impl Runtime {
                 .get(pane_id)
                 .is_some_and(|state| state.0 && state.1)
         {
-            Some("Return to the prompt before adding these images. Nothing was submitted.")
+            Some("Return to prompt to add images, or use Remove to cancel them. Nothing was submitted.")
         } else if shelf.items.iter().any(|item| item.state == State::Loading) {
             Some("Images are still preparing. Press Enter again when ready; nothing was submitted.")
         } else if shelf
@@ -489,6 +489,11 @@ impl Runtime {
         if shelf.following_bottom == following && shelf.viewport_message == message {
             return false;
         }
+        crate::diagnostics::emit(serde_json::json!({
+            "component": "image_attachment", "kind": "attachment.viewport",
+            "pane_id": pane_id, "generation": generation, "following_bottom": following,
+            "message": message,
+        }));
         shelf.following_bottom = following;
         shelf.viewport_message = message;
         true

@@ -1357,11 +1357,15 @@ mod tests {
 }
 
 /// Pane-scoped viewport subscription, distinct from sequenced topology events.
-pub(crate) fn viewport_subscription_params(pane_id: &str) -> Result<Value, String> {
+pub(crate) fn viewport_subscription_params(pane_id: &str, after_sequence: u64) -> Result<Value, String> {
     params(req::EventsSubscribeParams {
-        after_sequence: 0,
+        after_sequence,
         subscriptions: vec![req::Subscription::PaneScrollChanged { pane_id: pane_id.to_owned() }],
     })
+}
+
+pub(crate) fn viewport_cursor(value: Value) -> Result<u64, String> {
+    decode_snapshot_response(value).map(|snapshot| snapshot.event_sequence).map_err(|e| e.message().to_owned())
 }
 
 pub(crate) fn viewport_target_params(pane_id: &str) -> Result<Value, String> {

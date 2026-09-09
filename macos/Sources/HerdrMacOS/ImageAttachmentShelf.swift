@@ -71,7 +71,7 @@ struct ImageAttachmentShelf: View {
         let pending = visible.filter { ["loading", "pending", "queued"].contains($0.state) }.count
         let failures = visible.filter { $0.state == "failed" }.count
         let receipts = visible.filter { $0.state == "handoff_unconfirmed" }.count
-        let label = [pending > 0 ? "\(pending) images pending" : nil,
+        let label = [pending > 0 ? "\(pending) \(pending == 1 ? "image" : "images") pending" : nil,
                      failures > 0 ? "\(failures) failed" : nil,
                      receipts > 0 ? "\(receipts) handoffs unconfirmed" : nil]
             .compactMap { $0 }.joined(separator: ", ")
@@ -104,6 +104,20 @@ struct ImageAttachmentShelf: View {
                     .hideTooltip(message)
             }
             Spacer(minLength: HideTheme.spacingXS)
+            if shelf.items.contains(where: { !$0.handoffStarted }) {
+                Menu {
+                    ForEach(shelf.items.filter { !$0.handoffStarted }) { item in
+                        Button("Remove \(item.name)") {
+                            model.core.attachmentAction("remove", paneID: paneID, id: item.id)
+                        }
+                    }
+                } label: {
+                    HideMenuChipLabel(title: "Remove", image: Image(systemName: "xmark"))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .hideTooltip("Remove a pending image without sending it, even when the viewport is unavailable")
+            }
 
         }
         .padding(.horizontal, HideTheme.spacingSM)

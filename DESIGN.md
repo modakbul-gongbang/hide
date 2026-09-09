@@ -1262,7 +1262,8 @@ Native screenshots remain necessary to approve toolbar spacing, font fallback an
 
 Local image drag and Command+V into the active terminal are two ingress adapters to one core attachment lifecycle and native private-file service.
 A drag focuses its actual receiving pane; paste targets the terminal first responder.
-Image paste is captured before ordinary terminal text handling, using the OS pasteboard's image/file-URL types.
+Image paste is captured at the terminal's Command+V key-equivalent and direct key-down entrypoints as well as the Paste action, using the OS pasteboard's image/file-URL types.
+Only an image paste is consumed there, so a provider's keyboard protocol cannot bypass the attachment ingress.
 Plain text and non-image paste retain the existing SwiftTerm paste path without rewriting bytes.
 An image item may offer alternative bitmap/text representations of the same image; it becomes one intent.
 Separate mixed image and non-image clipboard items are refused with an explicit shelf reason and no terminal input, so text cannot silently disappear.
@@ -1301,6 +1302,9 @@ It never implies attachment to a visible offscreen composer.
 Return to prompt focuses terminal input, restores local bottom and sends the pinned control stream's empty-input scroll reset, without Enter or typed characters.
 The shelf expands after viewport confirmation.
 Capacity refusals and delivery/removal failures remain visible in the chip, with full shared tooltip/accessibility help.
+The collapsed chip also exposes an image-by-image Remove menu for pending intents, including when viewport observation fails.
+Removing all pending images restores ordinary Enter without submitting or discarding typed text.
+An observation retry starts from the current session event cursor, so a long-lived server with expired history does not permanently block the shelf.
 The contract has no composer rectangle, editable-mode guarantee or input-enabled state; viewport observations are not a substitute for those facts.
 
 Core intents own loading, pending, queued, handoff-unconfirmed and failed delivery states, plus a separate correlated removal error.
