@@ -218,6 +218,13 @@ enum HideTheme {
 
     static let badgeHeight: CGFloat = 16
 
+    enum Control {
+        static let compactHeight: CGFloat = 24
+        static let regularHeight = formControlHeight
+        static let checkboxSize: CGFloat = 16
+        static let tabIndicatorHeight: CGFloat = 2
+    }
+
     enum IconButton {
         static let standardSize = CGSize(width: 32, height: 32)
         static let toolbarSize = CGSize(width: 24, height: 24)
@@ -225,6 +232,23 @@ enum HideTheme {
 
     /// Sizes that describe the window's three-column frame rather than the
     /// spacing and radius scale above, which any view may reach for.
+    enum Overview {
+        static let cleanupHeight: CGFloat = 560
+        static let railWidth: CGFloat = 64
+        static let laneInset: CGFloat = 12
+        static let laneSpacing: CGFloat = 14
+        static let nodeOffset: CGFloat = 28
+        static let nodeSize: CGFloat = 7
+        static let commitHeight: CGFloat = 28
+        static let workspaceHeight: CGFloat = 96
+        static let rowWidth: CGFloat = 236
+        static let selectedNodeSize: CGFloat = 16
+        static let graphLineWidth: CGFloat = 1.5
+        // Git lane categories, independent of agent lifecycle colors.
+        static let lanes = [agentWorking, color(for: "#B69AFF"), success, warning]
+        static func laneColor(_ lane: Int) -> Color { lanes[lane % lanes.count] }
+    }
+
     enum Layout {
         static let pullRequestPopoverWidth: CGFloat = 360
         static let hairlineWidth: CGFloat = 1

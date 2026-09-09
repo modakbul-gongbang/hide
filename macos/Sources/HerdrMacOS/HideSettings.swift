@@ -80,7 +80,7 @@ struct HideSettingsView: View {
                     Image(systemName: "xmark")
                         .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
                 }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                .buttonStyle(HideTextButtonStyle())
                 .hideTooltip("Close Settings")
                 .accessibilityLabel("Close Settings")
                 .accessibilityIdentifier("hide-settings-close")
@@ -112,17 +112,6 @@ enum HideSettingsTab: String, CaseIterable, Identifiable {
         }
     }
 
-    var systemImage: String {
-        switch self {
-        case .general: "slider.horizontal.3"
-        case .appearance: "paintbrush"
-        case .agents: "sparkles"
-        case .pet: "pawprint"
-        case .devices: "externaldrive.connected.to.line.below"
-        case .shortcuts: "command"
-        }
-    }
-
     /// One line under the title, so the pane says what it governs without a
     /// paragraph inside every group.
     var subtitle: String {
@@ -141,35 +130,15 @@ private struct HideSettingsTabBar: View {
     @Binding var selection: HideSettingsTab
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXXS) {
-            ForEach(HideSettingsTab.allCases) { tab in
-                let isSelected = tab == selection
-                Button { selection = tab } label: {
-                    HStack(spacing: HideTheme.spacingXS) {
-                        Image(systemName: tab.systemImage)
-                            .hideFont(size: HideTheme.Typography.caption, weight: .medium)
-                        Text(tab.title)
-                            .hideFont(size: HideTheme.Typography.body, weight: isSelected ? .semibold : .medium)
-                    }
-                    .foregroundStyle(isSelected ? HideTheme.primary : HideTheme.secondary)
-                    .padding(.horizontal, HideTheme.spacingMD)
-                    .padding(.vertical, HideTheme.spacingSM)
-                    .background(
-                        isSelected ? HideTheme.elevated : .clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                            .stroke(
-                                isSelected ? HideTheme.divider : .clear,
-                                lineWidth: HideTheme.Layout.hairlineWidth
-                            )
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("hide-settings-tab-\(tab.rawValue)")
-            }
+        HStack {
+            HideChoiceGroup(
+                label: "Settings section",
+                values: HideSettingsTab.allCases,
+                selection: $selection,
+                title: { $0.title },
+                appearance: .tabs,
+                identifier: { "hide-settings-tab-\($0.rawValue)" }
+            )
             Spacer(minLength: 0)
         }
         .padding(.horizontal, HideTheme.spacingXL)
@@ -289,6 +258,7 @@ struct HideSettingsNote: View {
 struct HideSettingsField: View {
     let placeholder: String
     @Binding var text: String
+    @FocusState private var isFocused: Bool
     var width: CGFloat?
     var height: CGFloat = HideTheme.settingsFieldHeight
     var onSubmit: () -> Void = {}
@@ -296,17 +266,12 @@ struct HideSettingsField: View {
     var body: some View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.plain)
-            .hideFont(size: HideTheme.Typography.body, design: .monospaced)
-            .foregroundStyle(HideTheme.primary)
             .labelsHidden()
             .onSubmit(onSubmit)
-            .padding(.horizontal, HideTheme.spacingSM)
+            .focused($isFocused)
+            .hideInputSurface(compact: true, focused: isFocused, design: .monospaced)
+            .accessibilityLabel(placeholder)
             .frame(width: width, height: height)
-            .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-            .overlay {
-                RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                    .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-            }
     }
 }
 
@@ -415,8 +380,9 @@ private struct HideAppearanceSettings: View {
                                 }
                                 .contentShape(Circle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(HideInteractiveButtonStyle())
                         .accessibilityLabel("Accent \(hex)")
+                        .accessibilityAddTraits(accentHex == hex ? .isSelected : [])
                     }
                     HideSettingsValue(text: accentHex)
                 }
@@ -430,6 +396,8 @@ private struct HideAppearanceSettings: View {
                         .labelsHidden()
                         .tint(accent)
                         .frame(width: 180)
+                        .accessibilityLabel("Interface font size")
+                        .accessibilityValue("\(Int(fontSize)) points")
                         .onChange(of: fontSize) { _, value in
                             model.updatePreferences(fontSize: value)
                         }
@@ -493,7 +461,6 @@ private struct HideCLIStatus: View {
 /// shortcut, and the URL scheme write, plus the shortcut itself.
 private struct HidePetSettings: View {
     @ObservedObject var model: ShellModel
-    @Environment(\.hideAccent) private var accent
     @State private var capturing = false
 
     private var pet: CorePetSnapshot? { model.core.pet }
@@ -508,9 +475,9 @@ private struct HidePetSettings: View {
                         set: { model.core.setPetVisible($0) }
                     )
                 )
-                .toggleStyle(.switch)
+                .toggleStyle(HideCheckboxStyle())
                 .labelsHidden()
-                .tint(accent)
+                .accessibilityLabel("Show pet")
                 .accessibilityIdentifier("pet-visible-toggle")
             }
             HideSettingsRow(label: "Toggle shortcut", showsDivider: petFootnote != nil) {
@@ -522,14 +489,16 @@ private struct HidePetSettings: View {
                         model.updatePetShortcut(hotkey.canonical)
                     }
                     .frame(width: 150, height: 24)
+                    .accessibilityLabel("Pet toggle shortcut")
+                    .accessibilityValue(pet?.shortcut ?? "Not set")
                     .accessibilityIdentifier("pet-shortcut-field")
                     Button(capturing ? "Cancel" : "Record") { capturing.toggle() }
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                        .buttonStyle(HideTextButtonStyle())
                     Button("Clear") {
                         capturing = false
                         model.updatePetShortcut(nil)
                     }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .buttonStyle(HideTextButtonStyle())
                     .disabled(pet?.shortcut == nil)
                 }
             }
@@ -623,7 +592,7 @@ private struct HideDeviceSettings: View {
         HStack {
             Spacer(minLength: 0)
             Button("Add device") { showAddDevice = true }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                 .accessibilityIdentifier("hide-settings-add-device")
         }
 
@@ -653,7 +622,7 @@ private struct HideDeviceSettings: View {
                     HStack {
                         Spacer(minLength: 0)
                         Button("Retry") { model.retryRemote() }
-                            .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                            .buttonStyle(HideTextButtonStyle())
                     }
                     .padding(.horizontal, HideTheme.spacingMD)
                     .padding(.vertical, HideTheme.spacingSM)
@@ -710,9 +679,9 @@ private struct HideDeviceRow: View {
                 Spacer(minLength: HideTheme.spacingSM)
                 if device.kind == "remote" {
                     Button("Test", action: onTest)
-                        .buttonStyle(HideToolbarButtonStyle(isProminent: false))
-                    Button("Remove", action: onRemove)
-                        .buttonStyle(HideDestructiveButtonStyle())
+                        .buttonStyle(HideTextButtonStyle())
+                    Button("Remove", role: .destructive, action: onRemove)
+                        .buttonStyle(HideTextButtonStyle())
                 }
             }
             .padding(.horizontal, HideTheme.spacingMD)
@@ -801,7 +770,7 @@ private struct HidePaneShortcutRow: View {
                 }
                 .accessibilityLabel("\(command.title) shortcut")
                 Button("Apply") { model.updateShortcut(command, raw: draft) }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .buttonStyle(HideTextButtonStyle())
             }
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.spacingSM)
@@ -830,23 +799,6 @@ private struct HidePaneShortcutRow: View {
     }
 }
 
-/// Removing a device is the one destructive action in Settings, so it is the
-/// one button allowed to carry the danger color.
-struct HideDestructiveButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-            .foregroundStyle(HideTheme.danger)
-            .padding(.horizontal, HideTheme.spacingSM)
-            .padding(.vertical, HideTheme.spacingSM)
-            .background(
-                HideTheme.danger.opacity(HideTheme.Opacity.selectedFill),
-                in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-            )
-            .opacity(configuration.isPressed ? HideTheme.Opacity.secondary : 1)
-    }
-}
-
 struct AddDeviceSheet: View {
     @ObservedObject var model: ShellModel
     @Environment(\.dismiss) private var dismiss
@@ -867,9 +819,11 @@ struct AddDeviceSheet: View {
             HideSettingsGroup(title: "Device") {
                 HideSettingsRow(label: "Label") {
                     HideSettingsField(placeholder: "mini", text: $label, width: 210)
+                        .accessibilityLabel("Device label")
                 }
                 HideSettingsRow(label: "SSH alias", showsDivider: false) {
                     HideSettingsField(placeholder: "my-mac-mini", text: $alias, width: 210)
+                        .accessibilityLabel("SSH alias")
                 }
             }
             .padding(.horizontal, HideTheme.spacingXL)
@@ -877,12 +831,12 @@ struct AddDeviceSheet: View {
             HStack(spacing: HideTheme.spacingSM) {
                 Spacer(minLength: 0)
                 Button("Cancel") { dismiss() }
-                    .buttonStyle(HideToolbarButtonStyle(isProminent: false))
+                    .buttonStyle(HideTextButtonStyle())
                 Button("Add") {
                     model.addDevice(label: label, alias: alias)
                     dismiss()
                 }
-                .buttonStyle(HideToolbarButtonStyle(isProminent: true))
+                .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canAdd)
                 .opacity(canAdd ? 1 : HideTheme.Opacity.dimmed)

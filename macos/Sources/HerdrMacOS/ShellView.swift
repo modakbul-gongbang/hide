@@ -695,7 +695,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HideInteractiveButtonStyle())
                 .accessibilityLabel("Focus \(kind) pane \(title) (\(paneID))")
 
                 if isZoomed {
@@ -733,7 +733,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                             )
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HideInteractiveButtonStyle())
                     .hideTooltip("Open http://localhost:\(String(port))")
                     .accessibilityLabel("Open port \(String(port)) for pane \(paneID)")
                 }
@@ -920,22 +920,21 @@ struct PanelHeader: View {
                     .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
             }
             Spacer(minLength: ShellMetrics.compactSpacing)
-            Text(trailing)
-                .hideFont(size: HideTheme.Typography.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if sections == nil {
+                Text(trailing)
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.secondary)
+                    .lineLimit(1)
+            }
             if let collapseAction {
-                Button(action: collapseAction) {
-                    Image(systemName: "sidebar.right")
-                        .frame(
-                            width: HideTheme.Layout.panelCollapseControlSize,
-                            height: HideTheme.Layout.panelCollapseControlSize
-                        )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(HideTheme.secondary)
-                .hideTooltip(collapseAccessibilityLabel ?? "Collapse panel", command: collapseCommand)
-                .accessibilityLabel(collapseAccessibilityLabel ?? "Collapse panel")
+                HideIconButton(
+                    systemImage: "sidebar.right",
+                    help: collapseAccessibilityLabel ?? "Collapse panel",
+                    accessibilityLabel: collapseAccessibilityLabel ?? "Collapse panel",
+                    variant: .toolbar,
+                    command: collapseCommand,
+                    action: collapseAction
+                )
                 .accessibilityIdentifier(collapseAccessibilityIdentifier ?? "collapse-panel")
             }
         }
@@ -944,7 +943,7 @@ struct PanelHeader: View {
     }
 }
 
-/// The right panel's section chooser. Both sections are always visible, so
+/// The right panel's section chooser. All sections are always visible, so
 /// the panel's structure is encoded in the control rather than hidden behind a
 /// menu the operator has to open to discover.
 private struct PanelSectionPicker: View {
@@ -952,27 +951,9 @@ private struct PanelSectionPicker: View {
     let select: (RightPanelSection) -> Void
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXXS) {
-            ForEach(RightPanelSection.allCases) { section in
-                let isActive = section == active
-                Button {
-                    select(section)
-                } label: {
-                    Label(section.title, systemImage: section.systemImage)
-                        .hideFont(size: HideTheme.Typography.body, weight: .medium)
-                        .foregroundStyle(isActive ? HideTheme.primary : HideTheme.secondary)
-                        .padding(.horizontal, HideTheme.spacingSM)
-                        .padding(.vertical, HideTheme.spacingXS)
-                        .background(
-                            RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                                .fill(isActive ? HideTheme.elevated : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("right-panel-section-\(section.rawValue)")
-                .accessibilityAddTraits(isActive ? [.isSelected] : [])
-            }
-        }
+        HideChoiceGroup(label: "Right panel section", values: RightPanelSection.allCases,
+                        selection: Binding(get: { active }, set: { select($0) }), title: { $0.title }, appearance: .tabs,
+                        identifier: { "right-panel-section-\($0.rawValue)" })
     }
 }
 
@@ -1057,147 +1038,5 @@ private struct PetStatus: View {
         }
         .padding(ShellMetrics.panelPadding)
         .accessibilityIdentifier("pet-status")
-    }
-}
-
-private struct RuntimeStatusCards: View {
-    @EnvironmentObject private var model: ShellModel
-
-    var body: some View {
-        VStack(spacing: HideTheme.spacingSM) {
-            BrowserStatusCard()
-            RemoteStatusCard()
-        }
-        .padding(HideTheme.spacingMD)
-        .background(HideTheme.background)
-    }
-}
-
-private struct BrowserStatusCard: View {
-    @EnvironmentObject private var model: ShellModel
-    private var receipt: BrowserRuntimeReceipt { model.browser.receipt }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-            HStack {
-                Label("Chrome", systemImage: "globe")
-                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                Spacer()
-                Text(receipt.phase.rawValue)
-                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                    .foregroundStyle(phaseColor(receipt.phase))
-            }
-            Text(receipt.currentTitle ?? receipt.message)
-                .hideFont(size: HideTheme.Typography.caption)
-                .lineLimit(2)
-            if let url = receipt.currentURL {
-                Text(url)
-                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            HStack {
-                Button("Open Browser") { model.browser.openOrFocus() }
-                    .disabled(receipt.phase == .loading || model.browser.profile != "default")
-                    .accessibilityIdentifier("chromux-open-default")
-                Button("Retry") { model.browser.refresh() }
-                    .disabled(receipt.phase == .loading)
-            }
-            .controlSize(.small)
-            if receipt.phase == .stale || receipt.phase == .failed || receipt.phase == .unavailable {
-                Text(receipt.message + " Last checked: " + receipt.checkedAt)
-                    .hideFont(size: HideTheme.Typography.micro)
-                    .foregroundStyle(HideTheme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(HideTheme.spacingSM)
-        .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
-        .accessibilityIdentifier("chromux-status-card")
-    }
-}
-
-private struct RemoteStatusCard: View {
-    @EnvironmentObject private var model: ShellModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-            HStack {
-                Label("mini", systemImage: "externaldrive.connected.to.line.below")
-                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                Spacer()
-                Text(model.remote.phase.rawValue)
-                    .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                    .foregroundStyle(phaseColor(model.remote.phase))
-            }
-            if model.remote.phase == .loading {
-                ProgressView("Connecting through SSH…")
-                    .controlSize(.small)
-            } else {
-                Text(model.remote.message)
-                    .hideFont(size: HideTheme.Typography.caption)
-                    .lineLimit(3)
-            }
-            if let workspace = model.remote.workspaces.first {
-                Label("\(workspace.label) · \(workspace.paneCount) pane(s)", systemImage: "rectangle.3.group")
-                    .hideFont(size: HideTheme.Typography.micro)
-                    .lineLimit(1)
-                Text("Remote inline editing is disabled. Use the attached remote terminal to modify files.")
-                    .hideFont(size: HideTheme.Typography.micro)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Button("Refresh mini") { model.remote.refreshMini() }
-                .controlSize(.small)
-                .disabled(model.remote.phase == .loading)
-                .accessibilityIdentifier("remote-mini-refresh")
-        }
-        .padding(HideTheme.spacingSM)
-        .background(HideTheme.panel, in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium))
-        .accessibilityIdentifier("remote-mini-status-card")
-    }
-}
-
-private func phaseColor(_ phase: RuntimePhase) -> Color {
-    switch phase {
-    case .ready: HideTheme.success
-    case .loading: HideTheme.secondary
-    case .stale, .unavailable: HideTheme.warning
-    case .failed: HideTheme.danger
-    case .idle: HideTheme.muted
-    }
-}
-
-private struct StatusBar: View {
-    @EnvironmentObject private var model: ShellModel
-
-    private var statusMessage: String {
-        if let error = model.core.bridgeError { return error }
-        if model.browser.receipt.phase == .failed || model.browser.receipt.phase == .stale {
-            return model.browser.receipt.message
-        }
-        if let environment = model.core.snapshot?.status.environment.first(where: { $0.key == "SSH_AUTH_SOCK" }),
-           environment.state != "available" {
-            return environment.message
-        }
-        return "Local features ready"
-    }
-
-    var body: some View {
-        HStack(spacing: HideTheme.spacingLG) {
-            Label(statusMessage, systemImage: "circle.fill")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(HideTheme.warning, HideTheme.warning)
-            Spacer()
-            Text("Chromux \(model.browser.receipt.phase.rawValue)")
-            Text("mini \(model.remote.phase.rawValue)")
-            Text("Core schema v1")
-        }
-        .hideFont(size: HideTheme.Typography.caption)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, HideTheme.spacingMD)
-        .frame(height: 28)
-        .background(HideTheme.panel)
-        .accessibilityIdentifier("status-bar")
     }
 }

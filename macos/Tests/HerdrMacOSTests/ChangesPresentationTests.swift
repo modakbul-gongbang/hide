@@ -6,7 +6,7 @@ import Testing
 
 /// The right panel's section set and the changes view's reading of what the
 /// core sends. Every case here is one the operator reported or one the PRD
-/// names: a panel with exactly three sections, an empty list that must not read
+/// names: Overview first, an empty list that must not read
 /// as "no changes" when it has a reason, and the four statuses.
 @Suite("Changes presentation")
 struct ChangesPresentationTests {
@@ -53,9 +53,9 @@ struct ChangesPresentationTests {
         #expect(firstRow < 80, "Short diff content must start at the top, not the vertical center")
     }
 
-    @Test func theRightPanelOffersExplorerChangesAndGit() {
-        #expect(RightPanelSection.allCases == [.explorer, .changes, .git])
-        #expect(RightPanelSection.allCases.map(\.title) == ["Explorer", "Changes", "Git"])
+    @Test func theRightPanelOffersOverviewExplorerChangesAndGit() {
+        #expect(RightPanelSection.allCases == [.overview, .explorer, .changes, .git])
+        #expect(RightPanelSection.allCases.map(\.title) == ["Overview", "Explorer", "Changes", "Git"])
     }
 
     @Test func aChangesPayloadDecodesItsEntriesStatusesAndDiff() throws {
@@ -137,7 +137,7 @@ struct ChangesPresentationTests {
         #expect(CodeLineNumbers.number(at: text.length, in: text) == 3)
     }
 
-    @Test func aStoredSectionSurvivesTheUIStateRoundTripAndDefaultsToTheExplorer() throws {
+    @Test func aStoredSectionSurvivesTheUIStateRoundTripAndDefaultsToOverview() throws {
         let stored = """
         {
             "left_sidebar_visible": true,
@@ -164,6 +164,6 @@ struct ChangesPresentationTests {
             CoreUIStateSnapshot.self,
             from: Data(withoutSection.utf8)
         )
-        #expect(defaulted.rightPanelSection == .explorer)
+        #expect(defaulted.rightPanelSection == .overview)
     }
 }

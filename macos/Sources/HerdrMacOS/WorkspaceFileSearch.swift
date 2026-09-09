@@ -133,27 +133,28 @@ struct WorkspaceFileSearchSheet: View {
         let rows = currentMatches
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
-                Image(systemName: "doc.text.magnifyingglass").foregroundStyle(HideTheme.accent)
-                TextField("Open file in selected checkout", text: $query)
-                    .textFieldStyle(.plain)
-                    .hideFont(size: HideTheme.Typography.headline)
-                    .hideSearchKeyboard(selection: $selection, resultIDs: rows.map(\.id),
-                        activate: { open(selection.entry(in: currentMatches)) }, dismiss: { dismiss() })
-                    .accessibilityIdentifier("hide-file-search-query")
+                HideSearchField(
+                    placeholder: "Open file in selected checkout",
+                    text: $query,
+                    selection: $selection,
+                    resultIDs: rows.map(\.id),
+                    activate: { open(selection.entry(in: currentMatches)) },
+                    dismiss: { dismiss() }
+                )
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("hide-file-search-query")
                 if loading { ProgressView().controlSize(.small) }
-                Text("ESC")
-                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
+                HideKeycap(command: .label("Esc"), emphasized: false)
             }
-            .padding(HideTheme.spacingLG)
-            .background(
-                HideTheme.elevated,
-                in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
-            )
             .padding(HideTheme.spacingLG)
 
             if let error {
-                ContentUnavailableView("File index unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
+                HideEmptyState(
+                    "File index unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -178,7 +179,7 @@ struct WorkspaceFileSearchSheet: View {
                                     .padding(.vertical, HideTheme.spacingSM)
                                     .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(HideInteractiveButtonStyle())
                                 .background(
                                     selection.selectedID == match.id ? HideTheme.accent.opacity(HideTheme.Opacity.emphasisFill) : Color.clear,
                                     in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)

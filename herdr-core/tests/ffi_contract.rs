@@ -388,6 +388,27 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
 }
 
 #[test]
+fn failed_ui_state_save_is_visible_and_free_finishes() {
+    let blocked_parent = temporary_state_path();
+    fs::create_dir_all(blocked_parent.parent().unwrap()).unwrap();
+    fs::write(&blocked_parent, "not a directory").unwrap();
+    let options = options_with_state(&blocked_parent.join("state.json"));
+    let core = create_with_socket_override_hidden(&options);
+    assert!(!core.is_null());
+    dispatch(core, json!({"schema_version":2, "kind":"pet_set_visible", "payload":{"visible":false}}));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if snapshot(core)["status"]["last_error"]["kind"] == "ui_state.save_failed" { break; }
+        assert!(Instant::now() < deadline, "The caller must see a failed save");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let started = Instant::now();
+    herdr_core_destroy(core);
+    assert!(started.elapsed() < Duration::from_secs(2), "A failed save must not hang free");
+    fs::remove_file(blocked_parent).unwrap();
+}
+
+#[test]
 fn every_pet_toggle_surface_writes_one_shared_visibility_that_survives_relaunch() {
     let state_path = std::env::temp_dir().join(format!(
         "herdr-core-pet-visibility-{}.json",

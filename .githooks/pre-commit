@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# Per-command activation preserves shared Git settings and other worktrees.
+cd "$(git rev-parse --show-toplevel)"
+exec node scripts/check-design-contract.mjs --staged

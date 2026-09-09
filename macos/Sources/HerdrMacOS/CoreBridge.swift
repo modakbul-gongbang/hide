@@ -872,11 +872,13 @@ struct CoreDiskUsage: Decodable, Equatable {
 
 /// What the summary card needs that a checkout row does not already carry.
 struct CoreCheckoutCard: Decodable, Equatable {
+    var inspectedCheckoutPath: String? = nil
     let checkoutID: String?
     let github: CoreGithubStatus
     let disk: CoreDiskUsage
     let diskMeasuring: Bool
     let deletionGate: CoreWorktreeDeletionGate?
+    let panes: [CoreCheckoutPaneContext]
 
     static let empty = CoreCheckoutCard(
         checkoutID: nil,
@@ -887,11 +889,13 @@ struct CoreCheckoutCard: Decodable, Equatable {
     )
 
     enum CodingKeys: String, CodingKey {
+        case inspectedCheckoutPath = "inspected_checkout_path"
         case checkoutID = "checkout_id"
         case github
         case disk
         case diskMeasuring = "disk_measuring"
         case deletionGate = "deletion_gate"
+        case panes
     }
 
     init(
@@ -899,22 +903,42 @@ struct CoreCheckoutCard: Decodable, Equatable {
         github: CoreGithubStatus,
         disk: CoreDiskUsage,
         diskMeasuring: Bool,
-        deletionGate: CoreWorktreeDeletionGate?
+        deletionGate: CoreWorktreeDeletionGate?,
+        panes: [CoreCheckoutPaneContext] = []
     ) {
         self.checkoutID = checkoutID
         self.github = github
         self.disk = disk
         self.diskMeasuring = diskMeasuring
         self.deletionGate = deletionGate
+        self.panes = panes
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        inspectedCheckoutPath = try container.decodeIfPresent(String.self, forKey: .inspectedCheckoutPath)
         checkoutID = try container.decodeIfPresent(String.self, forKey: .checkoutID)
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         disk = try container.decodeIfPresent(CoreDiskUsage.self, forKey: .disk) ?? .empty
         diskMeasuring = try container.decodeIfPresent(Bool.self, forKey: .diskMeasuring) ?? false
         deletionGate = try container.decodeIfPresent(CoreWorktreeDeletionGate.self, forKey: .deletionGate)
+        panes = try container.decodeIfPresent([CoreCheckoutPaneContext].self, forKey: .panes) ?? []
+    }
+}
+
+struct CoreCheckoutPaneContext: Decodable, Equatable, Identifiable {
+    let paneID: String
+    let title: String
+    let status: String
+    let sessionID: String?
+    let parentPaneID: String?
+    var id: String { paneID }
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case title, status
+        case sessionID = "session_id"
+        case parentPaneID = "parent_pane_id"
     }
 }
 
@@ -1453,7 +1477,7 @@ struct CoreUIStateSnapshot: Decodable {
         rightPanelSection = try container.decodeIfPresent(
             RightPanelSection.self,
             forKey: .rightPanelSection
-        ) ?? .explorer
+        ) ?? .overview
         expandedPaths = try container.decode([String].self, forKey: .expandedPaths)
         collapsedWorkspaceIDs = try container.decodeIfPresent(
             [String].self,
@@ -1529,9 +1553,10 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-/// The right panel's three sections. The core owns which one is showing, so the
+/// The right panel's four sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
+    case overview
     case explorer
     case changes
     case git
@@ -1540,6 +1565,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .overview: "Overview"
         case .explorer: "Explorer"
         case .changes: "Changes"
         case .git: "Git"
@@ -1548,6 +1574,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .overview: "info.circle"
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
         case .git: HideTheme.gitSectionIcon

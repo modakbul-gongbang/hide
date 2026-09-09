@@ -40,7 +40,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | --- | --- | --- | --- |
 | `cargo test` | The core's behavior, including its Herdr fixtures | `cargo test --locked --manifest-path herdr-core/Cargo.toml` | Fix the test or the code. A fixture that no longer matches Herdr means the pin moved; see `AGENTS.md`, Herdr API Contract. |
 | `swift test` | The shell's rendering and event contracts | `swift test --package-path macos` after the release core build | Same. `--filter <TestName>` narrows a run. |
-| right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Explorer, Changes, and Git; rename, do not reintroduce. |
+| right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Overview, Explorer, Changes, and Git; rename, do not reintroduce. |
 | shortcut contract | The right panel toggle is `⇧⌘B` and `⌘⌥B` is advertised nowhere | `bash scripts/check-shortcut-contract.sh` | Update the catalog and every label together. |
 | harness ignore anchor | `/agents/` is ignored and `.claude/agents/` is not | `bash scripts/check-harness-ignore-anchor.sh` | Keep the leading slash on the ignore rule. |
 | agent asset committed | The simplification subagent stays a tracked file | `bash scripts/check-agent-asset-committed.sh` | `git add` it; it once became uncommittable through an unanchored ignore rule. |
@@ -52,13 +52,33 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
 
 The gates that read a running Herdr server (the full `check-herdr-contract.sh` and the workbench evidence scripts under `macos/scripts/`) are local steps and are not required in CI.
-The separate `design-contract.yml` workflow runs `check-hide-theme-literals.sh` and `check-hide-components.sh`; it performs static checks, not desktop interaction.
+The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs` and `node --test scripts/tests/design-controls.test.mjs`.
+The shared entrypoint runs the token, component ownership and counted control-policy checks; it performs static checks, not desktop interaction.
+The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
+
+### Local design hook
+
+Run `node scripts/check-design-contract.mjs` for immediate feedback on working-tree sources.
+The tracked `.githooks/pre-commit` checks staged content through `node scripts/check-design-contract.mjs --staged`.
+Use `git -c core.hooksPath=.githooks commit` to enable it for one commit without changing shared Git configuration or other worktrees.
+This is opt-in; the hook is not installed automatically and an ordinary commit does not imply it ran.
+If an existing hook is already configured, retain it and call the shared staged entrypoint from that hook rather than replacing its hook path.
+CI independently runs the same checks even when the local hook was not enabled.
+No branch-protection setting is changed by this repository patch.
+
+Stage the checker, policy and affected sources together: staged verification executes the staged checker files and reads staged Swift sources, ignoring unstaged repairs or new violations.
+A missing script, conflict, non-ordinary source input or checker failure blocks the hook with its cause.
+The checker does not stage, stash, restore or modify files.
+When a check fails, reuse the documented owner or fix the source; if an existing usage was removed, retire its counted allowance in `scripts/design-control-policy.json` in the same change.
+Adding an exception requires an explicit design decision and reason in DESIGN.md, not an automatic baseline update.
+Keep visual acceptance separate: DESIGN.md owns the future native catalog and human screenshot-review procedure; neither exists as an automated aesthetic approval gate.
 
 ## Performance-sensitive changes
 
 Read [PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md#verification-layers-and-current-ci-coverage) for the three verification layers and review policy.
 The Rust/Swift suites include deterministic performance-related regression tests, including bitmap repaint and cache retention, but CI does not currently launch and drive Hide with a live Herdr server.
-Native typing, drag, wheel, focus, compositor, and controlled latency/RSS comparisons remain isolated local QA.
+Native typing, drag, wheel, focus, compositor, project Tree/List and destructive cleanup review, and controlled latency/RSS comparisons remain isolated local QA.
+Cleanup deletion tests must use a private fixture root; never use an operator project as a cleanup target.
 The guide's maintenance policy requires affected native scenarios for input/rendering/lifecycle changes and matched measurements for performance claims; this is review-required evidence, not a branch-protection check today.
 Record completed and unrun checks in the PR's Evidence section; a green `verify` result alone does not prove native responsiveness.
 

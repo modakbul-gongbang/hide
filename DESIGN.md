@@ -849,7 +849,7 @@ The primary branch mismatch keeps its migration action as a warning icon beside 
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
 New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
-`HideFormPicker` owns both compact and stacked menu presentations, and `HideSettingsField` owns text inputs.
+`HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
 Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
 The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
@@ -930,6 +930,45 @@ Fixed content geometry remains in its named Layout tokens rather than changing w
 | `{rounded.radiusMedium}` | Tooltips, small cards and controls |
 | `{rounded.radiusLarge}` | Search input and larger cards |
 | `{rounded.radiusExtraLarge}` | Container vocabulary |
+
+### Shared control family
+
+The shell owns control appearance through shared styles while retaining native Button, Toggle, DisclosureGroup and TextField behavior.
+Sheet and popover presentation, text editing, IME, scroll physics and ProgressView animation remain platform-owned.
+The native controls are not replaced with gesture-only drawings.
+
+| Component | Appearance and geometry | State contract |
+| --- | --- | --- |
+| `HideTextButtonStyle` | Quiet, standard and prominent appearances; compact 24pt / body 11, regular 36pt / title 13; radius 6 | Standard uses elevated fill and divider; quiet has no resting container; prominent uses the current accent; destructive role uses danger; disabled prominent actions use the elevated surface and muted label; hover, pressed and focus remain visible |
+| `HideChoiceGroup` tabs | Subhead 12; single-line labels, 4pt horizontal padding and 8pt gaps; transparent base; selected primary label and 2pt bottom indicator | Selection never adds a pill to section tabs; hover and keyboard focus remain distinct from selection |
+| `HideChoiceGroup` segmented | Contained choices on sidebar, 2pt inset, divider border, radius 6, elevated selected choice | Tree/List changes only inspection mode; selected choice and group label are accessible |
+| `HideSearchField` | Shared input surface, 36pt height, radius 6, 8pt gap, magnifier and 24pt clear action | Existing `HideSearchKeyboard` is the only focus owner; a local focus observation drives the neutral outline; native IME and search keyboard behavior remain intact |
+| `HideCheckboxStyle` | 16pt mark inside a compact hit area; neutral checked fill and check mark | Toggle owns checked state and accessibility; unchecked, checked, disabled, hover and focus are distinguishable |
+| `HideDisclosureStyle` | Subhead 12 label, compact row, chevron and shared quiet interaction treatment | DisclosureGroup owns expansion; visible label and expanded state remain accessible, and collapsed content is absent |
+
+`HideInputSurface` owns text-input typography, horizontal inset, elevated fill, neutral border, focused outline and disabled appearance at compact 24pt or regular 36pt minimum height.
+It is a presentation modifier and does not install focus, submit, selection or keyboard handlers.
+Search retains `HideSearchKeyboard` as its only focus owner; address, form and composer inputs retain their existing native editing bindings.
+`HideMenuChipLabel` owns compact menu-trigger typography, chevron, surface and border; the native Menu retains activation and selected menu-item semantics.
+`HideEmptyState` owns the shell's empty/unavailable heading, decorative icon, explanation, wrapping and accessibility grouping using real caller-provided content.
+Its optional semantic emphasis colors the heading and icon for warnings and failures while keeping the explanation readable.
+Standalone Pet/dashboard content and operating-system menu/alert presentation retain their explicit platform exceptions.
+
+`HideTheme.Control` owns compactHeight 24, regularHeight 36, checkboxSize 16 and tabIndicatorHeight 2.
+All controls use the existing spacing, corner and surface tokens; hover uses subtleFill, pressed uses secondary opacity, and disabled uses disabled opacity.
+A disabled control cannot activate, and destructive meaning comes from the Button role rather than its text.
+Pending operations keep their existing explicit progress labels and disabled actions; shared styles do not invent pending or error state.
+Hover and focus observations are local to the affected control and never dispatch core events or publish shell state.
+The duplicate toolbar and destructive button styles are retired into `HideTextButtonStyle`.
+Settings tabs, sidebar mode choices and right-panel sections use `HideChoiceGroup`; the central work-tab strip preserves drag/close/MRU behavior and uses shared interaction feedback for its selection action.
+The sidebar opts into equal-width choices and supplies option-specific command tooltips; equal width covers each choice's background and hit area, not only its layout slot.
+Cmd+K, file search and Overview reuse `HideSearchField`, including its clear action and the same keyboard selection behavior.
+Main-shell worktree review and settings Boolean controls use `HideCheckboxStyle`; a checkbox inside an operating-system Menu retains native menu semantics.
+Changes, sidebar and tab rows retain their domain layout but reuse `HideInteractiveButtonStyle` for hover, pressed, focus and disabled feedback.
+Shell actions use shared text/icon styles, including destructive roles, editor conflict recovery and composer submission.
+The old unreferenced checkout-summary renderer is retired; Overview remains the active project context composition.
+
+Project summary rows, Git rails, worktree rows and inspector composition remain owned by Overview instead of becoming general-purpose domain components.
 
 ### Recent navigation in the native shell
 
@@ -1035,9 +1074,75 @@ Sheets use panel containers, headline titles, body or caption supporting text, a
 The selected provider card uses an elevated fill and stronger neutral border; its status remains readable.
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
-The right panel's Explorer and Changes sections use the same panel and text ladder.
+### Projects and checkout context
+
+Projects use the native sidebar list, existing Search (Command+K), and persisted project/workspace disclosure.
+Projects and their checkouts sort by the latest authoritative agent activity timestamp or Git commit timestamp, descending; server state-change sequence breaks timestamp ties, and stable IDs break remaining ties.
+Missing activity remains absent and sorts after known activity; no UI interaction or local clock invents recency.
+An active pane without a wall timestamp can only contribute its server sequence, not a fabricated date.
+Raised Needs You and Done groups retain their status ordering above Projects.
+
+The right panel starts with Overview, followed by Explorer, Changes, and Git.
+The compact section selector uses text labels on one line without a competing checkout title.
+Existing saved section selections survive; new state starts on Overview.
+Overview is project-scoped: a compact Project Summary, Tree/List worktree inspection, and a selected-workspace inspector.
+Project Summary shows the existing GitHub result, Allocated on disk, and a separate Clean up merged worktrees entry.
+GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
+The popover states the lookup window and preserves loading, no recent PRs, authentication, unavailable and stale results.
+
+Tree draws actual Git parent edges for all project worktree HEADs and the known main/base refs.
+Commit parent order is preserved, including merges; named refs and worktree attachments stay visible when linear ancestry is folded.
+A window holds at most 512 commits; actual parent IDs beyond it form a continuation frontier, never a fabricated root or branch.
+Shallow boundaries and unavailable history are explicit, and a missing or unborn HEAD has no invented attachment.
+Tree may scroll horizontally when concurrent lanes exceed panel width.
+List reuses the search keyboard pattern and Needs You, Done, Working, Seen ordering, with stable path ties and an explicit empty state.
+Both modes share one core-owned inspector selection; switching modes, filtering, inspecting and scrolling never changes the terminal's pane, tab, checkout focus or read state.
+Only explicit Open workspace or Open/Return agent actions change workspace or pane focus.
+View changes switches the section for the currently open workspace; another inspected workspace must first be opened.
+
+The inspector puts the branch, short folder name, current representative agent and status, changed files and PR before collapsed latest-commit details.
+The live pane list is not repeated.
+Absolute paths and commit IDs are selectable secondary details; the latest commit describes the checkout HEAD, not the pane that authored it.
+The pinned Herdr contract offers lifetime-scoped display metadata and agent lineage but no persistent commit-authoring relation, so Hide neither adds Git trailers nor renames branches.
+Retired or moved panes leave the current context on the next topology projection; a retired parent ID is omitted.
+Remote Overview explicitly reports that local Git context is unavailable.
+Explorer contains file navigation only, with no checkout summary above it.
+Changes and Git keep their existing responsibilities.
+
+Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.
+Nested roots belong to the longest matching root; hard links share one inode allocation, and descendant symlinks are not followed.
+An incomplete component has no total; the UI separates the confirmed subtotal from unavailable target measurements.
+Allocated blocks are not a promise of reclaimable space, particularly for APFS clones.
+
+Cleanup opens a review sheet with separate Available and Excluded groups, exact branch and folder, allocated size or failure, and target-specific exclusion reasons.
+Nothing is preselected and Remove is disabled until a user explicitly checks an eligible folder.
+Main/current, dirty/untracked, live-pane use, locked, nested, detached, unknown and not-confirmed-merged targets are excluded.
+Only clean, unused linked worktrees merged into local main can be removed, without force; branches and history remain.
+Confirm rechecks current Git and Herdr state before each target and refuses changed state with Review again recovery.
+Completion lists individual removed/refused outcomes; repeating the same completed intent does not repeat removal.
+Review and cancel perform no filesystem mutations.
+This file deletion flow is separate from registration removal.
+
+Overview geometry uses named `HideTheme.Overview` tokens: a 64pt minimum rail, 14pt lane spacing, 12pt inset, 28pt node offset, 7pt nodes, 28pt commit rows, 96pt worktree rows and 236pt row content.
+The project title uses the 17pt headline token; workspace titles and summary values use 13pt, with 12pt supporting text.
+Git lanes use a repeating blue, violet (`#B69AFF`), green and amber category palette through `HideTheme.Overview`; these colors identify graph lanes, not agent status or commit authorship.
+Actual agent lifecycle colors retain their existing semantic meaning.
+A 16pt ring marks the selected workspace HEAD, and only selected rows receive the elevated surface.
+The graph legend distinguishes solid ancestry, dashed workspace attachments and folded commits without relying on color alone.
+The inspector groups the short folder with its branch, then places agent status below the task and beside its explicit Open/Return action.
+These actions reuse `HideTextButtonStyle` so system appearance cannot introduce a competing light button surface.
+GitHub and disk popovers use the same dark panel surface as existing PR details and show pending refresh alongside any retained result.
+The cleanup sheet uses the existing 440pt worktree dialog width and a 560pt height with a scrolling list.
+Colors, typography, spacing, corners, status marks and tooltip/accessibility help come from the shared shell system.
+
+Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
+The action is offered only for registered projects and retains its existing confirmation.
+An in-use project stays registered and reports how to close or move its Herdr workspaces before retrying.
+A completed removal disappears from the core snapshot and a repeated request is a quiet no-op.
+Save failures remain caller-visible; normal no-op results never become alerts.
+
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
-The Git section retains its existing open/refresh trigger, while the sidebar popover and project menu can explicitly refresh one repository.
+Git and the selected Overview project retain their open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
 All triggers share the existing bounded background reader, authentication and cache.
 Explorer and Changes do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
@@ -1049,7 +1154,7 @@ The ruler clips all drawing to its own bounds, and text loaded into an initially
 Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.
 Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
-Content and accessibility identifiers are unchanged; only the visual hierarchy changes.
+Existing controls retain their accessibility contracts; Overview adds named section, inspection, graph, search, explicit focus and cleanup targets.
 
 ### Enforcement
 
@@ -1057,3 +1162,60 @@ Add a named token before using a new visual value.
 `scripts/check-hide-theme-literals.sh` rejects inline styling, native tooltips, and shortcut glyph literals outside token definitions and Pet files.
 `scripts/check-hide-components.sh` prevents duplicated component ownership and checks every migrated tooltip file.
 The shell test parses this document's frontmatter and typography table against actual token values.
+
+### Design consistency and control ownership
+
+`HideTheme` owns visual tokens; the shared component owning a control owns its appearance and interaction states.
+A screen chooses the component's supported role or variant and supplies data and actions.
+It must not introduce a parallel button, picker, disclosure or checkbox style merely to match one screen.
+Use existing `HideTextButtonStyle`, `HideIconButton`, `HideFormPicker`, `HideBadge`, `HideKeycap` and `HideBalloon` where their contracts fit.
+A missing component or variant is a design decision: describe its role and states here before a separately authorized UI implementation, then update the owner and all affected consumers together.
+A token name alone is not approval to add a new visual treatment.
+
+Every interactive component's contract specifies its label and accessible name, supported sizes/roles, default, hovered, pressed, keyboard-focused, selected and disabled states where applicable.
+Pending actions must show pending feedback and preserve the existing retry/duplicate-action contract.
+Status indicators retain text or a symbol alongside color; actual product state supplies their values.
+Keyboard activation, selection, IME handling and focus semantics remain part of the control contract when its appearance changes.
+Focus and hover are local presentation state and must not publish core snapshots or trigger Git/disk work.
+Geometry, color, typography and spacing are selected through existing tokens and supported variants rather than downstream overrides of a shared component's appearance.
+
+The machine-readable control policy is `scripts/design-control-policy.json`.
+Its exact paths identify approved owners, existing legacy uses and platform exceptions, with a reason and count for each detected construct.
+The policy records native control invocations inside shared owners, the Pet dashboard empty-state exception and native menu controls.
+Remaining input invocations are owned wrappers or the composer/address editing boundary, each with the shared input surface.
+Overview's stock segmented Picker, cleanup's stock checkbox appearance and obsolete toolbar/destructive styles have no retained allowance.
+TextField, SecureField and TextEditor invocations are counted as well: new input controls belong in a documented shared owner, while enumerated existing fields remain legacy uses.
+An allowance permits a specific native behavior boundary; it does not permit a caller to invent another appearance.
+A new occurrence, an unlisted style implementation, or a new source file using these constructs fails the check, including in nested directories.
+When an occurrence is removed, reduce its allowance in the same reviewed change so old exceptions cannot silently become spare capacity.
+Do not regenerate or increase allowances just to make CI pass.
+A new exception requires its owning reason and design decision in this guide, plus the explicit policy diff.
+Existing platform menu/sheet/popover presentation, scroll behavior, SF Symbols and `ProgressView` retain native behavior; the checker does not prohibit their use or claim to restyle them.
+The Pet design exception remains in the existing token/component checks; the control inventory still bounds the currently enumerated uses rather than exempting every new file with a similar name.
+
+`node scripts/check-design-contract.mjs` runs the token, component ownership and control-policy checks together.
+`--staged` reads ordinary staged source and checker files into a temporary directory, checks that exact content and removes the temporary copy without changing the index or working tree.
+These are static source checks, not a Swift compiler or an aesthetic evaluator.
+The control inventory deliberately does not count every Button invocation because buttons can inherit an approved root style.
+It does not resolve inherited styles, AppKit controls, protocol aliases or arbitrary custom drawing; component ownership and token checks provide complementary bounds.
+They catch the listed syntax and counted drift; aliases, an equally sized replacement inside an allowed legacy file, and visually poor compositions made from valid tokens are not proven correct by a passing result.
+The Git hook uses the same repository checks for every contributor without changing global configuration.
+CI and the opt-in local pre-commit hook run the same checker; activation and failure recovery are owned by CONTRIBUTING.md.
+
+### Native component catalog and visual review procedure
+
+A native component catalog is planned and is not currently a shipped screen.
+When separately authorized, it should render the actual shared components with explicitly labelled sample data and local state, without dispatching project, pane or filesystem actions.
+Its coverage should include buttons, section tabs and mode choices, search fields, checkbox/disclosure controls, workspace rows, status labels and empty/pending/error states.
+It must reuse product components rather than draw a second approximation of them.
+Review actual hover, focus, selection and disabled feedback alongside English, Korean, mixed-script labels and long unbroken identifiers.
+Use the approved Overview structure as the product composition reference; sample PR counts and activity labels never enter runtime data.
+
+For a visual change, first show the component states and the affected product screen in the exact identified native candidate at 320, 344 and 400pt panel widths where supported.
+Follow docs/PERFORMANCE_TESTING.md for isolated state and app/process coordination; preserve the installed app and operator panes.
+Record the build, actual widths, interactions, screenshots and unverified states under `agents/runs/<slug>/`.
+Obtain human judgment on a new visual baseline before treating it as approved; a passing hook, CI result or image diff cannot supply that judgment.
+If layout structure remains unresolved, present distinct candidates before implementation under design principle 11.
+Do not refresh an expected screenshot merely because a new build differs; explain the intended design change and review it.
+Shared controls and their policy checks are implemented; a native component catalog and screenshot-comparison service are not yet available.
+Visual baseline approval remains a separate human review.

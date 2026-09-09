@@ -1953,7 +1953,7 @@ final class ShellModel: ObservableObject {
     }
 
     var rightPanelSection: RightPanelSection {
-        core.snapshot?.uiState.rightPanelSection ?? .explorer
+        core.snapshot?.uiState.rightPanelSection ?? .overview
     }
 
     func selectRightPanelSection(_ section: RightPanelSection) {

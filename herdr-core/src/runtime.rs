@@ -691,6 +691,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         }
     }
     changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
+    changed |= crate::project_context::sort_projects(workspaces, agents);
     changed
 }
 
@@ -895,6 +896,12 @@ struct ChangesSelectPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct CleanupConfirmPayload {
+    id: u64,
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct GitWorktreeOpenPayload {
     checkout_path: String,
 }
@@ -1095,6 +1102,11 @@ enum ValidatedEvent {
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
     /// the selected checkout, and a removal changes the whole worktree list.
+    OverviewSelect(GitWorktreeOpenPayload),
+    OverviewChanges(GitWorktreeOpenPayload),
+    CleanupReview,
+    CleanupConfirm(CleanupConfirmPayload),
+    CleanupDismiss,
     CardRefresh,
     CardMeasureDisk,
     ReconnectPane(FocusPanePayload),
@@ -1153,6 +1165,9 @@ fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bo
 pub struct Runtime {
     snapshot: Snapshot,
     state_path: PathBuf,
+    state_save_pending: bool,
+    state_save_active: bool,
+    state_save_worker: Option<thread::JoinHandle<()>>,
     remote_targets: Vec<crate::model::RemoteTarget>,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
@@ -1313,6 +1328,9 @@ pub struct Runtime {
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
+    overview_selection: Option<String>,
+    cleanup: Option<live::cleanup::CleanupSnapshot>,
+    next_cleanup_id: u64,
     /// Bumped when the worktree list itself is known to have changed through a
     /// manual refresh, an in-app removal, or an observed Herdr worktree event.
     worktree_generation: u64,
@@ -1443,6 +1461,9 @@ impl Runtime {
             editor_documents: HashMap::new(),
             editor_tab_history: Vec::new(),
             worker_context: None,
+            state_save_pending: false,
+            state_save_active: false,
+            state_save_worker: None,
             pet_active_at_unix_ms: unix_milliseconds(),
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
@@ -1471,6 +1492,9 @@ impl Runtime {
             github_generations: HashMap::new(),
             sidebar_github_projects: HashSet::new(),
             disk_generation: 0,
+            overview_selection: None,
+            cleanup: None,
+            next_cleanup_id: 0,
             worktree_generation: 0,
             next_worktree_removal_id: 0,
             next_task_operation_id: 0,
@@ -1488,6 +1512,10 @@ impl Runtime {
         notifier: ChangeNotifier,
     ) {
         self.worker_context = Some(RuntimeWorkerContext { runtime, notifier });
+    }
+
+    pub(crate) fn take_state_save_worker(&mut self) -> Option<thread::JoinHandle<()>> {
+        self.state_save_worker.take()
     }
 
     pub fn snapshot(&self) -> &Snapshot {
@@ -2704,7 +2732,11 @@ impl Runtime {
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
-        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
+        crate::sidebar::sync_checkout_agent_summaries(
+            &mut workspaces,
+            &self.snapshot.navigator.agents,
+        );
+        crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.scratch = crate::model::ScratchSnapshot {
             id: crate::scratch::NODE_ID.to_owned(),
@@ -4267,6 +4299,9 @@ impl Runtime {
             })
             .collect();
         crate::worktrees::WorktreeRequest {
+            overview_root: (self.snapshot.ui_state.right_panel_visible
+                && self.snapshot.ui_state.right_panel_section == RightPanelSection::Overview)
+                .then(|| self.focused_local_checkout().map(|(w, _)| PathBuf::from(&w.path))).flatten(),
             projects,
             generation: self.worktree_generation,
         }
@@ -4278,6 +4313,55 @@ impl Runtime {
         self.snapshot.git_worktrees_loading = false;
         self.refresh_worktree_projection();
         changed
+    }
+
+    pub(crate) fn cleanup_current_path(&self) -> Option<String> {
+        self.focused_local_checkout().map(|(_, checkout)| checkout.path.clone())
+    }
+
+    pub(crate) fn ingest_cleanup(&mut self, answer: live::cleanup::CleanupSnapshot) -> bool {
+        if self.cleanup.as_ref().is_none_or(|current| current.id != answer.id) { return false; }
+        let removed = answer.rows.iter().any(|row| row.result.as_deref() == Some("removed"));
+        self.cleanup = Some(answer);
+        if removed { self.refresh_worktrees(); self.remeasure_disk(); }
+        self.refresh_worktree_projection();
+        true
+    }
+
+    fn review_cleanup(&mut self) -> bool {
+        if self.cleanup.as_ref().is_some_and(|r| matches!(r.phase.as_str(), "loading" | "removing")) { return false; }
+        let Some((workspace, checkout)) = self.focused_local_checkout() else { return false; };
+        let root = workspace.path.clone();
+        let current = checkout.path.clone();
+        self.next_cleanup_id = self.next_cleanup_id.wrapping_add(1).max(1);
+        let mut review = live::cleanup::CleanupSnapshot { id: self.next_cleanup_id, repository_root: root,
+            phase: "loading".into(), ..Default::default() };
+        self.cleanup = Some(review.clone());
+        let started = self.live.clone().ok_or_else(|| "A live Herdr connection is required to verify worktree usage. Connect and review again.".into())
+            .and_then(|context| live::cleanup::spawn(context, review.clone(), None, current));
+        if let Err(message) = started {
+            review.phase = "failed".into(); review.message = Some(message);
+            self.cleanup = Some(review);
+        }
+        self.refresh_worktree_projection();
+        true
+    }
+
+    fn confirm_cleanup(&mut self, payload: CleanupConfirmPayload) -> bool {
+        let Some(review) = self.cleanup.clone().filter(|r| r.id == payload.id && r.phase == "review") else { return false; };
+        let paths: Vec<_> = payload.paths.into_iter().filter(|path| review.rows.iter()
+            .any(|row| row.path == *path && row.exclusion.is_none())).collect::<HashSet<_>>().into_iter().collect();
+        if paths.is_empty() { return false; }
+        let Some(current) = self.cleanup_current_path() else { return false; };
+        self.cleanup.as_mut().unwrap().phase = "removing".into();
+        let started = self.live.clone().ok_or_else(|| "The Herdr connection is unavailable. Reconnect and review again.".into())
+            .and_then(|context| live::cleanup::spawn(context, review.clone(), Some(paths), current));
+        if let Err(message) = started {
+            let active = self.cleanup.as_mut().unwrap();
+            active.phase = "failed".into(); active.message = Some(message);
+        }
+        self.refresh_worktree_projection();
+        true
     }
 
     /// Combines subprocess answers with live pane and agent state, then sends
@@ -4315,11 +4399,17 @@ impl Runtime {
             .filter(|agent| agent.activity == "working")
             .map(|agent| agent.pane_id.as_str())
             .collect::<HashSet<_>>();
+        let requested_github: HashSet<_> = self.github_request().projects.iter().map(|p| p.root.to_string_lossy().into_owned()).collect();
         let github = self.github.clone();
         let disk_usage = self.disk_usage.clone();
 
         for project in &mut self.worktree_catalog.projects {
             let github_project = github.project(&project.root_path);
+            project.github = github_project.map(|g| g.status.clone()).unwrap_or_else(|| crate::model::GithubStatusSnapshot {
+                loading: requested_github.contains(&project.root_path), ..Default::default()
+            });
+            project.pull_requests = github_project.map(|g| g.pull_requests.clone()).unwrap_or_default();
+            project.pull_request_window = crate::github::PULL_REQUEST_LIMIT.into();
             for worktree in &mut project.worktrees {
                 let panes = pane_rows.get(&worktree.path);
                 worktree.pane_count = panes.map_or(0, HashSet::len);
@@ -4352,6 +4442,18 @@ impl Runtime {
                     worktree.running_agent_count,
                 );
             }
+            project.shared_git_disk = disk_usage.iter()
+                .find(|d| d.path.is_some() && d.path == project.shared_git_path)
+                .cloned().unwrap_or_default();
+            let components: Vec<_> = project.worktrees.iter().map(|w| &w.disk)
+                .chain(std::iter::once(&project.shared_git_disk)).collect();
+            project.disk_total_bytes = project.shared_git_path.as_ref().and_then(|_| components.iter().map(|d| d.total_bytes).sum());
+            let confirmed: Vec<_> = components.iter().filter_map(|d| d.total_bytes).collect();
+            project.disk_confirmed_bytes = (!confirmed.is_empty()).then(|| confirmed.iter().sum());
+            project.linked_disk_bytes = project.worktrees.iter().filter(|w| !w.is_main)
+                .map(|w| w.disk.total_bytes).sum();
+            project.disk_unavailable_reason = components.iter().find_map(|d| d.unavailable_reason.clone())
+                .or_else(|| project.shared_git_path.is_none().then(|| "Shared Git directory is unavailable. Refresh Overview.".into()));
             project.worktrees.sort_by(|left, right| {
                 right
                     .is_main
@@ -4372,26 +4474,11 @@ impl Runtime {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
-            workspace.checkouts.sort_by(|left, right| {
-                let left_worktree = left.worktree.as_ref();
-                let right_worktree = right.worktree.as_ref();
-                right_worktree
-                    .is_some_and(|worktree| worktree.is_main)
-                    .cmp(&left_worktree.is_some_and(|worktree| worktree.is_main))
-                    .then_with(|| right.has_panes.cmp(&left.has_panes))
-                    .then_with(|| {
-                        right_worktree
-                            .and_then(|worktree| worktree.last_commit_unix_seconds)
-                            .unwrap_or(0)
-                            .cmp(
-                                &left_worktree
-                                    .and_then(|worktree| worktree.last_commit_unix_seconds)
-                                    .unwrap_or(0),
-                            )
-                    })
-                    .then_with(|| left.path.cmp(&right.path))
-            });
         }
+        crate::project_context::sort_projects(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
 
         let focused_project = self
             .snapshot
@@ -4412,6 +4499,9 @@ impl Runtime {
             .filter(|workspace| workspace.remote_target_id.is_none())
             .and_then(|workspace| self.worktree_catalog.project(&workspace.path))
             .cloned();
+        if let Some(project) = self.snapshot.git_worktrees.as_mut() {
+            project.cleanup = self.cleanup.as_ref().filter(|review| review.repository_root == project.root_path).cloned();
+        }
         self.refresh_card();
         before_catalog != self.worktree_catalog
             || before_navigator != self.snapshot.navigator
@@ -4439,7 +4529,11 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
-                .filter(|workspace| self.github_lookup_requested() || self.sidebar_github_projects.contains(&workspace.path))
+                .filter(|workspace| {
+                    (self.github_lookup_requested() && (self.snapshot.ui_state.right_panel_section == RightPanelSection::Git
+                        || self.focused_local_checkout().is_some_and(|(focused, _)| focused.path == workspace.path)))
+                        || self.sidebar_github_projects.contains(&workspace.path)
+                })
                 .map(|workspace| crate::github::GithubProjectRequest {
                     root: PathBuf::from(&workspace.path),
                     generation: self
@@ -4454,7 +4548,7 @@ impl Runtime {
 
     fn github_lookup_requested(&self) -> bool {
         self.snapshot.ui_state.right_panel_visible
-            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Git
+            && matches!(self.snapshot.ui_state.right_panel_section, RightPanelSection::Git | RightPanelSection::Overview)
     }
 
     pub fn ingest_github(&mut self, github: crate::model::GithubSnapshot) -> bool {
@@ -4491,6 +4585,9 @@ impl Runtime {
             .entry(project_path.to_owned())
             .or_insert(0);
         *generation = generation.wrapping_add(1);
+        if let Some(cached) = self.github.projects.iter_mut().find(|p| p.root_path == project_path) {
+            cached.status.loading = true;
+        }
     }
 
     pub fn refresh_worktrees(&mut self) {
@@ -4797,17 +4894,15 @@ impl Runtime {
     /// hidden is intentional: idle sidebar projection must never launch du.
     pub fn disk_request(&self) -> crate::disk::DiskRequest {
         let paths = if self.snapshot.ui_state.right_panel_visible
-            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Git
+            && matches!(self.snapshot.ui_state.right_panel_section, RightPanelSection::Git | RightPanelSection::Overview)
         {
             self.focused_local_checkout()
                 .and_then(|(workspace, _)| self.worktree_catalog.project(&workspace.path))
                 .map(|project| {
-                    project
-                        .worktrees
-                        .iter()
-                        .filter(|worktree| !worktree.missing)
-                        .map(|worktree| PathBuf::from(&worktree.path))
-                        .collect()
+                    let mut paths: Vec<_> = project.worktrees.iter()
+                        .map(|w| PathBuf::from(&w.path)).collect();
+                    if let Some(shared) = &project.shared_git_path { paths.push(PathBuf::from(shared)); }
+                    paths
                 })
                 .unwrap_or_default()
         } else {
@@ -4898,6 +4993,22 @@ impl Runtime {
         if self.snapshot.card == card {
             return false;
         }
+        let retired = self
+            .snapshot
+            .card
+            .panes
+            .iter()
+            .filter(|old| {
+                !card.panes.iter().any(|new| {
+                    new.pane_id == old.pane_id && new.parent_pane_id == old.parent_pane_id
+                })
+            })
+            .count();
+        if retired > 0 {
+            crate::diagnostic!(serde_json::json!({
+                "component": "checkout_context", "kind": "context.retired", "count": retired,
+            }));
+        }
         self.snapshot.card = card;
         true
     }
@@ -4928,7 +5039,15 @@ impl Runtime {
             .unwrap_or_default();
         let disk_measuring = checkout.is_worktree && disk.path.is_none();
         crate::model::CheckoutCardSnapshot {
+            inspected_checkout_path: self.overview_selection.as_ref()
+                .filter(|path| workspace.checkouts.iter().any(|c| &c.path == *path))
+                .cloned().or_else(|| Some(checkout.path.clone())),
             checkout_id: Some(checkout.id.clone()),
+            panes: crate::project_context::checkout_panes(
+                checkout,
+                &self.snapshot.navigator.workspaces,
+                &self.snapshot.navigator.agents,
+            ),
             github,
             disk,
             disk_measuring,
@@ -5185,17 +5304,45 @@ impl Runtime {
     /// Writes the operator's UI state and the pane sizes the next launch
     /// attaches with. The sizes are not part of the UI state the shell draws,
     /// so they are collected here rather than carried on the snapshot.
-    fn write_ui_state(&self) -> Result<(), String> {
-        let pane_terminal_sizes: persistence::PaneTerminalSizes = self
-            .terminal_sizes
-            .iter()
-            .map(|(pane_id, size)| (pane_id.clone(), *size))
-            .collect();
-        persistence::save(
-            &self.state_path,
-            &self.snapshot.ui_state,
-            &pane_terminal_sizes,
-        )
+    fn write_ui_state(&mut self) -> Result<(), String> {
+        let Some(context) = self.worker_context.clone() else {
+            // Standalone runtimes have no shared mutex or worker context.
+            return persistence::save(&self.state_path, &self.snapshot.ui_state,
+                &self.terminal_sizes.iter().map(|(id, size)| (id.clone(), *size)).collect());
+        };
+        self.state_save_pending = true;
+        if self.state_save_active {
+            return Ok(());
+        }
+        self.state_save_active = true;
+        match thread::Builder::new().name("hide-state-save".into()).spawn(move || {
+            let Some(runtime) = context.runtime.upgrade() else { return; };
+            loop {
+                let (path, state, sizes) = {
+                    let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
+                    if !guard.state_save_pending {
+                        guard.state_save_active = false;
+                        return;
+                    }
+                    guard.state_save_pending = false;
+                    (guard.state_path.clone(), guard.snapshot.ui_state.clone(),
+                     guard.terminal_sizes.iter().map(|(id, size)| (id.clone(), *size)).collect())
+                };
+                // The existing save function serializes and writes outside the
+                // runtime mutex. One pending flag coalesces newer UI state.
+                if let Err(message) = persistence::save(&path, &state, &sizes) {
+                    runtime.lock().unwrap_or_else(|e| e.into_inner())
+                        .set_error("ui_state.save_failed", message, true);
+                    context.notifier.notify();
+                }
+            }
+        }) {
+            Ok(worker) => { self.state_save_worker = Some(worker); Ok(()) }
+            Err(error) => {
+                self.state_save_active = false;
+                Err(format!("UI state save worker could not start: {error}"))
+            }
+        }
     }
 
     fn persist_ui_state(&mut self) {
@@ -6948,7 +7095,10 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
-        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &self.snapshot.navigator.agents);
+        crate::sidebar::sync_checkout_agent_summaries(
+            &mut workspaces,
+            &self.snapshot.navigator.agents,
+        );
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
@@ -8090,20 +8240,49 @@ impl Runtime {
                 true
             }
             ValidatedEvent::RemoveWorkspace(payload) => {
+                // Removing a registration never closes Herdr workspaces. An
+                // occupied project would immediately return through discovery.
+                if self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                    workspace.id == payload.workspace_id
+                        && (!workspace.session_workspace_ids.is_empty()
+                            || workspace
+                                .checkouts
+                                .iter()
+                                .any(|checkout| checkout.has_panes))
+                }) {
+                    self.set_error(
+                        "workspace.registration_in_use",
+                        "This project is still open in Herdr. Close or move its panes and workspaces, then remove the registration again. Files and worktrees are kept.",
+                        true,
+                    );
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "registration", "kind": "remove.in_use",
+                        "workspace_id": payload.workspace_id,
+                    }));
+                    return true;
+                }
                 let before = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
                     .ui_state
                     .workspace_registrations
                     .retain(|registration| registration.id != payload.workspace_id);
                 if before == self.snapshot.ui_state.workspace_registrations.len() {
-                    self.set_error(
-                        "workspace.unknown",
-                        format!("Workspace {} is not registered", payload.workspace_id),
-                        false,
-                    );
-                    return true;
+                    return false;
                 }
-                self.rebuild_catalog();
+                // Retire the accepted projection directly. Rebuilding the
+                // filesystem catalog here ran git while holding the mutex.
+                self.snapshot
+                    .navigator
+                    .workspaces
+                    .retain(|workspace| workspace.id != payload.workspace_id);
+                if let Some(catalog) = &mut self.last_accepted_catalog {
+                    catalog.retain(|workspace| workspace.id != payload.workspace_id);
+                }
+                self.snapshot
+                    .ui_state
+                    .collapsed_workspace_ids
+                    .retain(|id| id != &payload.workspace_id);
+                self.resync_navigator_focus();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "workspace.unregistered",
@@ -8987,11 +9166,23 @@ impl Runtime {
                 changed
             }
             ValidatedEvent::GithubRequest(payload) => {
-                let project = self.snapshot.navigator.workspaces.iter()
-                    .find(|workspace| workspace.id == payload.workspace_id && workspace.is_git && workspace.remote_target_id.is_none())
+                let project = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| {
+                        workspace.id == payload.workspace_id
+                            && workspace.is_git
+                            && workspace.remote_target_id.is_none()
+                    })
                     .map(|workspace| workspace.path.clone());
                 let Some(project) = project else {
-                    self.set_error("github.invalid_project", "GitHub lookup requires a registered local Git project".to_owned(), false);
+                    self.set_error(
+                        "github.invalid_project",
+                        "GitHub lookup requires a registered local Git project".to_owned(),
+                        false,
+                    );
                     return true;
                 };
                 let first = self.sidebar_github_projects.insert(project.clone());
@@ -9003,6 +9194,32 @@ impl Runtime {
                 }
                 if first || payload.refresh { self.apply_pull_requests(); }
                 first || payload.refresh
+            }
+            ValidatedEvent::CleanupReview => self.review_cleanup(),
+            ValidatedEvent::CleanupConfirm(payload) => self.confirm_cleanup(payload),
+            ValidatedEvent::CleanupDismiss => {
+                if self.cleanup.as_ref().is_none_or(|r| r.phase == "removing") { return false; }
+                self.cleanup = None;
+                self.refresh_worktree_projection();
+                true
+            }
+            ValidatedEvent::OverviewChanges(payload) => {
+                if self.focused_local_checkout().is_none_or(|(_, checkout)| checkout.path != payload.checkout_path) {
+                    return false;
+                }
+                self.snapshot.ui_state.right_panel_visible = true;
+                self.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
+                self.persist_ui_state();
+                true
+            }
+            ValidatedEvent::OverviewSelect(payload) => {
+                let valid = self.focused_local_checkout().is_some_and(|(project, _)|
+                    project.checkouts.iter().any(|c| c.path == payload.checkout_path));
+                if !valid || self.overview_selection.as_deref() == Some(&payload.checkout_path) {
+                    return false;
+                }
+                self.overview_selection = Some(payload.checkout_path);
+                self.refresh_card()
             }
             ValidatedEvent::CardRefresh => {
                 // The card's one refresh button re-reads both the remote
@@ -9143,7 +9360,7 @@ impl Runtime {
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
                 let git_was_visible = current.right_panel_visible
-                    && current.right_panel_section == RightPanelSection::Git;
+                    && matches!(current.right_panel_section, RightPanelSection::Git | RightPanelSection::Overview);
                 self.snapshot.ui_state = UiStateSnapshot {
                     left_sidebar_visible: payload
                         .left_sidebar_visible
@@ -9212,7 +9429,7 @@ impl Runtime {
                 );
                 self.refresh_agent_lineage();
                 let git_is_visible = self.snapshot.ui_state.right_panel_visible
-                    && self.snapshot.ui_state.right_panel_section == RightPanelSection::Git;
+                    && matches!(self.snapshot.ui_state.right_panel_section, RightPanelSection::Git | RightPanelSection::Overview);
                 if git_is_visible && !git_was_visible {
                     if let Some((workspace, _)) = self.focused_local_checkout() {
                         let project = workspace.path.clone();
@@ -10046,6 +10263,11 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
             decode!(WorktreeRemovalFinishedPayload, WorktreeRemovalFinished)
         }
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
+        "cleanup_review" => Ok(ValidatedEvent::CleanupReview),
+        "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
+        "cleanup_dismiss" => Ok(ValidatedEvent::CleanupDismiss),
+        "overview_changes" => decode!(GitWorktreeOpenPayload, OverviewChanges),
+        "overview_select" => decode!(GitWorktreeOpenPayload, OverviewSelect),
         "card_refresh" => Ok(ValidatedEvent::CardRefresh),
         "card_measure_disk" => Ok(ValidatedEvent::CardMeasureDisk),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
@@ -10434,17 +10656,24 @@ mod tests {
     #[test]
     fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
         let mut runtime = runtime();
-        let mut project = workspace("workspace-1", "hide", "/tmp/hide",
-            vec![settled_worktree(crate::model::PullRequestBadge::Open)]);
+        let mut project = workspace(
+            "workspace-1",
+            "hide",
+            "/tmp/hide",
+            vec![settled_worktree(crate::model::PullRequestBadge::Open)],
+        );
         project.is_git = true;
         let mut other = workspace("workspace-2", "other", "/tmp/other", Vec::new());
         other.is_git = true;
         runtime.snapshot.navigator.workspaces = vec![project, other];
         let focus = runtime.snapshot.focused.clone();
-        let event = |refresh| serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "github_request",
-            "payload": {"workspace_id":"workspace-1", "refresh":refresh}
-        })).unwrap();
+        let event = |refresh| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "github_request",
+                "payload": {"workspace_id":"workspace-1", "refresh":refresh}
+            }))
+            .unwrap()
+        };
         assert!(runtime.dispatch_json(&event(false)));
         assert!(!runtime.dispatch_json(&event(false)));
         assert_eq!(runtime.snapshot.focused, focus);
@@ -10459,7 +10688,7 @@ mod tests {
     /// Without sidebar requests, pull requests are absent until Git is visible.
     /// Once visible, one request per project is stable until header refresh.
     #[test]
-    fn pull_requests_are_requested_only_for_the_visible_git_section() {
+    fn pull_requests_are_scoped_to_overview_and_visible_git_section() {
         let mut runtime = runtime();
         let mut hide = workspace(
             "workspace-1",
@@ -10485,6 +10714,8 @@ mod tests {
                 })
                 .collect()
         };
+        assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 0)], "Overview reads only its project");
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
         assert!(generations(&runtime).is_empty());
         assert!(!runtime.projected_card().github.loading);
         runtime.snapshot.ui_state.right_panel_visible = true;
@@ -11936,6 +12167,213 @@ mod tests {
             runtime.terminal_sessions[pane_id]
                 .test_written_lines()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn removing_registration_in_use_preserves_it_and_explains_recovery() {
+        let mut runtime = runtime();
+        let path =
+            std::env::temp_dir().join(format!("hide-registration-busy-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let registration =
+            workspace::registration(path.to_str().unwrap(), "Busy project", "local").unwrap();
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.last_session_spaces = vec![workspace::SessionSpace {
+            id: "w1".into(),
+            label: "Busy project".into(),
+            cwds: vec![registration.path.clone()],
+        }];
+        runtime.rebuild_catalog();
+        runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
+        })).unwrap());
+        assert_eq!(
+            runtime.snapshot.ui_state.workspace_registrations,
+            vec![registration]
+        );
+        assert_eq!(
+            runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+            "workspace.registration_in_use"
+        );
+        assert!(path.is_dir(), "Registration removal must not delete files");
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn removing_registration_converges_without_git_or_repeat_publication() {
+        let mut runtime = runtime();
+        let path =
+            std::env::temp_dir().join(format!("hide-registration-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let registration =
+            workspace::registration(path.to_str().unwrap(), "Empty project", "local").unwrap();
+        runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+        runtime.rebuild_catalog();
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
+        })).unwrap();
+        let git_before = workspace::git_calls_on_this_thread();
+        assert!(runtime.dispatch_json(&event));
+        assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+        assert!(runtime.snapshot.navigator.workspaces.is_empty());
+        assert_eq!(workspace::git_calls_on_this_thread(), git_before);
+        assert!(
+            !runtime.dispatch_json(&event),
+            "The same target state is already reached"
+        );
+        assert!(runtime.snapshot.status.last_error.is_none());
+        assert!(path.is_dir());
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    fn context_payload() -> SessionSnapshotPayload {
+        serde_json::from_value(serde_json::json!({
+            "agents": [
+                {"pane_id":"w1:p1", "agent":"codex", "agent_status":"working", "state_change_seq":10,
+                 "cwd":"/tmp/hide-context-alpha", "tokens":{"activity":"1788871000000"}},
+                {"pane_id":"w2:p1", "agent":"codex", "agent_status":"working", "state_change_seq":20,
+                 "cwd":"/tmp/hide-context-zeta", "tokens":{"activity":"1788872000000"},
+                 "agent_session":{"kind":"id", "value":"context-session"}, "spawned_from_pane_id":"w1:p1"}
+            ],
+            "workspaces":[{"workspace_id":"w1","label":"Alpha"},{"workspace_id":"w2","label":"Zeta"}],
+            "tabs":[{"workspace_id":"w1","tab_id":"w1:t1","label":"1"},{"workspace_id":"w2","tab_id":"w2:t1","label":"1"}],
+            "panes":[{"pane_id":"w1:p1","cwd":"/tmp/hide-context-alpha"},{"pane_id":"w2:p1","cwd":"/tmp/hide-context-zeta"}],
+            "layouts":[
+                {"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},
+                 "focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]},
+                {"workspace_id":"w2","tab_id":"w2:t1","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},
+                 "focused_pane_id":"w2:p1","panes":[{"pane_id":"w2:p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}
+            ]
+        })).unwrap()
+    }
+
+    #[test]
+    fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
+        let mut runtime = runtime();
+        runtime.ingest_session(Ok(context_payload()));
+        let project = runtime.snapshot.navigator.workspaces[0].clone();
+        runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+        let root = runtime.focused_local_checkout().unwrap().0.path.clone();
+        runtime.ingest_worktrees(crate::model::WorktreeCatalogSnapshot { projects: vec![crate::model::ProjectWorktreesSnapshot {
+            root_path: root, ..Default::default()
+        }] });
+        runtime.dispatch_json(br#"{"schema_version":2,"kind":"cleanup_review","payload":{}}"#);
+        let snapshot = serde_json::to_value(runtime.snapshot()).unwrap();
+        assert_eq!(snapshot["git_worktrees"]["cleanup"]["phase"], "failed");
+        assert!(snapshot["git_worktrees"]["cleanup"]["message"].as_str().unwrap().contains("live Herdr connection"));
+        runtime.dispatch_json(br#"{"schema_version":2,"kind":"cleanup_dismiss","payload":{}}"#);
+        assert!(serde_json::to_value(runtime.snapshot()).unwrap()["git_worktrees"]["cleanup"].is_null());
+    }
+
+    #[test]
+    fn overview_inspection_does_not_focus_or_repeat_publish() {
+        struct CountConnections(std::sync::mpsc::Sender<()>);
+        impl crate::herdr_api::ApiConnector for CountConnections {
+            fn connect(&self) -> Result<Box<dyn crate::herdr_api::ApiStream>, crate::herdr_api::ApiError> {
+                let _ = self.0.send(());
+                Err(crate::herdr_api::ApiError::Transport("fixture refused".into()))
+            }
+        }
+        let mut runtime = live_runtime();
+        runtime.ingest_session(Ok(context_payload()));
+        let mut target = runtime.snapshot.navigator.workspaces[1].checkouts[0].clone();
+        target.workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
+        runtime.snapshot.navigator.workspaces[0].checkouts.push(target.clone());
+        let project = runtime.snapshot.navigator.workspaces[0].clone();
+        runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+        let focused = runtime.snapshot.focused.clone();
+        let navigator = runtime.snapshot.navigator.clone();
+        let ui = runtime.snapshot.ui_state.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        runtime.live.as_mut().unwrap().api_connector = Arc::new(CountConnections(send));
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "overview_select", "payload": {"checkout_path": target.path}
+        })).unwrap();
+        runtime.dispatch_json(&event);
+        assert_eq!(runtime.snapshot.card.inspected_checkout_path, Some(target.path));
+        assert_eq!(runtime.snapshot.focused, focused);
+        assert_eq!(runtime.snapshot.navigator, navigator);
+        assert_eq!(runtime.snapshot.ui_state, ui);
+        assert!(!runtime.dispatch_json(&event), "Repeating an inspection has no effects");
+        assert!(receive.recv_timeout(std::time::Duration::from_millis(30)).is_err(), "Inspection sent a Herdr request");
+        let pane = &target.tabs[0].panes[0].id;
+        runtime.dispatch_json(&operator_focus_event(pane));
+        assert!(receive.recv_timeout(std::time::Duration::from_secs(1)).is_ok(), "Explicit Open must notify Herdr");
+    }
+
+    #[test]
+    fn projects_follow_authoritative_activity_and_identical_snapshots_settle() {
+        let mut runtime = runtime();
+        let mut payload = context_payload();
+        runtime.ingest_session(Ok(payload.clone()));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .path
+                .ends_with("/hide-context-zeta")
+        );
+        runtime.ingest_session(Ok(payload.clone()));
+        let before = runtime.snapshot_delta_payload(0, 0);
+        let revision = before.revision;
+        for _ in 0..5 {
+            runtime.ingest_session(Ok(payload.clone()));
+            let delta = runtime.snapshot_delta_payload(revision, 0);
+            assert!(
+                delta.rest.is_none(),
+                "Unchanged activity must not resend the navigator"
+            );
+        }
+        payload.agents[0]
+            .tokens
+            .insert("activity".into(), serde_json::json!("1788873000000"));
+        runtime.ingest_session(Ok(payload));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .path
+                .ends_with("/hide-context-alpha")
+        );
+    }
+
+    #[test]
+    fn overview_tracks_live_checkout_panes_and_drops_retired_lineage() {
+        let mut runtime = runtime();
+        let mut payload = context_payload();
+        runtime.ingest_session(Ok(payload.clone()));
+        let project = runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|w| w.path.ends_with("zeta"))
+            .unwrap()
+            .clone();
+        runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+        runtime.refresh_card();
+        assert_eq!(runtime.snapshot.card.panes.len(), 1);
+        assert_eq!(runtime.snapshot.card.panes[0].pane_id, "w2:p1");
+        assert_eq!(
+            runtime.snapshot.card.panes[0].session_id.as_deref(),
+            Some("context-session")
+        );
+        assert_eq!(
+            runtime.snapshot.card.panes[0].parent_pane_id.as_deref(),
+            Some("w1:p1")
+        );
+        payload.agents.remove(0);
+        payload.panes.remove(0);
+        payload.layouts.remove(0);
+        payload.tabs.remove(0);
+        payload.workspaces.remove(0);
+        runtime.ingest_session(Ok(payload.clone()));
+        runtime.refresh_card();
+        assert_eq!(runtime.snapshot.card.panes[0].parent_pane_id, None);
+        payload.panes[0].cwd = Some("/tmp/hide-context-moved".into());
+        payload.agents[0].cwd = Some("/tmp/hide-context-moved".into());
+        runtime.ingest_session(Ok(payload));
+        runtime.refresh_card();
+        assert!(
+            runtime.snapshot.card.panes.is_empty(),
+            "A pane moved away is no longer checkout context"
         );
     }
 

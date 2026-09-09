@@ -44,8 +44,8 @@ struct BrowserPaneView: View {
                     .disabled(!controller.connected)
                     TextField("Page address", text: $addressDraft)
                         .textFieldStyle(.plain)
-                        .hideFont(size: HideTheme.Typography.subhead)
                         .focused($editingAddress)
+                        .hideInputSurface(compact: true, focused: editingAddress)
                         .onSubmit { controller.navigate(addressDraft) }
                         .accessibilityIdentifier("browser-address-\(pane.id)")
                     HideIconButton(

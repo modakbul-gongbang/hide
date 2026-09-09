@@ -777,11 +777,12 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's three persisted sections.
+/// The right panel's four persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
+    Overview,
     Explorer,
     Changes,
     Git,
@@ -790,6 +791,7 @@ pub enum RightPanelSection {
 impl RightPanelSection {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "overview" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
             "git" => Some(Self::Git),
@@ -1234,6 +1236,7 @@ pub struct UnpushedSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
     pub head_sha: Option<String>,
+    pub last_commit_subject: Option<String>,
     pub last_commit_unix_seconds: Option<u64>,
     pub nested: bool,
     pub merged: Option<bool>,
@@ -1315,6 +1318,17 @@ pub struct TaskOperationSnapshot {
 /// One repository's worktrees.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectWorktreesSnapshot {
+    pub github: GithubStatusSnapshot,
+    pub pull_requests: Vec<PullRequestSnapshot>,
+    pub pull_request_window: String,
+    pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
+    pub history: Option<crate::worktrees::history::GitHistorySnapshot>,
+    pub shared_git_path: Option<String>,
+    pub shared_git_disk: DiskUsageSnapshot,
+    pub disk_total_bytes: Option<u64>,
+    pub disk_confirmed_bytes: Option<u64>,
+    pub linked_disk_bytes: Option<u64>,
+    pub disk_unavailable_reason: Option<String>,
     pub base_branch: Option<String>,
     pub base_source: String,
     pub base_branch_fallback: Option<String>,
@@ -1364,6 +1378,7 @@ pub struct DiskUsageSnapshot {
 /// and whether the worktree may be removed.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CheckoutCardSnapshot {
+    pub inspected_checkout_path: Option<String>,
     /// Absent when nothing is selected, or when the selection is a remote
     /// checkout - remote worktree management is out of scope, so no card.
     pub checkout_id: Option<String>,
@@ -1372,6 +1387,17 @@ pub struct CheckoutCardSnapshot {
     /// True while the selected checkout's size is still being measured.
     pub disk_measuring: bool,
     pub deletion_gate: Option<WorktreeDeletionGateSnapshot>,
+    /// Current topology, not a claim about who authored HEAD or older commits.
+    pub panes: Vec<CheckoutPaneContext>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CheckoutPaneContext {
+    pub pane_id: String,
+    pub title: String,
+    pub status: String,
+    pub session_id: Option<String>,
+    pub parent_pane_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

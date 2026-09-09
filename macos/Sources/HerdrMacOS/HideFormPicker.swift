@@ -7,14 +7,14 @@ import SwiftUI
 /// platform selection behaviour while Hide owns the surface hierarchy.
 struct HideFormPicker<SelectionValue: Hashable, Content: View>: View {
     let label: String
-    var selectedLabel: String?
+    let selectedLabel: String
     @Binding var selection: SelectionValue
     @ViewBuilder let content: () -> Content
 
     init(
         _ label: String,
         selection: Binding<SelectionValue>,
-        selectedLabel: String? = nil,
+        selectedLabel: String,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.label = label
@@ -24,44 +24,19 @@ struct HideFormPicker<SelectionValue: Hashable, Content: View>: View {
     }
 
     var body: some View {
-        if let selectedLabel {
-            VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-                fieldLabel
-                Menu {
-                    Picker(label, selection: $selection, content: content)
-                } label: {
-                    Text(selectedLabel).lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .hideFont(size: HideTheme.Typography.body)
-                .foregroundStyle(HideTheme.primary)
-                .padding(.horizontal, HideTheme.spacingMD)
-                .frame(maxWidth: .infinity, minHeight: HideTheme.formControlHeight)
-                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-                .overlay {
-                    RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                        .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-                }
-                .accessibilityLabel(label)
-                .accessibilityValue(selectedLabel)
-            }
-        } else {
-            HStack(spacing: HideTheme.spacingMD) {
-                fieldLabel
+        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+            fieldLabel
+            Menu {
                 Picker(label, selection: $selection, content: content)
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .tint(HideTheme.secondary)
-                    .hideFont(size: HideTheme.Typography.body)
-                    .foregroundStyle(HideTheme.primary)
-                    .padding(.horizontal, HideTheme.spacingSM)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                            .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
-                    }
+            } label: {
+                Text(selectedLabel).lineLimit(1)
             }
+            .menuStyle(.borderlessButton)
+            .frame(maxWidth: .infinity)
+            .hideInputSurface()
+            .hideControlFocus(cornerRadius: HideTheme.radiusSmall)
+            .accessibilityLabel(label)
+            .accessibilityValue(selectedLabel)
         }
     }
 

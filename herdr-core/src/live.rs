@@ -34,6 +34,9 @@ use crate::sidebar::{
 };
 use crate::workspace;
 
+#[path = "worktree_cleanup.rs"]
+pub(crate) mod cleanup;
+
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub use worktree_control::{
