@@ -20,7 +20,7 @@ bash scripts/check-right-panel-sections.sh
 bash scripts/check-shortcut-contract.sh
 
 # verify / repository invariants lane
-python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash scripts/check-harness-ignore-anchor.sh
 bash scripts/check-agent-asset-committed.sh
 bash scripts/check-capability-readers-off-lock.sh

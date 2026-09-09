@@ -21,7 +21,7 @@ bash scripts/check-harness-ignore-anchor.sh
 bash scripts/check-agent-asset-committed.sh
 bash scripts/check-capability-readers-off-lock.sh
 bash scripts/check-terminal-row-cache.sh
-python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash scripts/check-no-workstation-identity.sh
 bash scripts/check-git-worktree-presentation.sh
 bash scripts/check-git-worktree-states.sh
@@ -52,7 +52,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | capability readers off lock | Nothing forks a subprocess while the runtime mutex is held, and every reader runs from the session-sync coordinator | `bash scripts/check-capability-readers-off-lock.sh` | Move the subprocess to a reader driven by the coordinator; see `AGENTS.md`, Performance Guide. |
 | terminal row cache | The terminal draw loop builds a row only when something it is drawn from changed | `bash scripts/check-terminal-row-cache.sh` | Reach text building through `preparedRow`, never from `drawTerminalContents`. This is a cost property, so no test fails when it is lost; see `AGENTS.md`, Performance Guide. |
 | no workstation identity | No tracked text file names a real home directory or machine, no run-artifact path is tracked, and no browser profile file is tracked | `bash scripts/check-no-workstation-identity.sh` | Use `/Users/example` in fixtures and a neutral placeholder in UI. Move run artifacts under `agents/runs/<slug>/`; a `git add -f` past the ignore rule is what this refuses. |
-| latency summary | Missing/excluded observations do not become fast samples and long stalls remain visible | `python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'` | Fix the measurement semantics; do not trim inconvenient observations. |
+| script suite | Measurement semantics stay honest, and no gate a workflow runs calls a tool the runner lacks or a script that is untracked or absent | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Fix the measurement semantics; do not trim inconvenient observations. For a portability failure, reach for `git grep` rather than installing the tool on the runner. |
 | git worktree presentation | The Git section's documentation and its view keep using shared theme tokens, with no inline color, spacing or font size | `bash scripts/check-git-worktree-presentation.sh` | Add the token to `HideTheme` and `DESIGN.md`, then use it; do not write the value in the view. |
 | git worktree states | The worktree section keeps an explicit loading, refresh, comparison and unavailable-repository state | `bash scripts/check-git-worktree-states.sh` | Keep the state visible in `GitWorktreesView.swift`; update the assertion in the same change when the wording moves. |
 | worktree base policy | The worktree row still offers base selection and still excludes detached rows | `bash scripts/check-worktree-base-policy.sh` | Restore the control, or move the assertion with it. |

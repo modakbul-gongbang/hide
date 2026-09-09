@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Searches use `git grep`, never `rg`: ripgrep is not on the CI runner.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
 
-rg -q 'Git section refreshes local worktree state only when repository metadata' "$root/AGENTS.md"
+git grep -q 'Git section refreshes local worktree state only when repository metadata' -- AGENTS.md
 for token in lineageIndent lineageDeepIndent gitRowFontSize gitDetailFontSize; do
-  rg -q "$token" "$root/DESIGN.md"
-  rg -q "static let $token" "$root/macos/Sources/HerdrMacOS/HideTheme.swift"
+  git grep -q "$token" -- DESIGN.md
+  git grep -q "static let $token" -- macos/Sources/HerdrMacOS/HideTheme.swift
 done
-rg -q 'HideTheme\.GitIcon\.(merged|unmerged|dirty|clean|refresh)' \
-  "$root/macos/Sources/HerdrMacOS/GitWorktreesView.swift"
+git grep -Eq 'HideTheme\.GitIcon\.(merged|unmerged|dirty|clean|refresh)' \
+  -- macos/Sources/HerdrMacOS/GitWorktreesView.swift
 
-if rg -n '\bColor\(|\.padding\([0-9]|\.font\(\.system\(size: [0-9]' \
-  "$root/macos/Sources/HerdrMacOS/GitWorktreesView.swift"; then
+if git grep -nE '(^|[^A-Za-z0-9_])Color\(|\.padding\([0-9]|\.font\(\.system\(size: [0-9]' \
+  -- macos/Sources/HerdrMacOS/GitWorktreesView.swift; then
   echo "Git worktree presentation contains an inline color, spacing, or font size" >&2
   exit 1
 fi
