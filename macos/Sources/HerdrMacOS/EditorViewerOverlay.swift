@@ -4,14 +4,19 @@ import SwiftUI
 struct EditorViewerOverlay: View {
     @EnvironmentObject private var model: ShellModel
     @State private var draft = ""
+    @State private var draftTabID: String?
     @State private var findRequest = 0
     @State private var notice: String?
 
     private var isMarkdown: Bool { editor?.language == "markdown" || ["md", "markdown", "mdown"].contains(selectedURL?.pathExtension.lowercased() ?? "") }
     private var preview: Bool { activeTab?.markdownPreview ?? true }
     private var wrapsLines: Bool { activeTab?.wrap ?? false }
+    private var currentDraft: String { draftTabID == editor?.activeTabID ? draft : (editor?.contentsUTF8 ?? "") }
     private var draftBinding: Binding<String> {
-        Binding(get: { draft }, set: { value in
+        let target = editor?.activeTabID
+        return Binding(get: { currentDraft }, set: { value in
+            guard model.core.snapshot?.editor.activeTabID == target else { return }
+            draftTabID = target
             draft = value
             model.core.updateDraft(value)
             model.core.scheduleFileSave(value)
@@ -53,10 +58,11 @@ struct EditorViewerOverlay: View {
         .accessibilityIdentifier("editor-viewer-overlay")
         .task(id: editor?.activeTabID) {
             draft = editor?.contentsUTF8 ?? ""
+            draftTabID = editor?.activeTabID
             notice = nil
         }
         .onChange(of: editor?.contentsUTF8) { _, contents in
-            if let contents, contents != draft { draft = contents }
+            if let contents { draft = contents; draftTabID = editor?.activeTabID }
         }
 
     }
@@ -66,23 +72,23 @@ struct EditorViewerOverlay: View {
         if isImage(url) {
             imagePreview(url)
         } else if editor?.contentsUTF8 != nil {
-            if isMarkdown && preview && draft.isEmpty {
+            if isMarkdown && preview && currentDraft.isEmpty {
                 unavailable(title: "Empty document", message: "Choose Edit to start writing Markdown.")
             } else if isMarkdown && preview {
-                MarkdownPreview(text: draft, textScale: model.editorTextScale, findRequest: findRequest, openLink: openDocumentLink)
+                MarkdownPreview(text: currentDraft, textScale: model.editorTextScale, findRequest: findRequest, openLink: openDocumentLink)
                     .frame(maxWidth: HideTheme.Editor.documentWidth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("markdown-preview")
             } else {
-            HighlightedCodeEditor(
-                text: draftBinding,
-                language: editor?.language,
-                isEditable: readonlyReason == nil,
-                textScale: model.editorTextScale,
-                wrapsLines: wrapsLines,
-                findRequest: findRequest
-            )
-            .id(activeTab?.id)
+                HighlightedCodeEditor(
+                    text: draftBinding,
+                    language: editor?.language,
+                    isEditable: readonlyReason == nil,
+                    textScale: model.editorTextScale,
+                    wrapsLines: wrapsLines,
+                    findRequest: findRequest
+                )
+                .id(activeTab?.id)
             }
         } else {
             unavailable(
@@ -94,7 +100,7 @@ struct EditorViewerOverlay: View {
 
     private func documentToolbar(_ url: URL) -> some View {
         HStack(spacing: HideTheme.spacingSM) {
-            Text(url.deletingLastPathComponent().lastPathComponent + " / " + url.lastPathComponent)
+            Text(breadcrumb(for: url))
                 .hideFont(size: HideTheme.Typography.subhead)
                 .foregroundStyle(HideTheme.secondary)
                 .lineLimit(1)
@@ -135,6 +141,13 @@ struct EditorViewerOverlay: View {
         .background(HideTheme.panel)
         .overlay(alignment: .bottom) { HideTheme.divider.frame(height: HideTheme.Layout.hairlineWidth) }
         .accessibilityIdentifier("file-document-toolbar")
+    }
+
+    private func breadcrumb(for url: URL) -> String {
+        guard let tab = activeTab, let checkout = model.registeredCheckouts.first(where: { $0.id == tab.checkoutID }),
+              url.path.hasPrefix(checkout.path + "/") else { return url.path }
+        let relative = String(url.path.dropFirst(checkout.path.count + 1))
+        return ([URL(fileURLWithPath: checkout.path).lastPathComponent] + relative.split(separator: "/").map(String.init)).joined(separator: " / ")
     }
 
     private func setView(preview: Bool, wrap: Bool) {

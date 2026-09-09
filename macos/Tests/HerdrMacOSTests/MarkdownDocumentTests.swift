@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import SwiftUI
 @testable import HerdrMacOS
 
 @Suite("Markdown native document", .serialized)
@@ -17,6 +18,21 @@ struct MarkdownDocumentTests {
         let body = (rendered.string as NSString).range(of: "한국어")
         let font = try #require(rendered.attribute(.font, at: body.location, effectiveRange: nil) as? NSFont)
         #expect(font.fontName.contains("Inter"))
+    }
+
+    @Test func longPreviewHasScrollableNativeDocumentGeometry() throws {
+        let source = Array(repeating: "한국어와 English paragraph for the document preview.", count: 100).joined(separator: "\n\n")
+        let host = NSHostingView(rootView: MarkdownPreview(text: source, textScale: 1, findRequest: 0, openLink: { _ in }))
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 240)
+        host.layoutSubtreeIfNeeded()
+        func scroll(in view: NSView) -> NSScrollView? {
+            (view as? NSScrollView) ?? view.subviews.lazy.compactMap { scroll(in: $0) }.first
+        }
+        let scrollView = try #require(scroll(in: host))
+        let document = try #require(scrollView.documentView as? NSTextView)
+        #expect(document.string.contains("한국어와 English"))
+        #expect(document.frame.height > scrollView.contentSize.height)
+        #expect(document.frame.width <= scrollView.contentSize.width)
     }
 
     @Test func koreanAndEnglishWrapAtReadableWidthUsingActualFont() throws {
