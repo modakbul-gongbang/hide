@@ -816,6 +816,7 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 
 `HideTheme.lineageIndent` is 12pt for the first two descendant levels, and `lineageDeepIndent` is 6pt per level from depth three onward.
 `lineageChevronWidth` reserves 16pt on every project agent row, with a disclosure control for parents and hairline connectors for descendants.
+The Git worktree section sizes its own text from `HideTheme.gitRowFontSize` (11pt) for a worktree row and `HideTheme.gitDetailFontSize` (10pt) for the ahead/behind, pushed and disk detail beside it.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
 The branch is the title; the primary checkout carries a separate `primary` role badge.
 The sidebar hierarchy is Project > Workspace > Agents; a workspace corresponds to one checkout path, including a plain folder.
@@ -1159,8 +1160,10 @@ Existing controls retain their accessibility contracts; Overview adds named sect
 ### Enforcement
 
 Add a named token before using a new visual value.
-`scripts/check-hide-theme-literals.sh` rejects inline styling, native tooltips, and shortcut glyph literals outside token definitions and Pet files.
-`scripts/check-hide-components.sh` prevents duplicated component ownership and checks every migrated tooltip file.
+`node scripts/check-design-contract.mjs` is the entrypoint CI runs, and it runs all three checkers below.
+`check-hide-theme-literals.mjs` rejects inline styling, native tooltips, and shortcut glyph literals outside token definitions and Pet files.
+`check-hide-components.mjs` prevents duplicated component ownership and checks every migrated tooltip file.
+`check-design-controls.mjs` counts control usage against `scripts/design-control-policy.json`.
 The shell test parses this document's frontmatter and typography table against actual token values.
 
 ### Design consistency and control ownership

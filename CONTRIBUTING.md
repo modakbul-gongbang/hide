@@ -23,6 +23,11 @@ bash scripts/check-capability-readers-off-lock.sh
 bash scripts/check-terminal-row-cache.sh
 python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
 bash scripts/check-no-workstation-identity.sh
+bash scripts/check-git-worktree-presentation.sh
+bash scripts/check-git-worktree-states.sh
+bash scripts/check-worktree-base-policy.sh
+bash scripts/check-worktree-catalog-presentation.sh
+bash scripts/check-worktree-removal-boundary.sh
 zsh scripts/check-herdr-pin-single-source.sh
 zsh scripts/check-herdr-contract.sh --schema-only   # needs a Herdr CLI on PATH or --herdr-bin
 ```
@@ -46,12 +51,18 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | agent asset committed | The simplification subagent stays a tracked file | `bash scripts/check-agent-asset-committed.sh` | `git add` it; it once became uncommittable through an unanchored ignore rule. |
 | capability readers off lock | Nothing forks a subprocess while the runtime mutex is held, and every reader runs from the session-sync coordinator | `bash scripts/check-capability-readers-off-lock.sh` | Move the subprocess to a reader driven by the coordinator; see `AGENTS.md`, Performance Guide. |
 | terminal row cache | The terminal draw loop builds a row only when something it is drawn from changed | `bash scripts/check-terminal-row-cache.sh` | Reach text building through `preparedRow`, never from `drawTerminalContents`. This is a cost property, so no test fails when it is lost; see `AGENTS.md`, Performance Guide. |
-| no workstation identity | No tracked text file names a real home directory or machine | `bash scripts/check-no-workstation-identity.sh` | Use `/Users/example` in fixtures and a neutral placeholder in UI. |
+| no workstation identity | No tracked text file names a real home directory or machine, no run-artifact path is tracked, and no browser profile file is tracked | `bash scripts/check-no-workstation-identity.sh` | Use `/Users/example` in fixtures and a neutral placeholder in UI. Move run artifacts under `agents/runs/<slug>/`; a `git add -f` past the ignore rule is what this refuses. |
 | latency summary | Missing/excluded observations do not become fast samples and long stalls remain visible | `python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'` | Fix the measurement semantics; do not trim inconvenient observations. |
+| git worktree presentation | The Git section's documentation and its view keep using shared theme tokens, with no inline color, spacing or font size | `bash scripts/check-git-worktree-presentation.sh` | Add the token to `HideTheme` and `DESIGN.md`, then use it; do not write the value in the view. |
+| git worktree states | The worktree section keeps an explicit loading, refresh, comparison and unavailable-repository state | `bash scripts/check-git-worktree-states.sh` | Keep the state visible in `GitWorktreesView.swift`; update the assertion in the same change when the wording moves. |
+| worktree base policy | The worktree row still offers base selection and still excludes detached rows | `bash scripts/check-worktree-base-policy.sh` | Restore the control, or move the assertion with it. |
+| worktree catalog presentation | The main worktree stays marked and the empty linked-worktree state stays named | `bash scripts/check-worktree-catalog-presentation.sh` | Same. |
+| worktree removal boundary | Branch deletion during worktree removal is `-d` and never `-D` | `bash scripts/check-worktree-removal-boundary.sh` | Never force-delete; an unmerged branch must fail and surface the reason. |
 | herdr pin single source | The Herdr version and digest live only in `herdr-bundle.json` | `zsh scripts/check-herdr-pin-single-source.sh` | Derive from the manifest; never restate the value. Bump with `scripts/bump-herdr.sh <version>`. |
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
 
-The gates that read a running Herdr server (the full `check-herdr-contract.sh` and the workbench evidence scripts under `macos/scripts/`) are local steps and are not required in CI.
+The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
+They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a fixture in [verification-fixtures.md](docs/verification-fixtures.md).
 The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs` and `node --test scripts/tests/design-controls.test.mjs`.
 The shared entrypoint runs the token, component ownership and counted control-policy checks; it performs static checks, not desktop interaction.
 The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
@@ -72,6 +83,27 @@ The checker does not stage, stash, restore or modify files.
 When a check fails, reuse the documented owner or fix the source; if an existing usage was removed, retire its counted allowance in `scripts/design-control-policy.json` in the same change.
 Adding an exception requires an explicit design decision and reason in DESIGN.md, not an automatic baseline update.
 Keep visual acceptance separate: DESIGN.md owns the future native catalog and human screenshot-review procedure; neither exists as an automated aesthetic approval gate.
+
+## Local gates
+
+None of these run in CI, and a green `verify` says nothing about them.
+A script that stops earning its place here is deleted rather than left unreferenced; five gates once rotted silently because nothing named them, and three of those were asserting a symbol the design system had renamed.
+
+| Command | Checks | Needs |
+| --- | --- | --- |
+| `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `/tmp/herdr-ide-verify/hide-full.log` |
+| `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
+| `node scripts/check-hide-design.mjs` | `DESIGN.md` lints clean and still carries the clauses the contract names | Network, for `npx @google/design.md` |
+| `node scripts/check-hide-design-enforcement.mjs` | `design-contract.yml` still binds the real checkers, so this list cannot drift from CI | - |
+| `bash scripts/check-hide-copy.sh <base-sha>` | User-facing copy against the inventory at an immutable pre-change commit | The base commit of the change under review |
+| `bash scripts/check-hide-accessibility.sh` | The accessibility tree of the built dev app | Builds and launches the dev bundle |
+| `bash scripts/check-typed-contract.sh <stage>` | The typed wire boundary: `generated`, `behavior`, `structure`, `suites` or `e2e` | `suites` and `e2e` build and launch |
+| `bash scripts/check-typed-live-remote.sh <stage>` | The same boundary against a live and a remote server | An authorized remote fixture |
+| `python3 scripts/check-no-attribution.py` | No AI tooling attribution in the branch name, the commits, or a prepared PR body | A fetched `origin/main`; `--range` and `--pr-body` override the defaults |
+| `python3 scripts/check-herdr-release.py <source\|asset>` | A Herdr release at its public and local source boundaries before the pin moves | A Herdr checkout or a reference binary |
+| `python3 scripts/check-worktree-performance-evidence.py [dir]` | A worktree performance run recorded what the guide requires | A completed native run directory |
+| `bash macos/scripts/check_workbench_native_evidence.sh ...` | A native Workbench run used one identified app and an isolated server | A completed native run |
+| `zsh scripts/install-local-runtime.sh --herdr-root PATH` | Not a gate: installs a locally built Herdr for runtime work | A Herdr checkout |
 
 ## Performance-sensitive changes
 
