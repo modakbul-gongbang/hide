@@ -26,6 +26,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+      # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
+      - name: Check formatting
+        run: cargo fmt --manifest-path herdr-core/Cargo.toml --check
+      - name: Lint the core
+        run: cargo clippy --locked --manifest-path herdr-core/Cargo.toml --all-targets -- -D warnings
       - name: Test the core
         run: cargo test --locked --manifest-path herdr-core/Cargo.toml
 
