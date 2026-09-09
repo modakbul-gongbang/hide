@@ -6,6 +6,25 @@ import SwiftUI
 @Suite("Markdown native document", .serialized)
 @MainActor
 struct MarkdownDocumentTests {
+    @Test func tableColumnsRemainVisiblySeparated() throws {
+        let rendered = try MarkdownDocument.render("| Column | Value |\n| --- | --- |\n| Korean | 한글 |", scale: 1)
+        #expect(rendered.string.contains("Korean"))
+        #expect(rendered.string.contains("한글"))
+        let storage = NSTextStorage(attributedString: rendered)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
+        storage.addLayoutManager(layout)
+        layout.addTextContainer(container)
+        layout.ensureLayout(for: container)
+        let text = rendered.string as NSString
+        let leftRange = text.range(of: "Column")
+        let rightRange = text.range(of: "Value")
+        try #require(leftRange.location != NSNotFound && rightRange.location != NSNotFound)
+        let left = layout.boundingRect(forGlyphRange: layout.glyphRange(forCharacterRange: leftRange, actualCharacterRange: nil), in: container)
+        let right = layout.boundingRect(forGlyphRange: layout.glyphRange(forCharacterRange: rightRange, actualCharacterRange: nil), in: container)
+        #expect(right.minX - left.maxX >= 8, "Table columns require a visible gap, not a zero-width tab")
+    }
+
     @Test func previewPreservesBlocksAndNeverEmbedsHTMLOrFetchesImages() throws {
         let rendered = try MarkdownDocument.render("# Heading\n\n한국어 **bold** text\n\n- First\n- Second\n\n![secret](https://example.com/private.png)\n\n<script>alert(1)</script>", scale: 1)
         #expect(rendered.string.contains("Heading\n\n한국어 bold text\n\n• First\n\n• Second"))

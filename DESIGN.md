@@ -1242,6 +1242,7 @@ Core acknowledgement, switching file identity, and explicitly reloading a disk c
 Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.
 The document adds theme tokens for a 720-point readable width, 15-point Inter body and 5-point line spacing; Korean uses the font's native fallback and word wrapping.
 Headers, paragraphs, emphasis, lists, quotes, code and links retain readable structure.
+Tables use visibly separated textual cells rather than a grid; native tab stops must not make adjacent values appear concatenated.
 Raw HTML is inert literal text, never a browser execution surface.
 Local and remote Markdown images both display their description with an explicit preview-disabled label; no image resource is read or fetched by preview.
 HTTP(S) links open only after activation through the existing external-browser owner; relative file links are restricted to existing files inside the current symlink-resolved checkout.

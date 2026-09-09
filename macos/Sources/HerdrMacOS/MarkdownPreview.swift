@@ -17,7 +17,9 @@ enum MarkdownDocument {
                 switch component.kind { case .tableRow, .tableHeaderRow: true; default: false }
             }?.identity
             if output.length > 0, block != previousBlock {
-                output.append(NSAttributedString(string: cell && tableRow == previousTableRow ? "\t" : "\n\n"))
+                // A textual separator stays legible at every native tab-stop
+                // position; tables deliberately remain a plain reading view.
+                output.append(NSAttributedString(string: cell && tableRow == previousTableRow ? "  |  " : "\n\n"))
             }
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineSpacing = HideTheme.Editor.documentLineSpacing * scale
