@@ -31,8 +31,8 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .recentTab: "Next Recent Panel in Project"
-        case .previousRecentTab: "Previous Recent Panel in Project"
+        case .recentTab: "Next Recent Panel"
+        case .previousRecentTab: "Previous Recent Panel"
         case .recentProject: "Next Recent Project"
         case .previousRecentProject: "Previous Recent Project"
         case .newTab: "New Tab"

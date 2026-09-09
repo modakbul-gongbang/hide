@@ -26,21 +26,18 @@ struct ProjectMRU: Equatable {
     }
 }
 
-/// Each project retains its own ordering across checkout and project visits.
-/// Deleted projects release their history on the next topology observation.
-struct TabMRU: Equatable {
-    private var contexts: [String: RecentItemMRU] = [:]
+/// One recency order over every surface the session holds, across projects,
+/// checkouts and devices: the chord walks the panels the operator actually
+/// last used, not only the focused project's. Removed surfaces release their
+/// place on the next topology observation, and a per-project view is that same
+/// order filtered by the project each surface belongs to.
+struct SurfaceMRU: Equatable {
+    private var items = RecentItemMRU()
 
-    func tabIDs(in contextID: String) -> [String] { contexts[contextID]?.itemIDs ?? [] }
+    var surfaceIDs: [String] { items.itemIDs }
 
-    mutating func observe(contextID: String, focusedTabID: String?, availableTabIDs: [String]) {
-        contexts[contextID, default: RecentItemMRU()].observe(
-            focusedItemID: focusedTabID, availableItemIDs: availableTabIDs
-        )
-    }
-
-    mutating func retainContexts(_ available: Set<String>) {
-        contexts = contexts.filter { available.contains($0.key) }
+    mutating func observe(focusedSurfaceID: String?, availableSurfaceIDs: [String]) {
+        items.observe(focusedItemID: focusedSurfaceID, availableItemIDs: availableSurfaceIDs)
     }
 }
 

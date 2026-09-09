@@ -147,7 +147,7 @@ struct RecentNavigationIntegrationTests {
         #expect(model.interactionNotice == nil)
     }
 
-    @MainActor @Test func projectSwitchRestoresItsLastFileAndControlCycleIncludesTheTerminal() async throws {
+    @MainActor @Test func projectSwitchRestoresItsLastFileAndControlCycleSpansProjects() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("hide-recent-\(UUID().uuidString)")
         let alpha = root.appendingPathComponent("alpha")
         let beta = root.appendingPathComponent("beta")
@@ -195,13 +195,21 @@ struct RecentNavigationIntegrationTests {
         model.commitProjectSwitcher()
         try await eventually("restore alpha") { bridge.snapshot?.editor.activeTabID == fileAID }
         #expect(model.focusedWorkspace?.id == alphaID)
+        // The chord spans projects: the actually previous panel is beta's file,
+        // even though the focused project is now alpha.
         model.beginOrAdvanceTabSwitcher()
         let target = try #require(model.tabSwitcherCycle?.selectedTabID)
         let surface = try #require(model.recentSurfaces[target])
-        guard case .herdr = surface.item.kind else {
-            Issue.record("Control cycle must include the existing terminal alongside the file")
+        guard case .editor(let previousFile) = surface.item.kind, previousFile.id == fileBID else {
+            Issue.record("The previous panel must be the other project's file")
             return
         }
+        #expect(surface.projectID != "local:\(alphaID)")
+        let betaFileSurfaceID = target
+        // Terminals stay in the same cycle alongside the files.
+        #expect(model.tabSwitcherCycle?.tabIDs.compactMap { model.recentSurfaces[$0] }.contains {
+            if case .herdr = $0.item.kind { return true } else { return false }
+        } == true)
         var stepPublications = 0
         let stepSubscription = model.recentNavigation.$tabCycle.dropFirst().sink { _ in stepPublications += 1 }
         var shellPublications = 0
@@ -214,9 +222,11 @@ struct RecentNavigationIntegrationTests {
         withExtendedLifetime((stepSubscription, shellSubscription)) {}
         model.cancelTabSwitcher()
         #expect(bridge.snapshot?.editor.activeTabID == fileAID)
-        model.beginOrAdvanceProjectSwitcher()
-        model.commitProjectSwitcher()
+        // Committing that cross-project selection moves the focused project too.
+        model.beginOrAdvanceTabSwitcher()
+        model.commitTabSwitcher()
         try await eventually("restore beta") { bridge.snapshot?.editor.activeTabID == fileBID }
+        #expect(model.focusedWorkspace?.id == betaProject.id)
 
         // A file can close while its MRU row is highlighted. The held cycle
         // converges to the remaining terminal without asking for acknowledgement.
@@ -225,12 +235,12 @@ struct RecentNavigationIntegrationTests {
         #expect(model.tabSwitcherCycle != nil)
         bridge.closeFileTab(fileBID)
         try await eventually("closed file pruned") {
-            model.tabSwitcherCycle?.tabIDs.count == 1
+            model.tabSwitcherCycle?.tabIDs.contains(betaFileSurfaceID) == false
                 && bridge.snapshot?.editor.tabs.contains { $0.id == fileBID } == false
         }
         #expect(model.interactionNotice == nil)
         model.commitTabSwitcher()
-        #expect(model.focusedPaneID == "fixture-beta-pane")
+        #expect(model.tabSwitcherCycle == nil)
         #expect(model.interactionNotice == nil)
 
         // A held project's target may also retire before the queued commit.

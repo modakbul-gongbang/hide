@@ -830,6 +830,7 @@ Project-view number shortcuts skip agents hidden by workspace disclosure.
 `compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
 Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
 The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
+An expanded Workspace omits the chip as well: each nested agent row carries its own status and provider, so the summary would repeat what is already beside it. The disclosure chevron stays in both states.
 The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
 The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
 `agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
@@ -973,8 +974,8 @@ Project summary rows, Git rails, worktree rows and inspector composition remain 
 
 ### Recent navigation in the native shell
 
-Control+Tab and Control+Shift+Tab cycle all unified surfaces inside the selected project in recent-use order.
-This includes terminal, Browser plugin, file/editor, and diff tabs across every checkout in that project.
+Control+Tab and Control+Shift+Tab cycle all unified surfaces in recent-use order, across every project, checkout and device the session holds.
+This includes terminal, Browser plugin, file/editor, and diff tabs, and committing a row from another project moves the focused project with it.
 The overlay is named “Recent Panels”: a single Control+Tab returns to the actually previous surface, including a file view, and repeated chords toggle between the last two surfaces.
 Holding Control while pressing Tab again walks older visits rather than tab-strip or agent-list order.
 Option+Tab and Option+Shift+Tab cycle projects globally and restore each project's last used surface.
@@ -990,12 +991,12 @@ Workspace and device registration changes and connection-test requests use their
 Invalid runtime identities, unavailable devices, and failed operations remain visible, and destructive decisions retain their confirmations.
 
 The project identity is `CoreWorkspaceSnapshot.id`, scoped by device, following the sidebar's Project > Workspace > Agents hierarchy.
-Its checkouts are workspaces in that hierarchy, so two checkouts of one repository share a project cycle and a tab history.
+Its checkouts are workspaces in that hierarchy, so two checkouts of one repository share a project cycle; panel history is one order over every project, and a project's own last surface is that order narrowed to it.
 Herdr workspaces contributing tabs to those checkouts do not create separate Hide projects.
 The existing core catalog determines grouping; navigation does not infer it from display labels or directory names.
 
 Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
-Project rows show the last surface and checkout; tab rows show their checkout and surface type.
+Project rows show the last surface and checkout; panel rows show their project and checkout, collapsed to the checkout alone when both carry the same name, and their surface type.
 Recent Panels uses the same focused-pane agent brand mark as the tab strip, including Claude Code and Codex; file, diff and unassociated terminal surfaces keep their type icons.
 History is session-local and retains only existing projects and surfaces.
 A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
