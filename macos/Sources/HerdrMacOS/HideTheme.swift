@@ -87,6 +87,9 @@ enum HideTheme {
         static let lineNumberColumnWidth: CGFloat = 44
         static let diffLineNumberColumnWidth: CGFloat = 40
         static let minimumContentWidth: CGFloat = 720
+        static let documentWidth: CGFloat = 720
+        static let documentFontSize: CGFloat = 15
+        static let documentLineSpacing: CGFloat = 5
     }
     enum Hint {
         static let delay: TimeInterval = 0.150

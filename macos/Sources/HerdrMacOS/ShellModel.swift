@@ -860,7 +860,7 @@ final class ShellModel: ObservableObject {
     /// Every checkout this Mac has registered, which is what "inside the
     /// scope" means for a clicked path (A3). A remote checkout is not one:
     /// its paths name files on the other machine.
-    private var registeredCheckouts: [TerminalLinkCheckout] {
+    var registeredCheckouts: [TerminalLinkCheckout] {
         (core.snapshot?.navigator.workspaces ?? [])
             .filter { $0.remoteTargetID == nil }
             .flatMap(\.checkouts)

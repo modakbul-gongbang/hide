@@ -1222,3 +1222,31 @@ If layout structure remains unresolved, present distinct candidates before imple
 Do not refresh an expected screenshot merely because a new build differs; explain the intended design change and review it.
 Shared controls and their policy checks are implemented; a native component catalog and screenshot-comparison service are not yet available.
 Visual baseline approval remains a separate human review.
+
+## File document toolbar and Markdown
+
+The central file surface uses one document toolbar, preserving the existing tab strip and Explorer.
+The current folder and filename give context; Find uses AppKit's native find bar, Wrap changes the source text container, and reveal actions target Explorer and Finder.
+Controls use HideIconButton and the shared tooltip/accessibility renderer.
+Unsaved drafts and the existing read-only/conflict notices remain visible in either mode.
+Diff tabs retain their existing viewer.
+
+Markdown files alone show the centered Preview/Edit HideChoiceGroup.
+The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Preview with source wrapping off.
+These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
+The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
+Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
+
+Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.
+The document adds theme tokens for a 720-point readable width, 15-point Inter body and 5-point line spacing; Korean uses the font's native fallback and word wrapping.
+Headers, paragraphs, emphasis, lists, quotes, code and links retain readable structure.
+Raw HTML is inert literal text, never a browser execution surface.
+Local and remote Markdown images both display their description with an explicit preview-disabled label; no image resource is read or fetched by preview.
+HTTP(S) links open only after activation through the existing external-browser owner; relative file links are restricted to existing files inside the current symlink-resolved checkout.
+Unsupported schemes, fragments, outside-checkout paths and missing links show a caller-visible notice.
+Extended Markdown has no execution or plugin mechanism; unsupported syntax remains readable source and can always be inspected in Edit.
+A parse failure displays the reason and original source; an empty document offers Edit.
+
+MarkdownDocumentTests checks rendered text, inert HTML/images and actual Inter Korean/English layout at two widths.
+The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
+Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.

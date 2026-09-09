@@ -4,6 +4,19 @@ import SwiftUI
 struct EditorViewerOverlay: View {
     @EnvironmentObject private var model: ShellModel
     @State private var draft = ""
+    @State private var findRequest = 0
+    @State private var notice: String?
+
+    private var isMarkdown: Bool { editor?.language == "markdown" || ["md", "markdown", "mdown"].contains(selectedURL?.pathExtension.lowercased() ?? "") }
+    private var preview: Bool { activeTab?.markdownPreview ?? true }
+    private var wrapsLines: Bool { activeTab?.wrap ?? false }
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { value in
+            draft = value
+            model.core.updateDraft(value)
+            model.core.scheduleFileSave(value)
+        })
+    }
 
     private var editor: CoreEditorSnapshot? { model.core.snapshot?.editor }
     private var activeTab: CoreEditorTabSnapshot? {
@@ -19,7 +32,9 @@ struct EditorViewerOverlay: View {
                 diffViewer(tab: activeTab)
             } else if let selectedURL {
                 VStack(spacing: HideTheme.spacingNone) {
+                    documentToolbar(selectedURL)
                     editorContent(for: selectedURL)
+                    if let notice { noticeBar(systemImage: "exclamationmark.circle", message: notice, color: HideTheme.warning) }
                     if let conflict = editor?.conflict {
                         conflictBar(conflict)
                     } else if let readonlyReason, editor?.contentsUTF8 != nil {
@@ -38,15 +53,12 @@ struct EditorViewerOverlay: View {
         .accessibilityIdentifier("editor-viewer-overlay")
         .task(id: editor?.activeTabID) {
             draft = editor?.contentsUTF8 ?? ""
+            notice = nil
         }
         .onChange(of: editor?.contentsUTF8) { _, contents in
             if let contents, contents != draft { draft = contents }
         }
-        .onChange(of: draft) { _, value in
-            guard editor?.path != nil, editor?.contentsUTF8 != value else { return }
-            model.core.updateDraft(value)
-            model.core.scheduleFileSave(value)
-        }
+
     }
 
     @ViewBuilder
@@ -54,18 +66,101 @@ struct EditorViewerOverlay: View {
         if isImage(url) {
             imagePreview(url)
         } else if editor?.contentsUTF8 != nil {
+            if isMarkdown && preview && draft.isEmpty {
+                unavailable(title: "Empty document", message: "Choose Edit to start writing Markdown.")
+            } else if isMarkdown && preview {
+                MarkdownPreview(text: draft, textScale: model.editorTextScale, findRequest: findRequest, openLink: openDocumentLink)
+                    .frame(maxWidth: HideTheme.Editor.documentWidth)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("markdown-preview")
+            } else {
             HighlightedCodeEditor(
-                text: $draft,
+                text: draftBinding,
                 language: editor?.language,
                 isEditable: readonlyReason == nil,
-                textScale: model.editorTextScale
+                textScale: model.editorTextScale,
+                wrapsLines: wrapsLines,
+                findRequest: findRequest
             )
+            .id(activeTab?.id)
+            }
         } else {
             unavailable(
                 title: "Preview only",
                 message: editor?.readonlyReason ?? "This file type cannot be shown as text."
             )
         }
+    }
+
+    private func documentToolbar(_ url: URL) -> some View {
+        HStack(spacing: HideTheme.spacingSM) {
+            Text(url.deletingLastPathComponent().lastPathComponent + " / " + url.lastPathComponent)
+                .hideFont(size: HideTheme.Typography.subhead)
+                .foregroundStyle(HideTheme.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .hideTooltip(url.path)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if isMarkdown {
+                HideChoiceGroup(label: "Markdown mode", values: [true, false],
+                    selection: Binding(get: { preview }, set: { setView(preview: $0, wrap: wrapsLines) }),
+                    title: { $0 ? "Preview" : "Edit" },
+                    identifier: { $0 ? "markdown-mode-preview" : "markdown-mode-edit" },
+                    optionHelp: { $0 ? "Read the current Markdown draft" : "Edit Markdown source" })
+            }
+            HStack(spacing: HideTheme.spacingXXS) {
+                if editor?.dirty == true {
+                    Text("Unsaved").hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.warning)
+                }
+                HideIconButton(systemImage: "magnifyingglass", help: "Find in document", variant: .toolbar, command: .menu(.findInPane)) { findRequest += 1 }
+                    .disabled(editor?.contentsUTF8 == nil)
+                if !(isMarkdown && preview) && !isImage(url) {
+                    HideIconButton(systemImage: "arrow.turn.down.left", help: "Wrap lines", variant: .toolbar, isSelected: wrapsLines) {
+                        setView(preview: preview, wrap: !wrapsLines)
+                    }
+                    .disabled(editor?.contentsUTF8 == nil)
+                }
+                HideIconButton(systemImage: "folder", help: "Reveal file in Explorer", variant: .toolbar) {
+                    guard let tab = activeTab else { return }
+                    model.core.revealPath(url, workspaceID: tab.workspaceID, checkoutID: tab.checkoutID, isDirectory: false)
+                }
+                HideIconButton(systemImage: "arrow.up.forward.square", help: "Reveal file in Finder", variant: .toolbar) {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, HideTheme.spacingMD)
+        .padding(.vertical, HideTheme.spacingXS)
+        .background(HideTheme.panel)
+        .overlay(alignment: .bottom) { HideTheme.divider.frame(height: HideTheme.Layout.hairlineWidth) }
+        .accessibilityIdentifier("file-document-toolbar")
+    }
+
+    private func setView(preview: Bool, wrap: Bool) {
+        guard let tab = activeTab else { return }
+        model.core.setFileView(tabID: tab.id, preview: preview, wrap: wrap)
+    }
+
+    private func openDocumentLink(_ url: URL) {
+        if ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+            ExternalBrowser.open(url) { notice = $0 }
+            return
+        }
+        guard url.scheme == nil || url.isFileURL, let selectedURL, let tab = activeTab,
+              url.fragment == nil else {
+            notice = "This link type is unavailable in Markdown preview."
+            return
+        }
+        let target = url.isFileURL ? url : URL(fileURLWithPath: url.path, relativeTo: selectedURL.deletingLastPathComponent())
+        let path = TerminalLinkResolver.canonical(target)
+        guard let checkout = model.registeredCheckouts.first(where: { $0.id == tab.checkoutID }),
+              path.path.hasPrefix(TerminalLinkResolver.canonical(URL(fileURLWithPath: checkout.path)).path + "/"),
+              FileManager.default.fileExists(atPath: path.path) else {
+            notice = "The linked file is missing or outside this checkout."
+            return
+        }
+        model.core.revealPath(path, workspaceID: tab.workspaceID, checkoutID: tab.checkoutID, isDirectory: false)
     }
 
     @ViewBuilder

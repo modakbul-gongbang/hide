@@ -831,6 +831,13 @@ struct FileSavePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct FileViewPayload {
+    tab_id: String,
+    markdown_preview: bool,
+    wrap: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileDraftPayload {
     contents_utf8: String,
 }
@@ -1077,6 +1084,7 @@ enum ValidatedEvent {
     FileFocus(FileTabPayload),
     FileClose(FileTabPayload),
     FileDraft(FileDraftPayload),
+    FileView(FileViewPayload),
     FileSave(FileSavePayload),
     FileConflict(FileConflictPayload),
     UiStateUpdate(UiStateUpdatePayload),
@@ -7527,6 +7535,8 @@ impl Runtime {
                         .to_owned(),
                     kind: EditorTabKind::File,
                     diff_committed: None,
+                    markdown_preview: true,
+                    wrap: false,
                     dirty: false,
                 });
                 // A new file tab takes a slot at the end of the strip.
@@ -7583,6 +7593,8 @@ impl Runtime {
                 label: format!("{name} ({scope})"),
                 kind: EditorTabKind::Diff,
                 diff_committed: Some(committed),
+                markdown_preview: true,
+                wrap: false,
                 dirty: false,
             });
             self.rebuild_tab_strips();
@@ -8952,6 +8964,28 @@ impl Runtime {
                     }
                 }
                 self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::FileView(payload) => {
+                let Some(tab) = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == payload.tab_id && tab.kind == EditorTabKind::File)
+                else {
+                    self.set_error(
+                        "file.view_rejected",
+                        "The file tab is no longer open",
+                        false,
+                    );
+                    return true;
+                };
+                if tab.markdown_preview == payload.markdown_preview && tab.wrap == payload.wrap {
+                    return false;
+                }
+                tab.markdown_preview = payload.markdown_preview;
+                tab.wrap = payload.wrap;
                 true
             }
             ValidatedEvent::FileDraft(payload) => {
@@ -10407,6 +10441,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_focus" => decode!(FileTabPayload, FileFocus),
         "file_close" => decode!(FileTabPayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
+        "file_view" => decode!(FileViewPayload, FileView),
         "file_save" => decode!(FileSavePayload, FileSave),
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
@@ -15171,6 +15206,62 @@ mod tests {
         }))
         .expect("file open event");
         assert!(runtime.dispatch_json(&event));
+    }
+
+    #[test]
+    fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
+        let (mut runtime, checkout_id, directory) = strip_checkout("file-view-mode");
+        let first = directory.join("notes.md");
+        let second = directory.join("second.md");
+        std::fs::write(&first, "# Original").unwrap();
+        std::fs::write(&second, "# Second").unwrap();
+        open_file(&mut runtime, &checkout_id, &first);
+        let first_id = runtime.snapshot.editor.active_tab_id.clone().unwrap();
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "file_view",
+            "payload": {"tab_id": first_id, "markdown_preview": false, "wrap": true}
+        }))
+        .unwrap();
+        assert!(runtime.dispatch_json(&event));
+        assert!(
+            !runtime.dispatch_json(&event),
+            "repeated selection publishes no change"
+        );
+        open_file(&mut runtime, &checkout_id, &second);
+        assert!(
+            runtime
+                .snapshot
+                .editor
+                .tabs
+                .last()
+                .unwrap()
+                .markdown_preview
+        );
+        open_file(&mut runtime, &checkout_id, &first);
+        let tab = runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == first_id)
+            .unwrap();
+        assert!(!tab.markdown_preview);
+        assert!(tab.wrap);
+        let close = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "file_close", "payload": {"tab_id": first_id}
+        }))
+        .unwrap();
+        runtime.dispatch_json(&close);
+        open_file(&mut runtime, &checkout_id, &first);
+        assert!(
+            runtime
+                .snapshot
+                .editor
+                .tabs
+                .last()
+                .unwrap()
+                .markdown_preview
+        );
     }
 
     #[test]

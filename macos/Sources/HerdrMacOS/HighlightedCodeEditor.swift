@@ -9,6 +9,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     /// The file editor is one surface rather than a pane, so it carries the
     /// scale of the pane whose chords last changed it.
     let textScale: CGFloat
+    var wrapsLines = false
+    var findRequest = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -141,6 +143,22 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         textView.isEditable = isEditable
+        if context.coordinator.wrapsLines != wrapsLines {
+            context.coordinator.wrapsLines = wrapsLines
+            textView.isHorizontallyResizable = !wrapsLines
+            textView.textContainer?.widthTracksTextView = wrapsLines
+            textView.textContainer?.containerSize.width = wrapsLines
+                ? scrollView.contentSize.width : .greatestFiniteMagnitude
+            if wrapsLines { textView.setFrameSize(NSSize(width: scrollView.contentSize.width, height: textView.frame.height)) }
+            scrollView.hasHorizontalScroller = !wrapsLines
+        }
+        if context.coordinator.findRequest != findRequest {
+            context.coordinator.findRequest = findRequest
+            textView.window?.makeFirstResponder(textView)
+            let item = NSMenuItem()
+            item.tag = NSTextFinder.Action.showFindInterface.rawValue
+            textView.performFindPanelAction(item)
+        }
         let size = HideTheme.editorBaseFontSize * textScale
         let font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
         if textView.font?.pointSize != size {
@@ -180,6 +198,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         @Binding private var text: String
         weak var textView: NSTextView?
         weak var lineNumberRuler: CodeLineNumberRulerView?
+        var wrapsLines: Bool?
+        var findRequest = 0
         var isApplyingSnapshot = false
         var isForwardingChange = false
 
