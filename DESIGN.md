@@ -1260,6 +1260,47 @@ Native screenshots remain necessary to approve toolbar spacing, font fallback an
 
 ## Local image attachment shelf
 
+### Required bidirectional composer behavior
+
+The acceptance criterion is one attachment represented in the native provider composer and the Hide thumbnail grid.
+A valid drop or image paste prepares its private copy and requests attachment immediately, without an Attach action or an extra Enter.
+Native attachment confirmation makes that same image visible in both surfaces; preparation and unconfirmed delivery remain explicit intermediate states.
+Backspace/Delete in the provider composer removes the corresponding Hide thumbnail after an authoritative native change.
+Removing a Hide thumbnail requests removal of exactly that provider attachment, preserving typed text, cursor semantics and every other attachment.
+Submission uses ordinary Enter after native readiness; Enter is not an attachment-delivery action.
+First/middle/last removal, repeated identical images, native undo/history restoration and concurrent edits must retain exact identity.
+A pane switch never redirects an in-flight operation to another composer, and a submitted or replaced draft cannot receive a stale operation.
+The existing square grid and bottom/scroll-away chip layout remain the presentation contract.
+
+The provider composer owns accepted attachment membership.
+Hide owns preparation and operation intent, and renders the provider-confirmed attachment set rather than inferring it from terminal characters or its own writes.
+A transport completion is not attachment confirmation, and a Backspace key is not proof of which object the provider removed.
+
+The required integration capabilities below are an upstream contract gap, not available Herdr methods or a proposed terminal escape sequence:
+
+| Required capability | Caller-observable guarantee |
+| --- | --- |
+| Composer identity, revision and ordered attachment snapshot | Hide can identify the active editable draft and recover the complete current membership after reconnect |
+| Idempotent attachment request correlated with a Hide intent | Native acceptance returns a stable attachment ID; retry does not create another image |
+| Exact removal by native attachment ID | Repeated removal converges, preserves prompt text and other images, and rejects a replaced composer |
+| Ordered native membership changes | Native Backspace/Delete, undo, clear, paste, history restore and submission update Hide without screen parsing |
+| Snapshot/event resynchronization | Lost or reordered notifications cannot silently leave the two surfaces divergent |
+| Native readiness and resource-release lifecycle | Submission cannot race asynchronous image loading, and private copies survive until the provider releases them |
+
+Herdr can relay these capabilities only when the provider exposes them; terminal viewport and PTY bytes do not create composer authority.
+Provider adapters remain narrow and selected from authoritative agent metadata, with explicit unsupported capability results.
+The feature is not accepted for a provider until its real native composer and Hide grid pass bidirectional removal, duplicate/retry and draft-replacement checks.
+Mocks of a hypothetical provider contract cannot establish that capability.
+
+### Current implementation and acceptance gap
+
+The current pinned-provider integration supports image-path handoff and local cancellation before handoff.
+It does not expose native composer membership changes or exact attachment-ID removal.
+Its first-Enter delivery and retained unconfirmed receipts, described below, are existing behavior and do not meet the required bidirectional contract above.
+The new acceptance criterion supersedes approval of that interaction as the final UX.
+An implementation revision must remove that Enter interception and obsolete local-only attachment behavior together with the replacement integration.
+Changing only automatic delivery would leave the native-deletion defect unresolved.
+
 Local image drag and Command+V into the active terminal are two ingress adapters to one core attachment lifecycle and native private-file service.
 A drag focuses its actual receiving pane; paste targets the terminal first responder.
 Image paste is captured at the terminal's Command+V key-equivalent and direct key-down entrypoints as well as the Paste action, using the OS pasteboard's image/file-URL types.
