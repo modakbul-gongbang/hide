@@ -1255,6 +1255,7 @@ mod tests {
             registered: true,
             temporary: false,
             session_workspace_ids: vec![],
+            last_activity_unix_ms: None,
         }];
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},

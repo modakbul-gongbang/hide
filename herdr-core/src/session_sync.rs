@@ -1642,6 +1642,7 @@ impl SessionReplica {
                     registered: true,
                     temporary: false,
                     session_workspace_ids: vec![workspace.workspace_id.clone()],
+                    last_activity_unix_ms: None,
                     checkouts: vec![CheckoutSnapshot {
                         id: checkout_id,
                         workspace_id,
@@ -1666,18 +1667,17 @@ impl SessionReplica {
                 }
             })
             .collect::<Vec<_>>();
-        workspaces.sort_by(|left, right| {
-            left.label
-                .to_lowercase()
-                .cmp(&right.label.to_lowercase())
-                .then_with(|| left.id.cmp(&right.id))
-        });
-
         for agent in &mut agents {
             let source_pane_id = agent.pane_id.clone();
             agent.id = format!("remote:{target_id}:agent:{source_pane_id}");
             agent.pane_id = remote_pane_id(target_id, &source_pane_id);
         }
+
+        // A remote project list follows the same activity order as a local
+        // one, so a user reading two devices reads one rule. The agent pane
+        // ids are rewritten first because the ordering matches agents to the
+        // projected panes by id, and the projection carries the remote form.
+        crate::project_context::sort_projects(&mut workspaces, &agents);
 
         let active_tab_ids = self
             .state
