@@ -1237,6 +1237,7 @@ These choices share the existing ephemeral editor-tab lifecycle and are not adde
 The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
 Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
 The native editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
+The syntax highlighter and text view use the same scaled monospaced font; unchanged view updates do not restart highlighting or reset its typography.
 Core acknowledgement, switching file identity, and explicitly reloading a disk conflict settle that presentation buffer.
 
 Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.

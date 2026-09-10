@@ -7,6 +7,36 @@ import Testing
 @Suite("File document state", .serialized)
 @MainActor
 struct FileDocumentStateTests {
+    @Test func syntaxHighlightingKeepsTheRequestedFontAcrossViewUpdates() async throws {
+        let source = "# Agent Notes\n\nEnglish 한글 **bold** and `code`\n"
+        let host = NSHostingView(rootView: HighlightedCodeEditor(text: .constant(source), language: "markdown",
+            isEditable: true, textScale: 1))
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 400)
+        host.layoutSubtreeIfNeeded()
+        func text(in view: NSView) -> NSTextView? {
+            (view as? NSTextView) ?? view.subviews.lazy.compactMap { text(in: $0) }.first
+        }
+        let view = try #require(text(in: host))
+        for scale: CGFloat in [1, 1.5, 1] {
+            for update in 0..<6 {
+                host.rootView = HighlightedCodeEditor(text: .constant(source), language: "markdown",
+                    isEditable: update.isMultiple(of: 2), textScale: scale)
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(60))
+                let storage = try #require(view.textStorage)
+                storage.enumerateAttribute(.font, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                    let font = value as? NSFont
+                    #expect(font?.pointSize == HideTheme.editorBaseFontSize * scale)
+                }
+                // Korean may use AppKit's glyph fallback; the Latin heading
+                // must retain the configured monospaced family, not Courier.
+                let headingFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+                #expect(headingFont?.familyName == NSFont.monospacedSystemFont(ofSize: 12, weight: .regular).familyName)
+                #expect(view.string == source)
+            }
+        }
+    }
+
     @Test func typingSurvivesSnapshotEchoesAndAutosavesEveryCharacter() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("file-typing-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

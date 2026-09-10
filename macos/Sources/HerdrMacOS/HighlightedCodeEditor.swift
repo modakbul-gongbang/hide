@@ -17,7 +17,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let storage = Self.makeTextStorage(text: text, language: language)
+        let storage = Self.makeTextStorage(text: text, language: language,
+            font: NSFont.monospacedSystemFont(ofSize: HideTheme.editorBaseFontSize * textScale, weight: .regular))
 
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
@@ -96,7 +97,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     static func makeTextStorage(
         text: String = "",
         language: String?,
-        highlightr: Highlightr? = Highlightr()
+        highlightr: Highlightr? = Highlightr(),
+        font: NSFont = NSFont.monospacedSystemFont(ofSize: HideTheme.editorBaseFontSize, weight: .regular)
     ) -> NSTextStorage {
         guard let highlightr else {
             let payload = [
@@ -114,9 +116,10 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             return plainTextStorage(text)
         }
 
+        _ = highlightr.setTheme(to: "atom-one-dark")
+        highlightr.theme.setCodeFont(font)
         let storage = CodeAttributedString(highlightr: highlightr)
         storage.language = language
-        _ = highlightr.setTheme(to: "atom-one-dark")
         storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
         if language == nil {
             applyPlainTextColor(to: storage)
@@ -161,16 +164,19 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         }
         let size = HideTheme.editorBaseFontSize * textScale
         let font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
+        if let storage = textView.textStorage as? CodeAttributedString {
+            let fontChanged = storage.highlightr.theme.codeFont != font
+            if fontChanged { storage.highlightr.theme.setCodeFont(font) }
+            // Assigning even the same language schedules a full asynchronous
+            // highlight. Its font must agree with the editor, and unrelated
+            // snapshot updates must not continually restart that work.
+            if fontChanged || storage.language != language { storage.language = language }
+            if language == nil { Self.applyPlainTextColor(to: storage) }
+        }
         if textView.font?.pointSize != size {
             textView.font = font
             context.coordinator.lineNumberRuler?.fontSize = size
             context.coordinator.lineNumberRuler?.needsDisplay = true
-        }
-        if let storage = textView.textStorage as? CodeAttributedString {
-            storage.language = language
-            if language == nil {
-                Self.applyPlainTextColor(to: storage)
-            }
         }
         guard textView.string != text, !context.coordinator.isForwardingChange else { return }
         let selection = textView.selectedRange()
