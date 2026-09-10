@@ -297,6 +297,8 @@ mod tests {
             spawned_from_pane_id: None,
             chat_title: None,
             delegated: false,
+            stall_level: String::new(),
+            stall_notice: None,
             lineage_parent_pane_id: None,
             lineage_path_pane_ids: Vec::new(),
             lineage_sibling_pane_ids: Vec::new(),

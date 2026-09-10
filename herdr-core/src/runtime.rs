@@ -289,6 +289,40 @@ const DIAGNOSTIC_RETENTION: usize = 256;
 /// the screen.
 const ATTACHED_TAB_LIMIT: usize = 5;
 
+/// When a waiting descendant starts showing on its lineage root, and when it
+/// becomes the operator's problem.
+///
+/// Both are fixed. Which numbers are right is not knowable before the feature
+/// has been operated, so there is no setting to get wrong in the meantime
+/// (PRD D-41).
+const STALL_SOFT_MS: u64 = 5 * 60_000;
+const STALL_HARD_MS: u64 = 15 * 60_000;
+
+/// Hide's own record of when it first saw a pane in the state it is in.
+///
+/// Herdr sends no timestamp with `state_change_seq`, so the clock has to be
+/// Hide's. It lives only in memory: a restart starts every clock again, which
+/// is what stops a morning launch from raising a screenful of escalations for
+/// work that was never stuck (PRD B20, D-54).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StallClock {
+    /// What the pane looked like when this clock started. Herdr's sequence
+    /// alone is not enough: it does not always rise when only plugin tokens
+    /// change, which is the same gap the read record covers.
+    fingerprint: (Option<u64>, String, String),
+    /// Time already counted, excluding any stretch the server was away for.
+    stalled_ms: u64,
+    last_sample_unix_ms: u64,
+}
+
+impl StallClock {
+    /// How long this pane has been waiting, as of `now`.
+    fn elapsed(&self, now: u64) -> u64 {
+        self.stalled_ms
+            .saturating_add(now.saturating_sub(self.last_sample_unix_ms))
+    }
+}
+
 /// How long a relocation waits before Hide asks again.
 ///
 /// A failed move is retried on the next ingest that finds the child still
@@ -1210,6 +1244,9 @@ pub struct Runtime {
     /// released. Herdr renders a pane for every attached client, so an attach
     /// nobody is looking at costs a child process here and a render there for
     /// the life of the process.
+    /// How long each delegated child has been in the state it is in. Keyed by
+    /// pane id, in memory only.
+    stall_clocks: BTreeMap<String, StallClock>,
     /// Delegated child panes Hide has asked Herdr to move out of their
     /// parent's tab, and when it asked. A move that fails is retried quietly
     /// on a later ingest; it never reaches the pane header, because the
@@ -1483,6 +1520,7 @@ impl Runtime {
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
+            stall_clocks: BTreeMap::new(),
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
@@ -4229,6 +4267,7 @@ impl Runtime {
                 &self.snapshot.navigator.workspaces,
                 &self.snapshot.ui_state.collapsed_agent_pane_ids,
             );
+            self.apply_stall_escalation(&mut agents, unix_milliseconds());
             if self.snapshot.navigator.agents != agents {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
@@ -5536,6 +5575,179 @@ impl Runtime {
             self.rebuild_tab_strips();
         }
         changed || delegated_tabs_changed
+    }
+
+    /// Whether a delegated child's clock should be running at all.
+    ///
+    /// A finished child is not stuck, a released pane has no session to be
+    /// stuck in, an unknown activity gives nothing to measure, and a remote
+    /// pane is uninstrumented by decision (PRD B19, D-51).
+    fn stall_eligible(&self, agent: &SidebarAgentSnapshot) -> bool {
+        if !agent.delegated || crate::agent_hooks::is_remote_pane(&agent.pane_id) {
+            return false;
+        }
+        if agent.activity == "unknown" {
+            return false;
+        }
+        if self
+            .terminal_session_lifecycles
+            .get(&agent.pane_id)
+            .is_some_and(|lifecycle| lifecycle.state == "released")
+        {
+            return false;
+        }
+        // Waiting on the operator, or running with nothing to show for it.
+        // A stopped child with no demand has finished, which is not waiting.
+        agent.demand != "none" || agent.blocked || agent.activity == "working"
+    }
+
+    /// Advances every eligible child's clock and drops the rest.
+    ///
+    /// While the server is away the clocks hold their reading rather than
+    /// counting: a disconnection is Hide's blindness, not the agent being
+    /// stuck (PRD B20, D-54).
+    fn advance_stall_clocks(&mut self, agents: &[SidebarAgentSnapshot], now: u64) {
+        let connected = self.snapshot.status.herdr.state == "connected";
+        let mut live = BTreeSet::new();
+        for agent in agents {
+            if !self.stall_eligible(agent) {
+                continue;
+            }
+            live.insert(agent.pane_id.clone());
+            let fingerprint = (
+                agent.state_change_seq,
+                agent.demand.clone(),
+                agent.activity.clone(),
+            );
+            match self.stall_clocks.get_mut(&agent.pane_id) {
+                Some(clock) if clock.fingerprint == fingerprint => {
+                    if connected {
+                        clock.stalled_ms = clock.elapsed(now);
+                    }
+                    clock.last_sample_unix_ms = now;
+                }
+                _ => {
+                    self.stall_clocks.insert(
+                        agent.pane_id.clone(),
+                        StallClock {
+                            fingerprint,
+                            stalled_ms: 0,
+                            last_sample_unix_ms: now,
+                        },
+                    );
+                }
+            }
+        }
+        self.stall_clocks
+            .retain(|pane_id, _| live.contains(pane_id));
+    }
+
+    /// What each lineage root should be told about its descendants, as of
+    /// `now`. A pure read, so the coordinator can ask whether a threshold is
+    /// about to be crossed without changing anything.
+    ///
+    /// The notice lands on the root rather than climbing one level at a time:
+    /// at depth three, one level per threshold would keep the operator
+    /// waiting forty-five minutes for news of something stuck for fifteen
+    /// (PRD B18, D-62).
+    fn stall_escalations(
+        &self,
+        agents: &[SidebarAgentSnapshot],
+        now: u64,
+    ) -> BTreeMap<String, (&'static str, String, String)> {
+        let mut worst: BTreeMap<String, (u64, u8, &'static str, String, String)> = BTreeMap::new();
+        for agent in agents {
+            let Some(clock) = self.stall_clocks.get(&agent.pane_id) else {
+                continue;
+            };
+            if !self.stall_eligible(agent) {
+                continue;
+            }
+            let elapsed = clock.elapsed(now);
+            let level = if elapsed >= STALL_HARD_MS {
+                "hard"
+            } else if elapsed >= STALL_SOFT_MS {
+                "soft"
+            } else {
+                continue;
+            };
+            let root = agent
+                .lineage_path_pane_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| agent.pane_id.clone());
+            let name = agent.chat_title.clone().unwrap_or_else(|| agent.id.clone());
+            let notice = format!(
+                "{name} has been waiting {} minutes on {}",
+                elapsed / 60_000,
+                waiting_on(agent)
+            );
+            let priority = stall_priority(agent);
+            let candidate = (elapsed, priority, level, notice, agent.pane_id.clone());
+            // Longest wait first, and on a tie the one asking for the most.
+            // Without the second key the notice names whichever sibling the
+            // row order happened to reach first, which is not an answer.
+            match worst.get(&root) {
+                Some(best) if best.0 > elapsed => {}
+                Some(best) if best.0 == elapsed && best.1 <= priority => {}
+                _ => {
+                    worst.insert(root, candidate);
+                }
+            }
+        }
+        worst
+            .into_iter()
+            .map(|(root, (_, _, level, notice, pane_id))| (root, (level, notice, pane_id)))
+            .collect()
+    }
+
+    /// Runs the clocks and writes what they say onto the rows.
+    fn apply_stall_escalation(&mut self, agents: &mut [SidebarAgentSnapshot], now: u64) {
+        self.advance_stall_clocks(agents, now);
+        let escalations = self.stall_escalations(agents, now);
+        let hard_children = escalations
+            .values()
+            .filter(|(level, _, _)| *level == "hard")
+            .map(|(_, _, pane_id)| pane_id.clone())
+            .collect::<BTreeSet<_>>();
+        for agent in agents.iter_mut() {
+            let (level, notice) = match escalations.get(&agent.pane_id) {
+                Some((level, notice, _)) => ((*level).to_owned(), Some(notice.clone())),
+                None => (String::new(), None),
+            };
+            agent.stall_level = level;
+            agent.stall_notice = notice;
+            // The child that ran out of time stops being drawn as somebody
+            // else's work, because from here on it is the operator's.
+            if hard_children.contains(&agent.pane_id) {
+                agent.delegated = false;
+            }
+        }
+        crate::sidebar::rederive_ownership(agents);
+    }
+
+    /// Whether a stall threshold has been crossed since the last publish.
+    ///
+    /// The coordinator asks this on the agent tick it already runs, so a
+    /// stalled session - which by definition reports nothing new - still
+    /// reaches the operator without a timer of Hide's own (PRD B36).
+    pub fn stall_publish_due(&self) -> bool {
+        self.stall_publish_due_at(unix_milliseconds())
+    }
+
+    fn stall_publish_due_at(&self, now: u64) -> bool {
+        if self.snapshot.status.herdr.state != "connected" {
+            return false;
+        }
+        let agents = &self.snapshot.navigator.agents;
+        let escalations = self.stall_escalations(agents, now);
+        agents.iter().any(|agent| {
+            let level = escalations
+                .get(&agent.pane_id)
+                .map(|(level, _, _)| *level)
+                .unwrap_or("");
+            agent.stall_level != level
+        })
     }
 
     /// Marks the tabs that exist only to hold delegated children, and asks
@@ -10807,6 +11019,33 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+/// What a waiting child is waiting for, in the words the tooltip uses.
+///
+/// It names the demand when there is one, because "waiting for an approval"
+/// and "running with nothing to show for it" ask different things of the
+/// operator.
+/// How badly one waiting child needs an answer, worst first. It breaks ties
+/// between descendants that have waited exactly as long.
+fn stall_priority(agent: &SidebarAgentSnapshot) -> u8 {
+    match agent.demand.as_str() {
+        "error" => 0,
+        "approval" => 1,
+        "question" => 2,
+        _ if agent.blocked => 1,
+        _ => 3,
+    }
+}
+
+fn waiting_on(agent: &SidebarAgentSnapshot) -> &'static str {
+    match agent.demand.as_str() {
+        "error" => "an error",
+        "question" => "a question",
+        "approval" => "an approval",
+        _ if agent.blocked => "an approval",
+        _ => "no visible progress",
+    }
 }
 
 fn unix_milliseconds() -> u64 {

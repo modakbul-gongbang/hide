@@ -300,7 +300,8 @@ fn run_coordinator(
                         .as_mut()
                         .expect("active subscription always has a replica");
                     let publish =
-                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref())
+                            || stall_tick_needs_publish(&context);
                     if publish {
                         current.replace_agents(agents);
                         if current.ready_to_publish()
@@ -699,6 +700,33 @@ fn agent_tick_needs_publish(
 ) -> bool {
     replica.state.agents != agents
         || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+}
+
+/// Whether a stall threshold has been crossed since the last publish.
+///
+/// A stalled agent is by definition one that reports nothing new, so
+/// `agent_tick_needs_publish` says no for exactly as long as the operator
+/// most needs to hear about it. Asking the runtime on the tick that already
+/// runs keeps the escalation on the clock without a timer of Hide's own
+/// (PRD B36). It is a pure in-memory read of the snapshot, so it holds the
+/// mutex no longer than the comparison itself.
+///
+/// Only the local coordinator asks. A remote target's rows are projected
+/// from another machine's session and are not what the local stall clocks
+/// are counting.
+fn stall_tick_needs_publish(context: &SessionSyncContext) -> bool {
+    if !matches!(context.target, SessionSyncTarget::Local { .. }) {
+        return false;
+    }
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let due = match runtime.lock() {
+        Ok(guard) => guard.stall_publish_due(),
+        Err(_) => false,
+    };
+    drop(runtime);
+    due
 }
 
 fn publish_replica(

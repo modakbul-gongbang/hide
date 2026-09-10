@@ -172,12 +172,20 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
             .unwrap()
             .lineage_collapsed
     );
-    let raised = attention
+    // PRD B15, D-35: the child's question is the parent's problem. It keeps
+    // the hint that says whose child asked it, and it stays out of the
+    // operator's Needs You, which is what makes the delegation real.
+    assert!(
+        attention.iter().all(|row| row.group != "needs_you"),
+        "a delegated child's question never raises the operator's own group"
+    );
+    let asking = attention
         .iter()
-        .filter(|row| row.group == "needs_you")
-        .collect::<Vec<_>>();
-    assert_eq!(raised.len(), 1);
-    assert_eq!(raised[0].raised_hint.as_deref(), Some("↳ from Parent"));
+        .find(|row| row.pane_id == "child")
+        .expect("the child is still a row");
+    assert_eq!(asking.demand, "question");
+    assert_eq!(asking.raised_hint.as_deref(), Some("↳ from Parent"));
+    assert!(asking.delegated && !asking.emphasized);
     assert_eq!(
         runtime.snapshot.ui_state.collapsed_agent_pane_ids,
         ["parent"]
@@ -580,5 +588,249 @@ fn a_move_herdr_declined_is_an_error_rather_than_a_silent_success() {
     assert!(
         crate::wire::move_outcome(true, None, None).is_err(),
         "a move with no tab to show for it is not a success"
+    );
+}
+
+/// One root and one delegated child, so a clock assertion reads a single
+/// wait rather than the whole fixture tree's.
+fn one_child_rows() -> Vec<SidebarAgentSnapshot> {
+    let mut rows = project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [
+            {"id":"Parent","pane_id":"parent","agent_status":"working","state_change_seq":1},
+            {"id":"Child","pane_id":"child","spawned_from_pane_id":"parent",
+             "agent_status":"working","state_change_seq":2}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    rows
+}
+
+// PRD B15, B16, D-35, D-38: delegation is only real if the operator stops
+// being called for the delegated work.
+#[test]
+fn a_delegated_childs_demand_and_completion_stay_off_the_operators_groups() {
+    let mut rows = lineage_rows();
+    for row in rows.iter_mut() {
+        match row.pane_id.as_str() {
+            // Asking a question, unread.
+            "child" => {
+                row.demand = "question".to_owned();
+                row.activity = "stopped".to_owned();
+                row.unread = true;
+            }
+            // Finished, unread: the operator's own row here would be Done.
+            "grandchild" => {
+                row.demand = "none".to_owned();
+                row.activity = "stopped".to_owned();
+                row.unread = true;
+            }
+            _ => {}
+        }
+    }
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let row = |id: &str| {
+        rows.iter()
+            .find(|row| row.pane_id == id)
+            .unwrap_or_else(|| panic!("{id} is a row"))
+    };
+
+    assert_eq!(row("child").group, "seen", "a child's question is its parent's");
+    assert_eq!(
+        row("grandchild").group,
+        "seen",
+        "a delegated completion is not the operator's Done"
+    );
+    assert!(!row("child").emphasized && !row("grandchild").emphasized);
+    // The axes themselves are untouched, so the parent's badge can still read
+    // the question off the row it points at.
+    assert_eq!(row("child").demand, "question");
+    assert_eq!(row("child").symbol, "?");
+    // The operator's own root keeps its group and its brightness.
+    assert_eq!(row("parent").group, "working");
+    assert!(!row("parent").delegated);
+}
+
+// PRD B19, D-51: what the clock is allowed to count.
+#[test]
+fn the_stall_clock_runs_only_for_a_delegated_child_that_is_actually_waiting() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let mut rows = lineage_rows();
+    for row in rows.iter_mut() {
+        if row.pane_id == "grandchild" {
+            // Finished with nothing outstanding: not stuck, just done.
+            row.activity = "stopped".to_owned();
+        }
+        if row.pane_id == "sibling" {
+            row.activity = "unknown".to_owned();
+        }
+    }
+    rows.push({
+        let mut remote = rows[1].clone();
+        remote.pane_id = "remote:mini:p9".to_owned();
+        remote.id = "Remote child".to_owned();
+        remote.spawned_from_pane_id = Some("parent".to_owned());
+        remote
+    });
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    runtime.apply_stall_escalation(&mut rows, 0);
+
+    let clocked = runtime
+        .stall_clocks
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        clocked,
+        ["child".to_owned()].into_iter().collect(),
+        "a root, a finished child, an unknown activity and a remote pane are all excluded"
+    );
+}
+
+// PRD B17, B18, D-42, D-62: the soft mark, then the handover, and the notice
+// on the lineage root rather than one level at a time.
+#[test]
+fn a_stalled_grandchild_marks_the_root_then_hands_it_back_to_the_operator() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let mut rows = lineage_rows();
+    for row in rows.iter_mut() {
+        if row.pane_id == "grandchild" {
+            row.demand = "approval".to_owned();
+            row.activity = "stopped".to_owned();
+        }
+    }
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+
+    runtime.apply_stall_escalation(&mut rows, 0);
+    let level = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter()
+            .find(|row| row.pane_id == id)
+            .unwrap()
+            .stall_level
+            .clone()
+    };
+    assert_eq!(level(&rows, "parent"), "", "nothing has waited yet");
+
+    // Five minutes: the root says so, and nobody has been reassigned.
+    runtime.apply_stall_escalation(&mut rows, 5 * 60_000);
+    let root = rows.iter().find(|row| row.pane_id == "parent").unwrap();
+    assert_eq!(root.stall_level, "soft");
+    assert_eq!(
+        root.stall_notice.as_deref(),
+        Some("Grandchild has been waiting 5 minutes on an approval"),
+        "the notice names the descendant, not the root it is drawn on"
+    );
+    assert_eq!(root.group, "working", "a soft mark is not yet a summons");
+    assert_eq!(level(&rows, "grandchild"), "", "the mark lands on the root");
+    assert!(
+        rows.iter()
+            .find(|row| row.pane_id == "grandchild")
+            .unwrap()
+            .delegated,
+        "still somebody else's work at five minutes"
+    );
+
+    // Fifteen minutes at depth two, without waiting fifteen more per level.
+    runtime.apply_stall_escalation(&mut rows, 15 * 60_000);
+    let root = rows.iter().find(|row| row.pane_id == "parent").unwrap();
+    assert_eq!(root.stall_level, "hard");
+    assert_eq!(root.group, "needs_you");
+    assert!(root.emphasized);
+    assert!(
+        root.stall_notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("Grandchild") && notice.contains("15 minutes")),
+        "got {:?}",
+        root.stall_notice
+    );
+    let stuck = rows.iter().find(|row| row.pane_id == "grandchild").unwrap();
+    assert!(
+        !stuck.delegated,
+        "the child that ran out of time is the operator's now, so its dimming lifts"
+    );
+    assert_eq!(stuck.group, "needs_you");
+}
+
+// PRD B20, D-54: a disconnection is Hide's blindness, not the agent being
+// stuck, so the clocks hold their reading rather than counting through it.
+#[test]
+fn the_stall_clock_holds_its_reading_while_the_server_is_away() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let mut rows = one_child_rows();
+    runtime.apply_stall_escalation(&mut rows, 0);
+    runtime.apply_stall_escalation(&mut rows, 4 * 60_000);
+    assert_eq!(runtime.stall_clocks["child"].stalled_ms, 4 * 60_000);
+
+    runtime.snapshot.status.herdr.state = "reconnecting".to_owned();
+    runtime.apply_stall_escalation(&mut rows, 30 * 60_000);
+    assert_eq!(
+        runtime.stall_clocks["child"].stalled_ms,
+        4 * 60_000,
+        "half an hour offline is not half an hour stuck"
+    );
+    assert_eq!(
+        rows.iter().find(|row| row.pane_id == "parent").unwrap().stall_level,
+        "",
+        "and no threshold is crossed on the strength of that gap"
+    );
+
+    // Counting resumes from where it stopped once the server is back.
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    runtime.apply_stall_escalation(&mut rows, 31 * 60_000);
+    assert_eq!(runtime.stall_clocks["child"].stalled_ms, 5 * 60_000);
+}
+
+// PRD B19: the clock measures one uninterrupted wait, so any move in the
+// agent's own state starts it over.
+#[test]
+fn a_state_change_restarts_the_wait_rather_than_extending_it() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let mut rows = one_child_rows();
+    runtime.apply_stall_escalation(&mut rows, 0);
+    runtime.apply_stall_escalation(&mut rows, 14 * 60_000);
+    assert_eq!(runtime.stall_clocks["child"].stalled_ms, 14 * 60_000);
+
+    rows.iter_mut()
+        .find(|row| row.pane_id == "child")
+        .unwrap()
+        .state_change_seq = Some(99);
+    runtime.apply_stall_escalation(&mut rows, 14 * 60_000);
+    assert_eq!(runtime.stall_clocks["child"].stalled_ms, 0);
+    runtime.apply_stall_escalation(&mut rows, 20 * 60_000);
+    assert_eq!(
+        rows.iter().find(|row| row.pane_id == "parent").unwrap().stall_level,
+        "soft",
+        "six minutes into the new wait, not twenty into the old one"
+    );
+}
+
+// PRD B36: a stalled session reports nothing new, so the tick that already
+// runs has to be the one that notices.
+#[test]
+fn the_agent_tick_publishes_when_a_threshold_is_crossed_and_not_otherwise() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let mut rows = one_child_rows();
+    runtime.apply_stall_escalation(&mut rows, 0);
+    runtime.snapshot.navigator.agents = rows;
+
+    assert!(
+        !runtime.stall_publish_due_at(60_000),
+        "a minute of the same wait is not news"
+    );
+    assert!(
+        runtime.stall_publish_due_at(5 * 60_000),
+        "crossing into soft is"
+    );
+
+    runtime.snapshot.status.herdr.state = "reconnecting".to_owned();
+    assert!(
+        !runtime.stall_publish_due_at(20 * 60_000),
+        "a disconnected session publishes its own failure, not a stall verdict"
     );
 }

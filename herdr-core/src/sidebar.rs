@@ -218,18 +218,45 @@ impl AgentGroup {
     }
 }
 
-/// Which group a row belongs to, in the order the definitions are read.
+/// Who the row belongs to, as the grouping rule needs to know it.
 ///
-/// A pane Herdr reports as blocked right now stays in Needs You whether or not
-/// the operator has read it: the approval prompt is still on screen waiting,
-/// and it leaves the group when the prompt is answered, not when it is seen.
-pub fn agent_group(
+/// The distinction exists because delegation is only real if the operator
+/// stops being called for the delegated work. A child's question, approval,
+/// error or completion is the parent's problem: it shows on the parent's
+/// badge and never raises the operator's own attention groups (PRD B15, B16,
+/// D-35, D-38). A child stuck long enough to be nobody's problem comes back
+/// as the operator's through `Escalated`, which is the whole point of the
+/// safety net (PRD B18, D-42).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Ownership {
+    /// The operator's own work: a lineage root, or an orphan whose parent is
+    /// gone.
+    Operator,
+    /// Delegated work. Its demands stay with its parent.
+    Delegated,
+    /// Delegated work that stalled past the hard threshold, so ownership has
+    /// come back to the operator.
+    Escalated,
+}
+
+/// The group a row belongs to, given who owns it.
+pub fn agent_group_for(
     demand: AgentDemand,
     activity: AgentActivity,
     unread: bool,
     blocked: bool,
+    ownership: Ownership,
 ) -> AgentGroup {
-    if blocked || (demand != AgentDemand::None && unread) {
+    if ownership == Ownership::Delegated {
+        // The row keeps its own mark and status word; only its claim on the
+        // operator's attention is withheld.
+        return if activity == AgentActivity::Working {
+            AgentGroup::Working
+        } else {
+            AgentGroup::Seen
+        };
+    }
+    if blocked || ownership == Ownership::Escalated || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
     } else if demand == AgentDemand::None && activity == AgentActivity::Stopped && unread {
         AgentGroup::Done
@@ -263,14 +290,33 @@ fn agent_symbol(demand: AgentDemand, activity: AgentActivity, unread: bool) -> &
 /// badge both read it, so the two cannot disagree about which child a badge
 /// is describing (docs/status-model.md, Workspace aggregation).
 pub fn representative_rank(agent: &SidebarAgentSnapshot) -> (u8, u8) {
-    let demand_rank = match demand_of(agent) {
+    rank_within(agent, ownership_of(agent))
+}
+
+/// Where a child stands among its siblings, as the pane that spawned them
+/// sees it.
+///
+/// Delegation moves a child's demand off the *operator's* attention groups,
+/// not out of existence. Its parent is exactly who is supposed to answer it,
+/// so the parent's badge ranks its children as if it owned them; ranking them
+/// the way the sidebar does would flatten every child to Working or Seen and
+/// leave the badge naming a quiet sibling over the one that failed (PRD B15,
+/// B16, D-35, D-38).
+fn child_representative_rank(agent: &SidebarAgentSnapshot) -> (u8, u8) {
+    rank_within(agent, Ownership::Operator)
+}
+
+fn rank_within(agent: &SidebarAgentSnapshot, ownership: Ownership) -> (u8, u8) {
+    let (demand, activity, unread) = axes_of(agent);
+    let demand_rank = match demand {
         AgentDemand::Error => 0,
         AgentDemand::Approval => 1,
         AgentDemand::Question => 2,
         AgentDemand::None if agent.activity == "unknown" => 3,
         AgentDemand::None => 4,
     };
-    (group_of(agent).rank(), demand_rank)
+    let group = agent_group_for(demand, activity, unread, agent.blocked, ownership);
+    (group.rank(), demand_rank)
 }
 
 /// Aggregate physical pane ownership, never the visual lineage tree or raised rows.
@@ -544,6 +590,15 @@ pub fn apply_lineage(
         agent.raised_hint = hint;
         agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
     }
+    // Ownership was unknown when the rows were first derived, because it is
+    // the lineage that decides it. Rederiving here is what keeps every caller
+    // of this function on one answer instead of each remembering to ask
+    // (engineering rule 13). The order is left alone: this function is read
+    // by index while it walks the tree, and sorting is the ingest's last
+    // step, after the stall clocks have had their say.
+    for agent in agents.iter_mut() {
+        derive_from_axes(agent);
+    }
 }
 
 /// The chip one agent shows as somebody else's child.
@@ -606,7 +661,7 @@ pub fn project_pane_children(
         .lineage_child_pane_ids
         .iter()
         .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
-        .min_by_key(|child| representative_rank(child))
+        .min_by_key(|child| child_representative_rank(child))
         .map(child_chip);
     Some(crate::model::PaneChildrenSnapshot {
         instrumented: instrumentation.instrumented,
@@ -658,6 +713,18 @@ pub fn project_lineage_path(
                 .collect(),
         })
         .collect()
+}
+
+/// Re-derives every value that depends on ownership, then reorders.
+///
+/// The read pass runs before the lineage is known, so ownership is settled
+/// afterwards and the groups it decides have to be recomputed rather than
+/// left describing a row nobody owned yet.
+pub fn rederive_ownership(agents: &mut [SidebarAgentSnapshot]) {
+    for agent in agents.iter_mut() {
+        derive_from_axes(agent);
+    }
+    sort_agents(agents);
 }
 
 /// Collapse state belongs to pane existence, not whether it currently has
@@ -713,9 +780,20 @@ fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivity, bool) {
     (demand, activity, agent.unread)
 }
 
+/// Reads a row's ownership back off its published fields.
+pub fn ownership_of(agent: &SidebarAgentSnapshot) -> Ownership {
+    if agent.stall_level == "hard" {
+        Ownership::Escalated
+    } else if agent.delegated {
+        Ownership::Delegated
+    } else {
+        Ownership::Operator
+    }
+}
+
 pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
     let (demand, activity, unread) = axes_of(agent);
-    agent_group(demand, activity, unread, agent.blocked)
+    agent_group_for(demand, activity, unread, agent.blocked, ownership_of(agent))
 }
 
 /// The demand axis of a projected row, for callers outside this module.
@@ -733,7 +811,7 @@ pub fn demand_of(agent: &SidebarAgentSnapshot) -> AgentDemand {
 /// describe a different read state than the row they sit on.
 fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     let (demand, activity, unread) = axes_of(agent);
-    let group = agent_group(demand, activity, unread, agent.blocked);
+    let group = agent_group_for(demand, activity, unread, agent.blocked, ownership_of(agent));
     agent.group = group.name().to_owned();
     agent.symbol = agent_symbol(demand, activity, unread).to_owned();
     // A row the operator still has to deal with is drawn bright; everything
@@ -812,6 +890,8 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         chat_title,
         delegated: false,
+        stall_level: String::new(),
+        stall_notice: None,
         lineage_parent_pane_id: None,
         lineage_path_pane_ids: Vec::new(),
         lineage_sibling_pane_ids: Vec::new(),
@@ -1337,11 +1417,23 @@ mod tests {
     #[test]
     fn axes_hold_a_blocked_pane_in_needs_you_after_it_is_read() {
         assert_eq!(
-            agent_group(AgentDemand::Approval, AgentActivity::Unknown, false, true),
+            agent_group_for(
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                false,
+                true,
+                Ownership::Operator
+            ),
             AgentGroup::NeedsYou
         );
         assert_eq!(
-            agent_group(AgentDemand::Approval, AgentActivity::Unknown, false, false),
+            agent_group_for(
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                false,
+                false,
+                Ownership::Operator
+            ),
             AgentGroup::Seen
         );
     }
@@ -1396,7 +1488,7 @@ mod tests {
             ),
         ];
         for (demand, activity, unread, blocked, expected) in cases {
-            let group = agent_group(demand, activity, unread, blocked);
+            let group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
             assert_eq!(
                 agent_requires_close_confirmation(activity, group),
                 expected,

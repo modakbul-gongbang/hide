@@ -319,6 +319,14 @@ pub struct SidebarAgentSnapshot {
     /// A root has none: the layer above a root is the sidebar, not the
     /// breadcrumb, and independent roots are not one another's siblings.
     pub lineage_sibling_pane_ids: Vec<String>,
+    /// How long a descendant of this agent has been waiting: `none`, `soft`
+    /// or `hard`. It is set on the lineage root, never on the descendant that
+    /// is actually stuck, because the operator reads the list of roots and a
+    /// notice three levels down would not be seen (PRD B17, B18, D-62).
+    pub stall_level: String,
+    /// What the stall notice says: which descendant, how long, and what it is
+    /// waiting for. `None` unless `stall_level` is `soft` or `hard`.
+    pub stall_notice: Option<String>,
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,
