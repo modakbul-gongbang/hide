@@ -3165,6 +3165,89 @@ mod tests {
         assert_eq!(replica.project().agents[0].id.as_deref(), Some("observer"));
     }
 
+    /// B3, D-03. A remote device's project list follows the same activity
+    /// order the local list follows, not its own alphabetical one. The labels
+    /// here are deliberately in the opposite order to the activity, so a
+    /// return to sorting by label fails this.
+    #[test]
+    fn remote_projects_follow_activity_order_rather_than_label_order() {
+        let mut value = snapshot();
+        value["workspaces"][0]["label"] = json!("alpha");
+        value["workspaces"]
+            .as_array_mut()
+            .expect("workspaces array")
+            .push(json!({
+                "workspace_id": "w2",
+                "label": "zulu",
+                "agent_status": "idle", "focused": false, "number": 2, "pane_count": 1, "tab_count": 1,
+                "active_tab_id": "w2:t1"
+            }));
+        value["tabs"]
+            .as_array_mut()
+            .expect("tabs array")
+            .push(json!({
+                "workspace_id": "w2",
+                "tab_id": "w2:t1",
+                "agent_status": "idle", "focused": false, "number": 1, "pane_count": 1, "label": "1"
+            }));
+        value["panes"].as_array_mut().expect("panes array").push(json!({
+            "workspace_id": "w2",
+            "tab_id": "w2:t1",
+            "pane_id": "w2:p1", "focused": false, "revision": 0, "agent_status": "idle",
+            "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
+            "cwd": "/tmp/fixture-zulu"
+        }));
+        value["layouts"]
+            .as_array_mut()
+            .expect("layouts array")
+            .push(json!({
+                "workspace_id": "w2",
+                "tab_id": "w2:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                "focused_pane_id": "w2:p1",
+                "panes": [{
+                    "pane_id": "w2:p1", "focused": false,
+                    "rect": {"x": 0, "y": 0, "width": 120, "height": 60}
+                }],
+                "splits": []
+            }));
+        value["agents"] = json!([
+            {
+                "pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1",
+                "agent": "codex", "agent_status": "idle", "focused": false, "revision": 0,
+                "terminal_id": "fixture-terminal", "state_change_seq": 1,
+                "tokens": {"activity": "0000001000000"}
+            },
+            {
+                "pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1",
+                "agent": "codex", "agent_status": "working", "focused": false, "revision": 0,
+                "terminal_id": "fixture-terminal", "state_change_seq": 2,
+                "tokens": {"activity": "0000009000000"}
+            },
+        ]);
+        let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+
+        let (projected, _) = replica.project_remote("mini").expect("remote projection");
+
+        assert_eq!(
+            projected
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.label.as_str())
+                .collect::<Vec<_>>(),
+            ["zulu", "alpha"]
+        );
+        assert_eq!(
+            projected.workspaces[0].last_activity_unix_ms,
+            Some(9_000_000)
+        );
+        assert_eq!(
+            projected.workspaces[1].last_activity_unix_ms,
+            Some(1_000_000)
+        );
+    }
+
     #[test]
     fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
         let mut value = snapshot();
