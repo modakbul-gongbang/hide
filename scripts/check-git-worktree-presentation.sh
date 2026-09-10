@@ -6,7 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 git grep -q 'Git section refreshes local worktree state only when repository metadata' -- AGENTS.md
-for token in lineageIndent lineageDeepIndent gitRowFontSize gitDetailFontSize; do
+for token in lineageIndent lineageElbowY gitRowFontSize gitDetailFontSize; do
   git grep -q "$token" -- DESIGN.md
   git grep -q "static let $token" -- macos/Sources/HerdrMacOS/HideTheme.swift
 done
