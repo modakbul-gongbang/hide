@@ -274,6 +274,14 @@ enum HideTheme {
         /// measurement plus one spacing step.
         static let trafficLightInset: CGFloat = 69
         static let paneHeaderHeight: CGFloat = 28
+        /// The pane header's second row, which exists only when the pane has
+        /// children. The breadcrumb keeps the 28pt row above it; a pane with
+        /// no children is 28pt and nothing else (DESIGN.md, user decision).
+        static let paneChildRowHeight: CGFloat = 24
+        /// How wide one child chip is allowed to get before its name is
+        /// truncated. Long identifiers and Korean names both have to fit
+        /// several chips on one row rather than one chip pushing the rest off.
+        static let paneChildChipMaxWidth: CGFloat = 132
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
         static let sidebarMaxWidth: CGFloat = 440

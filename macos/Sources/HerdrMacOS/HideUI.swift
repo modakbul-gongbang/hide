@@ -1946,11 +1946,18 @@ private struct HideTabCanvas: View {
                         showsFork: model.canForkPane(pane),
                         activity: model.paneActivity(for: pane.id),
                         notice: model.paneNotice(for: pane.id),
+                        connected: model.agentsConnected,
                         onFocus: { model.focusPane(pane.id) },
                         onReconnect: { model.reconnectPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) },
                         onFork: { model.forkPaneFromHeader(pane.id) },
-                        onOpenPort: { model.openPanePort($0) }
+                        onOpenPort: { model.openPanePort($0) },
+                        // A child chip, a breadcrumb step and a sibling are
+                        // the same intent: show that pane instead of this one.
+                        // The core moves the visible tab to whichever tab
+                        // holds it, so the screen is replaced rather than
+                        // split (PRD B7, D-16).
+                        onSelectPane: { model.focusPane($0) }
                     ) {
                         TerminalHost(
                             bridge: model.core,
