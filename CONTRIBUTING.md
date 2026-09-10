@@ -95,7 +95,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 
 | Command | Checks | Needs |
 | --- | --- | --- |
-| `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `/tmp/herdr-ide-verify/hide-full.log` |
+| `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `hide-full.log` under the checkout's scratch root (`scripts/build-scratch.sh`) |
 | `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
 | `node scripts/check-hide-design.mjs` | `DESIGN.md` lints clean and still carries the clauses the contract names | Network, for `npx @google/design.md` |
 | `node scripts/check-hide-design-enforcement.mjs` | `design-contract.yml` still binds the real checkers, so this list cannot drift from CI | - |

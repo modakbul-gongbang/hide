@@ -11,17 +11,18 @@ export LC_ALL=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 export LANG=en_US.UTF-8
 cd "$(dirname "$0")/.."
-mkdir -p /tmp/herdr-ide-verify
-exec > >(tee /tmp/herdr-ide-verify/hide-full.log) 2>&1
+. scripts/build-scratch.sh
+mkdir -p "$HIDE_SCRATCH_ROOT"
+exec > >(tee "$HIDE_SCRATCH_ROOT/hide-full.log") 2>&1
 
 # verify / rust and swift lanes
 cargo fmt --manifest-path herdr-core/Cargo.toml --check
 cargo clippy --locked --manifest-path herdr-core/Cargo.toml --all-targets -- -D warnings
-cargo test --locked --manifest-path herdr-core/Cargo.toml --target-dir /tmp/herdr-ide-verify/cargo
+cargo test --locked --manifest-path herdr-core/Cargo.toml --target-dir "$HIDE_CARGO_SCRATCH"
 # SwiftPM links this archive from the repository target directory.
 cargo build --release --locked -p herdr-core
-swift build --package-path macos --scratch-path /tmp/herdr-ide-verify/swift
-swift test --package-path macos --scratch-path /tmp/herdr-ide-verify/swift
+swift build --package-path macos --scratch-path "$HIDE_SWIFT_SCRATCH"
+swift test --package-path macos --scratch-path "$HIDE_SWIFT_SCRATCH"
 bash scripts/check-right-panel-sections.sh
 bash scripts/check-shortcut-contract.sh
 

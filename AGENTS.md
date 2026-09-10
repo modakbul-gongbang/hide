@@ -38,12 +38,20 @@ This rule exists because they were: `docs/verification/`, `docs/screenshots/`, a
 
 ## Build Output Belongs To Its Worktree
 
-`target/` and `macos/.build/` stay inside the worktree that produced them.
-Do not redirect either with `CARGO_TARGET_DIR`, `--target-dir`, or `--build-path` to a shared location.
-Two things break.
-`macos/scripts/build_dev_app.sh`, `scripts/build-app.sh`, and `scripts/swift-test.sh` read the Rust archive and the Swift binary from fixed paths under the worktree, so a redirected build leaves them reading a path nothing wrote.
-And Cargo holds an exclusive lock on its target directory, so worktrees sharing one serialize the parallel builds this layout exists to allow.
+No build directory is ever shared between worktrees, and the release archive the shell links stays inside the worktree that produced it.
+Those are two separate rules, and the second is the narrower one.
+
+The release archive is `target/release/libherdr_core.a`, and `macos/scripts/build_dev_app.sh`, `scripts/build-app.sh` and `scripts/swift-test.sh` read it from that fixed path under the worktree.
+Redirecting a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-path` leaves all three reading a path nothing wrote; `check-typed-live-remote.sh` used to compensate with a worktree `target` symlink, which is the shape this rule exists to prevent.
+
+Sharing is the rule that governs everything else.
+Cargo names a workspace member's artifacts by its path relative to the workspace root, so two checkouts sharing one target directory read each other's build as fresh and run the other checkout's test binary.
+Cargo also holds an exclusive lock on it, so worktrees sharing one serialize the parallel builds this layout exists to allow.
 Local checks resolve their own record tree from the worktree and cannot follow output out of it either.
+
+A check script may still send its *test* build to a scratch directory, because a run that judges the working tree must not dirty it by building into `target/`.
+`scripts/build-scratch.sh` is the one place that decides where that goes: a path keyed by checkout, which is isolated from the tree and from every other tree at once.
+Source it rather than writing a path; `scripts/rust-test.sh` keys its own default the same way and for the same reason.
 
 The cost of that isolation is one full build cache per worktree, so the cache is removed with the work rather than left behind.
 `git worktree remove` takes both directories with it; a worktree kept alive after its branch lands keeps its cache alive too.
