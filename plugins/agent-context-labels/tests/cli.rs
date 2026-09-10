@@ -53,6 +53,7 @@ fn commands_other_than_watch_leave_legacy_state_where_it_is() {
         &["request-refresh"],
         &["set-automatic-summaries", "--enabled", "true"],
         &["verify-provider", "--provider", "claude"],
+        &["analyze-stdin"],
         &["hook"],
     ];
     for args in cases {
