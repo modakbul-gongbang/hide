@@ -145,11 +145,18 @@ struct RecentProject: Identifiable {
 struct RecentSurface: Identifiable {
     let id: String
     let projectID: String
+    let projectLabel: String
     let deviceID: String
     let workspaceID: String
     let checkoutID: String
     let checkoutLabel: String
     let item: ShellTabItem
+
+    /// The switcher spans projects, so a row names its project unless the
+    /// checkout already carries the same name, which is the single-checkout case.
+    var contextLabel: String {
+        projectLabel == checkoutLabel ? checkoutLabel : "\(projectLabel) · \(checkoutLabel)"
+    }
 
     var symbol: String {
         switch item.kind {
@@ -387,9 +394,8 @@ final class ShellModel: ObservableObject {
     private var observedNavigationDevice: String?
     private var currentProjectID: String?
     private var currentSurfaceID: String?
-    private var tabCycleProjectID: String?
     private var shortcutHintTask: Task<Void, Never>?
-    private var tabMRU = TabMRU()
+    private var surfaceMRU = SurfaceMRU()
 
     init(
         core: CoreBridge = CoreBridge(),
@@ -1136,10 +1142,14 @@ final class ShellModel: ObservableObject {
     }
 
     func recentProjectDetail(_ id: String) -> String {
-        guard let surfaceID = tabMRU.tabIDs(in: id).first, let surface = recentSurfaces[surfaceID] else {
-            return "No open tabs"
-        }
+        guard let surface = recentSurfaces(inProject: id).first else { return "No open tabs" }
         return "\(surface.checkoutLabel) · \(surface.item.label)"
+    }
+
+    /// The project switcher still restores one project's own last surface, and
+    /// that order is the global one narrowed to the surfaces of that project.
+    private func recentSurfaces(inProject projectID: String) -> [RecentSurface] {
+        surfaceMRU.surfaceIDs.compactMap { recentSurfaces[$0] }.filter { $0.projectID == projectID }
     }
 
     func beginOrAdvanceProjectSwitcher() { stepProjectSwitcher(.forward) }
@@ -1168,8 +1178,7 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("navigation.project.commit_recovered", detail: "reason=project_removed outcome=selection_kept")
             return
         }
-        guard let surfaceID = tabMRU.tabIDs(in: project.id).first,
-              let surface = recentSurfaces[surfaceID] else {
+        guard let surface = recentSurfaces(inProject: project.id).first else {
             // An empty project remains navigable without inventing a terminal.
             guard let checkout = project.workspace.checkouts.first else {
                 HideLaunchTrace.mark("navigation.project.commit_recovered", detail: "reason=workspace_removed outcome=selection_kept")
@@ -1201,23 +1210,19 @@ final class ShellModel: ObservableObject {
             if cycle.selectedTabID != tabSwitcherCycle?.selectedTabID { tabSwitcherCycle = cycle }
             return
         }
-        guard let projectID = currentProjectID,
-              let cycle = TabSwitcherCycle(originalTabID: currentSurfaceID,
-                  tabIDs: tabMRU.tabIDs(in: projectID), direction: direction) else {
+        guard let cycle = TabSwitcherCycle(originalTabID: currentSurfaceID,
+            tabIDs: surfaceMRU.surfaceIDs, direction: direction) else {
             // Keep the current surface without interrupting keyboard input.
             return
         }
-        tabCycleProjectID = projectID
         tabSwitcherCycle = cycle
     }
 
     func commitTabSwitcher() {
         guard let cycle = tabSwitcherCycle else { return }
-        let projectID = tabCycleProjectID
         cancelTabSwitcher()
-        guard projectID == currentProjectID,
-              let surface = recentSurfaces[cycle.selectedTabID], surface.projectID == projectID else {
-            HideLaunchTrace.mark("navigation.tab.commit_recovered", detail: "reason=context_changed outcome=selection_kept")
+        guard let surface = recentSurfaces[cycle.selectedTabID] else {
+            HideLaunchTrace.mark("navigation.tab.commit_recovered", detail: "reason=surface_removed outcome=selection_kept")
             return
         }
         focusRecentSurface(surface)
@@ -1225,7 +1230,6 @@ final class ShellModel: ObservableObject {
 
     func cancelTabSwitcher() {
         if tabSwitcherCycle != nil { tabSwitcherCycle = nil }
-        tabCycleProjectID = nil
     }
 
     private func reportNavigationNotice(_ message: String) {
@@ -1275,6 +1279,7 @@ final class ShellModel: ObservableObject {
         var projects: [String: RecentProject] = [:]
         var surfaces: [String: RecentSurface] = [:]
         var projectOrder: [String] = []
+        var availableSurfaces: [String] = []
         currentProjectID = nil
         currentSurfaceID = nil
         var contexts: [(String, [CoreWorkspaceSnapshot], String?, String?, String?, [CoreEditorTabSnapshot],
@@ -1303,7 +1308,6 @@ final class ShellModel: ObservableObject {
                 projectOrder.append(projectID)
                 let selected = deviceID == selectedDevice && workspace.id == focusedWorkspaceID
                 if selected { currentProjectID = projectID }
-                var available: [String] = []
                 for checkout in workspace.checkouts {
                     let isFocused = selected && checkout.id == focusedCheckoutID
                     let activeTabID = deviceID != "local" && isFocused
@@ -1321,19 +1325,18 @@ final class ShellModel: ObservableObject {
                     }
                     for item in tabs {
                         let id = "\(projectID):\(checkout.id):\(item.id)"
-                        available.append(id)
-                        surfaces[id] = RecentSurface(id: id, projectID: projectID, deviceID: deviceID,
-                            workspaceID: workspace.id, checkoutID: checkout.id, checkoutLabel: checkout.label, item: item)
+                        availableSurfaces.append(id)
+                        surfaces[id] = RecentSurface(id: id, projectID: projectID, projectLabel: workspace.label,
+                            deviceID: deviceID, workspaceID: workspace.id, checkoutID: checkout.id,
+                            checkoutLabel: checkout.label, item: item)
                         if isFocused && item.active { currentSurfaceID = id }
                     }
                 }
-                tabMRU.observe(contextID: projectID, focusedTabID: selected ? currentSurfaceID : nil,
-                    availableTabIDs: available)
             }
         }
         recentProjects = projects
         recentSurfaces = surfaces
-        tabMRU.retainContexts(Set(projectOrder))
+        surfaceMRU.observe(focusedSurfaceID: currentSurfaceID, availableSurfaceIDs: availableSurfaces)
         projectMRU.observe(focusedProjectID: currentProjectID, availableProjectIDs: projectOrder)
         if var cycle = projectSwitcherCycle {
             let original = cycle
@@ -1347,10 +1350,9 @@ final class ShellModel: ObservableObject {
         }
         if var cycle = tabSwitcherCycle {
             let original = cycle
-            let available = tabCycleProjectID.map { Set(tabMRU.tabIDs(in: $0)) } ?? []
-            if tabCycleProjectID != currentProjectID || !cycle.reconcile(available: available) {
+            if !cycle.reconcile(available: Set(surfaceMRU.surfaceIDs)) {
                 cancelTabSwitcher()
-                HideLaunchTrace.mark("navigation.tab.cycle_cancelled", detail: "reason=context_changed outcome=selection_kept revision=\(snapshot.navigationRevision)")
+                HideLaunchTrace.mark("navigation.tab.cycle_cancelled", detail: "reason=all_removed outcome=selection_kept revision=\(snapshot.navigationRevision)")
             } else if original != cycle {
                 tabSwitcherCycle = cycle
                 HideLaunchTrace.mark("navigation.tabs.reconciled", detail: "reason=removed removed_count=\(original.tabIDs.count - cycle.tabIDs.count) revision=\(snapshot.navigationRevision)")

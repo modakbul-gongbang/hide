@@ -119,44 +119,39 @@ struct ProjectMRUTests {
     }
 }
 
-@Suite("Tab MRU and switcher")
-struct TabMRUTests {
-    @Test func recencyIsScopedToTheProject() {
-        var mru = TabMRU()
+@Suite("Surface MRU and switcher")
+struct SurfaceMRUTests {
+    @Test func recencySpansEveryProject() {
+        var mru = SurfaceMRU()
 
         mru.observe(
-            contextID: "local:project-a",
-            focusedTabID: "tab-a2",
-            availableTabIDs: ["tab-a1", "tab-a2"]
+            focusedSurfaceID: "tab-a2",
+            availableSurfaceIDs: ["tab-a1", "tab-a2", "tab-b1", "tab-b2"]
         )
-        #expect(mru.tabIDs(in: "local:project-a") == ["tab-a2", "tab-a1"])
+        #expect(mru.surfaceIDs == ["tab-a2", "tab-a1", "tab-b1", "tab-b2"])
 
         mru.observe(
-            contextID: "local:project-b",
-            focusedTabID: "tab-b1",
-            availableTabIDs: ["tab-b1", "tab-b2"]
+            focusedSurfaceID: "tab-b1",
+            availableSurfaceIDs: ["tab-a1", "tab-a2", "tab-b1", "tab-b2"]
         )
-        #expect(mru.tabIDs(in: "local:project-b") == ["tab-b1", "tab-b2"])
-        #expect(!mru.tabIDs(in: "local:project-b").contains("tab-a2"))
+        #expect(mru.surfaceIDs == ["tab-b1", "tab-a2", "tab-a1", "tab-b2"])
     }
 
     @Test func removedTabsCannotRemainInTheCycleOrCommit() throws {
-        var mru = TabMRU()
+        var mru = SurfaceMRU()
         mru.observe(
-            contextID: "local:project-a",
-            focusedTabID: "tab-a1",
-            availableTabIDs: ["tab-a1", "tab-a2", "tab-a3"]
+            focusedSurfaceID: "tab-a1",
+            availableSurfaceIDs: ["tab-a1", "tab-a2", "tab-a3"]
         )
         mru.observe(
-            contextID: "local:project-a",
-            focusedTabID: "tab-a3",
-            availableTabIDs: ["tab-a1", "tab-a3"]
+            focusedSurfaceID: "tab-a3",
+            availableSurfaceIDs: ["tab-a1", "tab-a3"]
         )
-        #expect(mru.tabIDs(in: "local:project-a") == ["tab-a3", "tab-a1"])
+        #expect(mru.surfaceIDs == ["tab-a3", "tab-a1"])
 
         var cycle = try #require(TabSwitcherCycle(
             originalTabID: "tab-a3",
-            tabIDs: mru.tabIDs(in: "local:project-a")
+            tabIDs: mru.surfaceIDs
         ))
         #expect(cycle.selectedTabID == "tab-a1")
         cycle.advance()
@@ -177,24 +172,27 @@ struct TabMRUTests {
 
 @Suite("Two-level recent navigation")
 struct RecentNavigationTests {
-    @Test func visitingAnotherProjectPreservesEverySurfaceAndCheckoutRecency() throws {
-        var tabs = TabMRU()
-        let alpha = ["terminal-main", "file-main", "diff-worktree", "browser-worktree"]
-        tabs.observe(contextID: "alpha", focusedTabID: "file-main", availableTabIDs: alpha)
-        tabs.observe(contextID: "alpha", focusedTabID: "browser-worktree", availableTabIDs: alpha)
-        tabs.observe(contextID: "beta", focusedTabID: "beta-file", availableTabIDs: ["beta-file"])
-        // Re-entering alpha restores the last surface; background snapshots
-        // must not reset that history to strip order or checkout order.
-        tabs.observe(contextID: "alpha", focusedTabID: nil, availableTabIDs: alpha)
-        #expect(tabs.tabIDs(in: "alpha") == ["browser-worktree", "file-main", "terminal-main", "diff-worktree"])
-        var cycle = try #require(TabSwitcherCycle(originalTabID: "browser-worktree", tabIDs: tabs.tabIDs(in: "alpha")))
+    @Test func visitingAnotherProjectKeepsOneOrderOverEverySurface() throws {
+        var tabs = SurfaceMRU()
+        let all = ["terminal-main", "file-main", "diff-worktree", "browser-worktree", "beta-file"]
+        tabs.observe(focusedSurfaceID: "file-main", availableSurfaceIDs: all)
+        tabs.observe(focusedSurfaceID: "browser-worktree", availableSurfaceIDs: all)
+        // The other project's visit takes the front of the same order rather
+        // than starting a history of its own.
+        tabs.observe(focusedSurfaceID: "beta-file", availableSurfaceIDs: all)
+        #expect(tabs.surfaceIDs == ["beta-file", "browser-worktree", "file-main", "terminal-main", "diff-worktree"])
+        // A background snapshot with no focus must not reset that history to
+        // strip order or checkout order.
+        tabs.observe(focusedSurfaceID: nil, availableSurfaceIDs: all)
+        #expect(tabs.surfaceIDs == ["beta-file", "browser-worktree", "file-main", "terminal-main", "diff-worktree"])
+        var cycle = try #require(TabSwitcherCycle(originalTabID: "beta-file", tabIDs: tabs.surfaceIDs))
+        #expect(cycle.selectedTabID == "browser-worktree")
+        cycle.advance()
         #expect(cycle.selectedTabID == "file-main")
         cycle.advance()
         #expect(cycle.selectedTabID == "terminal-main")
-        cycle.advance()
-        #expect(cycle.selectedTabID == "diff-worktree")
-        tabs.retainContexts(["beta"])
-        #expect(tabs.tabIDs(in: "alpha").isEmpty)
+        tabs.observe(focusedSurfaceID: nil, availableSurfaceIDs: ["beta-file"])
+        #expect(tabs.surfaceIDs == ["beta-file"])
     }
 
     @Test func removalDuringAHoldConvergesAndNeverChangesTheOriginalSelection() throws {

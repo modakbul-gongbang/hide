@@ -313,7 +313,7 @@ private struct RecentNavigationOverlay: View {
                 rows: cycle.visibleIDs.compactMap { id in
                     guard let surface = model.recentSurfaces[id] else { return nil }
                     return RecentSwitcherRow(id: id, title: surface.item.label,
-                        detail: surface.checkoutLabel, symbol: surface.symbol, dirty: surface.item.dirty,
+                        detail: surface.contextLabel, symbol: surface.symbol, dirty: surface.item.dirty,
                         agent: surface.item.focusedAgent)
                 }, selectedID: cycle.selectedTabID,
                 identifier: "tab-mru-switcher"
@@ -1472,7 +1472,11 @@ private struct CheckoutNavigatorRow: View {
                 }
                 if hasAgents {
                     Group {
-                        WorkspaceAgentSummary(presentation: presentation)
+                        // Expanded, every agent's own row carries its state;
+                        // the collapsed summary would repeat it beside them.
+                        if !model.isCheckoutExpanded(checkout) {
+                            WorkspaceAgentSummary(presentation: presentation)
+                        }
                         Image(systemName: model.isCheckoutExpanded(checkout) ? "chevron.down" : "chevron.right")
                             .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                             .foregroundStyle(HideTheme.secondary)
