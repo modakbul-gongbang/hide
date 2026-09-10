@@ -9,6 +9,7 @@
 //! - a removal takes only the entries carrying Hide's marker (PRD D-57);
 //! - installing twice converges instead of duplicating (PRD B25).
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -39,6 +40,17 @@ pub enum InstallFailure {
     /// Hide's entry points at a helper that is no longer on disk, so the hook
     /// runs nothing. Reinstalling from the running app repairs it.
     HelperMissing { path: String, helper: String },
+    /// The executable asking for the install is not inside an application
+    /// bundle, so there is no durable path to write into the hook.
+    ///
+    /// This is a refusal, not a failure to try. A hook command is a path
+    /// stored in the operator's own configuration and run by every future
+    /// session of that agent; a development build's executable lives under
+    /// `target/debug/deps`, which Cargo deletes on the next rebuild. Writing
+    /// it would leave every session on the machine running a command that no
+    /// longer exists, which is what happened on 2026-09-10 (engineering
+    /// rule 4: an invalid state is surfaced, never written through).
+    HelperNotBundled { executable: String },
 }
 
 impl InstallFailure {
@@ -56,6 +68,9 @@ impl InstallFailure {
             Self::HelperMissing { helper, .. } => {
                 format!("the installed hook points at {helper}, which is missing")
             }
+            Self::HelperNotBundled { executable } => format!(
+                "{executable} is not inside an application bundle, so Hide has no lasting path                  for the hook to run; install hooks from the installed app"
+            ),
         }
     }
 }
@@ -124,6 +139,45 @@ pub fn claim_first_run(home: &Path) -> io::Result<bool> {
         Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+/// Where the hook helper lives for the executable that is running.
+///
+/// A hook command outlives the process that wrote it: it is a path kept in
+/// the operator's own configuration file and run by every future session of
+/// that agent. So the only path worth writing is one that survives a
+/// rebuild, and inside this project that means the bundle's own
+/// `Contents/MacOS`. A development build's executable sits under
+/// `target/debug/deps`, which Cargo removes on the next build; installing
+/// from there once left every Claude and Codex session on the machine
+/// failing four hooks per turn.
+///
+/// So this refuses rather than resolving something plausible. The layout is
+/// checked, not the file name: `<name>.app/Contents/MacOS/<executable>`.
+pub fn helper_for(executable: &Path) -> Result<PathBuf, InstallFailure> {
+    let refuse = || InstallFailure::HelperNotBundled {
+        executable: executable.display().to_string(),
+    };
+    let macos = executable.parent().ok_or_else(refuse)?;
+    if macos.file_name() != Some(OsStr::new("MacOS")) {
+        return Err(refuse());
+    }
+    let contents = macos.parent().ok_or_else(refuse)?;
+    if contents.file_name() != Some(OsStr::new("Contents")) {
+        return Err(refuse());
+    }
+    let bundle = contents.parent().ok_or_else(refuse)?;
+    if bundle.extension() != Some(OsStr::new("app")) {
+        return Err(refuse());
+    }
+    let helper = macos.join(crate::runtime::HELPER_BINARY_NAME);
+    if !helper.is_file() {
+        return Err(InstallFailure::HelperMissing {
+            path: bundle.display().to_string(),
+            helper: helper.display().to_string(),
+        });
+    }
+    Ok(helper)
 }
 
 pub fn status(runtime: AgentRuntime, home: &Path) -> HookStatus {
@@ -449,6 +503,123 @@ mod tests {
             let _ = fs::remove_file(runtime.config_path(fixture.home()));
         }
         assert!(!claim_first_run(fixture.home()).unwrap());
+    }
+
+    #[test]
+    fn a_cargo_build_directory_is_refused_instead_of_written_into_a_hook() {
+        let fixture = Fixture::new("not-bundled");
+        // The exact shape that reached two of the operator's configuration
+        // files on 2026-09-10. Cargo deletes this directory on the next
+        // build, so every session afterwards ran a command that was gone.
+        let deps = fixture.home().join("target/debug/deps");
+        fs::create_dir_all(&deps).unwrap();
+        let executable = deps.join("HerdrMacOS");
+        fs::write(&executable, b"binary").unwrap();
+        fs::write(deps.join(crate::runtime::HELPER_BINARY_NAME), b"binary").unwrap();
+
+        // The helper sitting right beside it is not enough: it is the
+        // directory that does not survive, not the file that is missing.
+        let refusal = helper_for(&executable).expect_err("a build directory is refused");
+        assert!(
+            matches!(refusal, InstallFailure::HelperNotBundled { .. }),
+            "got {refusal:?}"
+        );
+        assert!(
+            refusal
+                .message()
+                .contains("not inside an application bundle"),
+            "the operator is told why: {}",
+            refusal.message()
+        );
+    }
+
+    #[test]
+    fn only_the_bundles_own_macos_directory_resolves_the_helper() {
+        let fixture = Fixture::new("bundled");
+        let macos = fixture.home().join("hide.app/Contents/MacOS");
+        fs::create_dir_all(&macos).unwrap();
+        let executable = macos.join("HerdrMacOS");
+        fs::write(&executable, b"binary").unwrap();
+
+        // A bundle that shipped without the helper is a missing file, not a
+        // wrong location, and says so.
+        let missing = helper_for(&executable).expect_err("a bundle without the helper is refused");
+        assert!(
+            matches!(missing, InstallFailure::HelperMissing { .. }),
+            "got {missing:?}"
+        );
+
+        let helper = macos.join(crate::runtime::HELPER_BINARY_NAME);
+        fs::write(&helper, b"binary").unwrap();
+        assert_eq!(helper_for(&executable).unwrap(), helper);
+
+        // A directory that merely ends in .app is not enough on its own, and
+        // neither is a MacOS directory outside one.
+        for wrong in [
+            fixture.home().join("hide.app/MacOS/HerdrMacOS"),
+            fixture.home().join("elsewhere/Contents/MacOS/HerdrMacOS"),
+        ] {
+            fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+            fs::write(&wrong, b"binary").unwrap();
+            fs::write(
+                wrong.with_file_name(crate::runtime::HELPER_BINARY_NAME),
+                b"binary",
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                    helper_for(&wrong),
+                    Err(InstallFailure::HelperNotBundled { .. })
+                ),
+                "{} is not a bundle layout",
+                wrong.display()
+            );
+        }
+    }
+
+    #[test]
+    fn hide_can_take_out_its_own_entries_after_the_helper_they_name_is_gone() {
+        let fixture = Fixture::new("helper-gone");
+        let runtime = AgentRuntime::ClaudeCode;
+        fs::create_dir_all(runtime.home_directory(fixture.home())).unwrap();
+        let helper = fixture
+            .home()
+            .join("hide.app/Contents/MacOS/hide-agent-hooks");
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(&helper, b"binary").unwrap();
+        install(runtime, fixture.home(), &helper).unwrap();
+
+        // The build directory goes away, which is the whole incident.
+        fs::remove_file(&helper).unwrap();
+        let diagnosed = crate::Diagnosis::read(fixture.home());
+        let row = diagnosed
+            .runtimes
+            .iter()
+            .find(|row| row.runtime == runtime)
+            .expect("the runtime is diagnosed");
+        assert!(
+            matches!(
+                row.status,
+                HookStatus::Failed {
+                    reason: InstallFailure::HelperMissing { .. }
+                }
+            ),
+            "got {:?}",
+            row.status
+        );
+        assert!(
+            row.offers_removal(),
+            "the operator can take out entries whose helper is gone"
+        );
+
+        // And removal works without the binary, because it reads the file.
+        let outcome = remove(runtime, fixture.home()).unwrap();
+        assert!(outcome.changed);
+        assert_eq!(outcome.removed_entries, HookEvent::ALL.len());
+        assert!(matches!(
+            status(runtime, fixture.home()),
+            HookStatus::NotInstalled
+        ));
     }
 
     struct Fixture(PathBuf);

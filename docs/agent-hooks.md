@@ -73,7 +73,19 @@ The request is a set and the write rewrites the same hook group either way, so a
 The write itself runs on the coordinator thread, outside every lock, and the diagnosis is read back from the file afterwards so the screen shows what the file now says rather than what was asked for.
 
 The helper ships beside the app's own executable, in `Contents/MacOS/`, under the name `hide_agent_hooks::HELPER_BINARY_NAME`.
-A build that did not bundle it fails the install with the path it looked at rather than writing a hook that cannot run.
+`hide_agent_hooks::helper_for` is the only thing that resolves it, and it checks the layout rather than the file name: the executable's parent must be `MacOS`, its parent `Contents`, and its parent must end in `.app`.
+Anything else is refused as `HelperNotBundled`, and a bundle that shipped without the helper is refused as `HelperMissing`.
+A refused install writes nothing and reports why; an install the operator pressed for also raises `agent_hooks.install_refused` so the press is answered on screen.
+
+The refusal exists because a hook command outlives the process that wrote it.
+It is a path stored in the operator's own configuration file and run by every future session of that agent, so the only path worth writing is one that survives a rebuild.
+On 2026-09-10 a development build resolved the helper beside its own executable under `target/debug/deps`, which Cargo deletes on the next build, and wrote that path into both `~/.claude/settings.json` and `~/.codex/hooks.json`.
+Every Claude and Codex session on the machine then failed four hooks per turn with `No such file or directory` until the entries were taken out by hand.
+Resolving "beside the executable" was the defect; the bundle layout is the whole answer, and `a_cargo_build_directory_is_refused_instead_of_written_into_a_hook` is the test that keeps it.
+
+Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker.
+So a runtime whose helper has gone missing is offered a removal as well as a reinstall, which is how the operator clears entries that name a binary that is no longer there.
+The other read failures are not offered a removal, because Hide could not parse the file and does not know what removing would touch.
 
 `hide-agent-hooks doctor [--json]` prints the same judgement in a terminal, because a broken hook shows on screen only as an uninstrumented mark and the output of that command is the evidence.
 Install and remove are deliberately not CLI subcommands: writing to the operator's configuration is the app's decision, taken with their approval, not something a stray command line performs.

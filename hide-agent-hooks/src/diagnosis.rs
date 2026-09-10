@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::install::{HookStatus, status};
+use crate::install::{HookStatus, InstallFailure, status};
 use crate::runtime::{AgentRuntime, HOOK_VERSION};
 
 /// Why Hide cannot say what a pane's agent has spawned.
@@ -198,10 +198,21 @@ impl RuntimeDiagnosis {
     }
 
     /// Whether the operator can be offered a removal (PRD B29).
+    ///
+    /// A missing helper counts. Finding it is proof that Hide's own entries
+    /// are in the file and readable - that is how the helper path was read in
+    /// the first place - and those entries are exactly what the operator
+    /// needs taken out when the binary they name is gone. The other failures
+    /// do not count: Hide could not parse or read the file, so it has no idea
+    /// what removing would touch.
     pub fn offers_removal(&self) -> bool {
         matches!(
             self.status,
-            HookStatus::Installed { .. } | HookStatus::Outdated { .. }
+            HookStatus::Installed { .. }
+                | HookStatus::Outdated { .. }
+                | HookStatus::Failed {
+                    reason: InstallFailure::HelperMissing { .. }
+                }
         )
     }
 }

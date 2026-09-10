@@ -364,10 +364,22 @@ fn run_coordinator(
                 return;
             };
             if !requested.is_empty() {
+                // An install the operator pressed for reports back to the
+                // operator. The diagnosis that follows reads the file, so a
+                // refusal that never reached the file would otherwise leave
+                // the screen unchanged and the press unanswered (PRD B28,
+                // engineering rule 4).
+                let mut refusal = None;
                 for runtime in requested {
-                    install_agent_hook(home, runtime);
+                    refusal = install_agent_hook(home, runtime).or(refusal);
                 }
                 publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+                if let Some(refusal) = refusal
+                    && let Some(core) = context.runtime.upgrade()
+                    && let Ok(mut locked) = core.lock()
+                {
+                    locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+                }
             }
         }
 
@@ -765,14 +777,17 @@ fn take_agent_hook_installs(
 
 /// Writes one runtime's hook, and records what happened either way.
 ///
-/// The helper ships beside the executable that is running, so that is where
-/// it is looked for; a build that did not bundle it fails here with the path
-/// it looked at rather than installing a hook that cannot run.
-fn install_agent_hook(home: &std::path::Path, runtime: hide_agent_hooks::AgentRuntime) {
+/// The helper ships inside the bundle that is running, and
+/// [`hide_agent_hooks::helper_for`] refuses anything else: what goes into the
+/// hook is a path the operator's own configuration keeps and every future
+/// session of that agent runs, so a build directory is not an answer. The
+/// refusal is reported, never worked around.
+fn install_agent_hook(
+    home: &std::path::Path,
+    runtime: hide_agent_hooks::AgentRuntime,
+) -> Option<hide_agent_hooks::InstallFailure> {
     let helper = match std::env::current_exe() {
-        Ok(executable) => executable
-            .parent()
-            .map(|directory| directory.join(hide_agent_hooks::HELPER_BINARY_NAME)),
+        Ok(executable) => hide_agent_hooks::helper_for(&executable),
         Err(error) => {
             crate::diagnostic!(json!({
                 "component": "agent_hooks",
@@ -780,32 +795,41 @@ fn install_agent_hook(home: &std::path::Path, runtime: hide_agent_hooks::AgentRu
                 "runtime": runtime.id(),
                 "message": format!("Hide could not locate its own executable: {error}"),
             }));
-            return;
+            return None;
         }
     };
-    let Some(helper) = helper else {
-        crate::diagnostic!(json!({
-            "component": "agent_hooks",
-            "kind": "install.failed",
-            "runtime": runtime.id(),
-            "message": "Hide's executable has no containing directory to find its hook helper in",
-        }));
-        return;
+    let helper = match helper {
+        Ok(helper) => helper,
+        Err(refusal) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.refused",
+                "runtime": runtime.id(),
+                "message": refusal.message(),
+            }));
+            return Some(refusal);
+        }
     };
     match hide_agent_hooks::install(runtime, home, &helper) {
-        Ok(outcome) => crate::diagnostic!(json!({
-            "component": "agent_hooks",
-            "kind": "install.completed",
-            "runtime": runtime.id(),
-            "changed": outcome.changed,
-            "preserved_entries": outcome.preserved_entries,
-        })),
-        Err(failure) => crate::diagnostic!(json!({
-            "component": "agent_hooks",
-            "kind": "install.failed",
-            "runtime": runtime.id(),
-            "message": failure.message(),
-        })),
+        Ok(outcome) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.completed",
+                "runtime": runtime.id(),
+                "changed": outcome.changed,
+                "preserved_entries": outcome.preserved_entries,
+            }));
+            None
+        }
+        Err(failure) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.failed",
+                "runtime": runtime.id(),
+                "message": failure.message(),
+            }));
+            Some(failure)
+        }
     }
 }
 
