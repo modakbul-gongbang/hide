@@ -25,7 +25,8 @@ Run the lanes it runs before opening the pull request; `CONTRIBUTING.md` lists e
 A gate that is wrong is changed in the same pull request with the reason in the description; there is no bypass label.
 The pull request template's `Risk surface` names the places this repository has actually been bitten: the runtime mutex, the snapshot wire, Herdr versus core ownership, the API contract, the failure path, and the high-frequency path.
 Answer the ones the diff touches from the diff, not from intent, and delete the rest rather than filling them with "N/A".
-The template's other required judgement is `Review focus`: what the evidence has already settled, and what a person still has to decide.
+The template's other required judgements are `Review focus`, which says what the evidence has already settled and what a person still has to decide, and `Breaking change`, which names what an operator has to do by hand because no commit can do it for them.
+Link the PRD or issue the change answers under `Related`.
 
 ## Evidence Belongs Outside The Repository
 
