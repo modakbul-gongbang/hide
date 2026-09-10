@@ -7,11 +7,12 @@ use serde_json::Value;
 
 use crate::log::{AiLogEvent, AiLogSink};
 use crate::schema;
-use crate::{AiBackend, AiError, AiRequest, Availability, CancelToken, ProviderId};
+use crate::{AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ProviderId};
 
 /// Retry and selection policy. The defaults carry the label plugin's proven
 /// constants forward: exponential backoff capped at four attempts for a
-/// failure that may clear on its own, two for one settled by the input.
+/// refusal that may clear on its own, two for one settled by the input.
+/// A request whose completion is unknown is never attempted again.
 #[derive(Clone, Debug)]
 pub struct RouterConfig {
     /// Order used when more than one provider is connected.
@@ -46,8 +47,38 @@ struct DedupKey {
 }
 
 struct InFlight {
-    done: Mutex<Option<Result<Value, AiError>>>,
+    done: Mutex<Option<Result<AiResult, AiError>>>,
     changed: Condvar,
+}
+
+/// Owns one in-flight entry for its leader. Settling it wakes every joiner
+/// and frees the key; dropping it unsettled, which only a panic does, settles
+/// it with an explicit error so no joiner waits on a leader that is gone.
+struct FlightGuard<'a> {
+    router: &'a AiRouter,
+    key: DedupKey,
+    flight: Arc<InFlight>,
+    settled: bool,
+}
+
+impl FlightGuard<'_> {
+    fn settle(&mut self, result: Result<AiResult, AiError>) {
+        self.settled = true;
+        {
+            let mut done = self.flight.done.lock().unwrap_or_else(|e| e.into_inner());
+            *done = Some(result);
+        }
+        self.flight.changed.notify_all();
+        self.router.lock().in_flight.remove(&self.key);
+    }
+}
+
+impl Drop for FlightGuard<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.settle(Err(AiError::Internal("leader_panicked".to_owned())));
+        }
+    }
 }
 
 #[derive(Default)]
@@ -121,7 +152,10 @@ impl AiRouter {
         self.lock().availability.clear();
     }
 
-    pub fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<Value, AiError> {
+    /// Runs the request on the selected provider and returns the validated
+    /// answer with the provider that produced it. Every failure is typed;
+    /// see [`AiError`] for which ones the router retries or moves.
+    pub fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResult, AiError> {
         let key = DedupKey {
             feature_id: request.feature_id,
             subject_id: request.subject_id.clone(),
@@ -147,13 +181,14 @@ impl AiRouter {
             });
             return self.join(&flight, cancel);
         }
+        let mut guard = FlightGuard {
+            router: self,
+            key,
+            flight,
+            settled: false,
+        };
         let result = self.execute_selected(request, cancel);
-        {
-            let mut done = flight.done.lock().unwrap_or_else(|e| e.into_inner());
-            *done = Some(result.clone());
-        }
-        flight.changed.notify_all();
-        self.lock().in_flight.remove(&key);
+        guard.settle(result.clone());
         result
     }
 
@@ -189,7 +224,7 @@ impl AiRouter {
         self.sink.log(event);
     }
 
-    fn join(&self, flight: &InFlight, cancel: &CancelToken) -> Result<Value, AiError> {
+    fn join(&self, flight: &InFlight, cancel: &CancelToken) -> Result<AiResult, AiError> {
         let mut done = flight.done.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             if let Some(result) = done.as_ref() {
@@ -210,7 +245,7 @@ impl AiRouter {
         &self,
         request: &AiRequest,
         cancel: &CancelToken,
-    ) -> Result<Value, AiError> {
+    ) -> Result<AiResult, AiError> {
         let started = Instant::now();
         let ordered = self.ordered_backends();
         let states: Vec<(ProviderId, Availability)> = ordered
@@ -243,14 +278,15 @@ impl AiRouter {
             let outcome = self.execute_on(backend.as_ref(), request, cancel);
             match outcome {
                 Ok((value, attempt)) => {
+                    let result = AiResult { provider, value };
                     self.finish(
                         request,
                         Some(provider),
-                        &Ok(value.clone()),
+                        &Ok(result.clone()),
                         started,
                         attempt,
                     );
-                    return Ok(value);
+                    return Ok(result);
                 }
                 Err((error, attempt)) => {
                     self.finish(
@@ -260,6 +296,8 @@ impl AiRouter {
                         started,
                         attempt,
                     );
+                    // Only a refusal moves on: the provider never took the
+                    // request, so another provider repeats nothing.
                     let eligible = matches!(
                         error,
                         AiError::ProviderUnavailable(_)
@@ -324,10 +362,11 @@ impl AiRouter {
                         event.attempt = Some(attempt);
                     });
                     let limit = match &error {
-                        AiError::Transient(_) | AiError::Timeout => {
-                            self.config.max_transient_attempts
-                        }
+                        AiError::Transient(_) => self.config.max_transient_attempts,
                         AiError::InvalidOutput(_) => self.config.max_invalid_output_attempts,
+                        // Submitted, fate unknown: a second attempt could be
+                        // a second completion.
+                        AiError::Timeout | AiError::CompletionUnknown(_) => 0,
                         AiError::UsageLimited { retry_after } => {
                             let wait = retry_after.unwrap_or(self.config.default_cooldown);
                             self.lock()
@@ -353,7 +392,10 @@ impl AiRouter {
                             );
                             0
                         }
-                        AiError::Cancelled | AiError::Unsupported(_) | AiError::NoProvider(_) => 0,
+                        AiError::Cancelled
+                        | AiError::Unsupported(_)
+                        | AiError::NoProvider(_)
+                        | AiError::Internal(_) => 0,
                     };
                     if attempt >= limit {
                         return Err((error, attempt));
@@ -409,7 +451,7 @@ impl AiRouter {
         &self,
         request: &AiRequest,
         provider: Option<ProviderId>,
-        result: &Result<Value, AiError>,
+        result: &Result<AiResult, AiError>,
         started: Instant,
         attempt: u8,
     ) {
@@ -565,7 +607,6 @@ mod tests {
             system: "sys".to_owned(),
             input: input.to_owned(),
             output_schema: schema(),
-            max_output_tokens: 64,
             deadline: Duration::from_secs(5),
             schema_version: "test.v1",
         }
@@ -588,10 +629,11 @@ mod tests {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(ProviderId::Codex, vec![ok("a")]);
         let router = make_router(vec![codex.clone()], sink.clone());
-        let value = router
+        let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
-        assert_eq!(value["summary"], "a");
+        assert_eq!(result.value["summary"], "a");
+        assert_eq!(result.provider, ProviderId::Codex);
         let finished = sink.events("ai.request.finished");
         assert_eq!(finished.len(), 1);
         assert_eq!(finished[0].provider, Some(ProviderId::Codex));
@@ -621,32 +663,167 @@ mod tests {
         assert_eq!(claude.calls(), 0);
     }
 
+    /// A submitted request whose fate is unknown is spent: one call, no
+    /// second attempt on the same provider, no attempt on another.
     #[test]
-    fn a_timeout_retries_the_same_provider_and_never_runs_elsewhere() {
+    fn a_completion_unknown_outcome_is_final_and_never_runs_elsewhere() {
+        for error in [
+            AiError::Timeout,
+            AiError::CompletionUnknown("app_server_exited:signal".to_owned()),
+        ] {
+            let sink = Arc::new(Recorder::default());
+            let codex = Scripted::new(ProviderId::Codex, vec![Err(error.clone()), ok("again")]);
+            let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+            let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
+            assert_eq!(
+                router.execute(&request("p1", "x"), &CancelToken::new()),
+                Err(error.clone()),
+                "{error:?}"
+            );
+            assert_eq!(codex.calls(), 1, "{error:?}");
+            assert_eq!(claude.calls(), 0, "{error:?}");
+            assert!(sink.events("ai.fallback").is_empty());
+            let finished = sink.events("ai.request.finished");
+            assert_eq!(finished.len(), 1);
+            assert_eq!(finished[0].outcome_class, Some(error.class()));
+            // The provider is not marked unavailable: the next intent is new.
+            assert_eq!(
+                router
+                    .execute(&request("p2", "y"), &CancelToken::new())
+                    .unwrap()
+                    .value["summary"],
+                "again"
+            );
+        }
+    }
+
+    /// A refusal that may clear is retried on the same provider only.
+    #[test]
+    fn a_transient_refusal_retries_the_same_provider_and_never_runs_elsewhere() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
             ProviderId::Codex,
-            vec![Err(AiError::Timeout), Err(AiError::Timeout), ok("third")],
+            vec![
+                Err(AiError::Transient("rpc_error:thread/start:-1".to_owned())),
+                Err(AiError::Transient(
+                    "control_timeout:thread/start".to_owned(),
+                )),
+                ok("third"),
+            ],
         );
         let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
         let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
-        let value = router
+        let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
-        assert_eq!(value["summary"], "third");
+        assert_eq!(result.value["summary"], "third");
         assert_eq!(codex.calls(), 3);
         assert_eq!(claude.calls(), 0);
         assert!(sink.events("ai.fallback").is_empty());
 
-        let exhausted = Scripted::new(ProviderId::Codex, vec![Err(AiError::Timeout); 4]);
+        let exhausted = Scripted::new(
+            ProviderId::Codex,
+            vec![Err(AiError::Transient("busy".to_owned())); 4],
+        );
         let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
         let router = make_router(vec![exhausted.clone(), claude.clone()], sink);
-        assert_eq!(
+        assert!(matches!(
             router.execute(&request("p2", "x"), &CancelToken::new()),
-            Err(AiError::Timeout)
-        );
+            Err(AiError::Transient(_))
+        ));
         assert_eq!(exhausted.calls(), 4);
         assert_eq!(claude.calls(), 0);
+    }
+
+    /// Whoever answers is named in the result, so a fallback can never be
+    /// mistaken for the first provider's answer.
+    #[test]
+    fn a_result_names_the_provider_that_answered_after_a_fallback() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::with_availability(ProviderId::Codex, Availability::NeedsLogin);
+        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
+        let result = router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(result.provider, ProviderId::Claude);
+        assert_eq!(result.value["summary"], "claude");
+        let finished = sink.events("ai.request.finished");
+        assert_eq!(finished[0].provider, Some(ProviderId::Claude));
+    }
+
+    /// A leader that panics must not strand its joiners or its key.
+    #[test]
+    fn a_panicking_leader_settles_every_joiner_with_an_error_and_frees_the_key() {
+        struct Panicking {
+            started: Arc<(Mutex<bool>, Condvar)>,
+            release: Arc<(Mutex<bool>, Condvar)>,
+            calls: AtomicUsize,
+        }
+        impl AiBackend for Panicking {
+            fn id(&self) -> ProviderId {
+                ProviderId::Codex
+            }
+            fn availability(&self) -> Availability {
+                Availability::Ready
+            }
+            fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+                let calls = self.calls.fetch_add(1, Ordering::SeqCst);
+                if calls > 0 {
+                    return Ok(AiResponse {
+                        value: json!({"summary": "fresh"}),
+                        usage: crate::AiUsage::default(),
+                    });
+                }
+                signal(&self.started);
+                wait_for(&self.release);
+                panic!("provider bug");
+            }
+        }
+        fn signal(pair: &(Mutex<bool>, Condvar)) {
+            *pair.0.lock().unwrap() = true;
+            pair.1.notify_all();
+        }
+        fn wait_for(pair: &(Mutex<bool>, Condvar)) {
+            let mut flag = pair.0.lock().unwrap();
+            while !*flag {
+                flag = pair.1.wait(flag).unwrap();
+            }
+        }
+        let backend = Arc::new(Panicking {
+            started: Arc::new((Mutex::new(false), Condvar::new())),
+            release: Arc::new((Mutex::new(false), Condvar::new())),
+            calls: AtomicUsize::new(0),
+        });
+        let sink = Arc::new(Recorder::default());
+        let router = Arc::new(make_router(vec![backend.clone()], sink));
+        let leader = {
+            let router = Arc::clone(&router);
+            std::thread::spawn(move || router.execute(&request("same", "x"), &CancelToken::new()))
+        };
+        wait_for(&backend.started);
+        let joiner = {
+            let router = Arc::clone(&router);
+            std::thread::spawn(move || router.execute(&request("same", "x"), &CancelToken::new()))
+        };
+        // Give the joiner time to attach to the in-flight entry, then let
+        // the leader blow up.
+        std::thread::sleep(Duration::from_millis(100));
+        signal(&backend.release);
+        assert!(leader.join().is_err(), "the leader's panic propagates");
+        assert_eq!(
+            joiner.join().unwrap(),
+            Err(AiError::Internal("leader_panicked".to_owned()))
+        );
+        assert!(router.lock().in_flight.is_empty());
+        // The key is free: the same intent starts a new call.
+        assert_eq!(
+            router
+                .execute(&request("same", "x"), &CancelToken::new())
+                .unwrap()
+                .value["summary"],
+            "fresh"
+        );
     }
 
     #[test]
@@ -658,19 +835,20 @@ mod tests {
         );
         let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
         let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
-        let value = router
+        let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
-        assert_eq!(value["summary"], "claude");
+        assert_eq!(result.value["summary"], "claude");
+        assert_eq!(result.provider, ProviderId::Claude);
         let fallback = sink.events("ai.fallback");
         assert_eq!(fallback.len(), 1);
         assert_eq!(fallback[0].detail.as_deref(), Some("from=codex;to=claude"));
         // The failed provider's state is remembered, so the next request
         // goes straight to the fallback without a second failure.
-        let value = router
+        let result = router
             .execute(&request("p2", "y"), &CancelToken::new())
             .unwrap();
-        assert_eq!(value["summary"], "late");
+        assert_eq!(result.value["summary"], "late");
         assert_eq!(codex.calls(), 1);
     }
 
@@ -732,7 +910,8 @@ mod tests {
         assert_eq!(
             router
                 .execute(&request("p3", "z"), &CancelToken::new())
-                .unwrap()["summary"],
+                .unwrap()
+                .value["summary"],
             "after"
         );
     }
@@ -758,7 +937,8 @@ mod tests {
         assert_eq!(
             router
                 .execute(&request("p3", "z"), &CancelToken::new())
-                .unwrap()["summary"],
+                .unwrap()
+                .value["summary"],
             "logged in"
         );
     }
@@ -785,7 +965,7 @@ mod tests {
             })
             .collect();
         for handle in handles {
-            assert_eq!(handle.join().unwrap()["summary"], "shared");
+            assert_eq!(handle.join().unwrap().value["summary"], "shared");
         }
         assert_eq!(codex.calls(), 1);
         assert_eq!(sink.events("ai.request.joined").len(), 2);

@@ -292,11 +292,14 @@ The accepted provider output is exactly one JSON object with these fields:
 `summary` is normalized to one line and at most 30 characters, and the provider is instructed to write it in Korean.
 `attention` accepts only `question` or `none` because approval and error states come from native hooks rather than model inference.
 
-A request that fails for a reason that may clear on its own is retried by the provider layer with exponential backoff, at most four times; an answer the schema refuses is retried at most twice.
+A request the provider refused for a reason that may clear on its own is retried by the provider layer with exponential backoff, at most four times; an answer the schema refuses is retried at most twice.
+A request that was submitted and whose completion is unknown (a timeout, a lost connection after the turn started) is never retried anywhere.
 After that the turn is abandoned (`analysis_abandoned`) and never asked again until the user takes the next turn.
+An analysis thread that fails for any other reason still reports its outcome, so a pane is never left waiting on a thread that is gone.
 A usage limit, a missing login, or a provider that is not connected parks every pane for ten minutes instead: the turn is kept and asked again once the wait passes.
 When more than one provider is connected, the configured priority is `codex`, then `claude`; a fallback happens only on a provider-side outage, login, usage-limit, or unsupported state, and is written to the log as `ai.fallback`.
-A request that timed out is never re-run on another provider, because whether it completed is unknown.
+A request that timed out or lost its connection after submission is never re-run on another provider, because whether it completed is unknown.
+Every recorded verdict (`analysis_updated`) names the provider that answered it.
 Automatic summaries are enabled by default and the chosen setting survives watcher restarts.
 
 ## Privacy
@@ -323,7 +326,8 @@ Local runtime data is stored under:
 ~/.local/state/hide.agent-context-labels/
 ```
 
-A state directory left by the plugin's previous id, `herdr-agent-context-labels`, is moved here once on the next start; if both exist, neither is touched and `state_migrated` reports `kept_both`.
+A state directory left by the plugin's previous id, `herdr-agent-context-labels`, is moved here once when the watcher next starts; no other command moves it.
+If both exist, neither is touched and `state_migrated` reports `kept_both`.
 
 The important files are:
 
@@ -359,9 +363,9 @@ The binary is built by the workspace, so it lives under the repository's `target
 ../../target/release/hide-agent-context-labels verify-provider --provider codex
 ```
 
-It prints the provider's availability, then the verdict for a fixed two-line transcript, and exits non-zero when the provider cannot answer.
-Every command, this one included, first moves a state directory left under the previous plugin id to the current id.
-To verify a development build without touching the live watcher's state, give it its own home and point Codex at the real one: `HOME=$(mktemp -d) CODEX_HOME=~/.codex ../../target/release/hide-agent-context-labels verify-provider --provider codex`.
+It prints the provider's availability, then the verdict for a fixed two-line transcript with the provider that answered it, and exits non-zero when the provider cannot answer.
+Only `watch` moves a state directory left under the previous plugin id; this and every other command leave it where it is.
+To verify a development build without touching the live watcher's state at all, give it its own home and point Codex at the real one: `HOME=$(mktemp -d) CODEX_HOME=~/.codex ../../target/release/hide-agent-context-labels verify-provider --provider codex`.
 `--provider claude` prints `claude=unsupported` and exits non-zero; that is the documented state, not a fault.
 
 Classify an arbitrary transcript to see what the model would decide, without touching any pane:

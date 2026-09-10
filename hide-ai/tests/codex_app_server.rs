@@ -32,7 +32,6 @@ fn request(deadline: Duration) -> AiRequest {
         system: "Answer as JSON.".to_owned(),
         input: "hello".to_owned(),
         output_schema: json!({"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}),
-        max_output_tokens: 96,
         deadline,
         schema_version: "fixture.v1",
     }
@@ -141,11 +140,13 @@ fn a_non_json_message_is_invalid_output() {
     });
 }
 
+/// Losing the child before `turn/start` is written is a refusal; losing it
+/// once `turn/start` is on the wire, answered or not, leaves the turn's fate
+/// unknown. Both restart the child on the next request.
 #[test]
-fn a_child_that_exits_mid_turn_is_provider_unavailable_and_restarts() {
-    with_mode("exit", || {
-        let backend = backend();
-        let error = backend
+fn a_child_lost_around_turn_start_is_classified_by_what_was_submitted() {
+    with_mode("exit_at_thread_start", || {
+        let error = backend()
             .execute(&request(Duration::from_secs(10)), &CancelToken::new())
             .unwrap_err();
         assert!(
@@ -153,9 +154,28 @@ fn a_child_that_exits_mid_turn_is_provider_unavailable_and_restarts() {
             "{error:?}"
         );
     });
+    with_mode("exit", || {
+        let error = backend()
+            .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+            .unwrap_err();
+        assert!(matches!(error, AiError::CompletionUnknown(_)), "{error:?}");
+    });
+    with_mode("exit_after_turn_start", || {
+        let backend = backend();
+        let error = backend
+            .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+            .unwrap_err();
+        assert!(matches!(error, AiError::CompletionUnknown(_)), "{error:?}");
+        // The child is gone; the same instance starts a fresh one for the
+        // next request instead of reporting the dead one again. The fixture
+        // exits again in this mode, so a fresh child is what the second
+        // completion-unknown error proves.
+        let again = backend
+            .execute(&request(Duration::from_secs(10)), &CancelToken::new())
+            .unwrap_err();
+        assert!(matches!(again, AiError::CompletionUnknown(_)), "{again:?}");
+    });
     with_mode("ok", || {
-        // A fresh backend in ok mode proves the spawn path is repeatable; the
-        // same instance restarts its child on the next call too.
         assert!(
             backend()
                 .execute(&request(Duration::from_secs(10)), &CancelToken::new())

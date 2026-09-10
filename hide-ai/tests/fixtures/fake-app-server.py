@@ -2,8 +2,9 @@
 """Stand-in for `codex app-server --listen stdio://` used by hide-ai tests.
 
 Speaks the subset of the JSON-RPC protocol the backend uses. Behaviour is
-selected with FAKE_MODE: ok (default), slow, usage_limit, garbage, exit,
-no_account, no_model. FAKE_ARGS_FILE records the argument vector when set.
+selected with FAKE_MODE: ok (default), slow, usage_limit, garbage,
+exit_at_thread_start, exit (at turn/start, before answering),
+exit_after_turn_start, no_account, no_model. FAKE_ARGS_FILE records the argument vector when set.
 """
 import json
 import os
@@ -52,6 +53,8 @@ for raw in sys.stdin:
     elif method == "account/rateLimits/read":
         result(rid, {"rateLimits": {"primary": {"usedPercent": 100, "resetsAt": int(time.time()) + 120}}})
     elif method == "thread/start":
+        if MODE == "exit_at_thread_start":
+            sys.exit(2)
         assert params.get("ephemeral") is True and params.get("baseInstructions")
         result(rid, {"thread": {"id": "thread-1"}, "model": params.get("model"), "instructionSources": []})
     elif method == "turn/start":
@@ -61,6 +64,8 @@ for raw in sys.stdin:
         active_turn = "turn-1"
         result(rid, {"turn": {"id": active_turn, "status": "inProgress", "items": []}})
         notify("turn/started", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "inProgress", "items": []}})
+        if MODE == "exit_after_turn_start":
+            sys.exit(4)
         if MODE == "slow":
             continue
         if MODE == "usage_limit":

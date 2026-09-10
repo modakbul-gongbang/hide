@@ -1391,13 +1391,19 @@ impl<R: SessionReader> Watcher<FakeTransport, R> {
 /// A provider the test scripts: each request receives the next reply, and the
 /// last one repeats. Counting calls is what the request-budget tests observe.
 struct ScriptedBackend {
+    id: ProviderId,
     calls: AtomicUsize,
     replies: Mutex<Vec<std::result::Result<Value, AiError>>>,
 }
 
 impl ScriptedBackend {
     fn new(replies: Vec<std::result::Result<Value, AiError>>) -> Arc<Self> {
+        Self::with_id(ProviderId::Codex, replies)
+    }
+
+    fn with_id(id: ProviderId, replies: Vec<std::result::Result<Value, AiError>>) -> Arc<Self> {
         Arc::new(Self {
+            id,
             calls: AtomicUsize::new(0),
             replies: Mutex::new(replies),
         })
@@ -1410,7 +1416,7 @@ impl ScriptedBackend {
 
 impl AiBackend for ScriptedBackend {
     fn id(&self) -> ProviderId {
-        ProviderId::Codex
+        self.id
     }
 
     fn availability(&self) -> Availability {
@@ -1439,13 +1445,46 @@ impl AiBackend for ScriptedBackend {
 /// The router as the watcher sees it, with backoff sleeps elided so a retry
 /// policy is observed by its call count rather than waited out.
 fn router_with(backend: &Arc<ScriptedBackend>) -> Arc<AiRouter> {
-    let backend: Arc<dyn AiBackend> = Arc::clone(backend) as Arc<dyn AiBackend>;
+    router_over(vec![Arc::clone(backend) as Arc<dyn AiBackend>])
+}
+
+fn router_over(backends: Vec<Arc<dyn AiBackend>>) -> Arc<AiRouter> {
     Arc::new(AiRouter::with_sleep(
-        vec![backend],
+        backends,
         RouterConfig::default(),
         Arc::new(NoopLogSink),
         Box::new(|_| {}),
     ))
+}
+
+/// A provider with a bug: the first call panics, later calls answer. The
+/// watcher must survive the first and still make the second.
+struct PanickingBackend {
+    calls: AtomicUsize,
+}
+
+impl AiBackend for PanickingBackend {
+    fn id(&self) -> ProviderId {
+        ProviderId::Codex
+    }
+
+    fn availability(&self) -> Availability {
+        Availability::Ready
+    }
+
+    fn execute(
+        &self,
+        _: &hide_ai::AiRequest,
+        _: &CancelToken,
+    ) -> std::result::Result<AiResponse, AiError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("provider bug");
+        }
+        Ok(AiResponse {
+            value: json!({"expected_reply": "", "summary": "두 번째 요청 요약", "attention": "none"}),
+            usage: AiUsage::default(),
+        })
+    }
 }
 
 /// Nothing connected: every request answers `NoProvider`.
@@ -1578,6 +1617,84 @@ fn a_repeating_failure_is_abandoned_instead_of_retried_forever() {
     );
     // Abandoning is not a verdict: nothing is claimed about the pane.
     assert!(!log.contains("attention="), "log was: {log}");
+}
+
+/// The answering provider is part of the verdict's record, so a fallback can
+/// be seen in the log rather than inferred.
+#[test]
+fn the_recorded_verdict_names_the_provider_that_answered() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let codex = ScriptedBackend::new(vec![Err(AiError::ProviderUnavailable("gone".to_owned()))]);
+    let claude = ScriptedBackend::with_id(
+        ProviderId::Claude,
+        vec![Ok(
+            json!({"expected_reply": "", "summary": "대체 provider 요약", "attention": "none"}),
+        )],
+    );
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        router_over(vec![
+            Arc::clone(&codex) as Arc<dyn AiBackend>,
+            Arc::clone(&claude) as Arc<dyn AiBackend>,
+        ]),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.settle();
+    assert_eq!(codex.calls(), 1);
+    assert_eq!(claude.calls(), 1);
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(
+        log.contains("analysis_updated") && log.contains("provider=claude"),
+        "log was: {log}"
+    );
+    assert_eq!(
+        watcher.last_report().summary.as_deref(),
+        Some("대체 provider 요약")
+    );
+}
+
+/// A provider that panics inside the analysis thread must not leave the pane
+/// in flight: the outcome arrives, the turn is abandoned with the reason, and
+/// the next turn is analyzed.
+#[test]
+fn a_panicking_analysis_still_reports_and_frees_the_pane() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = Arc::new(PanickingBackend {
+        calls: AtomicUsize::new(0),
+    });
+    let session = ScriptedSessionReader::new();
+    session.user("첫 요청");
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "working")]),
+        router_over(vec![Arc::clone(&backend) as Arc<dyn AiBackend>]),
+        session,
+        paths.clone(),
+    );
+    // Silence the default panic report for this test's expected panic.
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    watcher.settle();
+    std::panic::set_hook(previous);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert!(watcher.analysis_in_flight.is_empty());
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(
+        log.contains("analysis_abandoned") && log.contains("analysis_worker_panicked"),
+        "log was: {log}"
+    );
+
+    // The next turn is a fresh intent and goes through.
+    watcher.session_reader.user("두 번째 요청");
+    watcher.transport.panes.borrow_mut()[0].state_change_seq = 2;
+    watcher.settle();
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        watcher.last_report().summary.as_deref(),
+        Some("두 번째 요청 요약")
+    );
 }
 
 /// Moving into the Hide workspace changed the plugin id, and the automatic

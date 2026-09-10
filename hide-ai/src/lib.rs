@@ -69,8 +69,9 @@ pub struct AiRequest {
     pub subject_id: String,
     pub system: String,
     pub input: String,
+    /// The prompt and the schema bound the answer's size; no provider
+    /// contract offers a token ceiling, so none is pretended here.
     pub output_schema: Value,
-    pub max_output_tokens: u32,
     pub deadline: Duration,
     /// Version of the feature's prompt and schema pair, for the log only.
     pub schema_version: &'static str,
@@ -114,6 +115,14 @@ impl Availability {
 
 /// Failure classes a caller can branch on. Payloads carry diagnostics, never
 /// prompt or output content.
+///
+/// Two families matter to the router. A refusal (`NotAuthenticated`,
+/// `UsageLimited`, `ProviderUnavailable`, `Transient`, `InvalidOutput`,
+/// `Unsupported`) means the provider never took the request, so asking
+/// again or asking another provider repeats nothing. A completion-unknown
+/// outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request
+/// was submitted and its fate is not known; it is final on that provider
+/// and is never re-run anywhere.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AiError {
     /// Not retried until availability changes.
@@ -122,12 +131,20 @@ pub enum AiError {
     UsageLimited {
         retry_after: Option<Duration>,
     },
+    /// The provider could not take the request; nothing was submitted.
     ProviderUnavailable(String),
+    /// The deadline passed after the request was submitted.
     Timeout,
     Cancelled,
-    /// Schema mismatch or a stream that ended before the turn completed.
+    /// The connection or the child was lost after the request was
+    /// submitted, so whether it completed is unknown.
+    CompletionUnknown(String),
+    /// Schema mismatch or a message that is not the answer.
     InvalidOutput(String),
+    /// A refusal that may clear on its own; nothing was submitted.
     Transient(String),
+    /// The provider layer itself failed (a panicked request leader).
+    Internal(String),
     /// The provider has no stable contract; see `Availability::Unsupported`.
     Unsupported(String),
     /// No connected provider; carries each provider's availability.
@@ -142,8 +159,10 @@ impl AiError {
             Self::ProviderUnavailable(_) => "provider_unavailable",
             Self::Timeout => "timeout",
             Self::Cancelled => "cancelled",
+            Self::CompletionUnknown(_) => "completion_unknown",
             Self::InvalidOutput(_) => "invalid_output",
             Self::Transient(_) => "transient",
+            Self::Internal(_) => "internal",
             Self::Unsupported(_) => "unsupported",
             Self::NoProvider(_) => "no_provider",
         }
@@ -158,8 +177,10 @@ impl fmt::Display for AiError {
                 None => f.write_str("usage_limited"),
             },
             Self::ProviderUnavailable(reason)
+            | Self::CompletionUnknown(reason)
             | Self::InvalidOutput(reason)
             | Self::Transient(reason)
+            | Self::Internal(reason)
             | Self::Unsupported(reason) => write!(f, "{}:{reason}", self.class()),
             Self::NoProvider(states) => {
                 f.write_str("no_provider")?;
@@ -187,6 +208,14 @@ pub struct AiUsage {
 pub struct AiResponse {
     pub value: Value,
     pub usage: AiUsage,
+}
+
+/// What the router hands back: the validated answer and which provider
+/// produced it, so a fallback is visible to the caller and its log.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AiResult {
+    pub provider: ProviderId,
+    pub value: Value,
 }
 
 /// Cooperative cancellation shared between the caller and the transport.

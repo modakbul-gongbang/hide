@@ -6,7 +6,7 @@ use agent_context_labels::{
 };
 use anyhow::{Context, Result, anyhow};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use hide_ai::{AiRouter, CancelToken, ProviderId};
+use hide_ai::{AiResult, AiRouter, CancelToken, ProviderId};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -66,8 +66,17 @@ fn home_directory() -> Result<PathBuf> {
         .context("HOME is unavailable")
 }
 
-fn watch(paths: &StatePaths, home: &Path) -> Result<()> {
+fn watch(home: &Path) -> Result<()> {
+    // The watcher is the one command that moves state left under the
+    // previous plugin id, and it does so before touching its own directory:
+    // the lock below would otherwise create it and turn the move into a
+    // kept-both.
+    let migrated = migrate_legacy_state(home)?;
+    let paths = &StatePaths::from_home(home);
     let _lock = exclusive_watcher_lock(paths)?;
+    if !migrated.is_empty() {
+        append_log(paths, "state_migrated", None, Some(&migrated.join(";")))?;
+    }
     let router = provider::router(paths);
     append_log(paths, "watcher_started", None, Some(PLUGIN_ID))?;
     append_log(
@@ -126,15 +135,16 @@ fn watch(paths: &StatePaths, home: &Path) -> Result<()> {
 }
 
 /// One label request over `context`, outside any pane. The request id names
-/// the command so its log lines are told apart from the watcher's.
+/// the command so its log lines are told apart from the watcher's, and the
+/// answer names the provider that produced it.
 fn analyze_once(router: &AiRouter, subject: &str, context: &str) -> Result<String> {
     let request = context_label::request(subject, format!("{subject}:manual"), context);
-    let value = router
+    let AiResult { provider, value } = router
         .execute(&request, &CancelToken::new())
         .map_err(|error| anyhow!("{error}"))?;
     let analysis = context_label::parse(value)?;
     Ok(format!(
-        "attention={} summary={}",
+        "provider={provider} attention={} summary={}",
         if analysis.attention.is_some() {
             "question"
         } else {
@@ -145,14 +155,12 @@ fn analyze_once(router: &AiRouter, subject: &str, context: &str) -> Result<Strin
 }
 
 fn main() -> Result<()> {
+    // Parse first: an invalid invocation or `--help` must not touch state.
+    let command = Cli::parse().command;
     let home = home_directory()?;
-    let migrated = migrate_legacy_state(&home)?;
     let paths = StatePaths::from_home(&home);
-    if !migrated.is_empty() {
-        append_log(&paths, "state_migrated", None, Some(&migrated.join(";")))?;
-    }
-    match Cli::parse().command {
-        Action::Watch => watch(&paths, &home),
+    match command {
+        Action::Watch => watch(&home),
         Action::RequestRefresh => {
             request_refresh(&paths)?;
             println!("refresh requested");

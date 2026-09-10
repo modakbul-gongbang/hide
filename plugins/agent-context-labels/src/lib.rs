@@ -3,7 +3,7 @@ pub mod provider;
 
 use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
-use hide_ai::{AiError, AiRouter, CancelToken};
+use hide_ai::{AiError, AiResult, AiRouter, CancelToken, ProviderId};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -1423,6 +1423,8 @@ enum AnalysisFailure {
     Provider(AiError),
     /// A well-formed answer whose content the feature refuses.
     Invalid(String),
+    /// The analysis thread itself failed; a bug, reported rather than lost.
+    Worker(String),
 }
 
 impl AnalysisFailure {
@@ -1439,14 +1441,14 @@ impl AnalysisFailure {
                 | AiError::NoProvider(_)
                 | AiError::ProviderUnavailable(_),
             ) => Some(PROVIDER_RECOVERY_INTERVAL),
-            Self::Provider(_) | Self::Invalid(_) => None,
+            Self::Provider(_) | Self::Invalid(_) | Self::Worker(_) => None,
         }
     }
 
     fn detail(&self) -> String {
         match self {
             Self::Provider(error) => error.to_string(),
-            Self::Invalid(reason) => reason.clone(),
+            Self::Invalid(reason) | Self::Worker(reason) => reason.clone(),
         }
     }
 }
@@ -1456,7 +1458,21 @@ struct AnalysisOutcome {
     turn: u64,
     phase: AnalysisPhase,
     context_chars: usize,
-    result: std::result::Result<Analysis, AnalysisFailure>,
+    result: std::result::Result<(ProviderId, Analysis), AnalysisFailure>,
+}
+
+/// One label request on the calling thread: the router's answer, then the
+/// feature's reading of it, with the answering provider kept alongside.
+fn analyze(
+    router: &AiRouter,
+    request: &hide_ai::AiRequest,
+) -> std::result::Result<(ProviderId, Analysis), AnalysisFailure> {
+    let AiResult { provider, value } = router
+        .execute(request, &CancelToken::new())
+        .map_err(AnalysisFailure::Provider)?;
+    let analysis = context_label::parse(value)
+        .map_err(|error| AnalysisFailure::Invalid(format!("{error:#}")))?;
+    Ok((provider, analysis))
 }
 
 pub struct Watcher<T: HerdrTransport, R: SessionReader> {
@@ -1519,9 +1535,10 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 continue;
             };
             match outcome.result {
-                Ok(analysis) => {
+                Ok((provider, analysis)) => {
                     self.record_analysis(
                         pane,
+                        provider,
                         &analysis,
                         outcome.turn,
                         outcome.phase,
@@ -1742,13 +1759,16 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let request = context_label::request(&pane.id, request_id, &context);
         self.analysis_in_flight.insert(pane_id.clone());
         std::thread::spawn(move || {
-            let result = router
-                .execute(&request, &CancelToken::new())
-                .map_err(AnalysisFailure::Provider)
-                .and_then(|value| {
-                    context_label::parse(value)
-                        .map_err(|error| AnalysisFailure::Invalid(format!("{error:#}")))
-                });
+            // The outcome must arrive whatever happens on this thread: a
+            // panic that escaped would leave the pane in flight forever.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                analyze(&router, &request)
+            }))
+            .unwrap_or_else(|_| {
+                Err(AnalysisFailure::Worker(
+                    "analysis_worker_panicked".to_owned(),
+                ))
+            });
             let _ = sender.send(AnalysisOutcome {
                 pane_id,
                 turn,
@@ -1881,6 +1901,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     fn record_analysis(
         &mut self,
         pane: &Pane,
+        provider: ProviderId,
         analysis: &Analysis,
         turn: u64,
         phase: AnalysisPhase,
@@ -1925,7 +1946,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             "analysis_updated",
             Some(pane),
             Some(&format!(
-                "attention={};phase={};context_chars={context_chars};turn={turn:016x}",
+                "attention={};phase={};context_chars={context_chars};turn={turn:016x};provider={provider}",
                 analysis.attention.map_or("none", |_| "question"),
                 phase.label(),
             )),

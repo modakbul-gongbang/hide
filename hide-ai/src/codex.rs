@@ -174,20 +174,25 @@ impl CodexAppServerBackend {
             .and_then(Value::as_str)
             .ok_or_else(|| AiError::Transient("thread_start_without_id".to_owned()))?
             .to_owned();
-        let turn = session.request(
-            "turn/start",
-            json!({
-                "threadId": thread_id,
-                "input": [{"type": "text", "text": request.input}],
-                "outputSchema": request.output_schema,
-                "clientUserMessageId": request.request_id.0,
-            }),
-            CONTROL_TIMEOUT,
-        )?;
+        // Once this is written the server may be running the turn. A lost
+        // answer no longer says whether it completed, and only that answer
+        // would make a retry safe; a rejection still does.
+        let turn = session
+            .request_raw(
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": request.input}],
+                    "outputSchema": request.output_schema,
+                    "clientUserMessageId": request.request_id.0,
+                }),
+                CONTROL_TIMEOUT,
+            )
+            .map_err(RequestFailure::after_submission)?;
         let turn_id = turn
             .pointer("/turn/id")
             .and_then(Value::as_str)
-            .ok_or_else(|| AiError::Transient("turn_start_without_id".to_owned()))?
+            .ok_or_else(|| AiError::CompletionUnknown("turn_start_without_id".to_owned()))?
             .to_owned();
 
         let mut usage = AiUsage::default();
@@ -205,7 +210,9 @@ impl CodexAppServerBackend {
             let message = match session.next_message(POLL.min(deadline - now)) {
                 Ok(message) => message,
                 Err(Wait::Elapsed) => continue,
-                Err(Wait::Gone(error)) => return Err(error),
+                Err(Wait::Gone(error)) => {
+                    return Err(AiError::CompletionUnknown(error.to_string()));
+                }
             };
             let Some(method) = message.get("method").and_then(Value::as_str) else {
                 continue;
@@ -349,7 +356,10 @@ impl AiBackend for CodexAppServerBackend {
         let mut guard = self.lock();
         let session = self.ensure_session(&mut guard)?;
         let result = self.run_turn(session, request, cancel);
-        if matches!(result, Err(AiError::ProviderUnavailable(_))) {
+        if matches!(
+            result,
+            Err(AiError::ProviderUnavailable(_) | AiError::CompletionUnknown(_))
+        ) {
             // The child is gone; the next request starts a fresh one.
             *guard = None;
         }
@@ -360,6 +370,42 @@ impl AiBackend for CodexAppServerBackend {
 enum Wait {
     Elapsed,
     Gone(AiError),
+}
+
+/// How a control request ended without a result. Only a rejection proves
+/// the server declined the request; the other two leave its fate open,
+/// which matters once the request is a turn.
+enum RequestFailure {
+    /// The server answered with a JSON-RPC error.
+    Rejected { method: &'static str, code: i64 },
+    /// No answer before the control timeout.
+    Unanswered { method: &'static str },
+    /// The child or its connection is gone.
+    Gone(AiError),
+}
+
+impl RequestFailure {
+    /// The classification for a request the server has not acted on yet.
+    fn before_submission(self) -> AiError {
+        match self {
+            Self::Rejected { method, code } => {
+                AiError::Transient(format!("rpc_error:{method}:{code}"))
+            }
+            Self::Unanswered { method } => AiError::Transient(format!("control_timeout:{method}")),
+            Self::Gone(error) => error,
+        }
+    }
+
+    /// The classification once the request may already be running.
+    fn after_submission(self) -> AiError {
+        match self {
+            Self::Rejected { .. } => self.before_submission(),
+            Self::Unanswered { method } => {
+                AiError::CompletionUnknown(format!("control_timeout:{method}"))
+            }
+            Self::Gone(error) => AiError::CompletionUnknown(error.to_string()),
+        }
+    }
 }
 
 impl Session {
@@ -438,36 +484,49 @@ impl Session {
         self.write(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
     }
 
+    /// A control request the server has not acted on: any failure is a
+    /// refusal and safe to repeat.
     fn request(
         &mut self,
-        method: &str,
+        method: &'static str,
         params: Value,
         timeout: Duration,
     ) -> Result<Value, AiError> {
+        self.request_raw(method, params, timeout)
+            .map_err(RequestFailure::before_submission)
+    }
+
+    fn request_raw(
+        &mut self,
+        method: &'static str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, RequestFailure> {
         self.next_id += 1;
         let id = self.next_id;
-        self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
+        self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
+            .map_err(RequestFailure::Gone)?;
         let deadline = Instant::now() + timeout;
         loop {
             let now = Instant::now();
             if now >= deadline {
-                return Err(AiError::Transient(format!("control_timeout:{method}")));
+                return Err(RequestFailure::Unanswered { method });
             }
             let message = match self.recv(deadline - now) {
                 Ok(message) => message,
                 Err(Wait::Elapsed) => continue,
-                Err(Wait::Gone(error)) => return Err(error),
+                Err(Wait::Gone(error)) => return Err(RequestFailure::Gone(error)),
             };
             if message.get("id").and_then(Value::as_u64) == Some(id)
                 && message.get("method").is_none()
             {
                 if let Some(error) = message.get("error") {
                     let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
-                    return Err(AiError::Transient(format!("rpc_error:{method}:{code}")));
+                    return Err(RequestFailure::Rejected { method, code });
                 }
                 return Ok(message.get("result").cloned().unwrap_or(Value::Null));
             }
-            self.route(message)?;
+            self.route(message).map_err(RequestFailure::Gone)?;
         }
     }
 

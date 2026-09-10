@@ -14,8 +14,6 @@ pub const FEATURE_ID: &str = "context_label";
 /// Bumped whenever the prompt or the schema changes, so a log line can be
 /// read against the pair that produced it.
 pub const SCHEMA_VERSION: &str = "context_label.v1";
-/// The answer is three short fields; the ceiling only bounds a runaway.
-const MAX_OUTPUT_TOKENS: u32 = 160;
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole poll
 /// cycle series.
@@ -48,7 +46,9 @@ pub const SYSTEM_PROMPT: &str = concat!(
 );
 
 /// `attention` accepts only `question` or `none`: approval and error states
-/// come from native hooks, never from inference.
+/// come from native hooks, never from inference. The prompt's length rule
+/// and this shape are what keep the answer short; no provider takes a
+/// token ceiling.
 pub static OUTPUT_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
     json!({
         "type": "object",
@@ -72,7 +72,6 @@ pub fn request(pane_id: &str, request_id: String, context: &str) -> AiRequest {
         system: SYSTEM_PROMPT.to_owned(),
         input: format!("<raw-session-events>\n{context}\n</raw-session-events>"),
         output_schema: OUTPUT_SCHEMA.clone(),
-        max_output_tokens: MAX_OUTPUT_TOKENS,
         deadline: DEADLINE,
         schema_version: SCHEMA_VERSION,
     }

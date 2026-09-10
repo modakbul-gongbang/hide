@@ -74,7 +74,8 @@ nohup /bin/sh "$root/scripts/start-watcher.sh" >/dev/null 2>&1 &
 워처는 시작하면서 사이드바 정렬(`agent.view.set`)도 함께 설치합니다.
 `agent_panel_sort` 정책을 덮어쓰는 transient view이며 워처가 시작될 때마다 재적용됩니다.
 
-이전 id `herdr-agent-context-labels`로 쓰던 상태 디렉터리가 있으면 첫 실행에서 새 id 경로로 한 번 옮기고 `state_migrated`를 기록합니다.
+이전 id `herdr-agent-context-labels`로 쓰던 상태 디렉터리가 있으면 워처가 처음 시작할 때 새 id 경로로 한 번 옮기고 `state_migrated`를 기록합니다.
+다른 명령은 그 디렉터리를 옮기지 않습니다.
 
 ## 5. (선택) hook 등록
 

@@ -68,8 +68,19 @@ grep 'ai_provider_availability\|ai.daily_rollup' ~/.local/state/hide.agent-conte
 `ai_provider_availability` is written at every watcher start and names each provider's state (`codex=ready;claude=unsupported`).
 `ai.daily_rollup` is written once per UTC day by the provider layer and counts outcomes per provider, which replaces the request counter the plugin used to keep in `usage.json`.
 
-A directory left under the previous id, `~/.local/state/herdr-agent-context-labels/`, is moved to the new path once on the first start after the upgrade.
+A directory left under the previous id, `~/.local/state/herdr-agent-context-labels/`, is moved to the new path once when the upgraded watcher first starts; no other command moves it.
 If a directory already exists under the new id, nothing is moved and `state_migrated` reports `kept_both`; remove whichever one is stale by hand.
+
+## Recovering a move that ran under a running old-id watcher
+
+If the new watcher's move happened while the previous-id watcher was still running, that watcher recreates its directory on its next write and the state is split across both.
+Stop the old watcher first, then reconcile:
+
+- `display-state.json`: the running watcher rewrites its whole state on every change, so the newer file is complete; keep it.
+- `events.jsonl`: concatenate the moved history and the lines the old watcher appended afterwards, in that order.
+- `settings.json` and `hook-state.json`: keep the moved copies unless the old watcher wrote a newer one.
+
+Leave the reconciled files under the id of the watcher that will run next, and delete the other directory.
 
 ## Sidebar colors are the user's, not the plugin's
 
