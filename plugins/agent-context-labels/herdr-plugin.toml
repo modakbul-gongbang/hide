@@ -1,0 +1,32 @@
+id = "hide.agent-context-labels"
+name = "Agent Context Labels"
+version = "0.2.0"
+description = "Compact task summaries, lifecycle, and interaction status for Codex and Claude Code panes"
+min_herdr_version = "0.8.0"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["/bin/sh", "scripts/fetch-or-build.sh"]
+
+[[startup]]
+command = ["/bin/sh", "scripts/start-watcher.sh"]
+
+[[actions]]
+id = "refresh-active-pane-summary"
+title = "Refresh active pane summary"
+description = "Ask the watcher to re-analyze the focused supported pane"
+command = ["/bin/sh", "scripts/refresh-active-pane-summary.sh"]
+
+# Two explicit actions rather than one flip: Herdr can dispatch a single
+# keypress more than once, and repeating a flip lands on an arbitrary state.
+[[actions]]
+id = "enable-automatic-summaries"
+title = "Enable automatic summaries"
+description = "Turn on automatic task-summary requests"
+command = ["/bin/sh", "scripts/enable-automatic-summaries.sh"]
+
+[[actions]]
+id = "disable-automatic-summaries"
+title = "Disable automatic summaries"
+description = "Turn off automatic task-summary requests while keeping attention symbols active"
+command = ["/bin/sh", "scripts/disable-automatic-summaries.sh"]
