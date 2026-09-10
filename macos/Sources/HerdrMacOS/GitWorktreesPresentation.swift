@@ -144,7 +144,12 @@ struct CoreGitWorktree: Decodable, Identifiable {
     let runningAgentCount: Int
     /// Who is working in this worktree and on what. Empty with no mark means
     /// nobody; empty with a mark means Hide cannot see into it.
-    let agentLine: CoreWorktreeAgentLine
+    ///
+    /// Stored optionally so one absent key cannot reject the whole Git
+    /// section: a snapshot that does not mention agents is a worktree with
+    /// none, which is exactly what the empty line already means.
+    private let storedAgentLine: CoreWorktreeAgentLine?
+    var agentLine: CoreWorktreeAgentLine { storedAgentLine ?? CoreWorktreeAgentLine() }
     let disk: CoreDiskUsage
     let pullRequest: CorePullRequest?
     let github: CoreGithubStatus
@@ -158,7 +163,7 @@ struct CoreGitWorktree: Decodable, Identifiable {
         case measuredAtUnixMS = "measured_at_unix_ms", lastCommitUnixSeconds = "last_commit_unix_seconds"
         case paneCount = "pane_count", runningAgentCount = "running_agent_count", pullRequest = "pull_request"
         case deletionGate = "deletion_gate", openError = "open_error"
-        case agentLine = "agent_line"
+        case storedAgentLine = "agent_line"
     }
     var label: String { branch ?? String(headSHA?.prefix(8) ?? "unknown") }
     var pushedLabel: String {

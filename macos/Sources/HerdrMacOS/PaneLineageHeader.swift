@@ -267,3 +267,39 @@ struct PaneBreadcrumb: View {
         .frame(maxWidth: HideTheme.Layout.paneChildChipMaxWidth * 2, alignment: .leading)
     }
 }
+
+/// The Overview worktree row's one agent line.
+///
+/// Overview's value is width, so this is a line rather than a new area
+/// (PRD B34, D-32, D-55). An empty line with no mark is a worktree nobody is
+/// working in; an empty line with the mark is one Hide cannot see into, and
+/// the difference is what the third mark position exists for (PRD B35, D-60).
+struct WorktreeAgentLine: View {
+    let line: CoreWorktreeAgentLine
+    let connected: Bool
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        if line.agents.isEmpty && line.uninstrumentedReason == nil {
+            // Nobody is working here, and that is an answer rather than a
+            // gap, so the row says nothing rather than apologising.
+            EmptyView()
+        } else {
+            HStack(spacing: HideTheme.spacingXS) {
+                if let reason = line.uninstrumentedReason {
+                    PaneUninstrumentedMark(
+                        reason: reason,
+                        accessibilityName: line.uninstrumentedLabel ?? reason
+                    )
+                }
+                ForEach(line.agents) { agent in
+                    PaneChildChip(chip: agent, connected: connected) { onSelect(agent.paneID) }
+                }
+                Spacer(minLength: HideTheme.spacingNone)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Agents in this worktree")
+        }
+    }
+}

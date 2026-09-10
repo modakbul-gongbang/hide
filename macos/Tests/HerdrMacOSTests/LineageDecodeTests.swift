@@ -198,3 +198,50 @@ import Testing
     #expect(unseen.uninstrumentedCode == "hooks_not_installed")
     #expect(unseen.uninstrumentedLabel?.isEmpty == false)
 }
+
+/// PRD B34, B35: the Overview row carries its agent line, and a snapshot that
+/// does not mention agents is a worktree with none rather than a rejected
+/// Git section.
+@Test func aWorktreeRowDecodesItsAgentLineAndSurvivesOneThatIsAbsent() throws {
+    let base = """
+    {
+        "path": "/fixture/main", "branch": "main", "head_sha": "abc12345",
+        "last_commit_subject": "work", "missing": false, "is_main": true,
+        "dirty": false, "changed_file_count": 0, "base_branch": "main",
+        "ahead": 0, "behind": 0, "merged": null, "upstream_state": "pushed",
+        "unpushed": null, "unavailable_reason": null,
+        "last_fetch_at_unix_ms": null, "measured_at_unix_ms": null,
+        "last_commit_unix_seconds": null,
+        "pane_count": 1, "running_agent_count": 1,
+        "disk": {"path": "/fixture/main", "total_bytes": null, "unavailable_reason": null},
+        "pull_request": null,
+        "github": {"available": true, "loading": false, "stale": false,
+                   "last_success_at_unix_ms": null, "unavailable_reason": null},
+        "deletion_gate": {"blocked_reason": null, "warnings": [], "button_label": "Delete",
+                          "can_delete_branch": false},
+        "open_error": null
+    }
+    """
+    let withoutLine = try JSONDecoder().decode(CoreGitWorktree.self, from: Data(base.utf8))
+    #expect(withoutLine.agentLine.agents.isEmpty)
+    #expect(withoutLine.agentLine.uninstrumentedCode == nil)
+
+    let withLine = base.replacingOccurrences(
+        of: "\"open_error\": null",
+        with: """
+        "open_error": null,
+        "agent_line": {
+            "agents": [
+                {"pane_id": "w1:p1", "label": "Observer", "detail": "building",
+                 "agent_kind": "claude", "demand": "none", "activity": "working",
+                 "emphasized": false, "symbol": "\\u25cf", "status_label": "Working",
+                 "delegated": false}
+            ],
+            "uninstrumented_reason": null, "uninstrumented_label": null,
+            "uninstrumented_code": null
+        }
+        """
+    )
+    let decoded = try JSONDecoder().decode(CoreGitWorktree.self, from: Data(withLine.utf8))
+    #expect(decoded.agentLine.agents.map(\.label) == ["Observer"])
+}
