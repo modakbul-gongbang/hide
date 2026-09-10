@@ -65,7 +65,7 @@ grep '<pane-id>' ~/.local/state/hide.agent-context-labels/events.jsonl | tail -3
 grep 'ai_provider_availability\|ai.daily_rollup' ~/.local/state/hide.agent-context-labels/events.jsonl | tail -5
 ```
 
-`ai_provider_availability` is written at every watcher start and names each provider's state (`codex=ready;claude=unsupported`).
+`ai_provider_availability` is written at every watcher start and names each provider's state (`codex=ready;claude=needs_login`); a provider parked by a usage limit reports that park with the wait it is under.
 `ai.daily_rollup` is written once per UTC day by the provider layer and counts outcomes per provider, which replaces the request counter the plugin used to keep in `usage.json`.
 
 A directory left under the previous id, `~/.local/state/herdr-agent-context-labels/`, is moved to the new path once when the upgraded watcher first starts; no other command moves it.
