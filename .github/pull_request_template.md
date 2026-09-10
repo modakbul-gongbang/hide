@@ -1,36 +1,59 @@
 <!--
-Answer every section. A section that does not apply gets "N/A" and one reason.
-Tests and screenshots settle what they settle; the questions below are the
-parts a reviewer has to judge. CONTRIBUTING.md lists the gates and how to run
-them locally.
+해당하는 곳만 채우고, 비는 섹션은 "N/A"로 메우지 말고 지우세요.
+테스트가 증명한 것은 리뷰어가 다시 판단하지 않습니다. 이 템플릿이 묻는 것은
+테스트가 증명하지 못하는 부분입니다. 게이트 목록은 CONTRIBUTING.md에 있습니다.
 -->
 
-## What changed, in one paragraph a new contributor can follow
+## Summary
 
-<!-- Plain words. What a user or a maintainer will notice, and why it was worth doing. -->
+<!-- 어떤 문제를 푸는가, 그래서 무엇을 바꿨는가. 처음 보는 사람이 따라올 수 있는 말로. -->
 
-## Review boundary
+## Related
 
-<!-- Each answer is one line. These are the places this codebase has been bitten. -->
+<!-- `agents/prd/<slug>/prd.md`, 이슈, 선행 PR. 없으면 이 섹션을 지우세요. -->
 
-- **Runtime mutex**: what does this change do while holding it, if anything?
-- **Snapshot wire**: does it add or move a field? Which channel (revisioned `rest`, top-level scalar, cursored stream) and why?
-- **Ownership**: does it touch a value Herdr owns (pane, split, zoom, cwd, PTY) or one the core owns (visible tab, focus pane, panels, text scale)? Does it wait for Herdr or move ahead of it?
-- **Herdr contract**: does it call a method, parameter, or field that is not in `contracts/herdr-api.schema.json`?
-- **Failure path**: what does a user see when this fails, and where is it logged?
+## Breaking change
+
+<!--
+설치, 상태 디렉터리, 저장된 설정, 공개 계약 중 무엇이 깨지는지와 운영자가 무엇을 해야 하는지.
+코드가 지울 수 없는 자리(셸 프로파일, 설치된 클론, 사용자 홈)가 있으면 여기에 목록으로.
+깨는 것이 없으면 이 섹션을 지우세요.
+-->
+
+## Review focus
+
+<!-- 리뷰어의 시간을 어디에 쓸지 정하는 섹션입니다. 판단할 것이 정말 없으면 그렇게 쓰고 이유 한 줄. -->
+
+- **사람이 판단할 것**: <!-- 제품 해석, UX와 문구, 트레이드오프, 되돌리기 어려운 결정 -->
+- **위험한 파일**: <!-- 이 diff에서 가장 조심해서 볼 곳과 그 이유 -->
+- **리뷰어에게 묻는 것**: <!-- 구체적인 질문. 없으면 이 줄을 지우세요 -->
+
+## Risk surface
+
+<!--
+이 저장소가 실제로 데인 자리입니다. 해당하는 줄만 남기고 나머지는 지우세요.
+전부 해당 없으면 섹션째 지우고 한 줄로 그렇게 쓰세요. 의도가 아니라 diff를 보고 답합니다.
+-->
+
+- **Runtime mutex**: `Mutex<Runtime>`을 쥔 채 무엇을 하는가? 서브프로세스, 블로킹 I/O, 큰 직렬화가 그 안에 있는가?
+- **Snapshot wire**: 어느 채널인가(revisioned `rest`, top-level scalar, cursored stream)? 왜 그 채널인가?
+- **Ownership**: Herdr 소유(pane, split, zoom, cwd, PTY)인가 core 소유(visible tab, focus pane, panels, text scale)인가? 기다리는가, 앞서 나가는가?
+- **Herdr contract**: `contracts/herdr-api.schema.json`에 없는 메서드나 필드를 부르는가?
+- **Failure path**: 실패하면 사용자에게 무엇이 보이고 어디에 기록되는가?
+- **High-frequency path**: 입력당 늘어난 일, 깨어나는 소비자, 대기 작업의 상한, 되살아난 실패를 잡는 회귀 테스트.
 
 ## Evidence
 
-<!-- A run directory under agents/runs/<slug>/ stays local. Attach what a reviewer must see; describe what was measured and how. -->
+<!-- `agents/runs/<slug>/`는 로컬에 남습니다. 경로만 링크하지 말고 무엇을 어떻게 쟀는지 쓰세요. -->
 
-- Verified by:
-- Not verified (and why):
-- High-frequency path impact (or N/A): added work per input, affected consumers, scaling and queue bounds; regression that catches the old failure; native evidence and remaining gaps.
-
-## Screenshots
-
-<!-- Required for anything a user looks at. Paste images here; GitHub stores them as user-attachments. "N/A - no visual surface changed" otherwise. -->
+- **확인한 것**: <!-- "테스트 통과"가 아니라 무엇이 몇 개, 어떤 조건에서 -->
+- **확인하지 못한 것과 그 이유**: <!-- 비우지 마세요. 빠진 증거를 적지 않은 PR은 검증됐다고 읽히지만 그렇지 않습니다. -->
+- **화면 증거**: <!-- 사용자가 보는 것이 바뀌었으면 필수. 이미지를 본문에 붙여넣으세요(GitHub가 user-attachments로 인라인 렌더링). private 저장소에서 raw.githubusercontent.com 링크는 404로 보입니다. 아니면 이 줄을 지우세요. -->
 
 ## AI tooling
 
-<!-- Which parts, if any, were produced with AI tooling, and what you checked by hand. This is a review input, not an attribution line. -->
+<!-- 리뷰 입력이지 저작자 표시가 아닙니다. 도구를 언급하려면 전체 제품명을 쓰거나 명령을 백틱으로 감싸세요. -->
+
+- [ ] 사람이 직접 작성  - [ ] 일부를 AI 도구로 작성  - [ ] 대부분을 AI 도구로 작성
+
+**손으로 확인한 것**: <!-- 뒤의 둘 중 하나라면 필수. 무엇을 직접 대조했는지. -->
