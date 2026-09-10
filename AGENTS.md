@@ -285,7 +285,7 @@ Exploration goes in the same file, in a band below the boards:
 - place it at `y: 1000` or below; the boards occupy `y: 0` and are 900 tall, and the components sit above at `y: -1080`
 - when it earns its place, redraw it as a `Proposal /` board and delete the scratch; otherwise just delete it
 
-It goes in `design/hide.pen` rather than a scratch file of its own because that is the only place the tokens resolve; see the traps below.
+It goes in `design/hide.pen` rather than a scratch file of its own because that is the only place the tokens resolve; see the import trap above.
 Scratch boards cost the contract nothing - `check-pen-tokens.mjs` reads only the document's `variables`, and the generator preserves every node it finds.
 
 Anything drawn inside the pen desktop app is scratch by default.
