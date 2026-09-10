@@ -6,6 +6,7 @@
 //! core reads it back out of the pane tokens its ordinary snapshot already
 //! carries (PRD D-53, and Technical structure).
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -91,6 +92,42 @@ pub fn forget(home: &Path, pane_id: &str) -> io::Result<()> {
     }
 }
 
+/// Drops every record whose pane no longer exists, and reports how many went.
+///
+/// A pane that Herdr has stopped listing cannot be running a session, so its
+/// counts belong to one that is over and nothing can ask for them again (PRD
+/// B31, D-53). Panes are the key rather than agents because the record is
+/// written by `SessionStart`, which can run before the agent is listed;
+/// sweeping by agent would race a session into losing its own count.
+///
+/// A record the sweep cannot read its name back from is left alone: this
+/// directory is Hide's, but deleting a file on a guess is not a cleanup.
+pub fn retain<'a>(
+    home: &Path,
+    live_pane_ids: impl IntoIterator<Item = &'a str>,
+) -> io::Result<usize> {
+    let keep: HashSet<PathBuf> = live_pane_ids
+        .into_iter()
+        .map(|pane_id| record_path(home, pane_id))
+        .collect();
+    let directory = state_directory(home);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut dropped = 0;
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_none_or(|extension| extension != "json") || keep.contains(&path) {
+            continue;
+        }
+        fs::remove_file(&path)?;
+        dropped += 1;
+    }
+    Ok(dropped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +200,37 @@ mod tests {
             apply(&root, pane, HookEvent::SessionStart).unwrap(),
             PaneCounters::default()
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_sweep_drops_the_records_of_panes_that_are_gone_and_keeps_the_rest() {
+        let root = home("retain");
+        apply(&root, "w1:pA", HookEvent::SubagentStart).unwrap();
+        apply(&root, "w1:pB", HookEvent::SubagentStart).unwrap();
+        apply(&root, "w2:pC", HookEvent::SubagentStart).unwrap();
+        // A file the sweep did not write is not its business.
+        fs::write(state_directory(&root).join("notes.txt"), b"kept").unwrap();
+
+        assert_eq!(retain(&root, ["w1:pA", "w2:pC"]).unwrap(), 1);
+        assert_eq!(read(&root, "w1:pA").working, 1);
+        assert_eq!(read(&root, "w2:pC").working, 1);
+        assert_eq!(
+            read(&root, "w1:pB"),
+            PaneCounters::default(),
+            "a dead session's count is gone rather than waiting to be redrawn"
+        );
+        assert!(state_directory(&root).join("notes.txt").exists());
+
+        // Idempotent: the same live set sweeps nothing the second time.
+        assert_eq!(retain(&root, ["w1:pA", "w2:pC"]).unwrap(), 0);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_sweep_before_any_hook_has_run_is_not_an_error() {
+        let root = home("retain-empty");
+        assert_eq!(retain(&root, ["w1:pA"]).unwrap(), 0);
         fs::remove_dir_all(&root).unwrap();
     }
 

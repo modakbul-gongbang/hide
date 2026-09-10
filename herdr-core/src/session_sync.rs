@@ -223,6 +223,8 @@ fn run_coordinator(
     {
         publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
     }
+    // Kept for the counter sweep below, which runs on a fresh snapshot.
+    let hook_home = context.is_local().then(|| home_path.clone()).flatten();
     let mut usage_reader = context
         .is_local()
         .then(|| crate::usage::ProviderUsageReader::new(home_path));
@@ -277,6 +279,9 @@ fn run_coordinator(
                     {
                         stop_subscription(&mut subscription);
                         return;
+                    }
+                    if let (Some(home), Some(current)) = (hook_home.as_deref(), replica.as_ref()) {
+                        sweep_subagent_counters(home, current);
                     }
                     needs_bootstrap = false;
                 }
@@ -700,6 +705,31 @@ fn agent_tick_needs_publish(
 ) -> bool {
     replica.state.agents != agents
         || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+}
+
+/// Drops the subagent counts of panes Herdr no longer lists.
+///
+/// A fresh `session.snapshot` is the one moment the pane set is known to be
+/// complete, so it is where the sweep belongs: a pane missing from an event
+/// stream may only be one Hide has not heard about yet. Nothing on screen
+/// depends on it - a pane with no agent projects no children at all - so this
+/// is housekeeping, and a failure is recorded rather than escalated (PRD B31,
+/// D-53).
+fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
+    let live = replica.state.panes.iter().map(|pane| pane.pane_id.as_str());
+    match hide_agent_hooks::counters::retain(home, live) {
+        Ok(0) => {}
+        Ok(dropped) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "counters.swept",
+            "dropped": dropped,
+        })),
+        Err(error) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "counters.sweep_failed",
+            "message": error.to_string(),
+        })),
+    }
 }
 
 /// Whether a stall threshold has been crossed since the last publish.

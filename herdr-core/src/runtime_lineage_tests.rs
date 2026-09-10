@@ -834,3 +834,29 @@ fn the_agent_tick_publishes_when_a_threshold_is_crossed_and_not_otherwise() {
         "a disconnected session publishes its own failure, not a stall verdict"
     );
 }
+
+// PRD B31, D-53: a dead session's numbers never stay on screen.
+#[test]
+fn a_pane_whose_session_ended_draws_no_counts_even_though_its_tokens_remain() {
+    let rows = instrumented_rows("claude");
+    let installed = hook_status_of(Some(hide_agent_hooks::HookStatus::Installed {
+        version: hide_agent_hooks::HOOK_VERSION,
+    }));
+    // Herdr's pane metadata is durable, so the last session's tokens are
+    // still on the pane after it exits.
+    let leftover = crate::agent_hooks::PaneHookTokens {
+        version: Some(hide_agent_hooks::HOOK_VERSION),
+        working: Some(3),
+        done: Some(9),
+        blocked: None,
+    };
+    assert!(
+        crate::sidebar::project_pane_children(&rows, "no-such-agent", leftover, &installed)
+            .is_none(),
+        "the counts belong to a session, and there is no session in that pane"
+    );
+    // The same tokens on a pane that does have a session still read.
+    let live = crate::sidebar::project_pane_children(&rows, "parent", leftover, &installed)
+        .expect("a pane with an agent projects");
+    assert_eq!(live.subagents.done, Some(9));
+}
