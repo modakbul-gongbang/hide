@@ -23,12 +23,18 @@ pub fn router_for(provider: ProviderId, paths: &StatePaths) -> Arc<AiRouter> {
     build(backends, paths)
 }
 
-/// `codex=ready;claude=unsupported`: the shape the startup log and the
-/// verification command both print.
+/// `codex=ready;claude=unsupported:<reason>`: the shape the startup log and
+/// the verification command both print. A reason is a diagnostic class from
+/// the provider layer, never content.
 pub fn availability_detail(states: &[(ProviderId, Availability)]) -> String {
     states
         .iter()
-        .map(|(provider, state)| format!("{provider}={}", state.class()))
+        .map(|(provider, state)| match state {
+            Availability::Unavailable { reason } | Availability::Unsupported { reason } => {
+                format!("{provider}={}:{reason}", state.class())
+            }
+            _ => format!("{provider}={}", state.class()),
+        })
         .collect::<Vec<_>>()
         .join(";")
 }
