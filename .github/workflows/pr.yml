@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   rust:
-    name: rust core
+    name: rust workspace
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -27,12 +27,15 @@ jobs:
         with:
           workspaces: ". -> target"
       # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
+      # The workspace is the core, the hide-ai provider boundary and the
+      # context-label plugin; every lane covers all three.
       - name: Check formatting
-        run: cargo fmt --manifest-path herdr-core/Cargo.toml --check
-      - name: Lint the core
-        run: cargo clippy --locked --manifest-path herdr-core/Cargo.toml --all-targets -- -D warnings
-      - name: Test the core
-        run: cargo test --locked --manifest-path herdr-core/Cargo.toml
+        run: cargo fmt --all --check
+      - name: Lint the workspace
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test the workspace
+        # hide-ai drives its codex backend against a python fake app server.
+        run: cargo test --locked --workspace
 
   swift:
     name: swift shell

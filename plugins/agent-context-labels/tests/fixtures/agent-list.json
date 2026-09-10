@@ -1,0 +1,41 @@
+{
+  "id": "test:agent:list",
+  "result": {
+    "type": "agent_list",
+    "agents": [
+      {
+        "agent": "codex",
+        "agent_status": "working",
+        "cwd": "/Users/example/project",
+        "focused": true,
+        "pane_id": "w1:p1",
+        "revision": 12,
+        "state_change_seq": 3,
+        "agent_session": {
+          "kind": "id",
+          "value": "codex-session-fixture"
+        }
+      },
+      {
+        "agent": "claude",
+        "agent_status": "idle",
+        "cwd": "/Users/example/project",
+        "focused": false,
+        "pane_id": "w1:p2",
+        "revision": 8,
+        "state_change_seq": 2,
+        "agent_session": null
+      },
+      {
+        "agent": "hermes",
+        "agent_status": "idle",
+        "cwd": "/Users/example/project",
+        "focused": false,
+        "pane_id": "w1:p3",
+        "revision": 5,
+        "state_change_seq": 1,
+        "agent_session": null
+      }
+    ]
+  }
+}

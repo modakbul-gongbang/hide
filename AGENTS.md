@@ -12,6 +12,8 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 
 - `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
 - `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. It projects Herdr-owned pane topology and owns Hide's UI state; the Swift shell owns neither. See Runtime Architecture for the exact ownership split.
+- `hide-ai/` - the provider boundary for background AI features: a feature submits its own prompt, output schema and parser through `AiRouter`, and the crate owns provider lifecycle, availability, timeouts, retries, fallback and structured errors. Summaries come from the user's logged-in Codex CLI through `codex app-server`; see `docs/AI_PROVIDERS.md`.
+- `plugins/` - Herdr plugins shipped from this repository: `browser/` (the Hide browser pane) and `agent-context-labels/` (pane task labels, a workspace member that consumes `hide-ai`). Each directory is installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`.
 - `src/` - removed retired Rust-native shell. The SSH/mini runtime is owned by `herdr-core/`; nothing links a root `src/` crate into the application.
 - `spikes/swift-shell-pivot/` - the Stage 0 spike source and its `VERDICTS.md`. A frozen record; do not edit it to reflect later changes. Its evidence output is no longer kept in the repository (see `Evidence Belongs Outside The Repository`).
 
