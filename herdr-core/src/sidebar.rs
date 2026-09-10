@@ -557,6 +557,11 @@ pub fn apply_lineage(
         // it. The name is the parent agent's when Hide can still see that
         // agent; a pane id is not a name and is never shown as one, because
         // the operator cannot act on an internal id (design principle 10).
+        //
+        // When it cannot, the line says only that. Hide knows the pane and
+        // knows no agent is listed there - not that the agent ended, which
+        // is equally consistent with a pane outside this list. Saying
+        // "ended" would be a claim the projection cannot make.
         let spawned_from = agents[index].spawned_from_pane_id.clone();
         let spawn_parent = spawned_from
             .as_ref()
@@ -564,7 +569,7 @@ pub fn apply_lineage(
             .map(|parent| agents[*parent].id.clone());
         let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
             Some(name) => format!("↳ from {name}"),
-            None => "↳ from an agent that has since ended".to_owned(),
+            None => "↳ from an agent Hide can't see".to_owned(),
         });
         let orphan = agents[index].spawned_from_pane_id.is_some() && parents[index].is_none();
         let own_checkout = checkouts.get(agents[index].pane_id.as_str());

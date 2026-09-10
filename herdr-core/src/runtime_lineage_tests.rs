@@ -88,12 +88,12 @@ fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     assert_eq!(child.lineage_depth, 0);
     assert_eq!(child.lineage_root_checkout_id.as_deref(), Some("feature"));
     assert!(child.lineage_orphan);
-    // The parent is gone, so there is no name to give and the line says that
-    // rather than printing the pane id it was keyed by. It used to read
-    // "↳ from parent", which looked like a name and was an internal handle.
+    // No agent is listed at that pane, so there is no name to give and the
+    // line says only that. It used to read "↳ from parent", which looked
+    // like a name and was an internal handle.
     assert_eq!(
         child.lineage_hint.as_deref(),
-        Some("↳ from an agent that has since ended")
+        Some("↳ from an agent Hide can't see")
     );
     assert_eq!(child.spawn_origin_pane_id, None);
 }
@@ -274,15 +274,16 @@ fn a_lost_origin_is_named_as_ended_rather_than_shown_as_a_pane_id() {
     assert_eq!(child.raised_hint.as_deref(), Some("↳ from Parent"));
     assert_eq!(child.spawn_origin_pane_id.as_deref(), Some("parent"));
 
-    // Once that agent is gone the line says so. A pane id is an internal
-    // handle, not a name, and it is never rendered as one; with nothing to
-    // go to, no destination is offered either.
+    // Once Hide cannot see that agent the line says only that, and not that
+    // it ended - which the projection has no way to know. A pane id is an
+    // internal handle, never rendered as a name; with nothing to go to, no
+    // destination is offered either.
     rows.retain(|row| row.pane_id != "parent");
     crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let orphan = row(&rows, "child");
     assert_eq!(
         orphan.lineage_hint.as_deref(),
-        Some("↳ from an agent that has since ended")
+        Some("↳ from an agent Hide can't see")
     );
     assert_eq!(orphan.spawn_origin_pane_id, None);
     for row in &rows {
