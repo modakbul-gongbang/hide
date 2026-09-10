@@ -650,13 +650,15 @@ mod tests {
     impl GhFixture {
         fn new(body: &str) -> Self {
             use std::os::unix::fs::PermissionsExt;
+            static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
-                "hide-gh-{}-{}",
+                "hide-gh-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&root).unwrap();
             let binary = root.join("gh");
