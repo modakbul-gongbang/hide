@@ -16,6 +16,10 @@ struct HideSettingsView: View {
     /// `dismiss` does not govern that window, so it does not show one.
     var showsCloseButton = false
     @Environment(\.dismiss) private var dismiss
+    /// Which tab the sheet opens on. The verification fixture names one so a
+    /// screen that lives behind a click can be captured without driving the
+    /// pointer; every other caller gets the first tab.
+    var initialTab: HideSettingsTab = .general
     @State private var tab: HideSettingsTab = .general
     @State private var accentHex = HideSettingsView.fallbackAccentHex
     @State private var fontSize = HideSettingsView.fallbackFontSize
@@ -30,6 +34,7 @@ struct HideSettingsView: View {
                 .fill(HideTheme.divider)
                 .frame(height: HideTheme.Layout.hairlineWidth)
             HideSettingsTabBar(selection: $tab)
+                .onAppear { tab = initialTab }
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: HideTheme.Layout.hairlineWidth)

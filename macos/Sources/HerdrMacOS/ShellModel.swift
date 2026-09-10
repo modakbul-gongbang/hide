@@ -331,6 +331,9 @@ final class ShellModel: ObservableObject {
     @Published var showSearch = false { didSet { refreshHintSheetState() } }
     @Published var showFileSearch = false { didSet { refreshHintSheetState() } }
     @Published var showSettings = false { didSet { refreshHintSheetState() } }
+    /// Which Settings tab the sheet opens on. Only the verification fixture
+    /// sets it; the sheet opens on the first tab otherwise.
+    var settingsInitialTab: HideSettingsTab = .general
     @Published var showPetDashboard = false
     let recentNavigation = RecentNavigationPresentation()
     private(set) var projectSwitcherCycle: ProjectSwitcherCycle? {

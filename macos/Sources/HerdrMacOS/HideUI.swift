@@ -127,7 +127,12 @@ struct ShellView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.showSettings) {
-            HideSettingsView(model: model, showsCloseButton: true).hideOverlayHost()
+            HideSettingsView(
+                model: model,
+                showsCloseButton: true,
+                initialTab: model.settingsInitialTab
+            )
+            .hideOverlayHost()
         }
         .sheet(isPresented: $model.showPetDashboard) {
             PetDashboardView()

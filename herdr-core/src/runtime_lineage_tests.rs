@@ -1105,3 +1105,242 @@ fn the_overview_agent_line_separates_nobody_working_here_from_cannot_see() {
     );
     assert!(unseen.uninstrumented_label.is_some(), "the mark is named");
 }
+
+/// One realistic delegation session, projected end to end.
+///
+/// It asserts what the operator's screen says in the four states this change
+/// exists to separate - a parent with children, a pane Hide cannot see into,
+/// an instrumented pane working alone, and a pane with no agent at all - and,
+/// when `HIDE_SNAPSHOT_OUT` names a path, writes the snapshot the shell would
+/// draw so the same states can be captured for human visual judgement
+/// (PRD D-34) without a live server or the operator's own panes.
+#[test]
+fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(serde_json::from_value(serde_json::json!({
+        "agents": [
+            {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
+             "state_change_seq":1,"cwd":"/fixture","workspace_label":"hide",
+             "tokens":{"summary":"delegating the orchestrator work"}},
+            {"id":"Implementor","pane_id":"w1:p2","agent":"claude","agent_status":"working",
+             "state_change_seq":2,"cwd":"/fixture","workspace_label":"hide",
+             "spawned_from_pane_id":"w1:p1","tokens":{"summary":"구현 중: 계보 투영과 위임 표시"}},
+            {"id":"Reviewer","pane_id":"w1:p3","agent":"claude","agent_status":"idle",
+             "state_change_seq":3,"cwd":"/fixture","workspace_label":"hide",
+             "spawned_from_pane_id":"w1:p1",
+             "tokens":{"status_question_new":"?","summary":"정체 임계값을 물어보는 중"}},
+            {"id":"Uninstrumented","pane_id":"w1:p4","agent":"claude","agent_status":"working",
+             "state_change_seq":4,"cwd":"/fixture","workspace_label":"hide",
+             "tokens":{"summary":"started before the hook was installed"}},
+            {"id":"Alone","pane_id":"w1:p5","agent":"claude","agent_status":"working",
+             "state_change_seq":5,"cwd":"/fixture","workspace_label":"hide",
+             "tokens":{"summary":"working with no children"}}
+        ],
+        "panes": [
+            {"pane_id":"w1:p1","cwd":"/fixture",
+             "tokens":{"hide_hooks":"1","hide_sub_working":"2","hide_sub_done":"4"}},
+            {"pane_id":"w1:p2","cwd":"/fixture","tokens":{"hide_hooks":"1"}},
+            {"pane_id":"w1:p3","cwd":"/fixture","tokens":{"hide_hooks":"1"}},
+            {"pane_id":"w1:p4","cwd":"/fixture"},
+            {"pane_id":"w1:p5","cwd":"/fixture","tokens":{"hide_hooks":"1","hide_sub_working":"0","hide_sub_done":"0"}},
+            {"pane_id":"w1:p6","cwd":"/fixture"}
+        ],
+        "tabs": [
+            {"workspace_id":"w1","tab_id":"t1","label":""},
+            {"workspace_id":"w1","tab_id":"t2","label":""},
+            {"workspace_id":"w1","tab_id":"t3","label":""},
+            {"workspace_id":"w1","tab_id":"t4","label":""},
+            {"workspace_id":"w1","tab_id":"t5","label":""},
+            {"workspace_id":"w1","tab_id":"t6","label":""}
+        ],
+        "layouts": [
+            {
+                "workspace_id":"w1","tab_id":"t1","zoomed":false,
+                "area":{"x":0,"y":0,"width":120,"height":40},
+                "focused_pane_id":"w1:p1",
+                "panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":120,"height":40}}],
+                "splits":[]
+            },
+            {
+                "workspace_id":"w1","tab_id":"t2","zoomed":false,
+                "area":{"x":0,"y":0,"width":120,"height":40},
+                "focused_pane_id":"w1:p2",
+                "panes":[{"pane_id":"w1:p2","rect":{"x":0,"y":0,"width":120,"height":40}}],
+                "splits":[]
+            },
+            {
+                "workspace_id":"w1","tab_id":"t6","zoomed":false,
+                "area":{"x":0,"y":0,"width":120,"height":40},
+                "focused_pane_id":"w1:p3",
+                "panes":[{"pane_id":"w1:p3","rect":{"x":0,"y":0,"width":120,"height":40}}],
+                "splits":[]
+            },
+            {
+                "workspace_id":"w1","tab_id":"t3","zoomed":false,
+                "area":{"x":0,"y":0,"width":120,"height":40},
+                "focused_pane_id":"w1:p4",
+                "panes":[{"pane_id":"w1:p4","rect":{"x":0,"y":0,"width":120,"height":40}}],
+                "splits":[]
+            },
+            {
+                "workspace_id":"w1","tab_id":"t4","zoomed":false,
+                "area":{"x":0,"y":0,"width":120,"height":40},
+                "focused_pane_id":"w1:p5",
+                "panes":[{"pane_id":"w1:p5","rect":{"x":0,"y":0,"width":120,"height":40}}],
+                "splits":[]
+            },
+            {
+                "workspace_id":"w1","tab_id":"t5","zoomed":false,
+                "area":{"x":0,"y":0,"width":120,"height":40},
+                "focused_pane_id":"w1:p6",
+                "panes":[{"pane_id":"w1:p6","rect":{"x":0,"y":0,"width":120,"height":40}}],
+                "splits":[]
+            }
+        ]
+    }))
+    .expect("session payload")));
+
+    // The hook is installed, which is what turns "no tokens on this pane"
+    // into "this session started first" rather than "no hook anywhere".
+    runtime.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
+        runtimes: vec![
+            hide_agent_hooks::diagnosis::RuntimeDiagnosis {
+                runtime: hide_agent_hooks::AgentRuntime::ClaudeCode,
+                label: "Claude Code".to_owned(),
+                path: "/fixture/.claude/settings.json".to_owned(),
+                status: hide_agent_hooks::HookStatus::Installed {
+                    version: hide_agent_hooks::HOOK_VERSION,
+                },
+                current_version: hide_agent_hooks::HOOK_VERSION,
+            },
+            hide_agent_hooks::diagnosis::RuntimeDiagnosis {
+                runtime: hide_agent_hooks::AgentRuntime::Codex,
+                label: "Codex".to_owned(),
+                path: "/fixture/.codex/hooks.json".to_owned(),
+                status: hide_agent_hooks::HookStatus::NotInstalled,
+                current_version: hide_agent_hooks::HOOK_VERSION,
+            },
+        ],
+    });
+
+    let pane = |id: &str| {
+        runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .find(|pane| pane.id == id)
+            .unwrap_or_else(|| panic!("{id} is a pane"))
+            .clone()
+    };
+
+    // A parent with children: chips for the pane children, the in-process
+    // count separate from them, and a breadcrumb its children carry.
+    let parent = pane("w1:p1").children.expect("the parent has a session");
+    assert!(parent.instrumented);
+    assert_eq!(
+        parent.chips.iter().map(|chip| chip.label.as_str()).collect::<Vec<_>>(),
+        ["Reviewer", "Implementor"],
+        "chips follow the lineage's own child order"
+    );
+    assert_eq!(parent.representative.as_ref().unwrap().label, "Reviewer");
+    assert_eq!((parent.subagents.working, parent.subagents.done), (Some(2), Some(4)));
+    assert!(pane("w1:p2").lineage_path.iter().any(|step| step.label == "Observer"));
+
+    // A pane Hide cannot see into, and the reason a restart would fix it.
+    let unseen = pane("w1:p4").children.expect("it has a session");
+    assert!(!unseen.instrumented);
+    assert_eq!(
+        unseen.uninstrumented_code.as_deref(),
+        Some("session_predates_install")
+    );
+
+    // An instrumented session working alone: a confirmed answer, and a
+    // different screen from the one above.
+    let alone = pane("w1:p5").children.expect("it has a session");
+    assert!(alone.instrumented && alone.chips.is_empty());
+    assert_eq!(alone.uninstrumented_reason, None);
+    assert_eq!(alone.subagents.working, Some(0));
+
+    // A pane with no agent says nothing at all.
+    assert!(pane("w1:p6").children.is_none());
+
+    // The Settings diagnosis names both runtimes and the pane a restart fixes.
+    let hooks = &runtime.snapshot.status.agent_hooks;
+    assert_eq!(hooks.runtimes.len(), 2);
+    assert_eq!(
+        hooks
+            .sessions_predating_install
+            .iter()
+            .map(|pane| pane.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Uninstrumented"]
+    );
+
+    // Overview reads the same rows. A catalog is handed in directly because
+    // the real one comes from `git`, which a projection test does not run,
+    // and Overview draws the focused checkout's project.
+    let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0].id.clone();
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
+    let workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
+    runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id);
+    runtime.ingest_worktrees(crate::model::WorktreeCatalogSnapshot {
+        projects: vec![crate::model::ProjectWorktreesSnapshot {
+            root_path: "/fixture".to_owned(),
+            base_source: "default_branch".to_owned(),
+            default_branch: Some("main".to_owned()),
+            worktrees: vec![
+                crate::model::WorktreeSnapshot {
+                    path: "/fixture".to_owned(),
+                    branch: Some("main".to_owned()),
+                    is_main: true,
+                    upstream_state: "pushed".to_owned(),
+                    ..Default::default()
+                },
+                crate::model::WorktreeSnapshot {
+                    path: "/fixture/quiet".to_owned(),
+                    branch: Some("quiet".to_owned()),
+                    upstream_state: "pushed".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }],
+    });
+    let overview = runtime
+        .snapshot
+        .git_worktrees
+        .as_ref()
+        .expect("the catalog projects");
+    let line = |path: &str| {
+        overview
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.path == path)
+            .map(|worktree| worktree.agent_line.clone())
+            .unwrap_or_else(|| panic!("{path} is a worktree row"))
+    };
+    // The worktree the session runs in names its agents and carries the mark
+    // of the one Hide cannot see into.
+    let busy = line("/fixture");
+    assert!(!busy.agents.is_empty());
+    assert_eq!(
+        busy.uninstrumented_code.as_deref(),
+        Some("session_predates_install")
+    );
+    // A worktree nobody is working in says nothing, which is a different
+    // screen from one Hide cannot see into (PRD B35, D-60).
+    let quiet = line("/fixture/quiet");
+    assert!(quiet.agents.is_empty());
+    assert_eq!(quiet.uninstrumented_code, None);
+
+    if let Ok(path) = std::env::var("HIDE_SNAPSHOT_OUT") {
+        let payload = runtime.snapshot_delta_payload(0, 0);
+        let bytes = crate::runtime::serialize_snapshot_delta(&payload).expect("snapshot encodes");
+        std::fs::write(&path, bytes).expect("snapshot is written");
+    }
+}

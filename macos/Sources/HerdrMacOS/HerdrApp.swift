@@ -229,6 +229,9 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 switch scene {
                 case "search": self.model.showSearch = true
                 case "settings": self.model.showSettings = true
+                case "settings-agents":
+                    self.model.settingsInitialTab = .agents
+                    self.model.showSettings = true
                 case "new-chat": self.model.showComposer = true
                 case "file-search": self.model.showFileSearch = true
                 case "add-device": self.presentVerificationAddDeviceSheet()

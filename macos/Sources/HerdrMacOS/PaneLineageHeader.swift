@@ -285,19 +285,46 @@ struct WorktreeAgentLine: View {
             // gap, so the row says nothing rather than apologising.
             EmptyView()
         } else {
-            HStack(spacing: HideTheme.spacingXS) {
-                if let reason = line.uninstrumentedReason {
-                    PaneUninstrumentedMark(
-                        reason: reason,
-                        accessibilityName: line.uninstrumentedLabel ?? reason
-                    )
+            GeometryReader { proxy in
+                // The Git panel is narrow, so the line folds the way the pane
+                // header's chip row does rather than running off the edge.
+                // The mark, when there is one, costs a slot of its own.
+                let slots = PaneLineagePresentation.chipLimit(width: proxy.size.width)
+                let limit = line.uninstrumentedReason == nil ? slots : slots - 1
+                let row = PaneLineagePresentation.chipRow(line.agents, limit: limit)
+                HStack(spacing: HideTheme.spacingXS) {
+                    if let reason = line.uninstrumentedReason {
+                        PaneUninstrumentedMark(
+                            reason: reason,
+                            accessibilityName: line.uninstrumentedLabel ?? reason
+                        )
+                    }
+                    ForEach(row.visible) { agent in
+                        PaneChildChip(chip: agent, connected: connected) { onSelect(agent.paneID) }
+                    }
+                    if row.overflow > 0 {
+                        Text("+\(row.overflow)")
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+                            .foregroundStyle(HideTheme.secondary)
+                            .padding(.horizontal, HideTheme.spacingXS)
+                            .frame(height: HideTheme.Layout.panelCollapseControlSize)
+                            .background(
+                                RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
+                                    .fill(HideTheme.elevated)
+                            )
+                            .hideTooltip("\(row.overflow) more agents. The sidebar lists them all.")
+                            .accessibilityLabel("\(row.overflow) more agents")
+                    }
+                    Spacer(minLength: HideTheme.spacingNone)
                 }
-                ForEach(line.agents) { agent in
-                    PaneChildChip(chip: agent, connected: connected) { onSelect(agent.paneID) }
-                }
-                Spacer(minLength: HideTheme.spacingNone)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: HideTheme.Layout.paneChildRowHeight,
+                maxHeight: HideTheme.Layout.paneChildRowHeight,
+                alignment: .leading
+            )
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Agents in this worktree")
         }
