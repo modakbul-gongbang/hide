@@ -23,6 +23,8 @@ A document's location or an old PRD citation does not make it current authority.
 | Which local build is running | [dev-runtime.md](dev-runtime.md) | Bundle identity, `CoreBridge.defaultStatePath`, actual process/window |
 | Performance and rendering verification | [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) | Regression tests, measurement tools, native run evidence |
 | Browser pane use and ownership | [BROWSER_PANES.md](BROWSER_PANES.md) | `plugins/browser/`, native browser viewer |
+| Background AI requests: provider boundary, selection and fallback, retries, logging, the Claude gap | [AI_PROVIDERS.md](AI_PROVIDERS.md) | `hide-ai/src/`, `hide-ai/tests/`, router and codex backend tests |
+| Pane task labels and attention symbols | [plugins/agent-context-labels/README.md](../plugins/agent-context-labels/README.md) | `plugins/agent-context-labels/src/`, its tests, `docs/deployment.md` under the plugin |
 | Sidebar PR details, CI rollup, refresh and failure states | [status-model.md: GitHub status](status-model.md#github-status-in-the-workspace-row) | `github.rs`, `runtime.rs`, `CheckoutCardPresentation.swift`, native Workspace PR control |
 | Agent status, semantic colors, Workspace aggregation, and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `AgentRow.swift`, `SidebarPresentation.swift`, status tests |
 | Optional ambient counts and privacy | [status-model.md](status-model.md#ambient-signals-subagents-background-tasks) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
