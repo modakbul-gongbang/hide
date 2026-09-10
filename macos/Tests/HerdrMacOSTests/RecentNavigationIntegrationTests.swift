@@ -154,6 +154,14 @@ struct RecentNavigationIntegrationTests {
         try FileManager.default.createDirectory(at: alpha, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: beta, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        // Each fixture is its own repository, so the two are separate projects
+        // wherever TMPDIR happens to point. A bare directory is only its own
+        // project while nothing above it is one, and a harness that puts TMPDIR
+        // inside a checkout - which is where run state lives here - would have
+        // both of these resolve to that enclosing checkout and never register
+        // beta at all.
+        try initRepository(at: alpha)
+        try initRepository(at: beta)
         let fileA = alpha.appendingPathComponent("한글-alpha.txt")
         let fileB = beta.appendingPathComponent("beta.txt")
         try "alpha\n".write(to: fileA, atomically: true, encoding: .utf8)
@@ -261,6 +269,15 @@ struct RecentNavigationIntegrationTests {
         for _ in 0..<1000 { model.cancelProjectSwitcher(); model.cancelTabSwitcher() }
         #expect(publications == 0)
         withExtendedLifetime((projectSubscription, tabSubscription)) {}
+    }
+
+    private func initRepository(at root: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", root.path, "init", "--quiet"]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
     }
 
     @MainActor private func eventually(_ label: String, _ condition: () -> Bool) async throws {
