@@ -64,7 +64,9 @@ Both the pane's own mark and the Settings diagnosis read that one function, and 
 ## Installing
 
 Hide installs once, on first run, and then leaves the operator's configuration alone.
-It never silently reattaches on later launches; an operator who removes the hook has removed it.
+The claim is a marker file in `~/.hide/agent-hooks/`, created exclusively so two launches racing each other still install once.
+It deliberately does not live in the rendered UI state, which the shell echoes back and could reset, and it does not depend on any hook file: an operator who removes a hook has removed it, and the next launch does not quietly put it back.
+Only a runtime that is present and carries no hook of Hide's is installed into; an outdated hook is left for the Settings diagnosis to ask about, and a configuration file that could not be read is not written to on a guess.
 
 Every later install is the `install_agent_hooks` event, sent from the Settings diagnosis after the operator said yes.
 The request is a set and the write rewrites the same hook group either way, so approving twice is one install.

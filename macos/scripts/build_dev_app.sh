@@ -46,6 +46,10 @@ if [[ ! -f "$icon_path" ]]; then
 fi
 
 cargo build --manifest-path "$worktree_root/herdr-core/Cargo.toml" --release
+# The hook helper is what an installed hook runs, so it ships beside the app's
+# own executable; a bundle without it can report hook state but not install one.
+cargo build --manifest-path "$worktree_root/Cargo.toml" --release \
+    -p hide-agent-hooks --bin hide-agent-hooks
 rust_archive="$worktree_root/target/release/libherdr_core.a"
 rust_archive_hash="$(LC_ALL=C LANG=C /usr/bin/shasum -a 256 "$rust_archive" | /usr/bin/awk '{print $1}')"
 swift build --package-path "$macos_root" --disable-keychain --disable-sandbox \
@@ -63,6 +67,9 @@ install -m 755 "$herdr_source" "$app_root/Contents/Resources/herdr-runtime/herdr
 install -m 755 \
     "$macos_root/.build/arm64-apple-macosx/debug/HerdrMacOS" \
     "$app_root/Contents/MacOS/HerdrMacOS"
+install -m 755 \
+    "$worktree_root/target/release/hide-agent-hooks" \
+    "$app_root/Contents/MacOS/hide-agent-hooks"
 install -m 644 \
     "$macos_root/Resources/Info.plist" \
     "$app_root/Contents/Info.plist"

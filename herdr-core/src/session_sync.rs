@@ -221,6 +221,7 @@ fn run_coordinator(
     if context.is_local()
         && let Some(home) = home_path.as_deref()
     {
+        install_agent_hooks_on_first_run(home);
         publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
     }
     // Kept for the counter sweep below, which runs on a fresh snapshot.
@@ -722,6 +723,33 @@ fn agent_tick_needs_publish(
 ) -> bool {
     replica.state.agents != agents
         || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+}
+
+/// Installs Hide's hooks the first time this machine runs Hide, and never
+/// again on its own.
+///
+/// Only a runtime that is here and carries no hook of Hide's is installed
+/// into. An outdated hook is left alone and asked about in the Settings
+/// diagnosis, and a runtime whose configuration could not be read is not
+/// written to on a guess (PRD B25, B28, D-31).
+fn install_agent_hooks_on_first_run(home: &std::path::Path) {
+    match hide_agent_hooks::claim_first_run(home) {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "first_run.unavailable",
+                "message": error.to_string(),
+            }));
+            return;
+        }
+    }
+    for row in hide_agent_hooks::Diagnosis::read(home).runtimes {
+        if matches!(row.status, hide_agent_hooks::HookStatus::NotInstalled) {
+            install_agent_hook(home, row.runtime);
+        }
+    }
 }
 
 /// Reads the approved installs out under a brief lock. `None` means the core

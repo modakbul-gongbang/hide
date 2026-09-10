@@ -10,7 +10,7 @@
 //! - installing twice converges instead of duplicating (PRD B25).
 
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -98,6 +98,34 @@ pub struct RemoveOutcome {
 const HOOKS_KEY: &str = "hooks";
 
 /// Judges one runtime without changing anything.
+/// Claims the one automatic install this machine gets, and reports whether
+/// this call is the one that got it.
+///
+/// Hide installs its hooks once, on first run, and then leaves the operator's
+/// configuration alone; an operator who removes a hook has removed it, and
+/// the next launch must not quietly put it back (PRD B25, D-31). The claim is
+/// a marker file created exclusively, so two launches racing each other still
+/// install once, and it lives in Hide's own directory rather than in the
+/// rendered UI state, which the shell echoes back and could reset.
+pub fn claim_first_run(home: &Path) -> io::Result<bool> {
+    let path = crate::counters::state_directory(home)
+        .parent()
+        .expect("the counter directory is always nested")
+        .join("installed-once");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn status(runtime: AgentRuntime, home: &Path) -> HookStatus {
     if !runtime.home_directory(home).is_dir() {
         return HookStatus::RuntimeAbsent;
@@ -403,6 +431,25 @@ fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_automatic_install_is_claimed_once_and_a_removed_hook_stays_removed() {
+        let fixture = Fixture::new("first-run");
+        assert!(
+            claim_first_run(fixture.home()).unwrap(),
+            "the first launch on this machine installs"
+        );
+        assert!(
+            !claim_first_run(fixture.home()).unwrap(),
+            "every later launch leaves the operator's configuration alone"
+        );
+        // The claim does not depend on any hook file, so removing one does
+        // not hand the next launch a fresh install (PRD D-31).
+        for runtime in AgentRuntime::ALL {
+            let _ = fs::remove_file(runtime.config_path(fixture.home()));
+        }
+        assert!(!claim_first_run(fixture.home()).unwrap());
+    }
 
     struct Fixture(PathBuf);
 
