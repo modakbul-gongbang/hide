@@ -94,3 +94,73 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
         "not knowing is a thing to say, and it says it here"
     )
 }
+
+private func row(
+    paneID: String,
+    delegated: Bool,
+    stallNotice: String? = nil
+) -> SidebarAgent {
+    var agent = SidebarAgent(
+        id: paneID,
+        paneID: paneID,
+        workspaceLabel: "hide",
+        agentKind: "claude",
+        demand: "none",
+        activity: "working",
+        group: delegated ? "seen" : "working",
+        symbol: "\u{25cf}",
+        emphasized: !delegated,
+        statusLabel: "Working",
+        summary: "running tests",
+        elapsed: "2m",
+        lastActivity: "1",
+        ambient: nil
+    )
+    agent.delegated = delegated
+    agent.stallNotice = stallNotice
+    return agent
+}
+
+/// PRD B11, B21, B17, B18, D-36, D-60: the row carries ownership, the stall
+/// notice and the uninstrumented mark, and every one of them has words.
+@Test func theSidebarRowCarriesOwnershipStallAndInstrumentation() {
+    let mine = AgentRowPresentation(
+        agent: row(paneID: "w1:p1", delegated: false),
+        density: .compact,
+        connected: true,
+        children: CorePaneChildren(instrumented: true)
+    )
+    #expect(!mine.delegated)
+    #expect(mine.stallNotice == nil)
+    #expect(mine.uninstrumentedReason == nil, "an instrumented pane has no mark")
+
+    let theirs = AgentRowPresentation(
+        agent: row(
+            paneID: "w1:p2",
+            delegated: true,
+            stallNotice: "Implementor has been waiting 16 minutes on an approval"
+        ),
+        density: .compact,
+        connected: true,
+        children: CorePaneChildren(
+            instrumented: false,
+            uninstrumentedReason: "This runtime's Hide hook is not installed.",
+            uninstrumentedLabel: "Children unknown: the hook is not installed",
+            uninstrumentedCode: "hooks_not_installed"
+        )
+    )
+    #expect(theirs.delegated)
+    #expect(theirs.stallNotice?.contains("16 minutes") == true)
+    #expect(theirs.uninstrumentedReason?.contains("not installed") == true)
+    // The symbol never carries the meaning by itself.
+    #expect(theirs.uninstrumentedLabel?.isEmpty == false)
+
+    // A pane with no agent has no children snapshot, and no mark follows.
+    let bare = AgentRowPresentation(
+        agent: row(paneID: "w1:p3", delegated: false),
+        density: .compact,
+        connected: true
+    )
+    #expect(bare.uninstrumentedReason == nil)
+    #expect(bare.uninstrumentedLabel == nil)
+}

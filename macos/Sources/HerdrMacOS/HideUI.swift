@@ -1553,7 +1553,10 @@ private struct AgentNavigatorRow: View {
                     presentation: AgentRowPresentation(
                         agent: agent,
                         density: density,
-                        connected: model.agentsConnected
+                        connected: model.agentsConnected,
+                        // The same instrumentation the pane header resolved,
+                        // read off the pane rather than judged again here.
+                        children: model.paneMetadata(for: agent.paneID)?.children
                     ),
                     style: .shell(density: density),
                     density: density,
