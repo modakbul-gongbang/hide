@@ -85,16 +85,24 @@ fn help_and_an_invalid_command_create_no_state_at_all() {
     }
 }
 
+/// Verification refuses rather than answering when the provider's CLI is not
+/// there, and it names which state stopped it. The empty PATH above is what
+/// makes that state the same on every machine.
 #[test]
-fn verify_provider_names_an_unsupported_provider_and_fails() {
-    let home = tempdir().unwrap();
-    let output = command(home.path())
-        .args(["verify-provider", "--provider", "claude"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("claude=unsupported"), "{stdout}");
+fn verify_provider_names_the_state_that_stopped_it_and_fails() {
+    for provider in ["claude", "codex"] {
+        let home = tempdir().unwrap();
+        let output = command(home.path())
+            .args(["verify-provider", "--provider", provider])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{provider}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!("{provider}=not_installed")),
+            "{provider}: {stdout}"
+        );
+    }
 }
 
 #[test]

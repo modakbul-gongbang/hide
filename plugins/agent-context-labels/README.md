@@ -31,7 +31,7 @@ Each supported pane gets a short task label, lifecycle status, agent kind, and t
 - Holds one steady symbol per state; working is told apart from an unseen completion by color, not by a blink.
 - Shows compact elapsed time such as `12s`, `4m`, `2h`, or `3d`.
 - Keeps completion semantics aligned with Herdr's native `working`, `done`, `idle`, `blocked`, and `unknown` lifecycle states.
-- Uses native agent hooks for high-confidence interaction signals and the user's own logged-in Codex CLI, through Hide's `hide-ai` provider layer, for task summaries and plain-text question detection.
+- Uses native agent hooks for high-confidence interaction signals and the user's own logged-in Codex and Claude Code CLIs, through Hide's `hide-ai` provider layer, for task summaries and plain-text question detection.
 - Publishes `sort_rank` and `activity` tokens and installs an `agent.view.set` sort on watcher start, so the sidebar orders panes by who is blocking whom: work that finished unread comes first (error, then question/approval, then a plain completion), then work still running, then everything already seen. Ties inside every group break on the `activity` clock, so the most recently active pane leads.
 - Runs one headless watcher, so no dedicated watcher pane is required.
 
@@ -40,7 +40,7 @@ The data flow is intentionally small:
 ```text
 Herdr agent lifecycle ────────────────┐
 Claude/Codex hooks ── attention ──────┼─> pane metadata tokens ─> Agents sidebar
-local session JSONL ─> redact ─> hide-ai ─> codex app-server ─┘
+local session JSONL ─> redact ─> hide-ai ─> codex app-server / claude -p ─┘
 ```
 
 Native hook state wins over semantic question detection, and both win over the ordinary Herdr lifecycle display.
@@ -95,12 +95,11 @@ Not every symbol has the same source, which matters if you skip the optional [ag
 - A Codex CLI that is logged in (`codex login`), for generated summaries and plain-text question detection.
 
 There is no API key and no environment variable.
-Summaries are produced by `codex app-server`, the same local process the Codex CLI itself uses, under the account already logged in on this machine.
-Lifecycle symbols continue to work without Codex.
-When no provider can answer (Codex is not installed, not logged in, or over its usage limit), the watcher keeps existing summaries, records `analysis_provider_unavailable` with the provider state, and asks again ten minutes later.
+Summaries are produced by the CLIs already logged in on this machine: `codex app-server`, the same local process the Codex CLI itself uses, and `claude -p` print mode.
+Lifecycle symbols continue to work without either.
+When no provider can answer (neither CLI is installed or logged in, or both are over their usage limit), the watcher keeps existing summaries, records `analysis_provider_unavailable` with the provider state, and asks again ten minutes later.
 
-Claude Code is registered as a provider but reports `unsupported`: the installed Claude Code and the pinned Herdr API expose no request-response contract that returns a structured answer without entering the user's own conversation.
-Nothing is scraped from a terminal to work around that, and the state is visible in the log rather than silently skipped.
+Nothing is scraped from a terminal and no credential file is read; a provider that cannot answer is visible in the log rather than silently skipped.
 
 ## Install
 
@@ -298,6 +297,7 @@ After that the turn is abandoned (`analysis_abandoned`) and never asked again un
 An analysis thread that fails for any other reason still reports its outcome, so a pane is never left waiting on a thread that is gone.
 A usage limit, a missing login, or a provider that is not connected parks every pane for ten minutes instead: the turn is kept and asked again once the wait passes.
 When more than one provider is connected, the configured priority is `codex`, then `claude`; a fallback happens only on a provider-side outage, login, usage-limit, or unsupported state, and is written to the log as `ai.fallback`.
+That fallback is sticky, so the parked provider is not asked again until its wait passes; `ai.provider.degraded` records entering it with the reason and the provider now answering, and `ai.provider.recovered` records the return.
 A request that timed out or lost its connection after submission is never re-run on another provider, because whether it completed is unknown.
 Every recorded verdict (`analysis_updated`) names the provider that answered it.
 Automatic summaries are enabled by default and the chosen setting survives watcher restarts.
@@ -366,7 +366,7 @@ The binary is built by the workspace, so it lives under the repository's `target
 It prints the provider's availability, then the verdict for a fixed two-line transcript with the provider that answered it, and exits non-zero when the provider cannot answer.
 Only `watch` moves a state directory left under the previous plugin id; this and every other command leave it where it is.
 To verify a development build without touching the live watcher's state at all, give it its own home and point Codex at the real one: `HOME=$(mktemp -d) CODEX_HOME=~/.codex ../../target/release/hide-agent-context-labels verify-provider --provider codex`.
-`--provider claude` prints `claude=unsupported` and exits non-zero; that is the documented state, not a fault.
+`--provider claude` reads the same way and needs `claude auth status --json` to report a login; `claude=needs_login` exiting non-zero is the state, not a fault.
 
 Classify an arbitrary transcript to see what the model would decide, without touching any pane:
 

@@ -622,7 +622,8 @@ impl Drop for Session {
     }
 }
 
-fn resolve_binary(binary: &Path) -> Option<PathBuf> {
+/// Shared by every backend that starts a user-installed CLI.
+pub(crate) fn resolve_binary(binary: &Path) -> Option<PathBuf> {
     if binary.components().count() > 1 {
         return binary.is_file().then(|| binary.to_path_buf());
     }

@@ -4,7 +4,7 @@
 
 use crate::{StatePaths, append_log};
 use hide_ai::{
-    AiBackend, AiLogEvent, AiLogSink, AiRouter, Availability, ClaudeInteractiveBackend,
+    AiBackend, AiLogEvent, AiLogSink, AiRouter, Availability, ClaudeCliBackend, ClaudeConfig,
     CodexAppServerBackend, CodexConfig, ProviderId, RouterConfig,
 };
 use std::sync::Arc;
@@ -23,7 +23,7 @@ pub fn router_for(provider: ProviderId, paths: &StatePaths) -> Arc<AiRouter> {
     build(backends, paths)
 }
 
-/// `codex=ready;claude=unsupported:<reason>`: the shape the startup log and
+/// `codex=ready;claude=needs_login`: the shape the startup log and
 /// the verification command both print. A reason is a diagnostic class from
 /// the provider layer, never content.
 pub fn availability_detail(states: &[(ProviderId, Availability)]) -> String {
@@ -42,7 +42,7 @@ pub fn availability_detail(states: &[(ProviderId, Availability)]) -> String {
 fn all_backends() -> Vec<Arc<dyn AiBackend>> {
     vec![
         Arc::new(CodexAppServerBackend::new(CodexConfig::default())),
-        Arc::new(ClaudeInteractiveBackend::new()),
+        Arc::new(ClaudeCliBackend::new(ClaudeConfig::default())),
     ]
 }
 
