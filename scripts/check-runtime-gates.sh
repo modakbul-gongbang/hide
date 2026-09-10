@@ -2,6 +2,9 @@
 set -euo pipefail
 export LC_ALL=en_US.UTF-8
 cd "$(dirname "$0")/.."
+# Reuse the machine's installed toolchain; rustup installs a private copy into an
+# empty $HOME/.rustup and still exits 0.
+. scripts/toolchain-env.sh
 . scripts/build-scratch.sh
 cargo test --manifest-path herdr-core/Cargo.toml --target-dir "$HIDE_CARGO_SCRATCH"
 cargo build --release --manifest-path herdr-core/Cargo.toml

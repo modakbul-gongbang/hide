@@ -19,6 +19,9 @@ bash scripts/rust-test.sh
 bash scripts/swift-test.sh
 ```
 
+Both resolve the toolchain through `scripts/toolchain-env.sh`, so they reuse the machine's installed Rust under a verification HOME rather than installing a private copy into it.
+The PRD harness binds `scripts/verify-cargo.sh test` and `scripts/verify-cargo.sh build` for the same reason; its verify commands run with no shell, so the environment decision cannot live in the command string.
+
 ## Scripted pet server
 
 [pet_scenario_server.py](../macos/scripts/pet_scenario_server.py) provides scripted `session.snapshot`, `events.subscribe`, and `agent.list` responses.

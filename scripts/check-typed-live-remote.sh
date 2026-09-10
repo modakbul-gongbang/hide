@@ -5,6 +5,9 @@ export PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$HOME/.car
 # Test builds go to a scratch directory keyed by checkout so this run does not
 # dirty the tree it judges; the release archive stays in the worktree, because
 # the dev bundle links it from there.
+# Reuse the machine's installed toolchain; rustup installs a private copy into an
+# empty $HOME/.rustup and still exits 0.
+. scripts/toolchain-env.sh
 . scripts/build-scratch.sh
 run=agents/runs/herdr-typed-live-remote
 mkdir -p "$run"

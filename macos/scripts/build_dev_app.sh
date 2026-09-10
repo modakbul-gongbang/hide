@@ -5,6 +5,11 @@ macos_root="$(cd "$(dirname "$0")/.." && pwd)"
 worktree_root="$(cd "$macos_root/.." && pwd)"
 icon_path="$macos_root/Resources/hide.icns"
 
+# Reuse the machine's installed toolchain; rustup installs a private copy into an
+# empty $HOME/.rustup and still exits 0. This script never cds, so the resolver is
+# named from the worktree root it already resolved.
+. "$worktree_root/scripts/toolchain-env.sh"
+
 # A build from a linked worktree becomes its own instance: its own bundle
 # identifier so macOS will run it alongside the main build instead of
 # activating that one, and its own name so the two are distinguishable in the

@@ -11,6 +11,9 @@ export LC_ALL=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 export LANG=en_US.UTF-8
 cd "$(dirname "$0")/.."
+# Reuse the machine's installed toolchain; rustup installs a private copy into an
+# empty $HOME/.rustup and still exits 0.
+. scripts/toolchain-env.sh
 . scripts/build-scratch.sh
 mkdir -p "$HIDE_SCRATCH_ROOT"
 exec > >(tee "$HIDE_SCRATCH_ROOT/hide-full.log") 2>&1
