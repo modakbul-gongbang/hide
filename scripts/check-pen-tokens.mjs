@@ -39,7 +39,11 @@ if (!failures.length && fs.readFileSync(file, 'utf8') !== apply(document, expect
 if (failures.length) {
   console.error('Design canvas is out of step with HideTheme:\n');
   for (const failure of failures) console.error(`  ${failure}\n`);
-  console.error('Run node scripts/gen-pen-tokens.mjs to bring the canvas forward.');
+  // Which way to repair depends on where the change was meant, and only the
+  // person who made it knows. Naming only the generator would tell a designer
+  // who deliberately changed a value on the canvas to throw that work away.
+  console.error('If the canvas value is the one you meant, put it in HideTheme.swift first, then run node scripts/gen-pen-tokens.mjs.');
+  console.error('If the canvas is simply behind, run node scripts/gen-pen-tokens.mjs.');
   process.exit(1);
 }
 
