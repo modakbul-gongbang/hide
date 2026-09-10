@@ -227,3 +227,34 @@ When the existing system does not cover a case, say so and propose the addition;
 
 The native shell components live in `macos/Sources/HerdrMacOS/`: `HideTheme.swift` defines tokens, `HideKeycap.swift` draws registry-derived shortcuts, `HideBalloon.swift` draws tooltips and hint chips, `HideIconButton.swift` owns icon controls, `HideBadge.swift` owns labels, and `HideOverlay.swift` attaches the shared renderer to window content.
 Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception; run `node scripts/check-design-contract.mjs` before delivery, which is the same entrypoint `design-contract.yml` runs.
+
+### The Design Canvas
+
+Screen designs, layout proposals and component sheets live in one Paper file, `Hide Design System`:
+
+    https://app.paper.design/file/01M2575AVTVPGM48ZMWEKWRSTC
+
+Put design work there rather than in a new file, an ad-hoc HTML page, or a screenshot pasted into a message.
+One file is what lets two proposals sit side by side on the same canvas and share one token set; a second file loses both.
+
+Paper is a local desktop app reached over MCP, so it answers only while `Paper.app` is running.
+`get_basic_info` reports the artboards and the token set; `list_files` confirms the connection.
+Anything read back out for code comes from `get_jsx` or `get_computed_styles`, never from a screenshot, which is for judging the result rather than measuring it.
+
+**The direction of truth is one-way.** `HideTheme.swift` defines a value, the Paper file receives it.
+The file carries the token set generated from `HideTheme`: colors as `--color-*`, sizes as `--text-*`, `--spacing-*`, `--radius-*`, and named layout dimensions as `--size-*`.
+Design against those variables (`background: var(--color-panel)`), never a literal hex, exactly as the shell designs against `HideTheme`.
+A proposal that needs a value the token set does not carry names the addition it wants; it does not settle it with a literal, and the addition lands in `HideTheme.swift` first.
+
+Two substitutions are recorded rather than fixed, because Paper cannot express either.
+SF Mono is not installed, so the canvas uses **JetBrains Mono**, which `DESIGN.md` accepts as a substitute.
+`font-feature-settings: 'ss03'` cannot ride on a token, so type renders as plain Inter; sizes and spacing are exact, glyph shapes are not.
+
+**Importing an existing HTML mockup.** Paper's `write_html` reads inline styles only.
+A `<style>` block is discarded and every element that depended on it is dropped, so a class-based page pastes in as an empty artboard; `<use href="#icon">` creates a node that draws nothing once the `<defs>` are gone.
+`scripts/paper-inline.mjs` resolves both ahead of time - it flattens the stylesheet into `style` attributes, splices icon symbols in at their use sites with `currentColor` resolved, renames the page's own custom properties to the Paper token names, and reports what it could not convert:
+
+    node scripts/paper-inline.mjs <body.html> [--css _shared.css] [--icons _icons.html]
+
+It also repairs three differences that only appear once the markup is in Paper: `margin` has no effect (use padding and gap), the `font` shorthand is not read (it expands to longhands), and a bare text span in a flex row is squeezed to one letter per line unless it is pinned open.
+Paste the output one visual group at a time rather than one page at a time, so the canvas fills in visibly and a mistake is cheap to locate.
