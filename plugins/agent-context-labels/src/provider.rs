@@ -4,23 +4,59 @@
 
 use crate::{StatePaths, append_log};
 use hide_ai::{
-    AiBackend, AiLogEvent, AiLogSink, AiRouter, Availability, ClaudeCliBackend, ClaudeConfig,
-    CodexAppServerBackend, CodexConfig, ProviderId, RouterConfig,
+    AiBackend, AiLogEvent, AiLogSink, AiRouter, AiSettings, Availability, ClaudeCliBackend,
+    ClaudeConfig, CodexAppServerBackend, CodexConfig, ProviderId,
 };
+use std::path::Path;
 use std::sync::Arc;
 
-/// Every provider the plugin can route to, in the configured priority order.
-pub fn router(paths: &StatePaths) -> Arc<AiRouter> {
-    build(all_backends(), paths)
+/// Every provider the plugin can route to, in the order the operator's saved
+/// choice puts them.
+pub fn router(settings: &AiSettings, paths: &StatePaths) -> Arc<AiRouter> {
+    build(all_backends(settings), settings, paths)
 }
 
 /// One provider only, for a verification that must not fall back.
-pub fn router_for(provider: ProviderId, paths: &StatePaths) -> Arc<AiRouter> {
-    let backends = all_backends()
+pub fn router_for(
+    provider: ProviderId,
+    settings: &AiSettings,
+    paths: &StatePaths,
+) -> Arc<AiRouter> {
+    let backends = all_backends(settings)
         .into_iter()
         .filter(|backend| backend.id() == provider)
         .collect();
-    build(backends, paths)
+    build(backends, settings, paths)
+}
+
+/// The operator's saved choice, from the file `hide-ai` owns.
+///
+/// A file that cannot be read is not taken as the defaults in silence: the
+/// reason is written to the plugin's own log once, and the defaults are then
+/// used.
+pub fn settings(home: &Path, paths: &StatePaths) -> AiSettings {
+    match hide_ai::settings::load(home) {
+        Ok(settings) => settings,
+        Err(error) => {
+            let _ = append_log(
+                paths,
+                "ai_settings_unreadable",
+                None,
+                Some(&error.to_string()),
+            );
+            AiSettings::default()
+        }
+    }
+}
+
+/// `provider=codex;model=gpt-5.6-luna`: what the startup log records about the
+/// choice in force.
+pub fn settings_detail(settings: &AiSettings) -> String {
+    format!(
+        "provider={};model={}",
+        settings.provider,
+        settings.model(settings.provider)
+    )
 }
 
 /// `codex=ready;claude=needs_login`: the shape the startup log and
@@ -39,17 +75,29 @@ pub fn availability_detail(states: &[(ProviderId, Availability)]) -> String {
         .join(";")
 }
 
-fn all_backends() -> Vec<Arc<dyn AiBackend>> {
+fn all_backends(settings: &AiSettings) -> Vec<Arc<dyn AiBackend>> {
     vec![
-        Arc::new(CodexAppServerBackend::new(CodexConfig::default())),
-        Arc::new(ClaudeCliBackend::new(ClaudeConfig::default())),
+        Arc::new(CodexAppServerBackend::new(CodexConfig {
+            model: settings.model(ProviderId::Codex).to_owned(),
+            ..CodexConfig::default()
+        })),
+        Arc::new(ClaudeCliBackend::new(ClaudeConfig {
+            model: settings.model(ProviderId::Claude).to_owned(),
+            ..ClaudeConfig::default()
+        })),
     ]
 }
 
-fn build(backends: Vec<Arc<dyn AiBackend>>, paths: &StatePaths) -> Arc<AiRouter> {
+fn build(
+    backends: Vec<Arc<dyn AiBackend>>,
+    settings: &AiSettings,
+    paths: &StatePaths,
+) -> Arc<AiRouter> {
     Arc::new(AiRouter::new(
         backends,
-        RouterConfig::default(),
+        // Only the priority moves with the choice; every retry, cooldown and
+        // stickiness constant is still the router's own.
+        settings.router_config(),
         Arc::new(EventLog {
             paths: paths.clone(),
         }),

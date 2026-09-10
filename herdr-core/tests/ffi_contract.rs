@@ -120,6 +120,35 @@ fn create_file_test(name: &str) -> (*mut HerdrCore, PathBuf) {
     (core, state_path)
 }
 
+/// Waits for something the fixture writes, rather than sleeping a fixed
+/// interval and hoping.
+///
+/// The fixture's writes are not bounded by the event that requests them: an
+/// attach records its argv when the child starts, and the settled resize is
+/// written when the first full frame arrives, which is a round trip later.
+/// A fixed sleep therefore asserts the scheduler rather than the behaviour,
+/// and these tests failed on it in three runs out of five with no change to
+/// the code under test. This waits for the condition and returns as soon as
+/// it holds, so a healthy run pays nothing.
+///
+/// It is only ever used to wait for something to appear. Where a test proves
+/// that nothing *else* appears, the settle after it stays a fixed interval,
+/// because there is no condition to wait for.
+#[track_caller]
+fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// How many lines the fixture has written to a capture file. A file it has
+/// not created yet has written none.
+fn captured_lines(path: &std::path::Path) -> usize {
+    fs::read_to_string(path).unwrap_or_default().lines().count()
+}
+
 fn dispatch(core: *mut HerdrCore, event: Value) {
     let bytes = serde_json::to_vec(&event).expect("event serialize");
     herdr_core_dispatch(core, bytes.as_ptr(), bytes.len());
@@ -1681,14 +1710,13 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
         }),
     );
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !argv_path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "the reported size did not start the attach"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // The file appears when the child starts and its argv lands a moment
+    // later, so the size it carries is what is waited for, not the file.
+    wait_until("the reported size to start the attach", || {
+        let argv = fs::read_to_string(&argv_path).unwrap_or_default();
+        argv.contains("30") && argv.contains("100")
+    });
+    // Nothing to wait for here: this proves a second attach never comes.
     std::thread::sleep(Duration::from_millis(200));
     let argv = fs::read_to_string(&argv_path).expect("recorded attach arguments");
     assert_eq!(
@@ -1703,6 +1731,13 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
 
     // R2 now requires one settled-size resize after attach. Once the first
     // matching full frame arrives, a repeated same-size report adds no write.
+    // The frame is what the settled resize waits on, so this waits for it too
+    // rather than assuming it has landed within a fixed interval.
+    let control_capture = root.join("w-attach:p1.stdin");
+    wait_until(
+        "the settled resize that follows the first full frame",
+        || captured_lines(&control_capture) > 0,
+    );
     dispatch(
         core,
         json!({
@@ -1711,8 +1746,9 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
             "payload": {"pane_id": "w-attach:p1", "rows": 30, "cols": 100}
         }),
     );
+    // Nothing to wait for here: this proves a second write never comes.
     std::thread::sleep(Duration::from_millis(200));
-    let control_lines = fs::read_to_string(root.join("w-attach:p1.stdin")).unwrap_or_default();
+    let control_lines = fs::read_to_string(&control_capture).unwrap_or_default();
     assert!(
         control_lines.lines().count() == 1,
         "attach sends one settled resize; a matching report must not repeat it: {control_lines}"
@@ -1819,15 +1855,13 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
     );
 
     let argv_path = root.join("attach.argv");
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !argv_path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "a launch that already knows the pane's size must attach without waiting"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    std::thread::sleep(Duration::from_millis(200));
+    wait_until(
+        "a launch that already knows the pane's size to attach without waiting",
+        || {
+            let argv = fs::read_to_string(&argv_path).unwrap_or_default();
+            argv.contains("44") && argv.contains("152")
+        },
+    );
     let argv = fs::read_to_string(&argv_path).expect("recorded attach arguments");
     assert!(
         argv.contains("44") && argv.contains("152"),
@@ -1843,6 +1877,13 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
         "nothing was waited for: {waiting}"
     );
 
+    // Same as the cold attach: the settled resize follows the first full
+    // frame, so it is waited for before a repeat is asked to add nothing.
+    let control_capture = root.join("w-warm:p1.stdin");
+    wait_until(
+        "the settled resize that follows the first full frame",
+        || captured_lines(&control_capture) > 0,
+    );
     dispatch(
         core,
         json!({
@@ -1851,8 +1892,9 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
             "payload": {"pane_id": "w-warm:p1", "rows": 44, "cols": 152}
         }),
     );
+    // Nothing to wait for here: this proves a second write never comes.
     std::thread::sleep(Duration::from_millis(200));
-    let control_lines = fs::read_to_string(root.join("w-warm:p1.stdin")).unwrap_or_default();
+    let control_lines = fs::read_to_string(&control_capture).unwrap_or_default();
     assert!(
         control_lines.lines().count() == 1,
         "warm attach sends one settled resize; the view must not repeat it: {control_lines}"

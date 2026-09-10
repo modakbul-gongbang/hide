@@ -77,8 +77,15 @@ fn watch(home: &Path) -> Result<()> {
     if !migrated.is_empty() {
         append_log(paths, "state_migrated", None, Some(&migrated.join(";")))?;
     }
-    let router = provider::router(paths);
+    let ai_settings = provider::settings(home, paths);
+    let router = provider::router(&ai_settings, paths);
     append_log(paths, "watcher_started", None, Some(PLUGIN_ID))?;
+    append_log(
+        paths,
+        "ai_settings",
+        None,
+        Some(&provider::settings_detail(&ai_settings)),
+    )?;
     append_log(
         paths,
         "ai_provider_availability",
@@ -91,6 +98,9 @@ fn watch(home: &Path) -> Result<()> {
         LocalSessionReader::new(home),
         paths.clone(),
     );
+    // From here the choice is re-read on every scan, so a change in Settings
+    // reaches the next label without restarting the watcher.
+    watcher.follow_ai_settings(home);
     // Ordering is a nicety; a rejected view must not stop status reporting.
     match apply_priority_agent_view(home) {
         Ok(()) => append_log(paths, "agent_view_applied", None, None)?,
@@ -186,7 +196,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Action::AnalyzeStdin => {
-            let router = provider::router(&paths);
+            let router = provider::router(&provider::settings(&home, &paths), &paths);
             let mut input = String::new();
             std::io::stdin()
                 .read_to_string(&mut input)
@@ -196,7 +206,7 @@ fn main() -> Result<()> {
         }
         Action::VerifyProvider { provider } => {
             let provider = ProviderId::from(provider);
-            let router = provider::router_for(provider, &paths);
+            let router = provider::router_for(provider, &provider::settings(&home, &paths), &paths);
             let states = router.availability();
             println!("availability {}", provider::availability_detail(&states));
             let ready = states.iter().any(|(_, state)| state.is_ready());

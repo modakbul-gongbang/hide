@@ -1600,8 +1600,79 @@ pub struct StatusSnapshot {
     pub chromux: ChromuxStatusSnapshot,
     pub environment: Vec<EnvironmentStatusSnapshot>,
     pub agent_hooks: AgentHooksSnapshot,
+    pub background_ai: BackgroundAiSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+}
+
+/// Which agent and model the background AI features use, and what each
+/// provider can do about it right now.
+///
+/// The choice is the operator's, stored by `hide-ai` in its own file; the
+/// availability and the model lists come from asking the providers, on the
+/// coordinator's reader, never under the runtime mutex.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct BackgroundAiSnapshot {
+    /// The provider a background request runs on first. It is the operator's
+    /// choice when they have made one and the default otherwise.
+    pub provider: String,
+    /// Whether `provider` is a saved choice rather than the default.
+    pub chosen: bool,
+    /// One row per provider Hide can route to, in the offered order. A
+    /// provider that is not on this Mac is still a row, because "not here"
+    /// and "not signed in" are different answers.
+    pub providers: Vec<BackgroundAiProviderSnapshot>,
+    /// Why the saved choice could not be read or written. The defaults are in
+    /// use while this is set; it is never left empty to stand for success.
+    pub unavailable_reason: Option<String>,
+}
+
+impl BackgroundAiSnapshot {
+    /// Every provider, none of them asked yet. This is what the screen shows
+    /// before the first read lands, and what an unobserved read answers. The
+    /// choice it names is the default, because nothing has been read that
+    /// could have changed it.
+    pub fn unread() -> Self {
+        Self {
+            provider: hide_ai::AiSettings::default().provider.as_str().to_owned(),
+            providers: hide_ai::PROVIDERS
+                .iter()
+                .map(|provider| BackgroundAiProviderSnapshot {
+                    id: provider.as_str().to_owned(),
+                    label: provider.label().to_owned(),
+                    state: "unread".to_owned(),
+                    headline: "Not checked yet".to_owned(),
+                    message: None,
+                    model: hide_ai::settings::default_model(*provider).to_owned(),
+                    models: Vec::new(),
+                    models_unavailable_reason: None,
+                })
+                .collect(),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct BackgroundAiProviderSnapshot {
+    /// The provider layer's own id: `codex` or `claude`.
+    pub id: String,
+    pub label: String,
+    /// The availability class the provider layer reported: `ready`,
+    /// `needs_login`, `not_installed`, `unavailable`, `unsupported`, or
+    /// `unread` before it has been asked.
+    pub state: String,
+    /// The short words beside the provider's name. The core writes them; no
+    /// view builds a sentence out of `state`.
+    pub headline: String,
+    /// The provider layer's own reason, when its state carries one.
+    pub message: Option<String>,
+    /// The model this provider is asked for.
+    pub model: String,
+    /// The models this provider offers. Empty when they are not known, which
+    /// `models_unavailable_reason` then says.
+    pub models: Vec<String>,
+    pub models_unavailable_reason: Option<String>,
 }
 
 /// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,
@@ -1876,6 +1947,7 @@ impl Snapshot {
                 },
                 environment: Vec::new(),
                 agent_hooks: AgentHooksSnapshot::default(),
+                background_ai: BackgroundAiSnapshot::unread(),
                 diagnostics: Vec::new(),
                 last_error: None,
             },

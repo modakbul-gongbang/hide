@@ -425,6 +425,16 @@ private struct HideAgentSettings: View {
             HideCLIStatus(name: "codex", showsDivider: false)
         }
 
+        HideBackgroundAISettings(state: model.backgroundAI) { provider, chosenModel in
+            var payload: [String: Any] = ["provider": provider]
+            if let chosenModel {
+                payload["model"] = chosenModel
+            }
+            model.core.dispatch(kind: "ai_settings", payload: payload)
+        } onObserving: { observing in
+            model.core.dispatch(kind: "ai_settings", payload: ["observing": observing])
+        }
+
         HideAgentHookSettings(hooks: model.agentHooks) { runtimeID in
             model.core.dispatch(kind: "install_agent_hooks", payload: ["runtime_id": runtimeID])
         }
@@ -436,6 +446,120 @@ private struct HideAgentSettings: View {
                 showsDivider: false
             )
         }
+    }
+}
+
+/// Which agent and model the background AI features use.
+///
+/// The same two CLIs the group above reports on, asked a different question:
+/// `Installed CLIs` says whether the command is on the login shell's PATH,
+/// and this says whether it is signed in and which of its models a background
+/// request should use. Both answers are the core's; nothing here decides one.
+///
+/// The provider probe starts child processes, so the core is told when this
+/// group is on screen and stops asking when it goes away.
+private struct HideBackgroundAISettings: View {
+    let state: CoreBackgroundAI
+    /// The chosen provider, and a model when the choice is a model.
+    let onChoose: (String, String?) -> Void
+    let onObserving: (Bool) -> Void
+
+    private var selected: CoreBackgroundAIProvider? { state.selected }
+
+    var body: some View {
+        HideSettingsGroup(
+            title: "Background AI",
+            note: note
+        ) {
+            HideSettingsRow(label: "Agent") {
+                HStack(spacing: HideTheme.spacingSM) {
+                    HideFormPicker(
+                        "Agent",
+                        selection: Binding(
+                            get: { state.provider },
+                            set: { onChoose($0, nil) }
+                        ),
+                        selectedLabel: selected?.label ?? state.provider,
+                        showsFieldLabel: false,
+                        width: HideTheme.settingsControlWidth
+                    ) {
+                        ForEach(state.providers) { provider in
+                            Text(provider.label).tag(provider.id)
+                        }
+                    }
+                    .disabled(state.providers.isEmpty)
+                }
+            }
+            HideSettingsRow(label: "Model", showsDivider: availability != nil) {
+                HideFormPicker(
+                    "Model",
+                    selection: Binding(
+                        get: { selected?.model ?? "" },
+                        set: { onChoose(state.provider, $0) }
+                    ),
+                    selectedLabel: selected?.model ?? "",
+                    showsFieldLabel: false,
+                    width: HideTheme.settingsControlWidth
+                ) {
+                    // The configured model is always offered, even when it is
+                    // not on the provider's list: dropping it would silently
+                    // change the operator's choice on the way to the screen.
+                    ForEach(offeredModels, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                .disabled(offeredModels.count < 2)
+            }
+            if let availability {
+                HideSettingsNote(
+                    text: availability.text,
+                    systemImage: availability.symbol,
+                    color: availability.color,
+                    showsDivider: false
+                )
+            }
+        }
+        .onAppear { onObserving(true) }
+        .onDisappear { onObserving(false) }
+    }
+
+    /// The models offered for the chosen provider, with its configured model
+    /// always among them.
+    private var offeredModels: [String] {
+        guard let selected else { return [] }
+        var models = selected.models
+        if !selected.model.isEmpty, !models.contains(selected.model) {
+            models.insert(selected.model, at: 0)
+        }
+        return models
+    }
+
+    /// One line about the chosen provider: the same three answers
+    /// `Installed CLIs` gives, plus the reason the provider layer attached.
+    private var availability: (text: String, symbol: String, color: Color)? {
+        guard let selected else { return nil }
+        var text = selected.headline
+        if let message = selected.message, !message.isEmpty {
+            text += ". \(message)."
+        }
+        switch selected.state {
+        case "ready":
+            return (text, "checkmark.circle.fill", HideTheme.success)
+        case "unread":
+            return (text, "clock", HideTheme.muted)
+        default:
+            return (text, "exclamationmark.circle", HideTheme.warning)
+        }
+    }
+
+    private var note: String {
+        if let unavailableReason = state.unavailableReason {
+            return unavailableReason
+        }
+        if let reason = selected?.modelsUnavailableReason, !reason.isEmpty {
+            return "Pane labels and other background features use this agent. Its models could not be listed (\(reason)), so only the configured one is offered."
+        }
+        return "Pane labels and other background features use this agent. An agent that cannot answer still hands the request to the other one."
     }
 }
 

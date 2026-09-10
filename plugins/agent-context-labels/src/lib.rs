@@ -1492,6 +1492,10 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     analysis_in_flight: HashSet<String>,
     analysis_sender: mpsc::Sender<AnalysisOutcome>,
     analysis_receiver: mpsc::Receiver<AnalysisOutcome>,
+    /// The home whose `hide-ai` settings file this watcher follows, and the
+    /// choice it last read from it. `None` for a watcher given its router
+    /// directly, which is what a test does.
+    ai_settings: Option<(PathBuf, hide_ai::AiSettings)>,
 }
 
 impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
@@ -1518,7 +1522,37 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             analysis_in_flight: HashSet::new(),
             analysis_sender,
             analysis_receiver,
+            ai_settings: None,
         }
+    }
+
+    /// Follows the operator's saved provider and model choice from this home.
+    ///
+    /// The choice is re-read on every scan, beside this plugin's own settings,
+    /// and a changed one rebuilds the router: a backend is constructed with
+    /// its model, and the priority is what the choice reorders. Rebuilding
+    /// also drops the sticky failover state, which is right, because the
+    /// reason it was sticky was about the provider that is no longer chosen.
+    pub fn follow_ai_settings(&mut self, home: &Path) {
+        let settings = crate::provider::settings(home, &self.paths);
+        self.router = crate::provider::router(&settings, &self.paths);
+        self.ai_settings = Some((home.to_path_buf(), settings));
+    }
+
+    /// Re-reads the choice and rebuilds the router when it moved. Returns
+    /// whether it moved, so the caller can record it.
+    fn refresh_ai_settings(&mut self) -> bool {
+        let Some((home, current)) = self.ai_settings.as_ref() else {
+            return false;
+        };
+        let home = home.clone();
+        let read = crate::provider::settings(&home, &self.paths);
+        if read == *current {
+            return false;
+        }
+        self.router = crate::provider::router(&read, &self.paths);
+        self.ai_settings = Some((home, read));
+        true
     }
 
     pub fn scan(&mut self) -> Result<usize> {
@@ -1526,6 +1560,14 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         // Both files are read once per scan rather than once per pane.
         self.hook_states = load_hook_states(&self.paths);
         self.settings = load_settings(&self.paths);
+        // The operator's provider and model choice lives in `hide-ai`'s own
+        // file, read on this same boundary rather than on a third schedule.
+        if self.refresh_ai_settings()
+            && let Some((_, settings)) = self.ai_settings.as_ref()
+        {
+            let detail = crate::provider::settings_detail(settings);
+            let _ = append_log(&self.paths, "ai_settings_changed", None, Some(&detail));
+        }
         let refresh_requested = self.take_refresh_request();
         let mut processed = 0;
 

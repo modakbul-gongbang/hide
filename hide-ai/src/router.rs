@@ -7,7 +7,9 @@ use serde_json::Value;
 
 use crate::log::{AiLogEvent, AiLogSink};
 use crate::schema;
-use crate::{AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ProviderId};
+use crate::{
+    AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ModelCatalog, ProviderId,
+};
 
 /// Retry and selection policy. The defaults carry the label plugin's proven
 /// constants forward: exponential backoff capped at four attempts for a
@@ -240,6 +242,17 @@ impl AiRouter {
             active: active_provider(&selection),
             degraded: degraded_of(selected, chosen),
         })
+    }
+
+    /// What each registered provider offers, in the configured priority
+    /// order. This asks the provider rather than the router's cache, because
+    /// a model list is not part of a selection decision and has no window of
+    /// its own; the caller decides how often to ask.
+    pub fn models(&self) -> Vec<(ProviderId, ModelCatalog)> {
+        self.ordered_backends()
+            .into_iter()
+            .map(|backend| (backend.id(), backend.models()))
+            .collect()
     }
 
     /// Forces the next selection to ask each provider again, for a caller
@@ -776,6 +789,9 @@ mod tests {
             self.probes.fetch_add(1, Ordering::SeqCst);
             self.availability.lock().unwrap().clone()
         }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(vec![format!("{}-model", self.id)])
+        }
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(self.delay);
@@ -984,6 +1000,9 @@ mod tests {
             }
             fn availability(&self) -> Availability {
                 Availability::Ready
+            }
+            fn models(&self) -> ModelCatalog {
+                ModelCatalog::Offered(Vec::new())
             }
             fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
                 let calls = self.calls.fetch_add(1, Ordering::SeqCst);

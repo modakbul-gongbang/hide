@@ -448,6 +448,101 @@ fn setting_automatic_summaries_is_idempotent() {
     }
 }
 
+/// The setting reaches the plugin: the router it builds follows the file, and
+/// a changed file is picked up on the same scan boundary that already re-reads
+/// this plugin's own settings.
+#[test]
+fn the_saved_choice_decides_the_routers_priority_and_a_changed_file_is_re_read() {
+    let root = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    fs::create_dir_all(&paths.root).unwrap();
+
+    // No file at all is the defaults, and the router's own order.
+    assert_eq!(
+        provider::settings(home.path(), &paths)
+            .router_config()
+            .priority,
+        RouterConfig::default().priority,
+        "nobody has chosen, so nothing is reordered"
+    );
+
+    let mut chosen = hide_ai::AiSettings {
+        provider: ProviderId::Claude,
+        ..hide_ai::AiSettings::default()
+    };
+    chosen.set_model(ProviderId::Claude, "sonnet");
+    hide_ai::settings::save(home.path(), &chosen).unwrap();
+
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        no_provider(),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.follow_ai_settings(home.path());
+    assert_eq!(
+        watcher.router.provider_state().map(|state| state.selected),
+        Some(ProviderId::Claude),
+        "the router the watcher runs on starts from the saved choice"
+    );
+
+    // A choice written while the watcher is running is picked up by the next
+    // scan, without restarting it.
+    let moved = hide_ai::AiSettings {
+        provider: ProviderId::Codex,
+        ..chosen.clone()
+    };
+    hide_ai::settings::save(home.path(), &moved).unwrap();
+    watcher.scan().unwrap();
+    assert_eq!(
+        watcher.router.provider_state().map(|state| state.selected),
+        Some(ProviderId::Codex),
+        "the changed file moved the router without a restart"
+    );
+    assert!(
+        fs::read_to_string(paths.log())
+            .unwrap()
+            .contains("ai_settings_changed"),
+        "the move is recorded rather than silent"
+    );
+
+    // An unchanged file does not rebuild anything.
+    let before = Arc::as_ptr(&watcher.router);
+    watcher.scan().unwrap();
+    assert_eq!(
+        Arc::as_ptr(&watcher.router),
+        before,
+        "an unchanged choice leaves the router, and its sticky state, alone"
+    );
+}
+
+/// A settings file that cannot be read is not taken as the defaults in
+/// silence: the reason lands in the plugin's own log and the defaults are then
+/// used.
+#[test]
+fn an_unreadable_choice_is_logged_before_the_defaults_are_used() {
+    let root = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    fs::create_dir_all(&paths.root).unwrap();
+    let settings_path = hide_ai::settings::settings_path(home.path());
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(&settings_path, "{ this is not json").unwrap();
+
+    assert_eq!(
+        provider::settings(home.path(), &paths),
+        hide_ai::AiSettings::default(),
+        "the defaults are used"
+    );
+    assert!(
+        fs::read_to_string(paths.log())
+            .unwrap()
+            .contains("ai_settings_unreadable"),
+        "and the reason is stated first"
+    );
+}
+
 #[test]
 fn corrupt_state_files_do_not_stop_the_watcher() {
     let root = tempdir().unwrap();
@@ -1423,6 +1518,10 @@ impl AiBackend for ScriptedBackend {
         Availability::Ready
     }
 
+    fn models(&self) -> hide_ai::ModelCatalog {
+        hide_ai::ModelCatalog::Offered(vec![format!("{}-model", self.id)])
+    }
+
     fn execute(
         &self,
         _: &hide_ai::AiRequest,
@@ -1470,6 +1569,10 @@ impl AiBackend for PanickingBackend {
 
     fn availability(&self) -> Availability {
         Availability::Ready
+    }
+
+    fn models(&self) -> hide_ai::ModelCatalog {
+        hide_ai::ModelCatalog::Offered(Vec::new())
     }
 
     fn execute(
