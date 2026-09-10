@@ -597,6 +597,104 @@ pub struct PaneSnapshot {
     pub fork: PaneForkSnapshot,
     /// The ports listened on from at or below this pane's working directory.
     pub ports: Vec<u16>,
+    /// What this pane's agent delegated, or why that is unknown. `None` on a
+    /// pane Herdr detected no agent in: a shell, an editor or a log gets
+    /// neither chips nor an uninstrumented mark, because there is no agent
+    /// there to have children (PRD B22, D-30).
+    pub children: Option<PaneChildrenSnapshot>,
+    /// The breadcrumb: this pane's ancestors root first, then this pane. It
+    /// is empty for a lineage root, which is what leaves its header plain.
+    pub lineage_path: Vec<LineageStepSnapshot>,
+}
+
+/// What a pane header says about the work its agent delegated.
+///
+/// The three shapes it can take are deliberately different screens: chips
+/// mean known children, an empty chip list on an instrumented pane means a
+/// confirmed "this agent is working alone", and `instrumented: false` means
+/// Hide cannot see and says why (PRD B21, B23, B32).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct PaneChildrenSnapshot {
+    pub instrumented: bool,
+    /// The first matching reason from the fixed order, present exactly when
+    /// `instrumented` is false. It is never empty and never a guess.
+    pub uninstrumented_reason: Option<String>,
+    /// The accessible name for the uninstrumented mark, so the symbol never
+    /// carries the meaning by itself (PRD B37).
+    pub uninstrumented_label: Option<String>,
+    /// One chip per pane child, in the lineage's own child order. Only panes:
+    /// an in-process subagent has no pane, so it cannot be a chip the
+    /// operator clicks into (PRD D-63).
+    pub chips: Vec<ChildChipSnapshot>,
+    /// The parent badge, chosen from the pane children by the same priority
+    /// the Workspace summary uses. In-process subagents take no part in it.
+    pub representative: Option<ChildChipSnapshot>,
+    /// In-process subagents, summarised and never added to the chip count.
+    pub subagents: SubagentCountsSnapshot,
+}
+
+impl PaneChildrenSnapshot {
+    /// The permanent answer for a pane on another machine.
+    pub fn remote() -> Self {
+        let reason = hide_agent_hooks::diagnosis::UninstrumentedReason::RemoteHost;
+        Self {
+            instrumented: false,
+            uninstrumented_reason: Some(reason.message().to_owned()),
+            uninstrumented_label: Some(reason.accessibility_label().to_owned()),
+            ..Self::default()
+        }
+    }
+}
+
+/// One child in the pane header's chip row.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChildChipSnapshot {
+    pub pane_id: String,
+    /// The short name the chip shows beside its mark.
+    pub label: String,
+    /// The longer description for the chip's tooltip.
+    pub detail: String,
+    pub agent_kind: String,
+    pub demand: String,
+    pub activity: String,
+    pub emphasized: bool,
+    pub symbol: String,
+    pub status_label: String,
+    /// Whether this child is still delegated work. It lifts when the child
+    /// has been stalled long enough to become the operator's problem.
+    pub delegated: bool,
+}
+
+/// The in-process subagents a pane's session reports.
+///
+/// Each count is optional because each is separately knowable. An adapter
+/// that cannot observe one leaves it `None`, and `None` draws as unknown
+/// rather than as zero (PRD B24, B32, D-53).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct SubagentCountsSnapshot {
+    pub working: Option<u32>,
+    pub done: Option<u32>,
+    pub blocked: Option<u32>,
+}
+
+impl SubagentCountsSnapshot {
+    /// Whether there is anything at all to draw.
+    pub fn is_silent(&self) -> bool {
+        self.working.is_none_or(|count| count == 0)
+            && self.done.is_none_or(|count| count == 0)
+            && self.blocked.is_none_or(|count| count == 0)
+    }
+}
+
+/// One step of a pane header's lineage breadcrumb.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LineageStepSnapshot {
+    pub pane_id: String,
+    pub label: String,
+    /// That layer's other agents, in the parent's own child order, so the
+    /// step's dropdown can offer them without a second traversal. It includes
+    /// the step itself, so the current position is visible in the list.
+    pub siblings: Vec<ChildChipSnapshot>,
 }
 
 /// The TCP listeners the machine has, with where each was started from.

@@ -1014,6 +1014,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "hide-agent-hooks",
  "libc",
  "regex",
  "regress 0.12.0",

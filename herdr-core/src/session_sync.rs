@@ -214,6 +214,15 @@ fn run_coordinator(
     let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
     let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
     let mut catalog_cache: Option<CatalogCache> = None;
+    // The hook-install state is two small file reads of this machine's own
+    // configuration, so the local coordinator takes it once before the first
+    // connect. It is not a poll: it changes only when the operator installs,
+    // reinstalls or removes, and each of those republishes it (PRD B36).
+    if context.is_local()
+        && let Some(home) = home_path.as_deref()
+    {
+        publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+    }
     let mut usage_reader = context
         .is_local()
         .then(|| crate::usage::ProviderUsageReader::new(home_path));
@@ -821,6 +830,26 @@ fn publish_provider_usage(
     true
 }
 
+/// Hands the runtime the hook-install judgement, which was read on this
+/// thread rather than under the mutex.
+fn publish_hook_diagnosis(
+    context: &SessionSyncContext,
+    diagnosis: hide_agent_hooks::Diagnosis,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_hook_diagnosis(diagnosis),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
 /// Reads what the changes view needs, holding the runtime mutex only for the
 /// read itself. `None` means the runtime is gone.
 fn read_changes_request(
@@ -1388,6 +1417,14 @@ impl SessionReplica {
                                     // so a remote pane reports none rather than
                                     // claiming the local machine's.
                                     ports: Vec::new(),
+                                    // Hide installs no hook on another
+                                    // machine, so a remote agent pane is
+                                    // permanently uninstrumented and says so
+                                    // rather than showing an empty chip row
+                                    // (PRD B33, D-28, D-49).
+                                    children: agent
+                                        .map(|_| crate::model::PaneChildrenSnapshot::remote()),
+                                    lineage_path: Vec::new(),
                                 }
                             })
                             .collect::<Vec<_>>();

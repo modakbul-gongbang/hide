@@ -291,3 +291,166 @@ fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() 
     assert_eq!(grandchild.lineage_parent_pane_id, None);
     assert!(!grandchild.delegated, "an orphaned grandchild is a root of its own");
 }
+
+// PRD B5, B21-B24, B32, D-30, D-63: what a pane header is allowed to say
+// about the work its agent delegated.
+fn hook_status_of(
+    status: Option<hide_agent_hooks::HookStatus>,
+) -> impl Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus> {
+    move |_| status.clone()
+}
+
+fn instrumented_rows(agent_kind: &str) -> Vec<SidebarAgentSnapshot> {
+    let mut rows = project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [
+            {"id":"Observer","pane_id":"parent","agent":agent_kind,"agent_status":"working","state_change_seq":1},
+            {"id":"Worker","pane_id":"child","agent":agent_kind,"spawned_from_pane_id":"parent",
+             "agent_status":"idle","state_change_seq":2,"tokens":{"status_error_new":"x"}},
+            {"id":"Runner","pane_id":"sibling","agent":agent_kind,"spawned_from_pane_id":"parent",
+             "agent_status":"working","state_change_seq":3}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    rows
+}
+
+#[test]
+fn a_pane_with_children_lists_them_and_names_the_one_that_speaks_for_them() {
+    let rows = instrumented_rows("claude");
+    let installed = hook_status_of(Some(hide_agent_hooks::HookStatus::Installed {
+        version: hide_agent_hooks::HOOK_VERSION,
+    }));
+    let tokens = crate::agent_hooks::PaneHookTokens {
+        version: Some(hide_agent_hooks::HOOK_VERSION),
+        working: Some(2),
+        done: Some(4),
+        blocked: None,
+    };
+    let children =
+        crate::sidebar::project_pane_children(&rows, "parent", tokens, &installed).unwrap();
+
+    assert!(children.instrumented);
+    assert_eq!(children.uninstrumented_reason, None);
+    let labels: Vec<_> = children.chips.iter().map(|chip| chip.label.as_str()).collect();
+    assert_eq!(labels, ["Runner", "Worker"], "chips follow the lineage's own child order");
+    assert!(children.chips.iter().all(|chip| chip.delegated));
+    // An unread error outranks a working sibling, by the same rule the
+    // Workspace summary chip uses.
+    assert_eq!(children.representative.as_ref().unwrap().label, "Worker");
+    assert_eq!(children.representative.as_ref().unwrap().symbol, "\u{d7}");
+
+    // In-process subagents are summarised separately and never folded into
+    // the chip count.
+    assert_eq!(children.subagents.working, Some(2));
+    assert_eq!(children.subagents.done, Some(4));
+    assert_eq!(children.subagents.blocked, None);
+    assert_eq!(children.chips.len(), 2, "two pane children, whatever the subagent count says");
+}
+
+#[test]
+fn an_instrumented_pane_with_no_children_is_a_different_answer_from_one_hide_cannot_see() {
+    let rows = instrumented_rows("claude");
+    let installed = hook_status_of(Some(hide_agent_hooks::HookStatus::Installed {
+        version: hide_agent_hooks::HOOK_VERSION,
+    }));
+    let reported = crate::agent_hooks::PaneHookTokens {
+        version: Some(hide_agent_hooks::HOOK_VERSION),
+        working: Some(0),
+        done: Some(0),
+        blocked: None,
+    };
+    let alone =
+        crate::sidebar::project_pane_children(&rows, "child", reported, &installed).unwrap();
+    assert!(alone.instrumented);
+    assert!(alone.chips.is_empty());
+    assert!(alone.subagents.is_silent());
+    assert_eq!(alone.uninstrumented_reason, None);
+
+    // The same pane before its session ever ran the hook.
+    let silent = crate::sidebar::project_pane_children(
+        &rows,
+        "child",
+        crate::agent_hooks::PaneHookTokens::default(),
+        &installed,
+    )
+    .unwrap();
+    assert!(!silent.instrumented);
+    assert!(
+        silent
+            .uninstrumented_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Restart the agent")),
+        "the operator is told which of the reasons applies"
+    );
+    assert!(silent.subagents.working.is_none(), "an unknown count is never a zero");
+
+    // The hook only ever answered for in-process subagents. Pane children come
+    // from Herdr's lineage, so an uninstrumented parent still lists them.
+    let uninstrumented_parent = crate::sidebar::project_pane_children(
+        &rows,
+        "parent",
+        crate::agent_hooks::PaneHookTokens::default(),
+        &installed,
+    )
+    .unwrap();
+    assert!(!uninstrumented_parent.instrumented);
+    assert_eq!(uninstrumented_parent.chips.len(), 2);
+    assert!(uninstrumented_parent.subagents.working.is_none());
+}
+
+#[test]
+fn a_pane_with_no_agent_gets_neither_chips_nor_a_mark() {
+    let rows = instrumented_rows("claude");
+    let installed = hook_status_of(Some(hide_agent_hooks::HookStatus::Installed {
+        version: hide_agent_hooks::HOOK_VERSION,
+    }));
+    assert!(
+        crate::sidebar::project_pane_children(
+            &rows,
+            "a-plain-shell",
+            crate::agent_hooks::PaneHookTokens::default(),
+            &installed,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn an_agent_hide_has_no_adapter_for_says_so_instead_of_guessing_a_runtime() {
+    let rows = instrumented_rows("gemini");
+    let children = crate::sidebar::project_pane_children(
+        &rows,
+        "parent",
+        crate::agent_hooks::PaneHookTokens::default(),
+        &hook_status_of(None),
+    )
+    .unwrap();
+    assert!(!children.instrumented);
+    assert_eq!(
+        children.uninstrumented_reason.as_deref(),
+        Some("Child information is unavailable for this pane.")
+    );
+    assert!(children.uninstrumented_label.is_some(), "the mark carries an accessible name");
+}
+
+#[test]
+fn the_breadcrumb_is_the_ancestors_then_the_pane_with_each_layers_siblings() {
+    let rows = instrumented_rows("claude");
+    assert!(
+        crate::sidebar::project_lineage_path(&rows, "parent").is_empty(),
+        "a root has nowhere to go back to"
+    );
+    let path = crate::sidebar::project_lineage_path(&rows, "child");
+    assert_eq!(
+        path.iter().map(|step| step.pane_id.as_str()).collect::<Vec<_>>(),
+        ["parent", "child"]
+    );
+    assert!(path[0].siblings.is_empty());
+    assert_eq!(
+        path[1].siblings.iter().map(|s| s.pane_id.as_str()).collect::<Vec<_>>(),
+        ["sibling", "child"],
+        "the step's dropdown offers that layer, including where the operator is"
+    );
+}

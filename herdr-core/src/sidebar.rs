@@ -255,6 +255,24 @@ fn agent_symbol(demand: AgentDemand, activity: AgentActivity, unread: bool) -> &
     }
 }
 
+/// Where a row stands when one row has to speak for several.
+///
+/// Group order first, then the worst demand inside it, with an unknown
+/// activity ahead of an ordinary idle so missing information is not hidden by
+/// a quiet sibling. The Workspace summary chip and the pane header's parent
+/// badge both read it, so the two cannot disagree about which child a badge
+/// is describing (docs/status-model.md, Workspace aggregation).
+pub fn representative_rank(agent: &SidebarAgentSnapshot) -> (u8, u8) {
+    let demand_rank = match demand_of(agent) {
+        AgentDemand::Error => 0,
+        AgentDemand::Approval => 1,
+        AgentDemand::Question => 2,
+        AgentDemand::None if agent.activity == "unknown" => 3,
+        AgentDemand::None => 4,
+    };
+    (group_of(agent).rank(), demand_rank)
+}
+
 /// Aggregate physical pane ownership, never the visual lineage tree or raised rows.
 /// Canonical order breaks ties after group and demand priority.
 pub fn sync_checkout_agent_summaries(
@@ -300,14 +318,7 @@ pub fn sync_checkout_agent_summaries(
                 }
             }
         }
-        let demand_rank = match demand_of(agent) {
-            AgentDemand::Error => 0,
-            AgentDemand::Approval => 1,
-            AgentDemand::Question => 2,
-            AgentDemand::None if agent.activity == "unknown" => 3,
-            AgentDemand::None => 4,
-        };
-        let rank = (group.rank(), demand_rank);
+        let rank = representative_rank(agent);
         if ranks[index].is_none_or(|best| rank < best) {
             ranks[index] = Some(rank);
             summary.representative_pane_id = Some(agent.pane_id.clone());
@@ -533,6 +544,120 @@ pub fn apply_lineage(
         agent.raised_hint = hint;
         agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
     }
+}
+
+/// The chip one agent shows as somebody else's child.
+fn child_chip(agent: &SidebarAgentSnapshot) -> crate::model::ChildChipSnapshot {
+    crate::model::ChildChipSnapshot {
+        pane_id: agent.pane_id.clone(),
+        // The name the operator gave the chat, when there is one; otherwise
+        // Herdr's own agent name. Never the missing-summary prompt, which is
+        // an instruction to the operator rather than a name for anything.
+        label: agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+        detail: if agent.summary == MISSING_SUMMARY {
+            agent.status_label.clone()
+        } else {
+            agent.summary.clone()
+        },
+        agent_kind: agent.agent_kind.clone(),
+        demand: agent.demand.clone(),
+        activity: agent.activity.clone(),
+        emphasized: agent.emphasized,
+        symbol: agent.symbol.clone(),
+        status_label: agent.status_label.clone(),
+        delegated: agent.delegated,
+    }
+}
+
+/// What one pane's header says about the work its agent delegated.
+///
+/// Returns `None` for a pane with no agent: a shell, an editor or a log has
+/// no children to report and gets no mark saying so (PRD B22, D-30).
+pub fn project_pane_children(
+    agents: &[SidebarAgentSnapshot],
+    pane_id: &str,
+    tokens: crate::agent_hooks::PaneHookTokens,
+    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+) -> Option<crate::model::PaneChildrenSnapshot> {
+    let agent = agents.iter().find(|agent| agent.pane_id == pane_id)?;
+    let runtime = crate::agent_hooks::runtime_of(&agent.agent_kind);
+    let status = runtime.and_then(status_of);
+    let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
+        hide_agent_hooks::diagnosis::PaneObservation {
+            remote: crate::agent_hooks::is_remote_pane(pane_id),
+            runtime,
+            token_version: tokens.version,
+            working: tokens.working,
+            done: tokens.done,
+            blocked: tokens.blocked,
+        },
+        status.as_ref(),
+    );
+    // Pane children come from the lineage, which Herdr reports directly, so
+    // they are known whether or not the hook is installed. Only the
+    // in-process count depends on instrumentation (PRD D-24).
+    let chips = agent
+        .lineage_child_pane_ids
+        .iter()
+        .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
+        .map(child_chip)
+        .collect::<Vec<_>>();
+    let representative = agent
+        .lineage_child_pane_ids
+        .iter()
+        .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
+        .min_by_key(|child| representative_rank(child))
+        .map(child_chip);
+    Some(crate::model::PaneChildrenSnapshot {
+        instrumented: instrumentation.instrumented,
+        uninstrumented_reason: instrumentation
+            .reason
+            .map(|reason| reason.message().to_owned()),
+        uninstrumented_label: instrumentation
+            .reason
+            .map(|reason| reason.accessibility_label().to_owned()),
+        chips,
+        representative,
+        subagents: crate::model::SubagentCountsSnapshot {
+            working: instrumentation.working,
+            done: instrumentation.done,
+            blocked: instrumentation.blocked,
+        },
+    })
+}
+
+/// The breadcrumb for one pane: its ancestors root first, each carrying that
+/// layer's siblings for the step's dropdown.
+///
+/// Derived from the current list every time, so a departed ancestor shortens
+/// it on the next projection with nothing to repair (PRD B9, D-18).
+pub fn project_lineage_path(
+    agents: &[SidebarAgentSnapshot],
+    pane_id: &str,
+) -> Vec<crate::model::LineageStepSnapshot> {
+    let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane_id) else {
+        return Vec::new();
+    };
+    if agent.lineage_path_pane_ids.is_empty() {
+        // A root has nowhere to go back to, so its header stays plain.
+        return Vec::new();
+    }
+    agent
+        .lineage_path_pane_ids
+        .iter()
+        .chain(std::iter::once(&agent.pane_id))
+        .filter_map(|step| agents.iter().find(|agent| &agent.pane_id == step))
+        .map(|step| crate::model::LineageStepSnapshot {
+            pane_id: step.pane_id.clone(),
+            label: child_chip(step).label,
+            siblings: step
+                .lineage_sibling_pane_ids
+                .iter()
+                .filter_map(|sibling| agents.iter().find(|agent| &agent.pane_id == sibling))
+                .map(child_chip)
+                .collect(),
+        })
+        .collect()
 }
 
 /// Collapse state belongs to pane existence, not whether it currently has
@@ -991,6 +1116,8 @@ mod tests {
                         activity_at_unix_ms: None,
                         fork: Default::default(),
                         ports: vec![],
+                        children: None,
+                        lineage_path: Vec::new(),
                     })
                     .collect(),
                 id: None,

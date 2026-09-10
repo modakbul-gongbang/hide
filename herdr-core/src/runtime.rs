@@ -1202,6 +1202,14 @@ pub struct Runtime {
     /// released. Herdr renders a pane for every attached client, so an attach
     /// nobody is looking at costs a child process here and a render there for
     /// the life of the process.
+    /// What Hide's hook last reported for each pane, read out of the pane
+    /// tokens the session snapshot already carries. Kept between ingests so
+    /// the projection does not have to hold the whole payload alive.
+    pane_hook_tokens: BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
+    /// The hook-install state of each runtime, read off the coordinator
+    /// thread. `None` until that first read lands, which reads as "not known
+    /// yet" rather than as "not installed".
+    hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1461,6 +1469,8 @@ impl Runtime {
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
+            pane_hook_tokens: BTreeMap::new(),
+            hook_diagnosis: None,
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             #[cfg(test)]
@@ -4116,6 +4126,16 @@ impl Runtime {
                 let layout = target_pane_id
                     .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
                     .transpose();
+                self.pane_hook_tokens = payload
+                    .panes
+                    .iter()
+                    .map(|pane| {
+                        (
+                            pane.pane_id.clone(),
+                            crate::agent_hooks::PaneHookTokens::read(&pane.tokens),
+                        )
+                    })
+                    .collect();
                 let projection = project_agents(payload);
                 excluded = projection.excluded;
                 match layout {
@@ -4194,6 +4214,7 @@ impl Runtime {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
             }
+            changed |= self.sync_pane_lineage();
         }
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
@@ -5404,6 +5425,77 @@ impl Runtime {
     /// the agent rows that just had the read axis applied.
     fn sync_pane_status_from_agents(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
         sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
+    }
+
+    /// Refills every pane's child summary and breadcrumb from the final agent
+    /// list.
+    ///
+    /// It runs after the read axis and the lineage, not while the panes are
+    /// built: a chip's mark and emphasis come from the group, the group comes
+    /// from the read axis, and the children come from the lineage, so a pass
+    /// that ran earlier would publish a chip row describing a state the
+    /// sidebar had already moved past.
+    fn sync_pane_lineage(&mut self) -> bool {
+        let agents = std::mem::take(&mut self.snapshot.navigator.agents);
+        let diagnosis = self.hook_diagnosis.clone();
+        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
+            diagnosis
+                .as_ref()
+                .and_then(|diagnosis| diagnosis.status_of(runtime))
+                .cloned()
+        };
+        let mut changed = false;
+        for pane in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+            .flat_map(|tab| tab.panes.iter_mut())
+            .chain(
+                self.snapshot
+                    .navigator
+                    .scratch
+                    .tabs
+                    .iter_mut()
+                    .flat_map(|tab| tab.panes.iter_mut()),
+            )
+        {
+            // A remote pane's answer is fixed and was decided where it was
+            // projected; the local hook state says nothing about it.
+            if crate::agent_hooks::is_remote_pane(&pane.id) {
+                continue;
+            }
+            let tokens = self
+                .pane_hook_tokens
+                .get(&pane.id)
+                .copied()
+                .unwrap_or_default();
+            let children =
+                crate::sidebar::project_pane_children(&agents, &pane.id, tokens, &status_of);
+            let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
+            if pane.children != children {
+                pane.children = children;
+                changed = true;
+            }
+            if pane.lineage_path != lineage_path {
+                pane.lineage_path = lineage_path;
+                changed = true;
+            }
+        }
+        self.snapshot.navigator.agents = agents;
+        changed
+    }
+
+    /// Takes the hook-install judgement the coordinator read off the lock.
+    pub(crate) fn ingest_hook_diagnosis(&mut self, diagnosis: hide_agent_hooks::Diagnosis) -> bool {
+        if self.hook_diagnosis.as_ref() == Some(&diagnosis) {
+            return false;
+        }
+        self.hook_diagnosis = Some(diagnosis);
+        self.sync_pane_lineage();
+        true
     }
 
     /// Steps one text scale by a direction the shell sent, or names the
@@ -10298,6 +10390,10 @@ fn project_layout_panes(
                 activity_at_unix_ms: agent.and_then(|agent| agent.last_activity.parse().ok()),
                 fork: pane_fork_snapshot(agent),
                 ports,
+                // Both are refilled from the final agent list once the read
+                // axis and the lineage are applied; see `sync_pane_lineage`.
+                children: None,
+                lineage_path: Vec::new(),
             }
         })
         .collect()
@@ -12901,6 +12997,8 @@ mod tests {
             activity_at_unix_ms: None,
             fork: PaneForkSnapshot::default(),
             ports: Vec::new(),
+            children: None,
+            lineage_path: Vec::new(),
         }
     }
 

@@ -1,3 +1,4 @@
+pub mod agent_hooks;
 mod changes;
 pub mod chromux;
 pub mod diagnostics;
