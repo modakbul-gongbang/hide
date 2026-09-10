@@ -240,7 +240,12 @@ It is committed, so a design change shows up in `git diff` beside the code chang
 
 `.pen` is JSON, and pen.dev is a local CLI reached over MCP or headlessly:
 
-    pen interactive --in design/hide.pen --out design/hide.pen
+    pen interactive --in design/hide.pen --out design/hide.pen                    # drive it yourself
+    pen --repo . --in design/hide.pen --out design/hide.pen --prompt "..."        # hand it to pen's own agent
+
+**`--repo .` is not optional.** It is the only thing that makes pen's agent read this file.
+Without it the agent reads nothing, even when it is launched from inside the checkout - `--repo` does not fall back to the working directory.
+Verified by planting a marker in `AGENTS.md`: with the flag the agent quotes it back, without the flag it reports no project instructions at all.
 
 Prefer structure a script could have produced over structure only a hand could have clicked, because that is what makes the file reviewable.
 
@@ -263,7 +268,25 @@ SF Mono is not installed, so the canvas uses **JetBrains Mono**, which `DESIGN.m
 `ss03` cannot ride on a token, so type renders as plain Inter; sizes and spacing are exact, glyph shapes are not.
 For the same reason there is no pixel-comparison gate: it would be permanently red or uselessly loose.
 
-**Three traps that cost a run each.**
-pen.dev is not HTML and not CSS - `alignItems: baseline`, `alignItems: stretch`, `margin` and percentage sizes all error, so think in the `.pen` schema rather than translating web properties.
-`--enable-preview` crashes the renderer on the second `execute`; use `TakeScreenshot` inside `execute` instead.
-`width` and `height` silently drop a `$variable` reference and leave the node at zero, so those two properties alone carry numeric literals - which is exactly why the generated check earns its keep on everything else.
+**Five traps, each of which cost a run or a wrong answer.**
+The last two are the dangerous ones, because they fail silently and look like they worked.
+
+- pen.dev is not HTML and not CSS - `alignItems: baseline`, `alignItems: stretch`, `margin` and percentage sizes all error, so think in the `.pen` schema rather than translating web properties.
+- `--enable-preview` crashes the renderer on the second `execute`; use `TakeScreenshot` inside `execute` instead.
+- `width` and `height` silently drop a `$variable` reference and leave the node at zero, so those two properties alone carry numeric literals - which is exactly why the generated check earns its keep on everything else.
+- **A variable reached through `imports` does not resolve, and renders black.** A second `.pen` file importing this one and filling a frame with `$--color-panel` drew `#000000`; the same variable declared locally drew `#1D1F21`, matching the literal exactly. There is no error. This is why there is one canvas file and not a scratch file beside it.
+- **A `context` node does not steer the agent.** A context node carrying a naming rule and "never use a literal hex" was ignored outright: the agent named the frame `Dark Frame` and filled it with `#1A1A1A`. Conventions have to arrive through `--repo .`, or not at all.
+
+### Scratch work on the canvas
+
+Exploration goes in the same file, in a band below the boards:
+
+- name it `Scratch / <topic>`, so it sorts away from the `Sidebar /`, `Panel /`, `Agreed /`, `Audit /` and `Proposal /` prefixes
+- place it at `y: 1000` or below; the boards occupy `y: 0` and are 900 tall, and the components sit above at `y: -1080`
+- when it earns its place, redraw it as a `Proposal /` board and delete the scratch; otherwise just delete it
+
+It goes in `design/hide.pen` rather than a scratch file of its own because that is the only place the tokens resolve; see the traps below.
+Scratch boards cost the contract nothing - `check-pen-tokens.mjs` reads only the document's `variables`, and the generator preserves every node it finds.
+
+Anything drawn inside the pen desktop app is scratch by default.
+The app's own agent has no way to reach this file, so assume its output carries literal colours and off-scale numbers, and clean it up when you promote it rather than while you are still exploring.
