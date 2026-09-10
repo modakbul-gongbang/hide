@@ -222,3 +222,72 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
     assert!(restored.collapsed_agent_pane_ids.is_empty());
     let _ = std::fs::remove_file(&runtime.state_path);
 }
+
+// PRD B11, B13, B14, D-36, D-52: ownership is the fourth derived axis, and it
+// is read off the lineage rather than stored anywhere.
+#[test]
+fn ownership_marks_descendants_delegated_and_hands_an_orphan_back_to_the_operator() {
+    let mut rows = lineage_rows();
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let row = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().find(|row| row.pane_id == id).unwrap().clone()
+    };
+    assert!(!row(&rows, "parent").delegated, "a lineage root is the operator's own work");
+    assert!(row(&rows, "child").delegated);
+    assert!(row(&rows, "grandchild").delegated);
+    // The delegation source the row already carried is what names the owner.
+    assert_eq!(row(&rows, "child").raised_hint.as_deref(), Some("↳ from Parent"));
+
+    rows.retain(|row| row.pane_id != "parent");
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let orphan = row(&rows, "child");
+    assert!(!orphan.delegated, "a lost parent returns ownership to the operator");
+    assert!(orphan.lineage_orphan);
+    assert!(row(&rows, "grandchild").delegated, "its own descendants stay delegated");
+}
+
+// PRD B7, B9, B10, D-18, D-19: the breadcrumb and its per-step sibling list
+// are derived every time from the lineage, so nothing can go stale.
+#[test]
+fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
+    let mut rows = lineage_rows();
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let row = |id: &str| rows.iter().find(|row| row.pane_id == id).unwrap();
+
+    assert_eq!(row("parent").lineage_path_pane_ids, Vec::<String>::new());
+    assert_eq!(row("child").lineage_path_pane_ids, ["parent"]);
+    assert_eq!(row("grandchild").lineage_path_pane_ids, ["parent", "child"]);
+    assert_eq!(
+        row("grandchild").lineage_parent_pane_id.as_deref(),
+        Some("child")
+    );
+
+    // A step's dropdown offers that layer, in the parent's own child order,
+    // and includes the step itself so the current position is visible.
+    assert_eq!(row("child").lineage_sibling_pane_ids, ["sibling", "child"]);
+    assert_eq!(row("sibling").lineage_sibling_pane_ids, ["sibling", "child"]);
+    assert_eq!(row("grandchild").lineage_sibling_pane_ids, ["grandchild"]);
+    assert_eq!(
+        row("parent").lineage_sibling_pane_ids,
+        Vec::<String>::new(),
+        "the layer above a root is the sidebar, not the breadcrumb"
+    );
+}
+
+// PRD D-18: the path is a function of the current list, so a child exiting
+// leaves every surviving row's breadcrumb correct with no stored state to fix.
+#[test]
+fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() {
+    let mut rows = lineage_rows();
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    assert_eq!(
+        rows.iter().find(|row| row.pane_id == "grandchild").unwrap().lineage_path_pane_ids,
+        ["parent", "child"]
+    );
+    rows.retain(|row| row.pane_id != "child");
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let grandchild = rows.iter().find(|row| row.pane_id == "grandchild").unwrap();
+    assert_eq!(grandchild.lineage_path_pane_ids, Vec::<String>::new());
+    assert_eq!(grandchild.lineage_parent_pane_id, None);
+    assert!(!grandchild.delegated, "an orphaned grandchild is a root of its own");
+}

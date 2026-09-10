@@ -292,6 +292,33 @@ pub struct SidebarAgentSnapshot {
     /// from Herdr's pane metadata token. Absent for an agent Hide did not
     /// start through the composer, which falls back to its tab label.
     pub chat_title: Option<String>,
+    /// Ownership, derived from the lineage alone: a root is the operator's own
+    /// work, a descendant is work the root delegated. It is the fourth derived
+    /// axis beside demand, activity and read, and it is advice rather than a
+    /// boundary - a delegated pane is still selectable and still takes input,
+    /// because the operator has to be able to reach one when it escalates
+    /// (PRD D-36, D-56).
+    ///
+    /// An orphan is a root again: when the parent is gone, ownership comes
+    /// back to the person (PRD D-52).
+    pub delegated: bool,
+    /// The pane that spawned this one, when that pane's agent is still in the
+    /// list. `spawned_from_pane_id` records what Herdr said; this records
+    /// which row it actually resolved to, so a breadcrumb never points at a
+    /// pane that is not there.
+    pub lineage_parent_pane_id: Option<String>,
+    /// The ancestors between the lineage root and this agent, root first and
+    /// excluding this agent. The breadcrumb is this list; nothing persists a
+    /// visited path, because a stored one rots across a restart, a tab switch
+    /// or a child exiting (PRD D-18).
+    pub lineage_path_pane_ids: Vec<String>,
+    /// Every agent sharing this agent's parent, in the same order the parent
+    /// lists its children, including this agent. It is what a breadcrumb
+    /// step's dropdown offers (PRD B10).
+    ///
+    /// A root has none: the layer above a root is the sidebar, not the
+    /// breadcrumb, and independent roots are not one another's siblings.
+    pub lineage_sibling_pane_ids: Vec<String>,
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,

@@ -473,12 +473,29 @@ pub fn apply_lineage(
         });
     }
     for index in 0..agents.len() {
+        // Walk to the root, remembering the way, so the breadcrumb is the
+        // same walk the depth already costs rather than a second traversal.
+        let mut ancestors = Vec::new();
         let mut root = index;
-        let mut depth = 0;
         while let Some(parent) = parents[root] {
+            ancestors.push(parent);
             root = parent;
-            depth += 1;
         }
+        let depth = ancestors.len();
+        ancestors.reverse();
+        let path = ancestors
+            .iter()
+            .map(|ancestor| agents[*ancestor].pane_id.clone())
+            .collect::<Vec<_>>();
+        let siblings = parents[index]
+            .map(|parent| {
+                children[parent]
+                    .iter()
+                    .map(|sibling| agents[*sibling].pane_id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let parent_pane_id = parents[index].map(|parent| agents[parent].pane_id.clone());
         let hint = agents[index].spawned_from_pane_id.as_ref().map(|pane| {
             let name = by_pane
                 .get(pane)
@@ -501,6 +518,12 @@ pub fn apply_lineage(
             .map(|child| agents[*child].pane_id.clone())
             .collect();
         let agent = &mut agents[index];
+        // Ownership is the depth and nothing else. An orphan resolved to no
+        // parent, so it is a root here and the dimming lifts with it.
+        agent.delegated = depth > 0;
+        agent.lineage_parent_pane_id = parent_pane_id;
+        agent.lineage_path_pane_ids = path;
+        agent.lineage_sibling_pane_ids = siblings;
         agent.lineage_depth = depth;
         agent.lineage_child_pane_ids = child_ids;
         agent.lineage_root_checkout_id = root_checkout;
@@ -663,6 +686,10 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         chat_title,
+        delegated: false,
+        lineage_parent_pane_id: None,
+        lineage_path_pane_ids: Vec::new(),
+        lineage_sibling_pane_ids: Vec::new(),
         lineage_depth: 0,
         lineage_child_pane_ids: Vec::new(),
         lineage_root_checkout_id: None,
