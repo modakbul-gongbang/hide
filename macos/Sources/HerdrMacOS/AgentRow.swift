@@ -49,14 +49,14 @@ enum AgentRowDensity {
     /// already the heading above it.
     case compact
 
-    var badgeSize: CGFloat { self == .prominent ? 19 : 16 }
+    var badgeSize: CGFloat { self == .prominent ? 19 : HideTheme.compactAgentBadgeSize }
     var titleWeight: Font.Weight { self == .prominent ? .semibold : .regular }
     var titleColor: Color { self == .prominent ? HideTheme.primary : HideTheme.secondary }
     /// Compact marks align beneath the Workspace branch icon.
     var leadingPadding: CGFloat { self == .prominent ? 14 : HideTheme.compactAgentLeadingInset }
     var iconSpacing: CGFloat { self == .compact ? HideTheme.spacingXS : HideTheme.spacingSM }
     var trailingPadding: CGFloat { self == .prominent ? 14 : 9 }
-    var verticalPadding: CGFloat { self == .prominent ? 7 : 5 }
+    var verticalPadding: CGFloat { self == .prominent ? 7 : HideTheme.compactAgentRowVerticalPadding }
 }
 
 /// A row's resolved visual policy. Surface wrappers choose it once so the
@@ -99,13 +99,29 @@ struct AgentRowPresentation: Equatable {
     let qualifier: String?
     let elapsed: String
     let ambient: CoreAmbientSignal?
+    /// Whether this row is somebody else's work. A delegated row is subdued
+    /// so that scanning the sidebar for bright rows finds the operator's own
+    /// (PRD B11, D-36).
+    var delegated: Bool = false
+    /// A descendant of this row has been waiting too long. The core writes
+    /// the sentence; no view builds one out of a level.
+    var stallNotice: String? = nil
+    /// Why Hide cannot say what this pane's session has spawned, as the
+    /// tooltip sentence and the mark's accessible name (PRD B21, D-60).
+    var uninstrumentedReason: String? = nil
+    var uninstrumentedLabel: String? = nil
 }
 
 extension AgentRowPresentation {
     /// A sidebar row. At `prominent` the project name is the title and the
     /// summary sits beneath it; nested under a checkout the summary is the
     /// title on its own, because the project name is already the heading.
-    init(agent: SidebarAgent, density: AgentRowDensity, connected: Bool) {
+    init(
+        agent: SidebarAgent,
+        density: AgentRowDensity,
+        connected: Bool,
+        children: CorePaneChildren? = nil
+    ) {
         paneID = agent.paneID
         agentKind = agent.agentKind
         let status = AgentStatusPresentation(agent: agent, connected: connected)
@@ -117,6 +133,12 @@ extension AgentRowPresentation {
         qualifier = density == .prominent ? agent.checkoutQualifier : nil
         elapsed = agent.elapsed
         ambient = agent.ambient
+        delegated = agent.delegated
+        stallNotice = agent.stallNotice
+        if let children, !children.instrumented {
+            uninstrumentedReason = children.uninstrumentedReason
+            uninstrumentedLabel = children.uninstrumentedLabel
+        }
     }
 
     /// A Scratch row. The chat's own title is the line that identifies it -
@@ -182,6 +204,11 @@ struct AgentRow: View {
     var isFocused: Bool = false
     var shortcutNumber: Int?
     var shortcutVisible = true
+    /// The agent tree draws its own toggle in the column this inset would
+    /// otherwise fill, so it starts the row flush against it. Every other
+    /// compact caller keeps the inset that lines the mark up with the
+    /// checkout row above.
+    var leadingInset: CGFloat?
     let action: () -> Void
     @Environment(\.hidePetAppearance) private var petAppearance
 
@@ -215,7 +242,11 @@ struct AgentRow: View {
                 HStack(spacing: style.contentSpacing) {
                     Text(presentation.title)
                         .hideFont(size: HideTheme.Typography.body, weight: density.titleWeight)
-                        .foregroundStyle(style.titleColor)
+                        // Delegation is drawn as emphasis, not as a new color:
+                        // bright is the operator's, subdued is somebody
+                        // else's, and a stall lifts it back by clearing the
+                        // flag in the core (PRD B11, D-36).
+                        .foregroundStyle(presentation.delegated ? style.muted : style.titleColor)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if let shortcutNumber {
@@ -254,10 +285,34 @@ struct AgentRow: View {
                             .foregroundStyle(HideTheme.danger)
                             .lineLimit(1)
                     }
+                    if let reason = presentation.uninstrumentedReason {
+                        // The second of the mark's three positions. A symbol
+                        // and a name, never a color alone (PRD B21, B37).
+                        Image(systemName: "questionmark.circle")
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+                            .foregroundStyle(style.muted)
+                            .hideTooltip(reason)
+                            .accessibilityLabel(presentation.uninstrumentedLabel ?? reason)
+                    }
+                }
+                if let notice = presentation.stallNotice {
+                    // The safety net saying so in words, beside the mark that
+                    // carries it, so the meaning is never the color's alone
+                    // (PRD B17, B18, B37).
+                    HStack(spacing: HideTheme.spacingXXS) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+                        Text(notice)
+                            .hideFont(size: HideTheme.Typography.micro, weight: .medium)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundStyle(HideTheme.warning)
+                    .accessibilityLabel(notice)
                 }
             }
         }
-        .padding(.leading, density.leadingPadding)
+        .padding(.leading, leadingInset ?? density.leadingPadding)
         .padding(.trailing, density.trailingPadding)
         .padding(.vertical, density.verticalPadding)
         .background(
@@ -274,6 +329,9 @@ struct AgentRow: View {
         if !presentation.elapsed.isEmpty { values.append(presentation.elapsed) }
         if let ambientLabel { values.append(ambientLabel) }
         if let failedLabel { values.append(failedLabel) }
+        if presentation.delegated { values.append("Delegated") }
+        if let label = presentation.uninstrumentedLabel { values.append(label) }
+        if let notice = presentation.stallNotice { values.append(notice) }
         return values.joined(separator: ", ")
     }
 

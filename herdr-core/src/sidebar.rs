@@ -218,18 +218,45 @@ impl AgentGroup {
     }
 }
 
-/// Which group a row belongs to, in the order the definitions are read.
+/// Who the row belongs to, as the grouping rule needs to know it.
 ///
-/// A pane Herdr reports as blocked right now stays in Needs You whether or not
-/// the operator has read it: the approval prompt is still on screen waiting,
-/// and it leaves the group when the prompt is answered, not when it is seen.
-pub fn agent_group(
+/// The distinction exists because delegation is only real if the operator
+/// stops being called for the delegated work. A child's question, approval,
+/// error or completion is the parent's problem: it shows on the parent's
+/// badge and never raises the operator's own attention groups (PRD B15, B16,
+/// D-35, D-38). A child stuck long enough to be nobody's problem comes back
+/// as the operator's through `Escalated`, which is the whole point of the
+/// safety net (PRD B18, D-42).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Ownership {
+    /// The operator's own work: a lineage root, or an orphan whose parent is
+    /// gone.
+    Operator,
+    /// Delegated work. Its demands stay with its parent.
+    Delegated,
+    /// Delegated work that stalled past the hard threshold, so ownership has
+    /// come back to the operator.
+    Escalated,
+}
+
+/// The group a row belongs to, given who owns it.
+pub fn agent_group_for(
     demand: AgentDemand,
     activity: AgentActivity,
     unread: bool,
     blocked: bool,
+    ownership: Ownership,
 ) -> AgentGroup {
-    if blocked || (demand != AgentDemand::None && unread) {
+    if ownership == Ownership::Delegated {
+        // The row keeps its own mark and status word; only its claim on the
+        // operator's attention is withheld.
+        return if activity == AgentActivity::Working {
+            AgentGroup::Working
+        } else {
+            AgentGroup::Seen
+        };
+    }
+    if blocked || ownership == Ownership::Escalated || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
     } else if demand == AgentDemand::None && activity == AgentActivity::Stopped && unread {
         AgentGroup::Done
@@ -253,6 +280,43 @@ fn agent_symbol(demand: AgentDemand, activity: AgentActivity, unread: bool) -> &
             AgentActivity::Unknown => "~",
         },
     }
+}
+
+/// Where a row stands when one row has to speak for several.
+///
+/// Group order first, then the worst demand inside it, with an unknown
+/// activity ahead of an ordinary idle so missing information is not hidden by
+/// a quiet sibling. The Workspace summary chip and the pane header's parent
+/// badge both read it, so the two cannot disagree about which child a badge
+/// is describing (docs/status-model.md, Workspace aggregation).
+pub fn representative_rank(agent: &SidebarAgentSnapshot) -> (u8, u8) {
+    rank_within(agent, ownership_of(agent))
+}
+
+/// Where a child stands among its siblings, as the pane that spawned them
+/// sees it.
+///
+/// Delegation moves a child's demand off the *operator's* attention groups,
+/// not out of existence. Its parent is exactly who is supposed to answer it,
+/// so the parent's badge ranks its children as if it owned them; ranking them
+/// the way the sidebar does would flatten every child to Working or Seen and
+/// leave the badge naming a quiet sibling over the one that failed (PRD B15,
+/// B16, D-35, D-38).
+fn child_representative_rank(agent: &SidebarAgentSnapshot) -> (u8, u8) {
+    rank_within(agent, Ownership::Operator)
+}
+
+fn rank_within(agent: &SidebarAgentSnapshot, ownership: Ownership) -> (u8, u8) {
+    let (demand, activity, unread) = axes_of(agent);
+    let demand_rank = match demand {
+        AgentDemand::Error => 0,
+        AgentDemand::Approval => 1,
+        AgentDemand::Question => 2,
+        AgentDemand::None if agent.activity == "unknown" => 3,
+        AgentDemand::None => 4,
+    };
+    let group = agent_group_for(demand, activity, unread, agent.blocked, ownership);
+    (group.rank(), demand_rank)
 }
 
 /// Aggregate physical pane ownership, never the visual lineage tree or raised rows.
@@ -300,14 +364,7 @@ pub fn sync_checkout_agent_summaries(
                 }
             }
         }
-        let demand_rank = match demand_of(agent) {
-            AgentDemand::Error => 0,
-            AgentDemand::Approval => 1,
-            AgentDemand::Question => 2,
-            AgentDemand::None if agent.activity == "unknown" => 3,
-            AgentDemand::None => 4,
-        };
-        let rank = (group.rank(), demand_rank);
+        let rank = representative_rank(agent);
         if ranks[index].is_none_or(|best| rank < best) {
             ranks[index] = Some(rank);
             summary.representative_pane_id = Some(agent.pane_id.clone());
@@ -473,18 +530,46 @@ pub fn apply_lineage(
         });
     }
     for index in 0..agents.len() {
+        // Walk to the root, remembering the way, so the breadcrumb is the
+        // same walk the depth already costs rather than a second traversal.
+        let mut ancestors = Vec::new();
         let mut root = index;
-        let mut depth = 0;
         while let Some(parent) = parents[root] {
+            ancestors.push(parent);
             root = parent;
-            depth += 1;
         }
-        let hint = agents[index].spawned_from_pane_id.as_ref().map(|pane| {
-            let name = by_pane
-                .get(pane)
-                .map(|parent| agents[*parent].id.as_str())
-                .unwrap_or(pane.as_str());
-            format!("↳ from {name}")
+        let depth = ancestors.len();
+        ancestors.reverse();
+        let path = ancestors
+            .iter()
+            .map(|ancestor| agents[*ancestor].pane_id.clone())
+            .collect::<Vec<_>>();
+        let siblings = parents[index]
+            .map(|parent| {
+                children[parent]
+                    .iter()
+                    .map(|sibling| agents[*sibling].pane_id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let parent_pane_id = parents[index].map(|parent| agents[parent].pane_id.clone());
+        // Where this row came from, for a row whose parent is not drawn above
+        // it. The name is the parent agent's when Hide can still see that
+        // agent; a pane id is not a name and is never shown as one, because
+        // the operator cannot act on an internal id (design principle 10).
+        //
+        // When it cannot, the line says only that. Hide knows the pane and
+        // knows no agent is listed there - not that the agent ended, which
+        // is equally consistent with a pane outside this list. Saying
+        // "ended" would be a claim the projection cannot make.
+        let spawned_from = agents[index].spawned_from_pane_id.clone();
+        let spawn_parent = spawned_from
+            .as_ref()
+            .and_then(|pane| by_pane.get(pane))
+            .map(|parent| agents[*parent].id.clone());
+        let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
+            Some(name) => format!("↳ from {name}"),
+            None => "↳ from an agent Hide can't see".to_owned(),
         });
         let orphan = agents[index].spawned_from_pane_id.is_some() && parents[index].is_none();
         let own_checkout = checkouts.get(agents[index].pane_id.as_str());
@@ -501,6 +586,12 @@ pub fn apply_lineage(
             .map(|child| agents[*child].pane_id.clone())
             .collect();
         let agent = &mut agents[index];
+        // Ownership is the depth and nothing else. An orphan resolved to no
+        // parent, so it is a root here and the dimming lifts with it.
+        agent.delegated = depth > 0;
+        agent.lineage_parent_pane_id = parent_pane_id;
+        agent.lineage_path_pane_ids = path;
+        agent.lineage_sibling_pane_ids = siblings;
         agent.lineage_depth = depth;
         agent.lineage_child_pane_ids = child_ids;
         agent.lineage_root_checkout_id = root_checkout;
@@ -508,8 +599,153 @@ pub fn apply_lineage(
         agent.lineage_orphan = orphan;
         agent.lineage_hint = orphan.then(|| hint.clone()).flatten();
         agent.raised_hint = hint;
+        // The pane the line points at, so the shell can offer the jump rather
+        // than printing a dead end. Only set while that pane still holds an
+        // agent Hide can name; an ended one is text and nothing more.
+        agent.spawn_origin_pane_id = spawn_parent.and(spawned_from);
         agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
     }
+    // Ownership was unknown when the rows were first derived, because it is
+    // the lineage that decides it. Rederiving here is what keeps every caller
+    // of this function on one answer instead of each remembering to ask
+    // (engineering rule 13). The order is left alone: this function is read
+    // by index while it walks the tree, and sorting is the ingest's last
+    // step, after the stall clocks have had their say.
+    for agent in agents.iter_mut() {
+        derive_from_axes(agent);
+    }
+}
+
+/// One agent, as every surface that names an agent in a line draws it: the
+/// pane header's chip row, a breadcrumb step's sibling list, and the
+/// Overview worktree row's agent line all read the same fields, so they
+/// cannot describe the same agent differently (PRD B5, B10, B34).
+pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapshot {
+    crate::model::AgentChipSnapshot {
+        pane_id: agent.pane_id.clone(),
+        // The name the operator gave the chat, when there is one; otherwise
+        // Herdr's own agent name. Never the missing-summary prompt, which is
+        // an instruction to the operator rather than a name for anything.
+        label: agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+        detail: if agent.summary == MISSING_SUMMARY {
+            agent.status_label.clone()
+        } else {
+            agent.summary.clone()
+        },
+        agent_kind: agent.agent_kind.clone(),
+        demand: agent.demand.clone(),
+        activity: agent.activity.clone(),
+        emphasized: agent.emphasized,
+        symbol: agent.symbol.clone(),
+        status_label: agent.status_label.clone(),
+        delegated: agent.delegated,
+    }
+}
+
+/// What one pane's header says about the work its agent delegated.
+///
+/// Returns `None` for a pane with no agent: a shell, an editor or a log has
+/// no children to report and gets no mark saying so (PRD B22, D-30).
+pub fn project_pane_children(
+    agents: &[SidebarAgentSnapshot],
+    pane_id: &str,
+    tokens: crate::agent_hooks::PaneHookTokens,
+    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+) -> Option<crate::model::PaneChildrenSnapshot> {
+    let agent = agents.iter().find(|agent| agent.pane_id == pane_id)?;
+    let runtime = crate::agent_hooks::runtime_of(&agent.agent_kind);
+    let status = runtime.and_then(status_of);
+    let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
+        hide_agent_hooks::diagnosis::PaneObservation {
+            remote: crate::agent_hooks::is_remote_pane(pane_id),
+            runtime,
+            token_version: tokens.version,
+            working: tokens.working,
+            done: tokens.done,
+            blocked: tokens.blocked,
+        },
+        status.as_ref(),
+    );
+    // Pane children come from the lineage, which Herdr reports directly, so
+    // they are known whether or not the hook is installed. Only the
+    // in-process count depends on instrumentation (PRD D-24).
+    let chips = agent
+        .lineage_child_pane_ids
+        .iter()
+        .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
+        .map(agent_chip)
+        .collect::<Vec<_>>();
+    let representative = agent
+        .lineage_child_pane_ids
+        .iter()
+        .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
+        .min_by_key(|child| child_representative_rank(child))
+        .map(agent_chip);
+    Some(crate::model::PaneChildrenSnapshot {
+        instrumented: instrumentation.instrumented,
+        uninstrumented_reason: instrumentation
+            .reason
+            .map(|reason| reason.message().to_owned()),
+        uninstrumented_label: instrumentation
+            .reason
+            .map(|reason| reason.accessibility_label().to_owned()),
+        uninstrumented_code: instrumentation
+            .reason
+            .map(|reason| reason.code().to_owned()),
+        chips,
+        representative,
+        subagents: crate::model::SubagentCountsSnapshot {
+            working: instrumentation.working,
+            done: instrumentation.done,
+            blocked: instrumentation.blocked,
+        },
+    })
+}
+
+/// The breadcrumb for one pane: its ancestors root first, each carrying that
+/// layer's siblings for the step's dropdown.
+///
+/// Derived from the current list every time, so a departed ancestor shortens
+/// it on the next projection with nothing to repair (PRD B9, D-18).
+pub fn project_lineage_path(
+    agents: &[SidebarAgentSnapshot],
+    pane_id: &str,
+) -> Vec<crate::model::LineageStepSnapshot> {
+    let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane_id) else {
+        return Vec::new();
+    };
+    if agent.lineage_path_pane_ids.is_empty() {
+        // A root has nowhere to go back to, so its header stays plain.
+        return Vec::new();
+    }
+    agent
+        .lineage_path_pane_ids
+        .iter()
+        .chain(std::iter::once(&agent.pane_id))
+        .filter_map(|step| agents.iter().find(|agent| &agent.pane_id == step))
+        .map(|step| crate::model::LineageStepSnapshot {
+            pane_id: step.pane_id.clone(),
+            label: agent_chip(step).label,
+            siblings: step
+                .lineage_sibling_pane_ids
+                .iter()
+                .filter_map(|sibling| agents.iter().find(|agent| &agent.pane_id == sibling))
+                .map(agent_chip)
+                .collect(),
+        })
+        .collect()
+}
+
+/// Re-derives every value that depends on ownership, then reorders.
+///
+/// The read pass runs before the lineage is known, so ownership is settled
+/// afterwards and the groups it decides have to be recomputed rather than
+/// left describing a row nobody owned yet.
+pub fn rederive_ownership(agents: &mut [SidebarAgentSnapshot]) {
+    for agent in agents.iter_mut() {
+        derive_from_axes(agent);
+    }
+    sort_agents(agents);
 }
 
 /// Collapse state belongs to pane existence, not whether it currently has
@@ -565,9 +801,20 @@ fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivity, bool) {
     (demand, activity, agent.unread)
 }
 
+/// Reads a row's ownership back off its published fields.
+pub fn ownership_of(agent: &SidebarAgentSnapshot) -> Ownership {
+    if agent.stall_level == "hard" {
+        Ownership::Escalated
+    } else if agent.delegated {
+        Ownership::Delegated
+    } else {
+        Ownership::Operator
+    }
+}
+
 pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
     let (demand, activity, unread) = axes_of(agent);
-    agent_group(demand, activity, unread, agent.blocked)
+    agent_group_for(demand, activity, unread, agent.blocked, ownership_of(agent))
 }
 
 /// The demand axis of a projected row, for callers outside this module.
@@ -585,7 +832,7 @@ pub fn demand_of(agent: &SidebarAgentSnapshot) -> AgentDemand {
 /// describe a different read state than the row they sit on.
 fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     let (demand, activity, unread) = axes_of(agent);
-    let group = agent_group(demand, activity, unread, agent.blocked);
+    let group = agent_group_for(demand, activity, unread, agent.blocked, ownership_of(agent));
     agent.group = group.name().to_owned();
     agent.symbol = agent_symbol(demand, activity, unread).to_owned();
     // A row the operator still has to deal with is drawn bright; everything
@@ -663,6 +910,12 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         chat_title,
+        delegated: false,
+        stall_level: String::new(),
+        stall_notice: None,
+        lineage_parent_pane_id: None,
+        lineage_path_pane_ids: Vec::new(),
+        lineage_sibling_pane_ids: Vec::new(),
         lineage_depth: 0,
         lineage_child_pane_ids: Vec::new(),
         lineage_root_checkout_id: None,
@@ -670,6 +923,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_orphan: false,
         lineage_hint: None,
         raised_hint: None,
+        spawn_origin_pane_id: None,
         lineage_collapsed: false,
     })
 }
@@ -964,6 +1218,8 @@ mod tests {
                         activity_at_unix_ms: None,
                         fork: Default::default(),
                         ports: vec![],
+                        children: None,
+                        lineage_path: Vec::new(),
                     })
                     .collect(),
                 id: None,
@@ -971,6 +1227,7 @@ mod tests {
                 checkout_id: None,
                 label: None,
                 empty: false,
+                delegated: false,
             }],
             ..Default::default()
         };
@@ -1182,11 +1439,23 @@ mod tests {
     #[test]
     fn axes_hold_a_blocked_pane_in_needs_you_after_it_is_read() {
         assert_eq!(
-            agent_group(AgentDemand::Approval, AgentActivity::Unknown, false, true),
+            agent_group_for(
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                false,
+                true,
+                Ownership::Operator
+            ),
             AgentGroup::NeedsYou
         );
         assert_eq!(
-            agent_group(AgentDemand::Approval, AgentActivity::Unknown, false, false),
+            agent_group_for(
+                AgentDemand::Approval,
+                AgentActivity::Unknown,
+                false,
+                false,
+                Ownership::Operator
+            ),
             AgentGroup::Seen
         );
     }
@@ -1241,7 +1510,7 @@ mod tests {
             ),
         ];
         for (demand, activity, unread, blocked, expected) in cases {
-            let group = agent_group(demand, activity, unread, blocked);
+            let group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
             assert_eq!(
                 agent_requires_close_confirmation(activity, group),
                 expected,

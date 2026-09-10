@@ -32,6 +32,9 @@ trap cleanup EXIT
 cd "$project_root"
 [[ -f "$icon_path" ]] || { print -u2 "app icon is missing: $icon_path"; exit 1; }
 cargo build --release --locked -p herdr-core
+# The hook helper is what an installed hook runs, so it ships beside the app's
+# own executable; a bundle without it can report hook state but not install one.
+cargo build --release --locked -p hide-agent-hooks --bin hide-agent-hooks
 swift build \
   --package-path "$macos_root" \
   --configuration release \
@@ -48,6 +51,9 @@ mkdir -p \
 install -m 755 \
   "$macos_root/.build/arm64-apple-macosx/release/HerdrMacOS" \
   "$temporary_bundle/Contents/MacOS/HerdrMacOS"
+install -m 755 \
+  "$project_root/target/release/hide-agent-hooks" \
+  "$temporary_bundle/Contents/MacOS/hide-agent-hooks"
 install -m 644 \
   "$macos_root/Resources/Info.plist" \
   "$temporary_bundle/Contents/Info.plist"

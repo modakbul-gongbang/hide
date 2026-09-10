@@ -28,6 +28,9 @@ A document's location or an old PRD citation does not make it current authority.
 | Sidebar PR details, CI rollup, refresh and failure states | [status-model.md: GitHub status](status-model.md#github-status-in-the-workspace-row) | `github.rs`, `runtime.rs`, `CheckoutCardPresentation.swift`, native Workspace PR control |
 | Agent status, semantic colors, Workspace aggregation, and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `AgentRow.swift`, `SidebarPresentation.swift`, status tests |
 | Optional ambient counts and privacy | [status-model.md](status-model.md#ambient-signals-subagents-background-tasks) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
+| Ownership axis, delegated grouping, the stall clock and its thresholds | [status-model.md: the stall clock](status-model.md#the-stall-clock) | `sidebar.rs::ownership_of`, `runtime.rs` stall clocks, `session_sync.rs` agent tick |
+| Why a pane's children are visible or not, and the uninstrumented mark | [status-model.md: uninstrumented is not an unknown activity](status-model.md#uninstrumented-is-not-an-unknown-activity) | `hide-agent-hooks/src/diagnosis.rs`, `herdr-core/src/agent_hooks.rs`, `sidebar.rs::project_pane_children` |
+| Agent hook installation, what is written where, and the Settings diagnosis | [agent-hooks.md](agent-hooks.md) | `hide-agent-hooks/`, `StatusSnapshot.agent_hooks`, `install_agent_hooks` event |
 | Native pet window and gestures | [pet-window-macos.md](pet-window-macos.md) | `PetWindow.swift`, `PetIntegrationTests.swift` |
 | Pet theme format | [theme-contract.md](theme-contract.md) | `PetTheme.swift`, each `theme.json`, theme tests |
 | Pet artwork workflow | [theme-contract.md](theme-contract.md#adding-art) | Bundled manifest and artwork |

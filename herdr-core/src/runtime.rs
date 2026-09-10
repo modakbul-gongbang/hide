@@ -289,6 +289,48 @@ const DIAGNOSTIC_RETENTION: usize = 256;
 /// the screen.
 const ATTACHED_TAB_LIMIT: usize = 5;
 
+/// When a waiting descendant starts showing on its lineage root, and when it
+/// becomes the operator's problem.
+///
+/// Both are fixed. Which numbers are right is not knowable before the feature
+/// has been operated, so there is no setting to get wrong in the meantime
+/// (PRD D-41).
+const STALL_SOFT_MS: u64 = 5 * 60_000;
+const STALL_HARD_MS: u64 = 15 * 60_000;
+
+/// Hide's own record of when it first saw a pane in the state it is in.
+///
+/// Herdr sends no timestamp with `state_change_seq`, so the clock has to be
+/// Hide's. It lives only in memory: a restart starts every clock again, which
+/// is what stops a morning launch from raising a screenful of escalations for
+/// work that was never stuck (PRD B20, D-54).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StallClock {
+    /// What the pane looked like when this clock started. Herdr's sequence
+    /// alone is not enough: it does not always rise when only plugin tokens
+    /// change, which is the same gap the read record covers.
+    fingerprint: (Option<u64>, String, String),
+    /// Time already counted, excluding any stretch the server was away for.
+    stalled_ms: u64,
+    last_sample_unix_ms: u64,
+}
+
+impl StallClock {
+    /// How long this pane has been waiting, as of `now`.
+    fn elapsed(&self, now: u64) -> u64 {
+        self.stalled_ms
+            .saturating_add(now.saturating_sub(self.last_sample_unix_ms))
+    }
+}
+
+/// How long a relocation waits before Hide asks again.
+///
+/// A failed move is retried on the next ingest that finds the child still
+/// split, and a delegated child changes state often enough that one arrives.
+/// The window keeps a persistently refusing Herdr from being asked once per
+/// event without adding a timer of its own (PRD B36).
+const RELOCATION_RETRY_INTERVAL_MS: u64 = 5_000;
+
 /// What Herdr says about its tabs, kept per Herdr workspace.
 ///
 /// A checkout is keyed by path, so several Herdr workspaces can share one
@@ -964,6 +1006,16 @@ struct RetryConnectPayload {
     target_id: String,
 }
 
+/// One runtime the operator asked Hide to install its hook into.
+///
+/// It exists because Hide installs once on first run and then leaves the
+/// operator's configuration alone; every later install is this event, sent
+/// from the Settings diagnosis after they said yes (PRD B28, D-31).
+#[derive(Debug, Deserialize)]
+struct InstallAgentHooksPayload {
+    runtime_id: String,
+}
+
 /// One pane search. An empty `term` clears the search rather than needing its
 /// own event, and `step` folds "search this" and "go to the next one" into one
 /// path: 0 searches and keeps the current match, +1 and -1 move.
@@ -1089,6 +1141,7 @@ enum ValidatedEvent {
     FileConflict(FileConflictPayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
+    InstallAgentHooks(InstallAgentHooksPayload),
     TerminalResize(TerminalResizePayload),
     TerminalViewport(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
@@ -1202,6 +1255,26 @@ pub struct Runtime {
     /// released. Herdr renders a pane for every attached client, so an attach
     /// nobody is looking at costs a child process here and a render there for
     /// the life of the process.
+    /// How long each delegated child has been in the state it is in. Keyed by
+    /// pane id, in memory only.
+    stall_clocks: BTreeMap<String, StallClock>,
+    /// Delegated child panes Hide has asked Herdr to move out of their
+    /// parent's tab, and when it asked. A move that fails is retried quietly
+    /// on a later ingest; it never reaches the pane header, because the
+    /// operator did not ask for the move and cannot act on its failure
+    /// (PRD B2, D-45).
+    pane_relocations_in_flight: BTreeMap<String, u64>,
+    /// What Hide's hook last reported for each pane, read out of the pane
+    /// tokens the session snapshot already carries. Kept between ingests so
+    /// the projection does not have to hold the whole payload alive.
+    pane_hook_tokens: BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
+    /// The hook-install state of each runtime, read off the coordinator
+    /// thread. `None` until that first read lands, which reads as "not known
+    /// yet" rather than as "not installed".
+    hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
+    /// Runtimes the operator has approved an install for, waiting for the
+    /// coordinator to do the file write off the mutex.
+    pending_hook_installs: BTreeSet<hide_agent_hooks::AgentRuntime>,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1461,6 +1534,11 @@ impl Runtime {
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
+            stall_clocks: BTreeMap::new(),
+            pane_relocations_in_flight: BTreeMap::new(),
+            pane_hook_tokens: BTreeMap::new(),
+            hook_diagnosis: None,
+            pending_hook_installs: BTreeSet::new(),
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             #[cfg(test)]
@@ -2639,6 +2717,7 @@ impl Runtime {
                     &session_tab.tab_id,
                 )),
                 empty: panes.is_empty(),
+                delegated: false,
                 panes,
             };
             if let Some(existing) = checkout
@@ -3431,6 +3510,7 @@ impl Runtime {
                 checkout_id: None,
                 label: None,
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             };
             return;
@@ -3454,6 +3534,7 @@ impl Runtime {
                 checkout_id: None,
                 label: None,
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             };
             return;
@@ -3478,6 +3559,7 @@ impl Runtime {
                 checkout_id: Some(checkout.id.clone()),
                 label: Some("No tabs".to_owned()),
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             };
         }
@@ -4116,6 +4198,16 @@ impl Runtime {
                 let layout = target_pane_id
                     .map(|pane_id| live::project_layout_for_pane(&payload, pane_id))
                     .transpose();
+                self.pane_hook_tokens = payload
+                    .panes
+                    .iter()
+                    .map(|pane| {
+                        (
+                            pane.pane_id.clone(),
+                            crate::agent_hooks::PaneHookTokens::read(&pane.tokens),
+                        )
+                    })
+                    .collect();
                 let projection = project_agents(payload);
                 excluded = projection.excluded;
                 match layout {
@@ -4190,10 +4282,13 @@ impl Runtime {
                 &self.snapshot.navigator.workspaces,
                 &self.snapshot.ui_state.collapsed_agent_pane_ids,
             );
+            self.apply_stall_escalation(&mut agents, unix_milliseconds());
             if self.snapshot.navigator.agents != agents {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
             }
+            changed |= self.sync_pane_lineage();
+            changed |= self.relocate_delegated_child_panes();
         }
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
@@ -4465,6 +4560,26 @@ impl Runtime {
             .filter(|agent| agent.activity == "working")
             .map(|agent| agent.pane_id.as_str())
             .collect::<HashSet<_>>();
+        // The agent line reads the rows the sidebar already projected and the
+        // instrumentation the pane header already resolved, so Overview
+        // repeats neither judgement (PRD B34, B35, engineering rule 7).
+        let agent_chips = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .map(|agent| (agent.pane_id.clone(), crate::sidebar::agent_chip(agent)))
+            .collect::<HashMap<_, _>>();
+        let pane_instrumentation = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .filter_map(|pane| Some((pane.id.clone(), pane.children.clone()?)))
+            .collect::<HashMap<_, _>>();
         let requested_github: HashSet<_> = self
             .github_request()
             .projects
@@ -4495,6 +4610,12 @@ impl Runtime {
                         .filter(|pane_id| running.contains(pane_id.as_str()))
                         .count()
                 });
+                worktree.agent_line = worktree_agent_line(
+                    panes,
+                    &agent_chips,
+                    &pane_instrumentation,
+                    &self.snapshot.navigator.agents,
+                );
                 worktree.disk = disk_usage
                     .iter()
                     .find(|disk| disk.path.as_deref() == Some(worktree.path.as_str()))
@@ -5406,6 +5527,435 @@ impl Runtime {
         sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
     }
 
+    /// Refills every pane's child summary and breadcrumb from the final agent
+    /// list.
+    ///
+    /// It runs after the read axis and the lineage, not while the panes are
+    /// built: a chip's mark and emphasis come from the group, the group comes
+    /// from the read axis, and the children come from the lineage, so a pass
+    /// that ran earlier would publish a chip row describing a state the
+    /// sidebar had already moved past.
+    fn sync_pane_lineage(&mut self) -> bool {
+        let agents = std::mem::take(&mut self.snapshot.navigator.agents);
+        let diagnosis = self.hook_diagnosis.clone();
+        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
+            diagnosis
+                .as_ref()
+                .and_then(|diagnosis| diagnosis.status_of(runtime))
+                .cloned()
+        };
+        let mut changed = false;
+        let mut delegated_tabs_changed = false;
+        // Collected on the same walk as the pane children, so the Settings
+        // diagnosis and the pane's own mark can never disagree about which
+        // sessions predate the install (PRD B27, D-61).
+        let mut predating: Vec<crate::model::AgentHookPaneSnapshot> = Vec::new();
+        // A tab is the operator's whenever it holds an agent they own. One
+        // holding only delegated children is the pile this change exists to
+        // take off the strip (PRD B1).
+        for tab in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+        {
+            let mut holds_an_agent = false;
+            let mut all_delegated = true;
+            for pane in &tab.panes {
+                let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane.id) else {
+                    continue;
+                };
+                holds_an_agent = true;
+                all_delegated &= agent.delegated;
+            }
+            let delegated = holds_an_agent && all_delegated;
+            if tab.delegated != delegated {
+                tab.delegated = delegated;
+                delegated_tabs_changed = true;
+            }
+        }
+        for pane in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+            .flat_map(|tab| tab.panes.iter_mut())
+            .chain(
+                self.snapshot
+                    .navigator
+                    .scratch
+                    .tabs
+                    .iter_mut()
+                    .flat_map(|tab| tab.panes.iter_mut()),
+            )
+        {
+            // A remote pane's answer is fixed and was decided where it was
+            // projected; the local hook state says nothing about it.
+            if crate::agent_hooks::is_remote_pane(&pane.id) {
+                continue;
+            }
+            let tokens = self
+                .pane_hook_tokens
+                .get(&pane.id)
+                .copied()
+                .unwrap_or_default();
+            let children =
+                crate::sidebar::project_pane_children(&agents, &pane.id, tokens, &status_of);
+            if let Some(children) = children.as_ref()
+                && children.uninstrumented_code.as_deref()
+                    == Some(
+                        hide_agent_hooks::diagnosis::UninstrumentedReason::SessionPredatesInstall
+                            .code(),
+                    )
+            {
+                predating.push(crate::model::AgentHookPaneSnapshot {
+                    pane_id: pane.id.clone(),
+                    label: agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .map(|agent| agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()))
+                        .unwrap_or_else(|| pane.id.clone()),
+                    message: children.uninstrumented_reason.clone().unwrap_or_default(),
+                });
+            }
+            let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
+            if pane.children != children {
+                pane.children = children;
+                changed = true;
+            }
+            if pane.lineage_path != lineage_path {
+                pane.lineage_path = lineage_path;
+                changed = true;
+            }
+        }
+        self.snapshot.navigator.agents = agents;
+        let hooks = crate::model::AgentHooksSnapshot {
+            runtimes: self
+                .hook_diagnosis
+                .iter()
+                .flat_map(|diagnosis| diagnosis.runtimes.iter())
+                .map(|row| crate::model::AgentHookRuntimeSnapshot {
+                    id: row.runtime.id().to_owned(),
+                    label: row.label.clone(),
+                    path: row.path.clone(),
+                    headline: row.headline(),
+                    installed: matches!(row.status, hide_agent_hooks::HookStatus::Installed { .. }),
+                    offers_install: row.offers_install(),
+                })
+                .collect(),
+            sessions_predating_install: predating,
+        };
+        if self.snapshot.status.agent_hooks != hooks {
+            self.snapshot.status.agent_hooks = hooks;
+            changed = true;
+        }
+        if delegated_tabs_changed {
+            self.rebuild_tab_strips();
+        }
+        changed || delegated_tabs_changed
+    }
+
+    /// Whether a delegated child's clock should be running at all.
+    ///
+    /// A finished child is not stuck, a released pane has no session to be
+    /// stuck in, an unknown activity gives nothing to measure, and a remote
+    /// pane is uninstrumented by decision (PRD B19, D-51).
+    fn stall_eligible(&self, agent: &SidebarAgentSnapshot) -> bool {
+        if !agent.delegated || crate::agent_hooks::is_remote_pane(&agent.pane_id) {
+            return false;
+        }
+        if agent.activity == "unknown" {
+            return false;
+        }
+        if self
+            .terminal_session_lifecycles
+            .get(&agent.pane_id)
+            .is_some_and(|lifecycle| lifecycle.state == "released")
+        {
+            return false;
+        }
+        // Waiting on the operator, or running with nothing to show for it.
+        // A stopped child with no demand has finished, which is not waiting.
+        agent.demand != "none" || agent.blocked || agent.activity == "working"
+    }
+
+    /// Advances every eligible child's clock and drops the rest.
+    ///
+    /// While the server is away the clocks hold their reading rather than
+    /// counting: a disconnection is Hide's blindness, not the agent being
+    /// stuck (PRD B20, D-54).
+    fn advance_stall_clocks(&mut self, agents: &[SidebarAgentSnapshot], now: u64) {
+        let connected = self.snapshot.status.herdr.state == "connected";
+        let mut live = BTreeSet::new();
+        for agent in agents {
+            if !self.stall_eligible(agent) {
+                continue;
+            }
+            live.insert(agent.pane_id.clone());
+            let fingerprint = (
+                agent.state_change_seq,
+                agent.demand.clone(),
+                agent.activity.clone(),
+            );
+            match self.stall_clocks.get_mut(&agent.pane_id) {
+                Some(clock) if clock.fingerprint == fingerprint => {
+                    if connected {
+                        clock.stalled_ms = clock.elapsed(now);
+                    }
+                    clock.last_sample_unix_ms = now;
+                }
+                _ => {
+                    self.stall_clocks.insert(
+                        agent.pane_id.clone(),
+                        StallClock {
+                            fingerprint,
+                            stalled_ms: 0,
+                            last_sample_unix_ms: now,
+                        },
+                    );
+                }
+            }
+        }
+        self.stall_clocks
+            .retain(|pane_id, _| live.contains(pane_id));
+    }
+
+    /// What each lineage root should be told about its descendants, as of
+    /// `now`. A pure read, so the coordinator can ask whether a threshold is
+    /// about to be crossed without changing anything.
+    ///
+    /// The notice lands on the root rather than climbing one level at a time:
+    /// at depth three, one level per threshold would keep the operator
+    /// waiting forty-five minutes for news of something stuck for fifteen
+    /// (PRD B18, D-62).
+    fn stall_escalations(
+        &self,
+        agents: &[SidebarAgentSnapshot],
+        now: u64,
+    ) -> BTreeMap<String, (&'static str, String, String)> {
+        let mut worst: BTreeMap<String, (u64, u8, &'static str, String, String)> = BTreeMap::new();
+        for agent in agents {
+            let Some(clock) = self.stall_clocks.get(&agent.pane_id) else {
+                continue;
+            };
+            if !self.stall_eligible(agent) {
+                continue;
+            }
+            let elapsed = clock.elapsed(now);
+            let level = if elapsed >= STALL_HARD_MS {
+                "hard"
+            } else if elapsed >= STALL_SOFT_MS {
+                "soft"
+            } else {
+                continue;
+            };
+            let root = agent
+                .lineage_path_pane_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| agent.pane_id.clone());
+            let name = agent.chat_title.clone().unwrap_or_else(|| agent.id.clone());
+            let notice = format!(
+                "{name} has been waiting {} minutes on {}",
+                elapsed / 60_000,
+                waiting_on(agent)
+            );
+            let priority = stall_priority(agent);
+            let candidate = (elapsed, priority, level, notice, agent.pane_id.clone());
+            // Longest wait first, and on a tie the one asking for the most.
+            // Without the second key the notice names whichever sibling the
+            // row order happened to reach first, which is not an answer.
+            match worst.get(&root) {
+                Some(best) if best.0 > elapsed => {}
+                Some(best) if best.0 == elapsed && best.1 <= priority => {}
+                _ => {
+                    worst.insert(root, candidate);
+                }
+            }
+        }
+        worst
+            .into_iter()
+            .map(|(root, (_, _, level, notice, pane_id))| (root, (level, notice, pane_id)))
+            .collect()
+    }
+
+    /// Runs the clocks and writes what they say onto the rows.
+    fn apply_stall_escalation(&mut self, agents: &mut [SidebarAgentSnapshot], now: u64) {
+        self.advance_stall_clocks(agents, now);
+        let escalations = self.stall_escalations(agents, now);
+        let hard_children = escalations
+            .values()
+            .filter(|(level, _, _)| *level == "hard")
+            .map(|(_, _, pane_id)| pane_id.clone())
+            .collect::<BTreeSet<_>>();
+        for agent in agents.iter_mut() {
+            let (level, notice) = match escalations.get(&agent.pane_id) {
+                Some((level, notice, _)) => ((*level).to_owned(), Some(notice.clone())),
+                None => (String::new(), None),
+            };
+            agent.stall_level = level;
+            agent.stall_notice = notice;
+            // The child that ran out of time stops being drawn as somebody
+            // else's work, because from here on it is the operator's.
+            if hard_children.contains(&agent.pane_id) {
+                agent.delegated = false;
+            }
+        }
+        crate::sidebar::rederive_ownership(agents);
+    }
+
+    /// Whether a stall threshold has been crossed since the last publish.
+    ///
+    /// The coordinator asks this on the agent tick it already runs, so a
+    /// stalled session - which by definition reports nothing new - still
+    /// reaches the operator without a timer of Hide's own (PRD B36).
+    pub fn stall_publish_due(&self) -> bool {
+        self.stall_publish_due_at(unix_milliseconds())
+    }
+
+    fn stall_publish_due_at(&self, now: u64) -> bool {
+        if self.snapshot.status.herdr.state != "connected" {
+            return false;
+        }
+        let agents = &self.snapshot.navigator.agents;
+        let escalations = self.stall_escalations(agents, now);
+        agents.iter().any(|agent| {
+            let level = escalations
+                .get(&agent.pane_id)
+                .map(|(level, _, _)| *level)
+                .unwrap_or("");
+            agent.stall_level != level
+        })
+    }
+
+    /// Marks the tabs that exist only to hold delegated children, and asks
+    /// Herdr to move any child still sharing its parent's tab into one.
+    ///
+    /// Detection is the same on every pass, so a child that arrives while
+    /// Hide is running and a child already split when Hide started are the
+    /// same case and take the same path (PRD B1, B3, D-44). Herdr keeps
+    /// owning split geometry and the PTY size, so the pane is really moved
+    /// rather than merely left undrawn (PRD D-15).
+    fn relocate_delegated_child_panes(&mut self) -> bool {
+        // Where Herdr currently holds each pane. The layout is the only place
+        // that carries Herdr's own workspace and tab ids for a pane.
+        let placement = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .flat_map(|layout| {
+                layout
+                    .pane_ids()
+                    .into_iter()
+                    .map(|pane_id| {
+                        (
+                            pane_id.to_owned(),
+                            (layout.workspace_id.clone(), layout.tab_id.clone()),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<BTreeMap<_, _>>();
+        let now = unix_milliseconds();
+        let mut requests = Vec::new();
+        for agent in &self.snapshot.navigator.agents {
+            if !agent.delegated || crate::agent_hooks::is_remote_pane(&agent.pane_id) {
+                continue;
+            }
+            let Some(parent_pane_id) = agent.lineage_parent_pane_id.as_deref() else {
+                continue;
+            };
+            let (Some((workspace_id, tab_id)), Some((_, parent_tab_id))) =
+                (placement.get(&agent.pane_id), placement.get(parent_pane_id))
+            else {
+                continue;
+            };
+            if tab_id != parent_tab_id {
+                continue;
+            }
+            if self
+                .pane_relocations_in_flight
+                .get(&agent.pane_id)
+                .is_some_and(|asked| now.saturating_sub(*asked) < RELOCATION_RETRY_INTERVAL_MS)
+            {
+                continue;
+            }
+            requests.push((
+                agent.pane_id.clone(),
+                workspace_id.clone(),
+                agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+            ));
+        }
+        // A pane Herdr no longer reports can never answer, so its record is
+        // dropped rather than held forever.
+        self.pane_relocations_in_flight
+            .retain(|pane_id, _| placement.contains_key(pane_id));
+        if requests.is_empty() {
+            return false;
+        }
+        let Some(context) = self.live.as_ref().cloned() else {
+            return false;
+        };
+        for (pane_id, workspace_id, label) in requests {
+            self.pane_relocations_in_flight.insert(pane_id.clone(), now);
+            if let Err(message) = live::spawn_pane_control(
+                context.clone(),
+                PaneControlAction::MoveToNewTab {
+                    pane_id: pane_id.clone(),
+                    workspace_id,
+                    label,
+                },
+            ) {
+                self.pane_relocations_in_flight.remove(&pane_id);
+                self.push_diagnostic(
+                    "lineage.relocate_failed",
+                    format!("Could not move delegated pane {pane_id}: {message}"),
+                );
+            }
+        }
+        true
+    }
+
+    /// Takes the hook-install judgement the coordinator read off the lock.
+    /// Queues an install the operator approved, or says why it cannot.
+    ///
+    /// The write itself happens on the coordinator thread: it is file I/O,
+    /// and nothing that touches the disk runs under this mutex.
+    fn request_agent_hook_install(&mut self, runtime_id: &str) -> bool {
+        let Some(runtime) = hide_agent_hooks::AgentRuntime::from_id(runtime_id) else {
+            self.set_error(
+                "agent_hooks.unknown_runtime",
+                format!("Hide has no agent hook adapter for {runtime_id}"),
+                false,
+            );
+            return true;
+        };
+        // Approving twice is one install: the request is a set, and the
+        // install itself rewrites the same hook group either way.
+        self.pending_hook_installs.insert(runtime);
+        true
+    }
+
+    /// Hands the queued installs to the caller that can perform them.
+    pub(crate) fn take_agent_hook_installs(&mut self) -> Vec<hide_agent_hooks::AgentRuntime> {
+        std::mem::take(&mut self.pending_hook_installs)
+            .into_iter()
+            .collect()
+    }
+
+    pub(crate) fn ingest_hook_diagnosis(&mut self, diagnosis: hide_agent_hooks::Diagnosis) -> bool {
+        if self.hook_diagnosis.as_ref() == Some(&diagnosis) {
+            return false;
+        }
+        self.hook_diagnosis = Some(diagnosis);
+        self.sync_pane_lineage();
+        true
+    }
+
     /// Steps one text scale by a direction the shell sent, or names the
     /// direction it could not read and answers `None`.
     fn stepped_text_scale(&mut self, current: f32, direction: &str) -> Option<f32> {
@@ -6111,6 +6661,30 @@ impl Runtime {
                     "duration_ms": elapsed_ms,
                 }));
                 self.apply_pane_layout(layout);
+                true
+            }
+            (PaneControlAction::MoveToNewTab { pane_id, .. }, outcome) => {
+                self.pane_relocations_in_flight.remove(&pane_id);
+                match outcome {
+                    Ok(_) => {
+                        self.push_diagnostic(
+                            "lineage.relocated",
+                            format!(
+                                "Delegated pane {pane_id} moved to its own tab in {elapsed_ms} ms"
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        // Deliberately not a `pane.` diagnostic: the pane
+                        // header reads those, and this failure must not
+                        // appear over a child the operator never asked to
+                        // move (PRD B2).
+                        self.push_diagnostic(
+                            "lineage.relocate_failed",
+                            format!("Could not move delegated pane {pane_id}: {error}"),
+                        );
+                    }
+                }
                 true
             }
             (PaneControlAction::Focus { pane_id }, Ok(PaneControlOutcome::Acknowledged { .. })) => {
@@ -8080,6 +8654,9 @@ impl Runtime {
                 self.snapshot.status.chromux.last_checked_at_unix_ms =
                     Some(payload.last_checked_at_unix_ms);
                 true
+            }
+            ValidatedEvent::InstallAgentHooks(payload) => {
+                self.request_agent_hook_install(&payload.runtime_id)
             }
             ValidatedEvent::RetryConnect(payload) => {
                 if let Some(remote) = self
@@ -10298,6 +10875,10 @@ fn project_layout_panes(
                 activity_at_unix_ms: agent.and_then(|agent| agent.last_activity.parse().ok()),
                 fork: pane_fork_snapshot(agent),
                 ports,
+                // Both are refilled from the final agent list once the read
+                // axis and the lineage are applied; see `sync_pane_lineage`.
+                children: None,
+                lineage_path: Vec::new(),
             }
         })
         .collect()
@@ -10446,6 +11027,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
+        "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
@@ -10549,6 +11131,70 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+/// What a waiting child is waiting for, in the words the tooltip uses.
+///
+/// It names the demand when there is one, because "waiting for an approval"
+/// and "running with nothing to show for it" ask different things of the
+/// operator.
+/// The agent line for one worktree row.
+///
+/// Empty with no reason is nobody working here; empty with a reason is a
+/// worktree Hide cannot see into. Keeping those two apart is the whole point
+/// of the third uninstrumented position (PRD B35, D-60).
+fn worktree_agent_line(
+    panes: Option<&HashSet<String>>,
+    chips: &HashMap<String, crate::model::AgentChipSnapshot>,
+    instrumentation: &HashMap<String, crate::model::PaneChildrenSnapshot>,
+    order: &[SidebarAgentSnapshot],
+) -> crate::model::WorktreeAgentLineSnapshot {
+    let Some(panes) = panes else {
+        return crate::model::WorktreeAgentLineSnapshot::default();
+    };
+    // The sidebar's order, so the two screens read the same way.
+    let agents = order
+        .iter()
+        .filter(|agent| panes.contains(&agent.pane_id))
+        .filter_map(|agent| chips.get(&agent.pane_id).cloned())
+        .collect::<Vec<_>>();
+    // The first reason in the resolution order the crate declares, rather
+    // than the first one the pane iteration happened to reach.
+    let worst = order
+        .iter()
+        .filter(|agent| panes.contains(&agent.pane_id))
+        .filter_map(|agent| instrumentation.get(&agent.pane_id))
+        .filter_map(|children| children.uninstrumented_code.as_deref())
+        .filter_map(hide_agent_hooks::diagnosis::UninstrumentedReason::from_code)
+        .min();
+    crate::model::WorktreeAgentLineSnapshot {
+        agents,
+        uninstrumented_reason: worst.map(|reason| reason.message().to_owned()),
+        uninstrumented_label: worst.map(|reason| reason.accessibility_label().to_owned()),
+        uninstrumented_code: worst.map(|reason| reason.code().to_owned()),
+    }
+}
+
+/// How badly one waiting child needs an answer, worst first. It breaks ties
+/// between descendants that have waited exactly as long.
+fn stall_priority(agent: &SidebarAgentSnapshot) -> u8 {
+    match agent.demand.as_str() {
+        "error" => 0,
+        "approval" => 1,
+        "question" => 2,
+        _ if agent.blocked => 1,
+        _ => 3,
+    }
+}
+
+fn waiting_on(agent: &SidebarAgentSnapshot) -> &'static str {
+    match agent.demand.as_str() {
+        "error" => "an error",
+        "question" => "a question",
+        "approval" => "an approval",
+        _ if agent.blocked => "an approval",
+        _ => "no visible progress",
+    }
 }
 
 fn unix_milliseconds() -> u64 {
@@ -11487,6 +12133,7 @@ mod tests {
             checkout_id: Some(checkout_id.to_owned()),
             label: Some("Inactive".to_owned()),
             empty: false,
+            delegated: false,
             panes: vec![pane(inactive_pane_id, "/tmp/herdr-remote-terminal")],
         });
         let mut remote_workspace = workspace(
@@ -12901,6 +13548,8 @@ mod tests {
             activity_at_unix_ms: None,
             fork: PaneForkSnapshot::default(),
             ports: Vec::new(),
+            children: None,
+            lineage_path: Vec::new(),
         }
     }
 
@@ -12911,6 +13560,7 @@ mod tests {
             checkout_id: Some(checkout_id.to_owned()),
             label: Some("Session".to_owned()),
             empty: pane.is_none(),
+            delegated: false,
             panes: pane.into_iter().collect(),
         }
     }
@@ -17419,6 +18069,7 @@ mod tests {
             checkout_id: Some(stale_checkout_id.to_owned()),
             label: Some("Old context".to_owned()),
             empty: false,
+            delegated: false,
             panes: vec![pane("w3P:p1", "/tmp/old-context")],
         };
         // The user chose this checkout against a running session, so it is an
@@ -17747,6 +18398,7 @@ mod tests {
                 checkout_id: Some("remote:checkout".to_owned()),
                 label: Some("Session".to_owned()),
                 empty: false,
+                delegated: false,
                 panes,
             }];
             RemoteSessionSnapshot {

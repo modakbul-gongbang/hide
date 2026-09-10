@@ -630,6 +630,64 @@ pub(crate) fn tab_target_params(id: &str) -> Result<Value, String> {
 pub(crate) fn pane_target_params(id: &str) -> Result<Value, String> {
     params(req::PaneTarget { pane_id: id.into() })
 }
+/// Moves a pane into a tab of its own inside the workspace it is already in.
+///
+/// The workspace matters: a delegated child runs in the same working
+/// directory as its parent, so a new workspace would split one checkout into
+/// two rows describing the same path (PRD D-43). `focus` stays false because
+/// the point of the move is that the operator's canvas does not change.
+pub(crate) fn pane_move_to_new_tab_params(
+    pane_id: &str,
+    workspace_id: &str,
+    label: &str,
+) -> Result<Value, String> {
+    params(req::PaneMoveParams {
+        pane_id: pane_id.into(),
+        destination: req::PaneMoveDestination::NewTab {
+            workspace_id: Some(workspace_id.into()),
+            label: Some(label.into()),
+        },
+        focus: false,
+    })
+}
+
+/// The tab `pane.move` created, when it created one.
+///
+/// Herdr answers a move it declined with `changed: false` and a reason
+/// instead of an error, so a refusal has to be read off the result rather
+/// than inferred from a missing field.
+pub(crate) fn moved_pane_tab(value: Value) -> Result<String, String> {
+    let missing = "pane.move response is missing created_tab.tab_id";
+    match response(value, missing)? {
+        res::ResponseResult::PaneMove { move_result } => move_outcome(
+            move_result.changed,
+            move_result.reason.map(|reason| format!("{reason:?}")),
+            move_result.created_tab.map(|tab| tab.tab_id),
+        ),
+        _ => Err(missing.into()),
+    }
+}
+
+/// The decision `pane.move`'s result carries, apart from decoding it.
+///
+/// Herdr answers a move it declined with `changed: false` and a reason rather
+/// than an error, so a refusal has to be read rather than inferred from a
+/// missing field.
+pub(crate) fn move_outcome(
+    changed: bool,
+    reason: Option<String>,
+    created_tab_id: Option<String>,
+) -> Result<String, String> {
+    let missing = "pane.move response is missing created_tab.tab_id";
+    if !changed {
+        return Err(match reason {
+            Some(reason) => format!("Herdr declined the move: {reason}"),
+            None => "Herdr declined the move".to_owned(),
+        });
+    }
+    nonempty_id(created_tab_id.ok_or_else(|| missing.to_owned())?, missing)
+}
+
 pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Result<Value, String> {
     params(req::TabCreateParams {
         workspace_id: Some(workspace.into()),

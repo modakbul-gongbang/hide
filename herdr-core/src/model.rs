@@ -292,6 +292,41 @@ pub struct SidebarAgentSnapshot {
     /// from Herdr's pane metadata token. Absent for an agent Hide did not
     /// start through the composer, which falls back to its tab label.
     pub chat_title: Option<String>,
+    /// Ownership, derived from the lineage alone: a root is the operator's own
+    /// work, a descendant is work the root delegated. It is the fourth derived
+    /// axis beside demand, activity and read, and it is advice rather than a
+    /// boundary - a delegated pane is still selectable and still takes input,
+    /// because the operator has to be able to reach one when it escalates
+    /// (PRD D-36, D-56).
+    ///
+    /// An orphan is a root again: when the parent is gone, ownership comes
+    /// back to the person (PRD D-52).
+    pub delegated: bool,
+    /// The pane that spawned this one, when that pane's agent is still in the
+    /// list. `spawned_from_pane_id` records what Herdr said; this records
+    /// which row it actually resolved to, so a breadcrumb never points at a
+    /// pane that is not there.
+    pub lineage_parent_pane_id: Option<String>,
+    /// The ancestors between the lineage root and this agent, root first and
+    /// excluding this agent. The breadcrumb is this list; nothing persists a
+    /// visited path, because a stored one rots across a restart, a tab switch
+    /// or a child exiting (PRD D-18).
+    pub lineage_path_pane_ids: Vec<String>,
+    /// Every agent sharing this agent's parent, in the same order the parent
+    /// lists its children, including this agent. It is what a breadcrumb
+    /// step's dropdown offers (PRD B10).
+    ///
+    /// A root has none: the layer above a root is the sidebar, not the
+    /// breadcrumb, and independent roots are not one another's siblings.
+    pub lineage_sibling_pane_ids: Vec<String>,
+    /// How long a descendant of this agent has been waiting: `none`, `soft`
+    /// or `hard`. It is set on the lineage root, never on the descendant that
+    /// is actually stuck, because the operator reads the list of roots and a
+    /// notice three levels down would not be seen (PRD B17, B18, D-62).
+    pub stall_level: String,
+    /// What the stall notice says: which descendant, how long, and what it is
+    /// waiting for. `None` unless `stall_level` is `soft` or `hard`.
+    pub stall_notice: Option<String>,
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,
@@ -300,6 +335,10 @@ pub struct SidebarAgentSnapshot {
     pub lineage_orphan: bool,
     pub lineage_hint: Option<String>,
     pub raised_hint: Option<String>,
+    /// The pane the hint points at, when that pane still holds an agent Hide
+    /// can name. It is what makes the line something to follow rather than
+    /// something to read.
+    pub spawn_origin_pane_id: Option<String>,
     pub lineage_collapsed: bool,
 }
 
@@ -461,8 +500,14 @@ impl StripTabSnapshot {
     /// remote projection build their Herdr entries here, so the rule that
     /// decides which tabs earn a slot and what an unlabelled one reads as has
     /// one implementation to change.
+    /// The Herdr tabs a checkout draws in its strip.
+    ///
+    /// A tab holding only delegated children is left out: the canvas keeps
+    /// one pane, and a strip slot for every child would put the pile back
+    /// where the split used to be (PRD B1).
     pub fn from_herdr_tabs(tabs: &[TabSnapshot]) -> Vec<Self> {
         tabs.iter()
+            .filter(|tab| !tab.delegated)
             .filter_map(|tab| {
                 Some(Self::herdr(
                     tab.id.clone()?,
@@ -543,6 +588,11 @@ pub struct TabSnapshot {
     pub checkout_id: Option<String>,
     pub label: Option<String>,
     pub empty: bool,
+    /// Every agent in this tab is somebody else's delegated child, so the tab
+    /// exists only to hold work the operator did not ask to look at. The tab
+    /// strip leaves it out; the sidebar and the breadcrumb still reach it
+    /// (PRD B1, B4, D-40).
+    pub delegated: bool,
     pub panes: Vec<PaneSnapshot>,
 }
 
@@ -570,6 +620,111 @@ pub struct PaneSnapshot {
     pub fork: PaneForkSnapshot,
     /// The ports listened on from at or below this pane's working directory.
     pub ports: Vec<u16>,
+    /// What this pane's agent delegated, or why that is unknown. `None` on a
+    /// pane Herdr detected no agent in: a shell, an editor or a log gets
+    /// neither chips nor an uninstrumented mark, because there is no agent
+    /// there to have children (PRD B22, D-30).
+    pub children: Option<PaneChildrenSnapshot>,
+    /// The breadcrumb: this pane's ancestors root first, then this pane. It
+    /// is empty for a lineage root, which is what leaves its header plain.
+    pub lineage_path: Vec<LineageStepSnapshot>,
+}
+
+/// What a pane header says about the work its agent delegated.
+///
+/// The three shapes it can take are deliberately different screens: chips
+/// mean known children, an empty chip list on an instrumented pane means a
+/// confirmed "this agent is working alone", and `instrumented: false` means
+/// Hide cannot see and says why (PRD B21, B23, B32).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct PaneChildrenSnapshot {
+    pub instrumented: bool,
+    /// The first matching reason from the fixed order, present exactly when
+    /// `instrumented` is false. It is never empty and never a guess.
+    pub uninstrumented_reason: Option<String>,
+    /// The accessible name for the uninstrumented mark, so the symbol never
+    /// carries the meaning by itself (PRD B37).
+    pub uninstrumented_label: Option<String>,
+    /// The reason's stable name. The Settings diagnosis reads it to list the
+    /// panes whose session predates the install, so that judgement is made
+    /// once here rather than by matching a sentence on two screens (PRD B27,
+    /// D-61).
+    pub uninstrumented_code: Option<String>,
+    /// One chip per pane child, in the lineage's own child order. Only panes:
+    /// an in-process subagent has no pane, so it cannot be a chip the
+    /// operator clicks into (PRD D-63).
+    pub chips: Vec<AgentChipSnapshot>,
+    /// The parent badge, chosen from the pane children by the same priority
+    /// the Workspace summary uses. In-process subagents take no part in it.
+    pub representative: Option<AgentChipSnapshot>,
+    /// In-process subagents, summarised and never added to the chip count.
+    pub subagents: SubagentCountsSnapshot,
+}
+
+impl PaneChildrenSnapshot {
+    /// The permanent answer for a pane on another machine.
+    pub fn remote() -> Self {
+        let reason = hide_agent_hooks::diagnosis::UninstrumentedReason::RemoteHost;
+        Self {
+            instrumented: false,
+            uninstrumented_reason: Some(reason.message().to_owned()),
+            uninstrumented_label: Some(reason.accessibility_label().to_owned()),
+            uninstrumented_code: Some(reason.code().to_owned()),
+            ..Self::default()
+        }
+    }
+}
+
+/// One agent in a line of them: a pane header chip, a breadcrumb step's
+/// sibling, or an Overview worktree row's agent.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AgentChipSnapshot {
+    pub pane_id: String,
+    /// The short name the chip shows beside its mark.
+    pub label: String,
+    /// The longer description for the chip's tooltip.
+    pub detail: String,
+    pub agent_kind: String,
+    pub demand: String,
+    pub activity: String,
+    pub emphasized: bool,
+    pub symbol: String,
+    pub status_label: String,
+    /// Whether this child is still delegated work. It lifts when the child
+    /// has been stalled long enough to become the operator's problem.
+    pub delegated: bool,
+}
+
+/// The in-process subagents a pane's session reports.
+///
+/// Each count is optional because each is separately knowable. An adapter
+/// that cannot observe one leaves it `None`, and `None` draws as unknown
+/// rather than as zero (PRD B24, B32, D-53).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct SubagentCountsSnapshot {
+    pub working: Option<u32>,
+    pub done: Option<u32>,
+    pub blocked: Option<u32>,
+}
+
+impl SubagentCountsSnapshot {
+    /// Whether there is anything at all to draw.
+    pub fn is_silent(&self) -> bool {
+        self.working.is_none_or(|count| count == 0)
+            && self.done.is_none_or(|count| count == 0)
+            && self.blocked.is_none_or(|count| count == 0)
+    }
+}
+
+/// One step of a pane header's lineage breadcrumb.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LineageStepSnapshot {
+    pub pane_id: String,
+    pub label: String,
+    /// That layer's other agents, in the parent's own child order, so the
+    /// step's dropdown can offer them without a second traversal. It includes
+    /// the step itself, so the current position is visible in the list.
+    pub siblings: Vec<AgentChipSnapshot>,
 }
 
 /// The TCP listeners the machine has, with where each was started from.
@@ -1248,6 +1403,10 @@ pub struct WorktreeSnapshot {
     pub measured_at_unix_ms: Option<u64>,
     pub pane_count: usize,
     pub running_agent_count: usize,
+    /// Who is working in this worktree and on what (PRD B34, B35, D-32,
+    /// D-55). Overview's own value is width, so this is one line rather than
+    /// a new area.
+    pub agent_line: WorktreeAgentLineSnapshot,
     pub disk: DiskUsageSnapshot,
     pub pull_request: Option<PullRequestSnapshot>,
     pub github: GithubStatusSnapshot,
@@ -1272,6 +1431,25 @@ pub struct WorktreeSnapshot {
     pub added_lines: u32,
     pub removed_lines: u32,
     pub unpushed: Option<UnpushedSnapshot>,
+}
+
+/// The Overview worktree row's agent line.
+///
+/// An empty `agents` with no reason is a worktree nobody is working in. An
+/// empty one carrying a reason is a worktree Hide cannot see into, which is a
+/// different answer and is drawn as one (PRD B35, D-60, `design/principles.md`
+/// rule 9).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorktreeAgentLineSnapshot {
+    /// The agents attached to this worktree's panes, in the sidebar's own
+    /// order so the two screens name them the same way.
+    pub agents: Vec<AgentChipSnapshot>,
+    /// The same mark and sentence the pane header shows, when one of those
+    /// agents is uninstrumented. The reason is the first in the resolution
+    /// order among them, so the line agrees with the pane it came from.
+    pub uninstrumented_reason: Option<String>,
+    pub uninstrumented_label: Option<String>,
+    pub uninstrumented_code: Option<String>,
 }
 
 /// One policy shared by all worktree deletion surfaces.
@@ -1421,8 +1599,43 @@ pub struct StatusSnapshot {
     pub remote: Vec<RemoteStatusSnapshot>,
     pub chromux: ChromuxStatusSnapshot,
     pub environment: Vec<EnvironmentStatusSnapshot>,
+    pub agent_hooks: AgentHooksSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+}
+
+/// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,
+/// D-48).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct AgentHooksSnapshot {
+    /// One row per runtime Hide has an adapter for, in the crate's own order.
+    /// A runtime that is not on this Mac is still a row, because "not here"
+    /// and "not installed" are different answers.
+    pub runtimes: Vec<AgentHookRuntimeSnapshot>,
+    /// Panes running a session that started before the hook was installed.
+    /// They are the ones a restart would fix, and they are the reason the
+    /// screen exists: the hook can be installed and a pane still uninstrumented.
+    pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AgentHookRuntimeSnapshot {
+    pub id: String,
+    pub label: String,
+    /// The configuration file this row describes, so the operator can look.
+    pub path: String,
+    pub headline: String,
+    pub installed: bool,
+    /// Whether the operator can be offered an install for this runtime. Hide
+    /// never reinstalls on its own after the first run (PRD B28, D-31).
+    pub offers_install: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AgentHookPaneSnapshot {
+    pub pane_id: String,
+    pub label: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1591,6 +1804,7 @@ impl Snapshot {
                 checkout_id: None,
                 label: None,
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             },
             connection: ConnectionSnapshot {
@@ -1661,6 +1875,7 @@ impl Snapshot {
                     last_checked_at_unix_ms: None,
                 },
                 environment: Vec::new(),
+                agent_hooks: AgentHooksSnapshot::default(),
                 diagnostics: Vec::new(),
                 last_error: None,
             },

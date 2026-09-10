@@ -296,6 +296,12 @@ mod tests {
             session_id: None,
             spawned_from_pane_id: None,
             chat_title: None,
+            delegated: false,
+            stall_level: String::new(),
+            stall_notice: None,
+            lineage_parent_pane_id: None,
+            lineage_path_pane_ids: Vec::new(),
+            lineage_sibling_pane_ids: Vec::new(),
             lineage_depth: 0,
             lineage_child_pane_ids: Vec::new(),
             lineage_root_checkout_id: None,
@@ -303,6 +309,7 @@ mod tests {
             lineage_orphan: false,
             lineage_hint: None,
             raised_hint: None,
+            spawn_origin_pane_id: None,
             lineage_collapsed: false,
         }
     }

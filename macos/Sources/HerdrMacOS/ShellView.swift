@@ -519,6 +519,10 @@ struct PaneTerminalCell<Content: View>: View {
     let onClose: () -> Void
     let onFork: () -> Void
     let onOpenPort: (UInt16) -> Void
+    /// Whether the session is answering. A disconnected mark says so rather
+    /// than repeating the last state it saw.
+    let connected: Bool
+    let onSelectPane: (String) -> Void
     private let content: () -> Content
 
     init(
@@ -530,11 +534,13 @@ struct PaneTerminalCell<Content: View>: View {
         showsFork: Bool = false,
         activity: String = "",
         notice: String? = nil,
+        connected: Bool = true,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
         onOpenPort: @escaping (UInt16) -> Void = { _ in },
+        onSelectPane: @escaping (String) -> Void = { _ in },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
@@ -550,6 +556,8 @@ struct PaneTerminalCell<Content: View>: View {
         self.onClose = onClose
         self.onFork = onFork
         self.onOpenPort = onOpenPort
+        self.connected = connected
+        self.onSelectPane = onSelectPane
         self.content = content
     }
 
@@ -572,11 +580,15 @@ struct PaneTerminalCell<Content: View>: View {
             activity: activity,
             notice: notice,
             ports: pane.ports,
+            lineagePath: pane.lineagePath,
+            children: pane.children,
+            connected: connected,
             onFocus: onFocus,
             onReconnect: onReconnect,
             onClose: onClose,
             onFork: onFork,
             onOpenPort: onOpenPort,
+            onSelectPane: onSelectPane,
             content: content
         )
     }
@@ -634,11 +646,22 @@ struct HideTerminalPaneCard<Content: View>: View {
     let notice: String?
     /// Ports a server is listening on from this pane's directory.
     let ports: [UInt16]
+    /// This pane's ancestors, root first. Empty for a root, which is most
+    /// panes, and the row it draws in costs nothing when it is.
+    let lineagePath: [CoreLineageStep]
+    /// What this pane's session has spawned, when a session was detected.
+    /// Absent means no agent here, which is why nothing is drawn (PRD B22).
+    let children: CorePaneChildren?
+    let connected: Bool
     let onFocus: () -> Void
     let onReconnect: () -> Void
     let onClose: () -> Void
     let onFork: () -> Void
     let onOpenPort: (UInt16) -> Void
+    /// Replaces the screen with another pane in this lineage: a child chip, a
+    /// breadcrumb step, or a sibling from a step's dropdown. All three are the
+    /// same intent, so all three send the same event (PRD B7, B9, B10).
+    let onSelectPane: (String) -> Void
     private let content: () -> Content
 
     init(
@@ -655,11 +678,15 @@ struct HideTerminalPaneCard<Content: View>: View {
         activity: String = "",
         notice: String? = nil,
         ports: [UInt16] = [],
+        lineagePath: [CoreLineageStep] = [],
+        children: CorePaneChildren? = nil,
+        connected: Bool = true,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
         onOpenPort: @escaping (UInt16) -> Void = { _ in },
+        onSelectPane: @escaping (String) -> Void = { _ in },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.paneID = paneID
@@ -675,17 +702,25 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.activity = activity
         self.notice = notice
         self.ports = ports
+        self.lineagePath = lineagePath
+        self.children = children
+        self.connected = connected
         self.onFocus = onFocus
         self.onReconnect = onReconnect
         self.onClose = onClose
         self.onFork = onFork
         self.onOpenPort = onOpenPort
+        self.onSelectPane = onSelectPane
         self.content = content
     }
 
     var body: some View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingXS) {
+                if !lineagePath.isEmpty {
+                    PaneBreadcrumb(steps: lineagePath, onSelect: onSelectPane)
+                }
+
                 Button(action: onFocus) {
                     Text(title + activity)
                         .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
@@ -778,7 +813,17 @@ struct HideTerminalPaneCard<Content: View>: View {
 
             Rectangle()
                 .fill(HideTheme.divider)
-                .frame(height: 1)
+                .frame(height: HideTheme.Layout.hairlineWidth)
+
+            if let children, PaneLineagePresentation.showsChildRow(children) {
+                PaneChildRow(children: children, connected: connected, onSelect: onSelectPane)
+                    .background(HideTheme.elevated)
+                    .accessibilityIdentifier("pane-children-\(paneID)")
+
+                Rectangle()
+                    .fill(HideTheme.divider)
+                    .frame(height: HideTheme.Layout.hairlineWidth)
+            }
 
             if let notice {
                 HStack(alignment: .top, spacing: HideTheme.spacingSM) {

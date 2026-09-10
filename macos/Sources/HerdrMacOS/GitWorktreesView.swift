@@ -109,6 +109,9 @@ private struct GitWorktreeRow: View {
             }
             .hideFont(size: HideTheme.Typography.caption)
             .foregroundStyle(HideTheme.secondary)
+            WorktreeAgentLine(line: worktree.agentLine, connected: model.agentsConnected) {
+                model.focusPane($0)
+            }
             if let error = worktree.openError {
                 Text(error).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.danger)
             }

@@ -2,15 +2,20 @@
 
 How Herdr's raw agent state becomes a group in the sidebar, a pet pose, and a badge row.
 
-The state of an agent is three axes, not one word.
-What it needs from the operator, whether it is running, and whether the operator has looked at it are independent, and mixing them into one string is what made the same agent read differently in different views.
+The state of an agent is four axes, not one word.
+What it needs from the operator, whether it is running, whether the operator has looked at it, and whose work it is are independent, and mixing them into one string is what made the same agent read differently in different views.
 
 - Demand: question, approval, error, none.
 - Activity: working, stopped, unknown.
 - Read: read, unread.
+- Ownership: operator, delegated, escalated.
 
-`herdr-core/src/sidebar.rs` is the single owner of all three.
+`herdr-core/src/sidebar.rs` is the single owner of all four.
 It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, and whether closing the pane needs a confirmation - so no surface decides any of it a second time.
+
+Ownership is not stored anywhere.
+It is read back off the row: a row whose lineage depth is greater than zero is delegated, and a row whose stall level is `hard` is escalated regardless of depth.
+`ownership_of` is the only function that makes that judgement, and `rederive_ownership` is what reapplies every derived value after the lineage or a stall clock moves.
 
 ## Hide owns the read axis, at pane level
 
@@ -45,7 +50,7 @@ The suffix is Herdr's answer to a question Hide no longer asks it, so reading th
 
 | Group | Membership |
 | --- | --- |
-| Needs You | An unread demand - question, approval or error - or a pane Herdr reports as blocked right now |
+| Needs You | An unread demand - question, approval or error - a pane Herdr reports as blocked right now, or a lineage root whose descendant has been stalled past the hard threshold |
 | Done | No demand, stopped, and unread |
 | Working | Running |
 | Seen | Everything else: read demands, read completions, unknown |
@@ -54,6 +59,28 @@ A blocked pane stays in Needs You whether or not it has been read.
 The approval prompt is still on screen waiting, so it leaves the group when the prompt is answered, not when it is looked at.
 
 Done is deliberately separate from Needs You: finished-unseen is "look when you have a moment", an unread demand is "act now".
+
+Needs You and Done are the operator's own groups, so only the operator's own rows enter them.
+A delegated row can be Working or Seen and nothing else: its question, approval, error or completion is its parent's problem, and answering it is what delegation means.
+The row keeps its own demand, mark and status word, so the parent's badge can still say what its child is asking for; what changes is only which group the row sits in and whether it is drawn bright.
+Done is therefore scoped to the lineage root: a delegated child that finishes leaves a dimmed Seen row, and the completion the operator acts on is the root's.
+
+## The stall clock
+
+Delegation is only safe if work that stops being anybody's problem comes back.
+Each delegated row that is waiting on somebody, or running with nothing to show for it, carries a clock.
+A finished child is not stuck, a released pane has no session to be stuck in, an unknown activity gives nothing to measure, and a remote pane is uninstrumented by decision; none of those are timed.
+
+The clock measures one uninterrupted wait, so any move in the agent's own state - Herdr's sequence, its demand, or its activity - starts it over.
+While the server is away every clock holds its reading rather than counting, because that gap is Hide's blindness and not the agent being stuck.
+
+At five minutes the lineage root carries a notice naming the descendant and what it is waiting on, and its group does not change.
+At fifteen the child stops being drawn as somebody else's work and the root enters Needs You.
+The notice lands on the root rather than climbing one level per threshold: at depth three, one level at a time would keep the operator waiting forty-five minutes for news of something stuck for fifteen.
+When two descendants have waited exactly as long, the notice names the one asking for the most.
+
+A stalled session is by definition one that reports nothing new, so nothing new arrives to trigger a publish.
+The `agent.list` tick that already runs once a second asks `stall_publish_due` instead, which is a pure in-memory comparison; no timer of Hide's own exists for this.
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.
@@ -184,6 +211,21 @@ A malformed ambient object excludes that agent with a diagnostic while other val
 This client does not own upstream transcript scanning, authorization, or server restart policy.
 
 Regression owners are `ambient_counts_parse_and_unknown_keys_never_survive`, `a_malformed_ambient_record_excludes_only_that_agent`, and `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected`.
+
+## Uninstrumented is not an unknown activity
+
+A pane whose agent Hide cannot see into is a different answer from a pane whose activity Herdr reports as `unknown`, and the two are drawn differently on purpose.
+
+- Activity `unknown` is Herdr saying it does not know what the process is doing. It is one of the three activity values and it groups like any other.
+- Uninstrumented is Hide saying it cannot tell what that session has spawned. It is not an activity, it never changes a group, and it is drawn as its own mark beside the agent.
+
+The reason is resolved once, by `hide_agent_hooks::diagnosis::instrumentation`, in a fixed order: config unreadable, remote host, hooks not installed, session predates install, hook outdated, unknown.
+The first match wins and nothing falls through to an empty value or an invented cause.
+Every projection carries the reason's stable code alongside its sentence, so no surface has to recognise its own operator-facing text.
+
+The mark appears in three places, and only on panes where an agent was detected: the pane header, the sidebar row, and the Overview worktree row's agent line.
+That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
+A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
 
 ## GitHub status in the Workspace row
 

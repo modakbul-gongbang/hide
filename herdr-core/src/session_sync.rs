@@ -214,6 +214,18 @@ fn run_coordinator(
     let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
     let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
     let mut catalog_cache: Option<CatalogCache> = None;
+    // The hook-install state is two small file reads of this machine's own
+    // configuration, so the local coordinator takes it once before the first
+    // connect. It is not a poll: it changes only when the operator installs,
+    // reinstalls or removes, and each of those republishes it (PRD B36).
+    if context.is_local()
+        && let Some(home) = home_path.as_deref()
+    {
+        install_agent_hooks_on_first_run(home);
+        publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+    }
+    // Kept for the counter sweep below, which runs on a fresh snapshot.
+    let hook_home = context.is_local().then(|| home_path.clone()).flatten();
     let mut usage_reader = context
         .is_local()
         .then(|| crate::usage::ProviderUsageReader::new(home_path));
@@ -269,6 +281,9 @@ fn run_coordinator(
                         stop_subscription(&mut subscription);
                         return;
                     }
+                    if let (Some(home), Some(current)) = (hook_home.as_deref(), replica.as_ref()) {
+                        sweep_subagent_counters(home, current);
+                    }
                     needs_bootstrap = false;
                 }
                 Err(failure) => {
@@ -291,7 +306,8 @@ fn run_coordinator(
                         .as_mut()
                         .expect("active subscription always has a replica");
                     let publish =
-                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref())
+                            || stall_tick_needs_publish(&context);
                     if publish {
                         current.replace_agents(agents);
                         if current.ready_to_publish()
@@ -335,6 +351,35 @@ fn run_coordinator(
             {
                 stop_subscription(&mut subscription);
                 return;
+            }
+        }
+
+        // An install the operator approved. The file write happens here,
+        // outside every lock, and the diagnosis is read back afterwards so
+        // the screen shows what the file now says rather than what was asked
+        // for (PRD B28, D-31).
+        if let Some(home) = hook_home.as_deref() {
+            let Some(requested) = take_agent_hook_installs(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if !requested.is_empty() {
+                // An install the operator pressed for reports back to the
+                // operator. The diagnosis that follows reads the file, so a
+                // refusal that never reached the file would otherwise leave
+                // the screen unchanged and the press unanswered (PRD B28,
+                // engineering rule 4).
+                let mut refusal = None;
+                for runtime in requested {
+                    refusal = install_agent_hook(home, runtime).or(refusal);
+                }
+                publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+                if let Some(refusal) = refusal
+                    && let Some(core) = context.runtime.upgrade()
+                    && let Ok(mut locked) = core.lock()
+                {
+                    locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+                }
             }
         }
 
@@ -692,6 +737,154 @@ fn agent_tick_needs_publish(
         || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
 }
 
+/// Installs Hide's hooks the first time this machine runs Hide, and never
+/// again on its own.
+///
+/// Only a runtime that is here and carries no hook of Hide's is installed
+/// into. An outdated hook is left alone and asked about in the Settings
+/// diagnosis, and a runtime whose configuration could not be read is not
+/// written to on a guess (PRD B25, B28, D-31).
+fn install_agent_hooks_on_first_run(home: &std::path::Path) {
+    match hide_agent_hooks::claim_first_run(home) {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "first_run.unavailable",
+                "message": error.to_string(),
+            }));
+            return;
+        }
+    }
+    for row in hide_agent_hooks::Diagnosis::read(home).runtimes {
+        if matches!(row.status, hide_agent_hooks::HookStatus::NotInstalled) {
+            install_agent_hook(home, row.runtime);
+        }
+    }
+}
+
+/// Reads the approved installs out under a brief lock. `None` means the core
+/// is gone and the coordinator should stop.
+fn take_agent_hook_installs(
+    context: &SessionSyncContext,
+) -> Option<Vec<hide_agent_hooks::AgentRuntime>> {
+    let runtime = context.runtime.upgrade()?;
+    let requested = runtime.lock().ok()?.take_agent_hook_installs();
+    drop(runtime);
+    Some(requested)
+}
+
+/// Writes one runtime's hook, and records what happened either way.
+///
+/// The helper ships inside the bundle that is running, and
+/// [`hide_agent_hooks::helper_for`] refuses anything else: what goes into the
+/// hook is a path the operator's own configuration keeps and every future
+/// session of that agent runs, so a build directory is not an answer. The
+/// refusal is reported, never worked around.
+fn install_agent_hook(
+    home: &std::path::Path,
+    runtime: hide_agent_hooks::AgentRuntime,
+) -> Option<hide_agent_hooks::InstallFailure> {
+    let helper = match std::env::current_exe() {
+        Ok(executable) => hide_agent_hooks::helper_for(&executable),
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.failed",
+                "runtime": runtime.id(),
+                "message": format!("Hide could not locate its own executable: {error}"),
+            }));
+            return None;
+        }
+    };
+    let helper = match helper {
+        Ok(helper) => helper,
+        Err(refusal) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.refused",
+                "runtime": runtime.id(),
+                "message": refusal.message(),
+            }));
+            return Some(refusal);
+        }
+    };
+    match hide_agent_hooks::install(runtime, home, &helper) {
+        Ok(outcome) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.completed",
+                "runtime": runtime.id(),
+                "changed": outcome.changed,
+                "preserved_entries": outcome.preserved_entries,
+            }));
+            None
+        }
+        Err(failure) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.failed",
+                "runtime": runtime.id(),
+                "message": failure.message(),
+            }));
+            Some(failure)
+        }
+    }
+}
+
+/// Drops the subagent counts of panes Herdr no longer lists.
+///
+/// A fresh `session.snapshot` is the one moment the pane set is known to be
+/// complete, so it is where the sweep belongs: a pane missing from an event
+/// stream may only be one Hide has not heard about yet. Nothing on screen
+/// depends on it - a pane with no agent projects no children at all - so this
+/// is housekeeping, and a failure is recorded rather than escalated (PRD B31,
+/// D-53).
+fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
+    let live = replica.state.panes.iter().map(|pane| pane.pane_id.as_str());
+    match hide_agent_hooks::counters::retain(home, live) {
+        Ok(0) => {}
+        Ok(dropped) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "counters.swept",
+            "dropped": dropped,
+        })),
+        Err(error) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "counters.sweep_failed",
+            "message": error.to_string(),
+        })),
+    }
+}
+
+/// Whether a stall threshold has been crossed since the last publish.
+///
+/// A stalled agent is by definition one that reports nothing new, so
+/// `agent_tick_needs_publish` says no for exactly as long as the operator
+/// most needs to hear about it. Asking the runtime on the tick that already
+/// runs keeps the escalation on the clock without a timer of Hide's own
+/// (PRD B36). It is a pure in-memory read of the snapshot, so it holds the
+/// mutex no longer than the comparison itself.
+///
+/// Only the local coordinator asks. A remote target's rows are projected
+/// from another machine's session and are not what the local stall clocks
+/// are counting.
+fn stall_tick_needs_publish(context: &SessionSyncContext) -> bool {
+    if !matches!(context.target, SessionSyncTarget::Local { .. }) {
+        return false;
+    }
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let due = match runtime.lock() {
+        Ok(guard) => guard.stall_publish_due(),
+        Err(_) => false,
+    };
+    drop(runtime);
+    due
+}
+
 fn publish_replica(
     context: &SessionSyncContext,
     replica: &SessionReplica,
@@ -812,6 +1005,26 @@ fn publish_provider_usage(
     };
     let changed = match runtime.lock() {
         Ok(mut guard) => guard.ingest_provider_usage(provider_usage),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+/// Hands the runtime the hook-install judgement, which was read on this
+/// thread rather than under the mutex.
+fn publish_hook_diagnosis(
+    context: &SessionSyncContext,
+    diagnosis: hide_agent_hooks::Diagnosis,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_hook_diagnosis(diagnosis),
         Err(_) => return false,
     };
     drop(runtime);
@@ -1388,6 +1601,14 @@ impl SessionReplica {
                                     // so a remote pane reports none rather than
                                     // claiming the local machine's.
                                     ports: Vec::new(),
+                                    // Hide installs no hook on another
+                                    // machine, so a remote agent pane is
+                                    // permanently uninstrumented and says so
+                                    // rather than showing an empty chip row
+                                    // (PRD B33, D-28, D-49).
+                                    children: agent
+                                        .map(|_| crate::model::PaneChildrenSnapshot::remote()),
+                                    lineage_path: Vec::new(),
                                 }
                             })
                             .collect::<Vec<_>>();
@@ -1397,6 +1618,7 @@ impl SessionReplica {
                             checkout_id: Some(checkout_id.clone()),
                             label: Some(crate::model::display_tab_label(&tab.label, &tab.tab_id)),
                             empty: panes.is_empty(),
+                            delegated: false,
                             panes,
                         }
                     })

@@ -12,6 +12,7 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 
 - `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
 - `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. It projects Herdr-owned pane topology and owns Hide's UI state; the Swift shell owns neither. See Runtime Architecture for the exact ownership split.
+- `hide-agent-hooks/` - the only code path in the product that writes a configuration file the operator owns. It knows where each agent runtime keeps its hook file, how to append one entry without disturbing anybody else's, how to judge what is installed, and how to report that judgement; its `hide-agent-hooks` binary is what the installed hook runs. It is a separate crate because the risk it carries is a file-system risk, and folding it into the crate that owns `Mutex<Runtime>` would put a `settings.json` write behind the render lock.
 - `hide-ai/` - the provider boundary for background AI features: a feature submits its own prompt, output schema and parser through `AiRouter`, and the crate owns provider lifecycle, availability, timeouts, retries, fallback and structured errors. Summaries come from the user's logged-in Codex CLI through `codex app-server`; see `docs/AI_PROVIDERS.md`.
 - `plugins/` - Herdr plugins shipped from this repository: `browser/` (the Hide browser pane) and `agent-context-labels/` (pane task labels, a workspace member that consumes `hide-ai`). Each directory is installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`.
 - `src/` - removed retired Rust-native shell. The SSH/mini runtime is owned by `herdr-core/`; nothing links a root `src/` crate into the application.
@@ -89,6 +90,19 @@ A clicked path is one event, not a sequence.
 The shell resolves the token on the filesystem, decides which registered checkout owns it by the longest symlink-resolved prefix, and sends `reveal_path`; the core then decides the focused checkout, the right panel's visibility and section, the tree's expanded set and selection, and the editor tab together.
 Dispatch is fire-and-forget, so four separate events would arrive as four frames and a refusal partway would leave the screen half moved.
 A path outside every checkout never reaches the core: the shell hands it to macOS, opening a file in its default application and a folder as a Finder window, and revealing rather than opening anything whose default application is the operating system running it - an executable file, an application bundle, an installer package - because link detection is a guess over arbitrary agent output and one wrong click must not start a program.
+
+A spawned child does not split the operator's pane.
+Herdr owns split geometry and the PTY size, so a delegated child pane is really moved out - `pane.move` to a new tab in the workspace it is already in - rather than left undrawn; a tab holding nothing but delegated children then stays out of the tab strip while remaining in the checkout.
+Detection is the same on every pass, so a child that arrives while Hide is running and one already split when Hide started take the same path, and a refusal is retried on a fixed interval rather than assumed to have worked.
+Herdr reports a refusal as an unchanged move with a reason rather than as an error, so the decision reads `changed` instead of trusting a successful request.
+
+Ownership is the fourth derived status axis and it is read off the lineage, never stored.
+A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; a per-child stall clock is what brings work back when it stops being anybody's problem.
+`docs/status-model.md` owns both rules.
+
+What an agent has spawned in-process is not on Herdr's wire at all.
+The hook helper reports it through `herdr pane report-metadata`, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
+A count Hide cannot read is reported as unknown, never as zero.
 
 An attach lives only while its tab is in the last five shown.
 Herdr renders a pane for every attached client, so an attach nobody is looking at costs a child process here and a render there for the life of the process; visiting eight tabs used to leave eight attaches alive.

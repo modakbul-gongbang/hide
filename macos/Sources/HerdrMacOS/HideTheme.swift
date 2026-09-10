@@ -196,8 +196,17 @@ enum HideTheme {
     }
     static let gitSectionIcon = "externaldrive.badge.checkmark"
     static let gitPullRequestIcon = "arrow.triangle.pull"
-    static let lineageIndent: CGFloat = 12
-    static let lineageDeepIndent: CGFloat = 6
+    /// One step down the agent tree.
+    ///
+    /// It is not a spacing value chosen by eye: it is exactly the distance
+    /// from a row's status mark to its agent badge, so a child's mark lands
+    /// centered under its parent's badge and every level reads as one column.
+    /// Compact is the density the tree uses; the flat views do not indent.
+    static let lineageIndent: CGFloat =
+        agentMarkWidth + spacingXS + (compactAgentBadgeSize - agentMarkWidth) / 2
+    /// The compact row's agent badge, repeated here because the indent is
+    /// derived from it and `AgentRowDensity` reads it back.
+    static let compactAgentBadgeSize: CGFloat = 16
     static let lineageChevronWidth: CGFloat = 16
     static let worktreeDialogWidth: CGFloat = 440
     static let formControlHeight: CGFloat = 36
@@ -208,10 +217,42 @@ enum HideTheme {
     static let compactAgentLeadingInset = spacingSM + agentMarkWidth + spacingSM
         + checkoutIconWidth / 2 - lineageChevronWidth - agentMarkWidth / 2
     static let tabTitleMaxWidth: CGFloat = 200
-    /// A descendant's inset in the agent tree: two full steps, then a shallower
-    /// step per level so a deep lineage still fits the sidebar's width.
+    /// A descendant's inset in the agent tree: one column per level.
+    ///
+    /// The step used to shrink after two levels to keep a deep lineage on
+    /// screen, which broke the column the connector and the marks share -
+    /// only the first two levels lined up with anything. Depth is what the
+    /// guide draws, so it stays uniform and the guide stays true.
     static func lineageInset(depth: Int) -> CGFloat {
-        CGFloat(min(depth, 2)) * lineageIndent + CGFloat(max(0, depth - 2)) * lineageDeepIndent
+        CGFloat(max(0, depth)) * lineageIndent
+    }
+
+    /// How far below a row's top its status mark is centered.
+    ///
+    /// A fixed offset, not a fraction of the row: a row grows downward when
+    /// it carries a stall notice or a second summary line, and an elbow tied
+    /// to the height would slide off the mark exactly when it did.
+    static let lineageElbowY: CGFloat = compactAgentRowVerticalPadding + compactAgentBadgeSize / 2
+    /// The compact row's vertical padding, shared with `AgentRowDensity` so
+    /// the guide and the row cannot disagree about where the mark sits.
+    static let compactAgentRowVerticalPadding: CGFloat = 5
+
+    /// Where the trunk descending from a row at `depth` is drawn, measured
+    /// from the leading edge of the tree's rows.
+    ///
+    /// It is that row's collapse toggle: the line leaves the control that
+    /// opens it, so a branch and the thing that shows or hides it are the
+    /// same column rather than two.
+    static func lineageTrunkX(depth: Int) -> CGFloat {
+        lineageInset(depth: depth) + compactAgentLeadingInset + lineageChevronWidth / 2
+    }
+
+    /// Where a row's guide stops: at its toggle when it has one, and at its
+    /// status mark when it does not, so the line arrives at something the
+    /// operator can see rather than crossing an empty column.
+    static func lineageElbowEndX(depth: Int, hasToggle: Bool) -> CGFloat {
+        let leading = lineageInset(depth: depth) + compactAgentLeadingInset
+        return hasToggle ? leading : leading + lineageChevronWidth
     }
 
     static let compactControlSize: CGFloat = 36
@@ -274,6 +315,14 @@ enum HideTheme {
         /// measurement plus one spacing step.
         static let trafficLightInset: CGFloat = 69
         static let paneHeaderHeight: CGFloat = 28
+        /// The pane header's second row, which exists only when the pane has
+        /// children. The breadcrumb keeps the 28pt row above it; a pane with
+        /// no children is 28pt and nothing else (DESIGN.md, user decision).
+        static let paneChildRowHeight: CGFloat = 24
+        /// How wide one child chip is allowed to get before its name is
+        /// truncated. Long identifiers and Korean names both have to fit
+        /// several chips on one row rather than one chip pushing the rest off.
+        static let paneChildChipMaxWidth: CGFloat = 132
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
         static let sidebarMaxWidth: CGFloat = 440

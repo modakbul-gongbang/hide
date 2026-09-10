@@ -814,8 +814,11 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 
 ## Native Git and lineage tokens
 
-`HideTheme.lineageIndent` is 12pt for the first two descendant levels, and `lineageDeepIndent` is 6pt per level from depth three onward.
-`lineageChevronWidth` reserves 16pt on every project agent row, with a disclosure control for parents and hairline connectors for descendants.
+`HideTheme.lineageIndent` is one column per descendant level, uniform at every depth.
+It is a measurement rather than a chosen spacing: the distance from a row's status mark to its agent badge, so a child's mark sits centered under its parent's badge and the tree reads as columns.
+It replaced a step that shrank after two levels, which kept deep trees narrow at the cost of the marks lining up with nothing.
+`lineageChevronWidth` reserves 16pt on every project agent row for the disclosure control, and that column is where the connector lives: the trunk drops from the control that opens the branch, so a branch and the thing that shows or hides it are one column rather than two.
+`lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a stall notice does not slide the connector off the mark.
 The Git worktree section sizes its own text from `HideTheme.gitRowFontSize` (11pt) for a worktree row and `HideTheme.gitDetailFontSize` (10pt) for the ahead/behind, pushed and disk detail beside it.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
 The branch is the title; the primary checkout carries a separate `primary` role badge.
@@ -858,6 +861,29 @@ The sidebar runtime version stays on one line with middle truncation; its toolti
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
 `HideTheme.GitIcon` names refresh (`arrow.clockwise`), merged (`checkmark.circle`), unmerged (`circle`), dirty (`circle.fill`), clean (`checkmark`), merged PR (`arrow.triangle.merge`), closed PR (`xmark.circle`), unavailable (`exclamationmark.circle`), and absent PR (`minus.circle`).
+
+## Pane header lineage and ownership
+
+The pane header keeps its 28pt breadcrumb row.
+A pane with children gains a second 24pt row for the child chips, and that row exists only when there are children; a pane with none stays at 28pt.
+This is a user decision between four candidates, not a default: compressing the marks onto the breadcrumb row, relying on the sidebar alone, and a bottom status bar were all rejected, because the chip has to carry the child's name where the operator is already looking.
+
+The breadcrumb draws the pane's ancestors root first.
+Each step carries that layer's siblings in a dropdown, so moving between siblings is one step inside a lineage; moving between lineages is the sidebar's job and is not duplicated here.
+A root has no siblings list and therefore no chevron, following the existing rule that a control with nothing to disclose is not drawn.
+
+Ownership is drawn as emphasis, not as a new color or container.
+The operator's own rows are bright; delegated rows are subdued, using the existing emphasized/subdued treatment that Needs You and Done already use.
+Nothing new is introduced for it: a delegated row is simply never emphasized, because it can only be Working or Seen.
+When a stall hands a child back to the operator, its dimming lifts through the same token rather than through a state of its own.
+
+The uninstrumented mark is drawn in exactly three places, and only on panes where an agent was detected: the pane header, the sidebar agent row, and the Overview worktree row's agent line.
+It is a mark plus an accessible name, never a color alone, and its tooltip carries the whole sentence.
+The subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
+
+The Overview worktree row gains one agent line and no new area.
+An empty line with no mark means nobody is working in that worktree; an empty line with the uninstrumented mark means Hide cannot see into it.
+The existing branch, ahead/behind, pushed, PR and CI indicators on that row are unchanged, as is the PR lookup failure treatment.
 
 ## In-Product Components
 
