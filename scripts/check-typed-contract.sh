@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Reuse the machine's installed toolchain; rustup installs a private copy into an
+# empty $HOME/.rustup and still exits 0.
+. scripts/toolchain-env.sh
 . scripts/build-scratch.sh
 export PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$HOME/.cargo/bin:$PATH"
 case "${1:-}" in

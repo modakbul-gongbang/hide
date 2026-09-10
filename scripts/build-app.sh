@@ -30,6 +30,10 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$project_root"
+
+# Reuse the machine's installed toolchain; rustup installs a private copy into an
+# empty $HOME/.rustup and still exits 0.
+. scripts/toolchain-env.sh
 [[ -f "$icon_path" ]] || { print -u2 "app icon is missing: $icon_path"; exit 1; }
 cargo build --release --locked -p herdr-core
 # The hook helper is what an installed hook runs, so it ships beside the app's

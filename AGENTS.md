@@ -65,6 +65,18 @@ On 2026-09-09 one abandoned worktree held 5.3 GB, over half of the 10 GB across 
 An agent worktree is built a few times and discarded, which never repays an incremental cache; what it does instead is grow one per worktree, and those had reached 1.5 GB.
 Debug output is what makes a stale worktree expensive, because nothing strips it: the debug `libherdr_core.a` measured 288 MB against 92 MB for the release archive.
 
+The toolchain itself is not build output and is never copied per run.
+`scripts/toolchain-env.sh` is sourced by every script here that calls cargo, and it resolves `CARGO_HOME` and `RUSTUP_HOME` from the cargo shim's own location so an isolated HOME reuses the machine's installed toolchain.
+
+Without it a verification runner pays for a whole toolchain and keeps it.
+rustup reads `RUSTUP_HOME` with a default of `$HOME/.rustup`, and a runner HOME makes that an empty directory; rustup does not fail there, it downloads and installs into it and reports the fact as a warning while exiting 0.
+That exit 0 is why the two earlier workarounds never ran: `rust-test.sh` and `swift-test.sh` had each diagnosed the missing toolchain correctly, and each guarded its recovery behind a cargo invocation failing.
+The cost was 1.3 GB of `.rustup` plus 128 MB of `.cargo` per run, 9.1 GB across eleven run directories, duplicating a toolchain already on the machine.
+
+`scripts/verify-cargo.sh` is the plain-argv entrypoint the PRD harness binds for its `test` and `build` commands.
+The harness runs a verify command with no shell, so an `ENV=value cargo ...` binding fails with ENOENT at verify time, when a sealed run can no longer be amended; a script is the only place that environment decision can live.
+Its target directory is deliberately shared across runs rather than keyed by checkout, which the sharing rule above permits for the reason it names: every verify run builds the same checkout, so there is one path and sharing is what makes the second run incremental.
+
 ## Runtime Architecture
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.

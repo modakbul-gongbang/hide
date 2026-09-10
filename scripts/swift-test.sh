@@ -3,12 +3,20 @@
 #
 # The shell links the core's static archive, so a stale archive would link
 # silently and test yesterday's core. Where cargo is available the archive is
-# rebuilt; where it is not - a verification runner with its own HOME has no
-# rustup toolchain - the archive must already be newer than every core source,
-# and the run fails rather than testing an unknown binary.
+# rebuilt; where it is not the archive must already be newer than every core
+# source, and the run fails rather than testing an unknown binary.
+#
+# A verification runner with its own HOME used to take the unavailable branch
+# for the wrong reason, and pay a full toolchain download on the way: rustup
+# auto-installs into an empty `$HOME/.rustup` and still exits 0.
+# `toolchain-env.sh` resolves the machine's toolchain first, so the branch below
+# now separates a machine with no Rust from a runner that merely has its own
+# HOME.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+. scripts/toolchain-env.sh
 
 archive="target/release/libherdr_core.a"
 
