@@ -641,6 +641,11 @@ pub struct PaneChildrenSnapshot {
     /// The accessible name for the uninstrumented mark, so the symbol never
     /// carries the meaning by itself (PRD B37).
     pub uninstrumented_label: Option<String>,
+    /// The reason's stable name. The Settings diagnosis reads it to list the
+    /// panes whose session predates the install, so that judgement is made
+    /// once here rather than by matching a sentence on two screens (PRD B27,
+    /// D-61).
+    pub uninstrumented_code: Option<String>,
     /// One chip per pane child, in the lineage's own child order. Only panes:
     /// an in-process subagent has no pane, so it cannot be a chip the
     /// operator clicks into (PRD D-63).
@@ -660,6 +665,7 @@ impl PaneChildrenSnapshot {
             instrumented: false,
             uninstrumented_reason: Some(reason.message().to_owned()),
             uninstrumented_label: Some(reason.accessibility_label().to_owned()),
+            uninstrumented_code: Some(reason.code().to_owned()),
             ..Self::default()
         }
     }
@@ -1565,8 +1571,43 @@ pub struct StatusSnapshot {
     pub remote: Vec<RemoteStatusSnapshot>,
     pub chromux: ChromuxStatusSnapshot,
     pub environment: Vec<EnvironmentStatusSnapshot>,
+    pub agent_hooks: AgentHooksSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+}
+
+/// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,
+/// D-48).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct AgentHooksSnapshot {
+    /// One row per runtime Hide has an adapter for, in the crate's own order.
+    /// A runtime that is not on this Mac is still a row, because "not here"
+    /// and "not installed" are different answers.
+    pub runtimes: Vec<AgentHookRuntimeSnapshot>,
+    /// Panes running a session that started before the hook was installed.
+    /// They are the ones a restart would fix, and they are the reason the
+    /// screen exists: the hook can be installed and a pane still uninstrumented.
+    pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AgentHookRuntimeSnapshot {
+    pub id: String,
+    pub label: String,
+    /// The configuration file this row describes, so the operator can look.
+    pub path: String,
+    pub headline: String,
+    pub installed: bool,
+    /// Whether the operator can be offered an install for this runtime. Hide
+    /// never reinstalls on its own after the first run (PRD B28, D-31).
+    pub offers_install: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AgentHookPaneSnapshot {
+    pub pane_id: String,
+    pub label: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1806,6 +1847,7 @@ impl Snapshot {
                     last_checked_at_unix_ms: None,
                 },
                 environment: Vec::new(),
+                agent_hooks: AgentHooksSnapshot::default(),
                 diagnostics: Vec::new(),
                 last_error: None,
             },

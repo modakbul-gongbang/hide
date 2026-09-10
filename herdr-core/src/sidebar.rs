@@ -671,6 +671,9 @@ pub fn project_pane_children(
         uninstrumented_label: instrumentation
             .reason
             .map(|reason| reason.accessibility_label().to_owned()),
+        uninstrumented_code: instrumentation
+            .reason
+            .map(|reason| reason.code().to_owned()),
         chips,
         representative,
         subagents: crate::model::SubagentCountsSnapshot {

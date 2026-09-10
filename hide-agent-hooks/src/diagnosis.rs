@@ -38,6 +38,19 @@ pub enum UninstrumentedReason {
 }
 
 impl UninstrumentedReason {
+    /// The stable name every surface keys on, so no screen has to compare
+    /// the operator-facing sentence against a literal of its own.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::ConfigUnreadable => "config_unreadable",
+            Self::RemoteHost => "remote_host",
+            Self::HooksNotInstalled => "hooks_not_installed",
+            Self::SessionPredatesInstall => "session_predates_install",
+            Self::HookOutdated => "hook_outdated",
+            Self::Unknown => "unknown",
+        }
+    }
+
     /// The sentence the tooltip shows. It is the whole explanation: the
     /// operator must be able to tell "installed but this session is old" from
     /// "never installed" without opening anything.

@@ -860,3 +860,144 @@ fn a_pane_whose_session_ended_draws_no_counts_even_though_its_tokens_remain() {
         .expect("a pane with an agent projects");
     assert_eq!(live.subagents.done, Some(9));
 }
+
+// PRD B27, D-31, D-48, D-61: the Settings diagnosis says what each runtime's
+// hook is, and names the panes a restart would fix.
+#[test]
+fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the_install() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(serde_json::from_value(serde_json::json!({
+        "agents": [
+            {"id":"Instrumented","pane_id":"w1:p1","agent":"claude","agent_status":"working",
+             "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture"},
+            {"id":"Older","pane_id":"w1:p2","agent":"claude","agent_status":"working",
+             "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture"}
+        ],
+        "panes": [
+            {"pane_id":"w1:p1","cwd":"/fixture","tokens":{"hide_hooks":"1","hide_sub_done":"2"}},
+            {"pane_id":"w1:p2","cwd":"/fixture"}
+        ],
+        "tabs": [{"workspace_id":"w1","tab_id":"t1","label":""}],
+        "layouts": [{
+            "workspace_id":"w1","tab_id":"t1","zoomed":false,
+            "area":{"x":0,"y":0,"width":80,"height":24},
+            "focused_pane_id":"w1:p1",
+            "panes":[
+                {"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":40,"height":24}},
+                {"pane_id":"w1:p2","rect":{"x":40,"y":0,"width":40,"height":24}}
+            ],
+            "splits":[{"direction":"right","ratio":0.5,
+                       "rect":{"x":0,"y":0,"width":80,"height":24}}]
+        }]
+    }))
+    .expect("session payload")));
+
+    // Before anything has been read, the screen has nothing to claim.
+    assert!(runtime.snapshot.status.agent_hooks.runtimes.is_empty());
+
+    assert!(runtime.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
+        runtimes: vec![
+            hide_agent_hooks::diagnosis::RuntimeDiagnosis {
+                runtime: hide_agent_hooks::AgentRuntime::ClaudeCode,
+                label: "Claude Code".to_owned(),
+                path: "/fixture/.claude/settings.json".to_owned(),
+                status: hide_agent_hooks::HookStatus::Installed {
+                    version: hide_agent_hooks::HOOK_VERSION,
+                },
+                current_version: hide_agent_hooks::HOOK_VERSION,
+            },
+            hide_agent_hooks::diagnosis::RuntimeDiagnosis {
+                runtime: hide_agent_hooks::AgentRuntime::Codex,
+                label: "Codex".to_owned(),
+                path: "/fixture/.codex/hooks.json".to_owned(),
+                status: hide_agent_hooks::HookStatus::NotInstalled,
+                current_version: hide_agent_hooks::HOOK_VERSION,
+            },
+        ],
+    }));
+
+    let hooks = &runtime.snapshot.status.agent_hooks;
+    assert_eq!(
+        hooks
+            .runtimes
+            .iter()
+            .map(|row| (row.id.as_str(), row.headline.as_str(), row.offers_install))
+            .collect::<Vec<_>>(),
+        vec![
+            ("claude-code", "Installed (v1)", false),
+            ("codex", "Not installed", true),
+        ],
+        "a runtime that is fine is not offered a reinstall (PRD B28)"
+    );
+    assert_eq!(hooks.runtimes[0].path, "/fixture/.claude/settings.json");
+
+    // The hook is installed and one pane still carries none of its tokens,
+    // so that session started first and a restart is what fixes it.
+    assert_eq!(
+        hooks
+            .sessions_predating_install
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        ["w1:p2"],
+        "the instrumented pane is not on the list"
+    );
+    assert!(
+        hooks.sessions_predating_install[0]
+            .message
+            .contains("Restart the agent"),
+        "got {:?}",
+        hooks.sessions_predating_install[0].message
+    );
+    assert_eq!(hooks.sessions_predating_install[0].label, "Older");
+}
+
+// PRD B28, D-31: Hide installs on approval, never on its own initiative, and
+// an approval it cannot act on says so rather than being dropped.
+#[test]
+fn an_approved_install_is_queued_once_and_an_unknown_runtime_is_reported() {
+    let mut runtime = runtime();
+    let install = |runtime_id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "install_agent_hooks",
+            "payload": {"runtime_id": runtime_id}
+        }))
+        .unwrap()
+    };
+
+    assert!(
+        runtime.take_agent_hook_installs().is_empty(),
+        "nothing is installed until the operator asks"
+    );
+
+    assert!(runtime.dispatch_json(&install("claude-code")));
+    // Approving twice is one install: the queue is a set and the write itself
+    // rewrites the same hook group either way (engineering rule 11).
+    assert!(runtime.dispatch_json(&install("claude-code")));
+    assert!(runtime.dispatch_json(&install("codex")));
+    assert_eq!(
+        runtime.take_agent_hook_installs(),
+        vec![
+            hide_agent_hooks::AgentRuntime::ClaudeCode,
+            hide_agent_hooks::AgentRuntime::Codex
+        ]
+    );
+    assert!(
+        runtime.take_agent_hook_installs().is_empty(),
+        "a taken request is not performed twice"
+    );
+
+    assert!(runtime.dispatch_json(&install("emacs")));
+    assert!(
+        runtime.take_agent_hook_installs().is_empty(),
+        "a runtime Hide has no adapter for installs nothing"
+    );
+    let error = runtime
+        .snapshot
+        .status
+        .last_error
+        .as_ref()
+        .expect("the refusal is visible rather than silent");
+    assert_eq!(error.kind, "agent_hooks.unknown_runtime");
+    assert!(error.message.contains("emacs"), "got {}", error.message);
+}

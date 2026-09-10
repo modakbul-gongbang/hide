@@ -1006,6 +1006,16 @@ struct RetryConnectPayload {
     target_id: String,
 }
 
+/// One runtime the operator asked Hide to install its hook into.
+///
+/// It exists because Hide installs once on first run and then leaves the
+/// operator's configuration alone; every later install is this event, sent
+/// from the Settings diagnosis after they said yes (PRD B28, D-31).
+#[derive(Debug, Deserialize)]
+struct InstallAgentHooksPayload {
+    runtime_id: String,
+}
+
 /// One pane search. An empty `term` clears the search rather than needing its
 /// own event, and `step` folds "search this" and "go to the next one" into one
 /// path: 0 searches and keeps the current match, +1 and -1 move.
@@ -1131,6 +1141,7 @@ enum ValidatedEvent {
     FileConflict(FileConflictPayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
+    InstallAgentHooks(InstallAgentHooksPayload),
     TerminalResize(TerminalResizePayload),
     TerminalViewport(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
@@ -1261,6 +1272,9 @@ pub struct Runtime {
     /// thread. `None` until that first read lands, which reads as "not known
     /// yet" rather than as "not installed".
     hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
+    /// Runtimes the operator has approved an install for, waiting for the
+    /// coordinator to do the file write off the mutex.
+    pending_hook_installs: BTreeSet<hide_agent_hooks::AgentRuntime>,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1524,6 +1538,7 @@ impl Runtime {
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
+            pending_hook_installs: BTreeSet::new(),
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             #[cfg(test)]
@@ -5505,6 +5520,10 @@ impl Runtime {
         };
         let mut changed = false;
         let mut delegated_tabs_changed = false;
+        // Collected on the same walk as the pane children, so the Settings
+        // diagnosis and the pane's own mark can never disagree about which
+        // sessions predate the install (PRD B27, D-61).
+        let mut predating: Vec<crate::model::AgentHookPaneSnapshot> = Vec::new();
         // A tab is the operator's whenever it holds an agent they own. One
         // holding only delegated children is the pile this change exists to
         // take off the strip (PRD B1).
@@ -5560,6 +5579,23 @@ impl Runtime {
                 .unwrap_or_default();
             let children =
                 crate::sidebar::project_pane_children(&agents, &pane.id, tokens, &status_of);
+            if let Some(children) = children.as_ref()
+                && children.uninstrumented_code.as_deref()
+                    == Some(
+                        hide_agent_hooks::diagnosis::UninstrumentedReason::SessionPredatesInstall
+                            .code(),
+                    )
+            {
+                predating.push(crate::model::AgentHookPaneSnapshot {
+                    pane_id: pane.id.clone(),
+                    label: agents
+                        .iter()
+                        .find(|agent| agent.pane_id == pane.id)
+                        .map(|agent| agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()))
+                        .unwrap_or_else(|| pane.id.clone()),
+                    message: children.uninstrumented_reason.clone().unwrap_or_default(),
+                });
+            }
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
             if pane.children != children {
                 pane.children = children;
@@ -5571,6 +5607,26 @@ impl Runtime {
             }
         }
         self.snapshot.navigator.agents = agents;
+        let hooks = crate::model::AgentHooksSnapshot {
+            runtimes: self
+                .hook_diagnosis
+                .iter()
+                .flat_map(|diagnosis| diagnosis.runtimes.iter())
+                .map(|row| crate::model::AgentHookRuntimeSnapshot {
+                    id: row.runtime.id().to_owned(),
+                    label: row.label.clone(),
+                    path: row.path.clone(),
+                    headline: row.headline(),
+                    installed: matches!(row.status, hide_agent_hooks::HookStatus::Installed { .. }),
+                    offers_install: row.offers_install(),
+                })
+                .collect(),
+            sessions_predating_install: predating,
+        };
+        if self.snapshot.status.agent_hooks != hooks {
+            self.snapshot.status.agent_hooks = hooks;
+            changed = true;
+        }
         if delegated_tabs_changed {
             self.rebuild_tab_strips();
         }
@@ -5839,6 +5895,32 @@ impl Runtime {
     }
 
     /// Takes the hook-install judgement the coordinator read off the lock.
+    /// Queues an install the operator approved, or says why it cannot.
+    ///
+    /// The write itself happens on the coordinator thread: it is file I/O,
+    /// and nothing that touches the disk runs under this mutex.
+    fn request_agent_hook_install(&mut self, runtime_id: &str) -> bool {
+        let Some(runtime) = hide_agent_hooks::AgentRuntime::from_id(runtime_id) else {
+            self.set_error(
+                "agent_hooks.unknown_runtime",
+                format!("Hide has no agent hook adapter for {runtime_id}"),
+                false,
+            );
+            return true;
+        };
+        // Approving twice is one install: the request is a set, and the
+        // install itself rewrites the same hook group either way.
+        self.pending_hook_installs.insert(runtime);
+        true
+    }
+
+    /// Hands the queued installs to the caller that can perform them.
+    pub(crate) fn take_agent_hook_installs(&mut self) -> Vec<hide_agent_hooks::AgentRuntime> {
+        std::mem::take(&mut self.pending_hook_installs)
+            .into_iter()
+            .collect()
+    }
+
     pub(crate) fn ingest_hook_diagnosis(&mut self, diagnosis: hide_agent_hooks::Diagnosis) -> bool {
         if self.hook_diagnosis.as_ref() == Some(&diagnosis) {
             return false;
@@ -8547,6 +8629,9 @@ impl Runtime {
                     Some(payload.last_checked_at_unix_ms);
                 true
             }
+            ValidatedEvent::InstallAgentHooks(payload) => {
+                self.request_agent_hook_install(&payload.runtime_id)
+            }
             ValidatedEvent::RetryConnect(payload) => {
                 if let Some(remote) = self
                     .snapshot
@@ -10916,6 +11001,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
+        "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),

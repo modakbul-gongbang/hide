@@ -443,7 +443,7 @@ mod tests {
     }
 
     fn helper(fixture: &Fixture) -> PathBuf {
-        let path = fixture.home().join("hide-agent-hooks");
+        let path = fixture.home().join(crate::HELPER_BINARY_NAME);
         fs::write(&path, "#!/bin/sh\n").unwrap();
         path
     }

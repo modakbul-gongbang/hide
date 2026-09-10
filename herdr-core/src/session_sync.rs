@@ -353,6 +353,23 @@ fn run_coordinator(
             }
         }
 
+        // An install the operator approved. The file write happens here,
+        // outside every lock, and the diagnosis is read back afterwards so
+        // the screen shows what the file now says rather than what was asked
+        // for (PRD B28, D-31).
+        if let Some(home) = hook_home.as_deref() {
+            let Some(requested) = take_agent_hook_installs(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if !requested.is_empty() {
+                for runtime in requested {
+                    install_agent_hook(home, runtime);
+                }
+                publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+            }
+        }
+
         if let Some(reader) = ports_reader.as_mut() {
             // `lsof` runs here, outside every lock; only the result is handed
             // in.
@@ -705,6 +722,63 @@ fn agent_tick_needs_publish(
 ) -> bool {
     replica.state.agents != agents
         || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+}
+
+/// Reads the approved installs out under a brief lock. `None` means the core
+/// is gone and the coordinator should stop.
+fn take_agent_hook_installs(
+    context: &SessionSyncContext,
+) -> Option<Vec<hide_agent_hooks::AgentRuntime>> {
+    let runtime = context.runtime.upgrade()?;
+    let requested = runtime.lock().ok()?.take_agent_hook_installs();
+    drop(runtime);
+    Some(requested)
+}
+
+/// Writes one runtime's hook, and records what happened either way.
+///
+/// The helper ships beside the executable that is running, so that is where
+/// it is looked for; a build that did not bundle it fails here with the path
+/// it looked at rather than installing a hook that cannot run.
+fn install_agent_hook(home: &std::path::Path, runtime: hide_agent_hooks::AgentRuntime) {
+    let helper = match std::env::current_exe() {
+        Ok(executable) => executable
+            .parent()
+            .map(|directory| directory.join(hide_agent_hooks::HELPER_BINARY_NAME)),
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.failed",
+                "runtime": runtime.id(),
+                "message": format!("Hide could not locate its own executable: {error}"),
+            }));
+            return;
+        }
+    };
+    let Some(helper) = helper else {
+        crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "install.failed",
+            "runtime": runtime.id(),
+            "message": "Hide's executable has no containing directory to find its hook helper in",
+        }));
+        return;
+    };
+    match hide_agent_hooks::install(runtime, home, &helper) {
+        Ok(outcome) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "install.completed",
+            "runtime": runtime.id(),
+            "changed": outcome.changed,
+            "preserved_entries": outcome.preserved_entries,
+        })),
+        Err(failure) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "install.failed",
+            "runtime": runtime.id(),
+            "message": failure.message(),
+        })),
+    }
 }
 
 /// Drops the subagent counts of panes Herdr no longer lists.

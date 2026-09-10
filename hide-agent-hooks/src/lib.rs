@@ -25,5 +25,7 @@ pub mod runtime;
 
 pub use counters::PaneCounters;
 pub use diagnosis::{Diagnosis, PaneInstrumentation, RuntimeDiagnosis, UninstrumentedReason};
-pub use install::{HookStatus, InstallFailure, InstallOutcome, RemoveOutcome};
-pub use runtime::{AgentRuntime, HOOK_SOURCE_NAME, HOOK_VERSION, HookEvent, hook_source_id};
+pub use install::{HookStatus, InstallFailure, InstallOutcome, RemoveOutcome, install, remove};
+pub use runtime::{
+    AgentRuntime, HELPER_BINARY_NAME, HOOK_SOURCE_NAME, HOOK_VERSION, HookEvent, hook_source_id,
+};
