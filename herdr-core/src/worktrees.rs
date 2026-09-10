@@ -150,21 +150,8 @@ impl WorktreeReader {
     pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeCatalogSnapshot> {
         let mut signature = Vec::new();
         for project in &request.projects {
-            let dotgit = project.root_path.join(".git");
-            let gitdir = if dotgit.is_file() {
-                std::fs::read_to_string(&dotgit).ok().and_then(|text| {
-                    text.strip_prefix("gitdir: ")
-                        .map(|p| project.root_path.join(p.trim()))
-                })
-            } else {
-                Some(dotgit)
-            };
-            if let Some(gitdir) = gitdir {
-                let common = std::fs::read_to_string(gitdir.join("commondir"))
-                    .ok()
-                    .map(|p| gitdir.join(p.trim()))
-                    .unwrap_or_else(|| gitdir.clone());
-                for base in [gitdir, common] {
+            if let Some(repository) = crate::git_dir::discover(&project.root_path) {
+                for base in [repository.git_dir, repository.common_dir] {
                     for name in [
                         "HEAD",
                         "index",

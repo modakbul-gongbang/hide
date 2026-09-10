@@ -1,15 +1,18 @@
 //! Persistent workspace and checkout discovery for the hide navigator.
 //!
 //! The catalog is deliberately filesystem-first. A workspace registration is
-//! metadata only, while checkout discovery is rebuilt from git on launch and
-//! after a session update. Removing a registration therefore cannot remove a
-//! checkout or terminate a remote process.
+//! metadata only, while checkout discovery is rebuilt from the repositories'
+//! own files on launch and after a session update, never by running git: the
+//! rebuild sits on the session-sync coordinator, and a process there holds
+//! every Herdr event behind it. Removing a registration therefore cannot
+//! remove a checkout or terminate a remote process.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::git_dir::{self, Repository};
 use crate::model::{
     CheckoutSnapshot, DeviceRegistration, DeviceSnapshot, RemoteTarget, TabSnapshot,
     WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
@@ -151,8 +154,8 @@ pub struct SessionSpace {
 
 /// Each pane directory's repository root in comparison form, keyed by the raw
 /// directory Herdr reported. Resolved by the sync coordinator before it takes
-/// the runtime lock, because the answer costs one `git rev-parse` per
-/// directory and the reconcile that consumes it runs on every publish.
+/// the runtime lock, because the reconcile that consumes it runs on every
+/// publish and a filesystem walk per directory does not belong under it.
 pub type RootIndex = BTreeMap<String, String>;
 
 /// Resolves every directory the session's panes occupy to its repository root,
@@ -165,8 +168,8 @@ pub fn root_index(spaces: &[SessionSpace]) -> RootIndex {
                 continue;
             }
             let path = Path::new(cwd);
-            let root = git_root(path)
-                .map(|root| normalized_for_comparison(&root))
+            let root = git_dir::discover(path)
+                .map(|repository| normalized_for_comparison(&repository.root))
                 .unwrap_or_else(|| normalized_for_comparison(path));
             index.insert(cwd.clone(), root);
         }
@@ -177,6 +180,8 @@ pub fn root_index(spaces: &[SessionSpace]) -> RootIndex {
 // How many times the current thread has run git. A test that asserts a code
 // path never shells out reads it before and after; the runtime lock is held
 // through some of those paths, and a fork there is a stall for every thread.
+// `initialize_git` is the one site left that runs it, so the count is also
+// the proof that the catalog is read from files.
 // Per thread, because the test runner runs other tests' git alongside.
 #[cfg(test)]
 thread_local! {
@@ -246,12 +251,9 @@ pub fn build_catalog(
 /// The directory that identifies a project: the repository's main worktree
 /// for a git checkout, the folder itself otherwise.
 fn project_root(path: &Path) -> PathBuf {
-    let root =
-        git_root(path).unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
-    if git_root(&root).is_some() {
-        main_worktree_root(&root).unwrap_or(root)
-    } else {
-        root
+    match git_dir::discover(path) {
+        Some(repository) => repository.main_root(),
+        None => normalized_path(path).unwrap_or_else(|_| path.into()),
     }
 }
 
@@ -305,9 +307,18 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
     let mut projects: Vec<WorkspaceSnapshot> = Vec::new();
     for cwd in &space.cwds {
         let path = Path::new(cwd);
-        let root =
-            git_root(path).unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
-        let project_path = project_root(&root);
+        // One discovery per directory answers root, project and branch; the
+        // catalog is rebuilt on the sync coordinator, so every fact it needs
+        // has to be a file read rather than a process.
+        let repository = git_dir::discover(path);
+        let root = repository
+            .as_ref()
+            .map(|repository| repository.root.clone())
+            .unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
+        let project_path = repository
+            .as_ref()
+            .map(Repository::main_root)
+            .unwrap_or_else(|| root.clone());
         let project_comparison = normalized_for_comparison(&project_path);
         let root_comparison = normalized_for_comparison(&root);
         let workspace_id = workspace_id_for_path(&project_path);
@@ -329,7 +340,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     expanded: true,
                     device_id: LOCAL_DEVICE_ID.to_owned(),
                     repo_name: name,
-                    is_git: git_root(&root).is_some(),
+                    is_git: repository.is_some(),
                     default_branch: None,
                     branches: Vec::new(),
                     registered: false,
@@ -347,7 +358,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         {
             continue;
         }
-        let branch = current_branch(&root);
+        let branch = repository.as_ref().and_then(Repository::branch);
         let label = checkout_row_label(branch.as_deref(), &root);
         let is_worktree = root_comparison != project_comparison;
         if !is_worktree {
@@ -455,30 +466,9 @@ pub(crate) fn checkout_row_label(branch: Option<&str>, path: &Path) -> String {
     })
 }
 
-fn current_branch(root: &Path) -> Option<String> {
-    let output = git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!branch.is_empty() && branch != "HEAD").then_some(branch)
-}
-
-/// The repository's main working tree, which tells a linked worktree apart
-/// from the checkout that owns the git directory.
-fn main_worktree_root(root: &Path) -> Option<PathBuf> {
-    let output = git(
-        root,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .ok()?;
-    let common = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!common.is_empty())
-        .then(|| PathBuf::from(common))
-        .and_then(|common| common.parent().map(Path::to_path_buf))
-}
-
+/// The working tree holding `path`, read from the repository's files.
 pub fn git_root(path: &Path) -> Option<PathBuf> {
-    let output = git(path, &["rev-parse", "--show-toplevel"]).ok()?;
-    let root = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!root.is_empty()).then(|| PathBuf::from(root))
+    git_dir::discover(path).map(|repository| repository.root)
 }
 
 /// A base directory for tests that assert what the catalog says about a
@@ -515,6 +505,8 @@ pub fn initialize_git(path: &Path) -> Result<(), String> {
     if git_root(path).is_some() {
         return Ok(());
     }
+    #[cfg(test)]
+    GIT_CALLS.with(|calls| calls.set(calls.get() + 1));
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
@@ -537,12 +529,15 @@ fn inspect(
     temporary: bool,
 ) -> WorkspaceSnapshot {
     let normalized = normalized_path(path).unwrap_or_else(|_| path.to_path_buf());
-    let git_root_path = git_root(&normalized);
+    let repository = git_dir::discover(&normalized);
+    let git_root_path = repository
+        .as_ref()
+        .map(|repository| repository.root.clone());
     let is_git = git_root_path.is_some();
     // One row for where this registration points. The repository's other
     // worktrees are added from the worktree reader's answer, so this stands
     // alone only for a plain folder and for the ticks before the first read.
-    let branch = git_root_path.as_deref().and_then(current_branch);
+    let branch = repository.as_ref().and_then(Repository::branch);
     let checkouts = match git_root_path.as_deref() {
         Some(root) => vec![checkout(
             id,
@@ -614,24 +609,6 @@ fn checkout(
     }
 }
 
-fn git(path: &Path, arguments: &[&str]) -> Result<std::process::Output, String> {
-    #[cfg(test)]
-    GIT_CALLS.with(|calls| calls.set(calls.get() + 1));
-    Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(arguments)
-        .output()
-        .map_err(|error| format!("git command could not start: {error}"))
-        .and_then(|output| {
-            if output.status.success() {
-                Ok(output)
-            } else {
-                Err(command_failure("git", &output))
-            }
-        })
-}
-
 fn command_failure(command: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if stderr.is_empty() {
@@ -693,6 +670,119 @@ mod tests {
             temp_base_outside_any_repository().join(format!("hide-workspace-{name}-{stamp}"));
         fs::create_dir_all(&path).expect("temp directory");
         path
+    }
+
+    /// A repository with one commit on `main` and a linked worktree on
+    /// `feature`, made with git itself so the catalog is measured against
+    /// what git would say.
+    fn repository_with_worktree(name: &str) -> (PathBuf, PathBuf) {
+        let root = temp_dir(name);
+        let run = |dir: &Path, args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?} in {}", dir.display());
+        };
+        run(&root, &["init", "-b", "main"]);
+        fs::write(root.join("README.md"), "fixture\n").expect("fixture file");
+        run(&root, &["add", "."]);
+        run(
+            &root,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.email=hide@example.invalid",
+                "-c",
+                "user.name=hide-test",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        );
+        let worktree = root.with_file_name(format!(
+            "{}-worktree",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        run(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        (root, worktree)
+    }
+
+    // The catalog is rebuilt on the session-sync coordinator, the thread that
+    // applies Herdr's events. With ~30 pane directories a rebuild that ran one
+    // git per fact spawned ~250 processes and held tab, zoom and focus events
+    // for seconds (2026-09-10 audit). Every fact now comes from a file read.
+    #[test]
+    fn the_catalog_is_built_without_running_git() {
+        let (root, worktree) = repository_with_worktree("no-spawn");
+        let nested = worktree.join("src");
+        fs::create_dir_all(&nested).expect("nested directory");
+        let folder = temp_dir("no-spawn-plain");
+        let demo =
+            registration(root.to_str().unwrap(), "Demo", LOCAL_DEVICE_ID).expect("registration");
+        let plain =
+            registration(folder.to_str().unwrap(), "Plain", LOCAL_DEVICE_ID).expect("registration");
+        let spaces = vec![
+            SessionSpace {
+                id: "w1".to_owned(),
+                label: "one".to_owned(),
+                cwds: vec![
+                    root.to_string_lossy().into_owned(),
+                    nested.to_string_lossy().into_owned(),
+                ],
+            },
+            SessionSpace {
+                id: "w2".to_owned(),
+                label: "two".to_owned(),
+                cwds: vec![folder.to_string_lossy().into_owned()],
+            },
+        ];
+
+        let before = git_calls_on_this_thread();
+        let catalog = build_catalog(&[demo, plain], &spaces, &no_worktrees());
+        let roots = root_index(&spaces);
+        assert_eq!(git_calls_on_this_thread(), before, "the catalog ran git");
+
+        // And it still says what git says: the worktree's pane is a checkout
+        // row under the repository it belongs to, on its own branch.
+        let project = catalog
+            .iter()
+            .find(|project| project.label == "Demo")
+            .expect("the repository is a project");
+        assert!(project.is_git);
+        assert_eq!(project.default_branch.as_deref(), Some("main"));
+        assert_eq!(project.session_workspace_ids, vec!["w1".to_owned()]);
+        assert_eq!(project.checkouts.len(), 2);
+        assert!(!project.checkouts[0].is_worktree);
+        let linked = &project.checkouts[1];
+        assert!(linked.is_worktree);
+        assert_eq!(linked.branch.as_deref(), Some("feature"));
+        assert_eq!(
+            normalized_for_comparison(Path::new(&linked.path)),
+            normalized_for_comparison(&worktree)
+        );
+        let plain = catalog
+            .iter()
+            .find(|project| project.label == "Plain")
+            .expect("the folder is a project");
+        assert!(!plain.is_git);
+        assert_eq!(plain.session_workspace_ids, vec!["w2".to_owned()]);
+        assert_eq!(
+            roots.get(nested.to_str().unwrap()).map(String::as_str),
+            Some(normalized_for_comparison(&worktree).as_str())
+        );
     }
 
     #[test]
