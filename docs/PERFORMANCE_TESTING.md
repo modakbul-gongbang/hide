@@ -316,6 +316,16 @@ Do not weaken an externally promised deadline to make a flaky test pass.
 
 ## 7. Regression gates, cleanup, and verdict
 
+### File drop and editor typography
+
+Local file drop checks pasteboard URL types at drag entry, then quotes O(total path characters) once at drop.
+It performs no file reads, provider queries, persistent attachment allocation, viewport observation or work on ordinary pointer movement.
+The complete ordered payload uses one existing terminal send; input publication and writer backpressure retain their existing owners.
+`TerminalFileDropTests` checks outgoing bytes, no submission, preserved text and file order, quoted special characters, native focus and hidden/detached refusal.
+Native OS drag geometry remains a separate user review when desktop automation is unavailable.
+Editor highlighting uses the configured font at creation and actual font changes; identical language/font updates schedule no new full-document highlight.
+`FileDocumentStateTests` observes real attributed font sizes across background highlighting, unrelated view updates and explicit zoom changes, including Korean fallback.
+
 ### Terminal link activation
 
 Links activate only on Command+Click, using SwiftTerm's existing `hoverWithModifier` policy.

@@ -52,6 +52,7 @@ struct TerminalHost: NSViewRepresentable {
             )
         )
         terminal.hidePaneID = paneID
+        terminal.registerForDraggedTypes([.fileURL])
         terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
         terminal.terminalDisplayTick = { [weak coordinator = context.coordinator] period in
             TerminalLatency.displayPeriod(period, paneID: paneID)

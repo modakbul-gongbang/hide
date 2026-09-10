@@ -1260,8 +1260,14 @@ Native screenshots remain necessary to approve toolbar spacing, font fallback an
 
 ## Terminal image attachment boundary
 
-Hide does not provide a terminal image shelf or intercept image drag/paste and Enter for attachment delivery.
-Terminal paste and keyboard input use the existing SwiftTerm and ordered-writer paths.
+Dropping local file URLs into a visible terminal focuses that receiving pane and inserts quoted paths immediately through the existing ordered writer.
+When the terminal advertises bracketed paste, each path has its own paste frame; the complete drop is enqueued once in file order.
+Otherwise the paths are inserted as shell-quoted text with a trailing space.
+Spaces, Korean and apostrophes survive; shell expansion characters are escaped, and paths containing control characters are rejected with a native error.
+The drop performs no upload, image decoding, temporary copy or automatic Enter, and never replaces existing prompt text.
+It inserts paths even when a provider cannot decode the referenced file; provider validation remains visible in its own composer.
+Hide provides no thumbnail shelf, attachment membership or synchronized removal; subsequent editing and submission remain native provider operations.
+Ordinary clipboard paste and keyboard input retain the existing SwiftTerm paths.
 Provider-native attachment behavior remains owned by the provider; pasting a path is not proof of image acceptance.
 The former shelf was removed because it could not synchronize native attachment deletion or clear confirmed submissions reliably.
 Reintroducing this surface requires a supported provider contract for stable attachment identity, idempotent add/remove, native draft changes and accepted submission events.
