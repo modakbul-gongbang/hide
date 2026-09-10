@@ -1,5 +1,5 @@
 [workspace]
-members = ["herdr-core"]
+members = ["herdr-core", "hide-ai"]
 resolver = "3"
 
 [profile.release]
