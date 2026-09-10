@@ -1108,6 +1108,11 @@ Projects use the native sidebar list, existing Search (Command+K), and persisted
 Projects and their checkouts sort by the latest authoritative agent activity timestamp or Git commit timestamp, descending; server state-change sequence breaks timestamp ties, and stable IDs break remaining ties.
 Missing activity remains absent and sorts after known activity; no UI interaction or local clock invents recency.
 An active pane without a wall timestamp can only contribute its server sequence, not a fabricated date.
+Activity orders projects inside one device group and never across two, and the remote session list follows that same order rather than its own alphabetical one.
+Each project row's trailing detail carries the recency the order was decided by, after the count it already showed: `2 agents · 3m`.
+That time is one token in the elapsed form the agent rows already use, with the first minute written `now` rather than counted in seconds, and a project the core reported no activity for shows its count alone rather than a claimed recency.
+It is recomputed from the core's timestamp on each snapshot, so it ages while the app is open without a timer of its own.
+The project name takes the row's width first; the trailing detail truncates in a narrow sidebar rather than pushing the name out.
 Raised Needs You and Done groups retain their status ordering above Projects.
 
 The right panel starts with Overview, followed by Explorer, Changes, and Git.

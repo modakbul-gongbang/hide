@@ -46,19 +46,52 @@ struct SidebarCheckoutPresentation: Equatable {
     }
 }
 
+/// How long ago something happened, written the way this app already writes
+/// elapsed time: one token of digits and a unit. Herdr's own `elapsed` token
+/// is `<digits><s|m|h|d>` and the agent rows draw it unchanged, so a project
+/// row saying the same thing reads as the same kind of fact.
+///
+/// The first minute is "now" rather than a second counter: a project row is
+/// read at a glance, and a number that changes every second there is motion
+/// without information. A timestamp ahead of this machine's clock is also
+/// "now", because the alternative is a negative age.
+enum RelativeActivityToken {
+    static func token(unixMS: UInt64?, now: Date) -> String? {
+        guard let unixMS else { return nil }
+        let seconds = now.timeIntervalSince1970 - Double(unixMS) / 1000
+        guard seconds >= 60 else { return "now" }
+        let minutes = Int(seconds / 60)
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
+    }
+}
+
 struct SidebarWorkspacePresentation: Equatable {
     let checkoutCount: Int
     let paneCount: Int
     let agentCount: Int
+    /// The relative time since this project's newest activity, absent when the
+    /// core reported none. The core owns which activity that is; the row only
+    /// says how long ago it was.
+    let lastActivity: String?
 
+    /// What the row already said, plus the recency the order was decided by.
+    /// The count stays first because it names the project's own contents; the
+    /// time is the reason this project sits where it does.
     var activityLabel: String {
+        let counts: String
         if agentCount > 0 {
-            return agentCount == 1 ? "1 agent" : "\(agentCount) agents"
+            counts = agentCount == 1 ? "1 agent" : "\(agentCount) agents"
+        } else {
+            counts = checkoutCount == 1 ? "1 workspace" : "\(checkoutCount) workspaces"
         }
-        return checkoutCount == 1 ? "1 workspace" : "\(checkoutCount) workspaces"
+        guard let lastActivity else { return counts }
+        return "\(counts) · \(lastActivity)"
     }
 
-    init(workspace: CoreWorkspaceSnapshot, agents: [SidebarAgent]) {
+    init(workspace: CoreWorkspaceSnapshot, agents: [SidebarAgent], now: Date = Date()) {
         let paneIDs = Set(
             workspace.checkouts
                 .flatMap(\.tabs)
@@ -68,6 +101,7 @@ struct SidebarWorkspacePresentation: Equatable {
         checkoutCount = workspace.checkouts.count
         paneCount = paneIDs.count
         agentCount = agents.filter { paneIDs.contains($0.paneID) }.count
+        lastActivity = RelativeActivityToken.token(unixMS: workspace.lastActivityUnixMS, now: now)
     }
 }
 

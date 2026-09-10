@@ -1230,6 +1230,11 @@ private struct WorkspaceNavigatorRow: View {
                             .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                             .foregroundStyle(isFocusedWorkspace ? HideTheme.primary : HideTheme.secondary)
                             .lineLimit(1)
+                            // The project's name is what the row is for. The
+                            // trailing detail gained a time token, so the name
+                            // takes the width it needs first and the detail
+                            // truncates in a narrow sidebar instead.
+                            .layoutPriority(1)
                         Spacer(minLength: 0)
                         Text(presentation.activityLabel)
                             .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
