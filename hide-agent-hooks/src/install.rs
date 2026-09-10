@@ -49,7 +49,9 @@ impl InstallFailure {
             Self::Unparsable { path, detail } => {
                 format!("{path} is not valid JSON ({detail}); Hide left it untouched")
             }
-            Self::UnexpectedShape { path, detail } => format!("{path} has an unexpected shape: {detail}"),
+            Self::UnexpectedShape { path, detail } => {
+                format!("{path} has an unexpected shape: {detail}")
+            }
             Self::NotWritable { path, detail } => format!("{path} could not be written: {detail}"),
             Self::HelperMissing { helper, .. } => {
                 format!("the installed hook points at {helper}, which is missing")
@@ -127,7 +129,7 @@ pub fn status(runtime: AgentRuntime, home: &Path) -> HookStatus {
     let Some(version) = lowest else {
         return HookStatus::NotInstalled;
     };
-    if let Some(helper) = installed_helper(&hooks)
+    if let Some(helper) = installed_helper(hooks)
         && !Path::new(&helper).exists()
     {
         return HookStatus::Failed {
@@ -193,10 +195,7 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
             preserved_entries: 0,
         });
     };
-    let hooks = match hooks_object_mut(&mut document, &path) {
-        Ok(hooks) => hooks,
-        Err(reason) => return Err(reason),
-    };
+    let hooks = hooks_object_mut(&mut document, &path)?;
     let mut removed = 0usize;
     let mut preserved = 0usize;
     let mut emptied = Vec::new();
@@ -278,7 +277,14 @@ fn installed_helper(hooks: &Map<String, Value>) -> Option<String> {
         .filter_map(Value::as_array)
         .flatten()
         .filter(|group| group_marker_version(group).is_some())
-        .filter_map(|group| group.get("hooks")?.as_array()?.first()?.get("command")?.as_str())
+        .filter_map(|group| {
+            group
+                .get("hooks")?
+                .as_array()?
+                .first()?
+                .get("command")?
+                .as_str()
+        })
         .find_map(parse_quoted_helper)
 }
 
@@ -385,7 +391,8 @@ fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
         let mut file = fs::File::create(&temporary).map_err(|error| failure(error.to_string()))?;
         file.write_all(serialized.as_bytes())
             .map_err(|error| failure(error.to_string()))?;
-        file.sync_all().map_err(|error| failure(error.to_string()))?;
+        file.sync_all()
+            .map_err(|error| failure(error.to_string()))?;
     }
     fs::rename(&temporary, path).map_err(|error| {
         let _ = fs::remove_file(&temporary);
@@ -470,8 +477,16 @@ mod tests {
         for event in ["SubagentStart", "Stop"] {
             let original = before["hooks"][event].as_array().unwrap();
             let current = after["hooks"][event].as_array().unwrap();
-            assert_eq!(current.len(), original.len() + 1, "{event} gained one entry");
-            assert_eq!(&current[..original.len()], original.as_slice(), "{event} kept its own");
+            assert_eq!(
+                current.len(),
+                original.len() + 1,
+                "{event} gained one entry"
+            );
+            assert_eq!(
+                &current[..original.len()],
+                original.as_slice(),
+                "{event} kept its own"
+            );
         }
         assert_eq!(after["model"], before["model"], "unrelated keys survive");
         assert!(after["hooks"]["SessionStart"].as_array().unwrap().len() == 1);
@@ -486,11 +501,19 @@ mod tests {
         install(AgentRuntime::Codex, fixture.home(), &path).unwrap();
         let first = fixture.read(AgentRuntime::Codex);
         let second_outcome = install(AgentRuntime::Codex, fixture.home(), &path).unwrap();
-        assert!(!second_outcome.changed, "a converged install writes nothing");
+        assert!(
+            !second_outcome.changed,
+            "a converged install writes nothing"
+        );
         assert_eq!(fixture.read(AgentRuntime::Codex), first);
         for event in HookEvent::ALL {
             let groups = first["hooks"][event.name()].as_array().unwrap();
-            assert_eq!(owned_versions(groups).len(), 1, "{} has one Hide entry", event.name());
+            assert_eq!(
+                owned_versions(groups).len(),
+                1,
+                "{} has one Hide entry",
+                event.name()
+            );
         }
     }
 
@@ -508,7 +531,9 @@ mod tests {
         );
         assert!(matches!(
             status(AgentRuntime::Codex, fixture.home()),
-            HookStatus::Failed { reason: InstallFailure::Unparsable { .. } }
+            HookStatus::Failed {
+                reason: InstallFailure::Unparsable { .. }
+            }
         ));
     }
 
@@ -526,20 +551,31 @@ mod tests {
         let after = fixture.read(AgentRuntime::Codex);
         let subagent_start = after["hooks"]["SubagentStart"].as_array().unwrap();
         assert_eq!(subagent_start.len(), 2);
-        assert!(subagent_start[0]["hooks"][0]["command"]
-            .as_str()
-            .unwrap()
-            .contains("inject.sh"));
+        assert!(
+            subagent_start[0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("inject.sh")
+        );
         assert_eq!(after["hooks"]["Stop"].as_array().unwrap().len(), 1);
-        assert!(after["hooks"].get("SessionStart").is_none(), "an event Hide emptied is dropped");
-        assert!(matches!(status(AgentRuntime::Codex, fixture.home()), HookStatus::NotInstalled));
+        assert!(
+            after["hooks"].get("SessionStart").is_none(),
+            "an event Hide emptied is dropped"
+        );
+        assert!(matches!(
+            status(AgentRuntime::Codex, fixture.home()),
+            HookStatus::NotInstalled
+        ));
     }
 
     #[test]
     fn a_missing_runtime_directory_is_reported_rather_than_created() {
         let fixture = Fixture::new("absent");
         fs::remove_dir_all(fixture.home().join(".codex")).unwrap();
-        assert_eq!(status(AgentRuntime::Codex, fixture.home()), HookStatus::RuntimeAbsent);
+        assert_eq!(
+            status(AgentRuntime::Codex, fixture.home()),
+            HookStatus::RuntimeAbsent
+        );
         assert!(!AgentRuntime::Codex.config_path(fixture.home()).exists());
     }
 
@@ -572,18 +608,25 @@ mod tests {
         fs::remove_file(&helper_path).unwrap();
         assert!(matches!(
             status(AgentRuntime::Codex, fixture.home()),
-            HookStatus::Failed { reason: InstallFailure::HelperMissing { .. } }
+            HookStatus::Failed {
+                reason: InstallFailure::HelperMissing { .. }
+            }
         ));
     }
 
     #[test]
     fn a_runtime_with_no_config_file_yet_installs_into_a_new_one() {
         let fixture = Fixture::new("fresh");
-        assert_eq!(status(AgentRuntime::ClaudeCode, fixture.home()), HookStatus::NotInstalled);
+        assert_eq!(
+            status(AgentRuntime::ClaudeCode, fixture.home()),
+            HookStatus::NotInstalled
+        );
         install(AgentRuntime::ClaudeCode, fixture.home(), &helper(&fixture)).unwrap();
         assert_eq!(
             status(AgentRuntime::ClaudeCode, fixture.home()),
-            HookStatus::Installed { version: crate::runtime::HOOK_VERSION }
+            HookStatus::Installed {
+                version: crate::runtime::HOOK_VERSION
+            }
         );
     }
 }

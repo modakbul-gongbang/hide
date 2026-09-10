@@ -270,13 +270,19 @@ mod tests {
             Some(UninstrumentedReason::ConfigUnreadable)
         );
         assert_eq!(
-            instrumentation(observation(Some(HOOK_VERSION)), Some(&HookStatus::NotInstalled)).reason,
+            instrumentation(
+                observation(Some(HOOK_VERSION)),
+                Some(&HookStatus::NotInstalled)
+            )
+            .reason,
             Some(UninstrumentedReason::HooksNotInstalled)
         );
         assert_eq!(
             instrumentation(
                 observation(None),
-                Some(&HookStatus::Installed { version: HOOK_VERSION })
+                Some(&HookStatus::Installed {
+                    version: HOOK_VERSION
+                })
             )
             .reason,
             Some(UninstrumentedReason::SessionPredatesInstall)
@@ -284,7 +290,9 @@ mod tests {
         assert_eq!(
             instrumentation(
                 observation(Some(HOOK_VERSION - 1)),
-                Some(&HookStatus::Installed { version: HOOK_VERSION })
+                Some(&HookStatus::Installed {
+                    version: HOOK_VERSION
+                })
             )
             .reason,
             Some(UninstrumentedReason::HookOutdated)
@@ -304,12 +312,17 @@ mod tests {
     fn an_instrumented_session_reports_its_counts_and_no_reason() {
         let result = instrumentation(
             observation(Some(HOOK_VERSION)),
-            Some(&HookStatus::Installed { version: HOOK_VERSION }),
+            Some(&HookStatus::Installed {
+                version: HOOK_VERSION,
+            }),
         );
         assert!(result.instrumented);
         assert_eq!(result.reason, None);
         assert_eq!((result.working, result.done), (Some(2), Some(3)));
-        assert_eq!(result.blocked, None, "no adapter observes a blocked subagent");
+        assert_eq!(
+            result.blocked, None,
+            "no adapter observes a blocked subagent"
+        );
     }
 
     #[test]

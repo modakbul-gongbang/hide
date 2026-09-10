@@ -186,8 +186,14 @@ mod tests {
         let command = "'/Applications/hide.app/Contents/MacOS/hide-agent-hooks' hook \
                        --event SubagentStart --source hide-subagents@1";
         assert_eq!(marker_version_in(command), Some(1));
-        assert_eq!(marker_version_in("/opt/other/hook.sh --source other-tool@4"), None);
-        assert_eq!(marker_version_in("/opt/other/hide-subagents-lookalike.sh"), None);
+        assert_eq!(
+            marker_version_in("/opt/other/hook.sh --source other-tool@4"),
+            None
+        );
+        assert_eq!(
+            marker_version_in("/opt/other/hide-subagents-lookalike.sh"),
+            None
+        );
     }
 
     #[test]

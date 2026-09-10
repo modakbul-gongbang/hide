@@ -73,15 +73,23 @@ mod tests {
         let arguments = report_arguments(
             "w7B:pM",
             "hide-subagents@1",
-            PaneCounters { working: 2, done: 5 },
+            PaneCounters {
+                working: 2,
+                done: 5,
+            },
         );
-        assert_eq!(&arguments[..4], &["pane", "report-metadata", "--source", "hide-subagents@1"]);
+        assert_eq!(
+            &arguments[..4],
+            &["pane", "report-metadata", "--source", "hide-subagents@1"]
+        );
         assert!(arguments.contains(&"hide_hooks=1".to_owned()));
         assert!(arguments.contains(&"hide_sub_working=2".to_owned()));
         assert!(arguments.contains(&"hide_sub_done=5".to_owned()));
         assert_eq!(arguments.last().unwrap(), "w7B:pM");
         assert!(
-            !arguments.iter().any(|argument| argument.starts_with("hide_sub_blocked")),
+            !arguments
+                .iter()
+                .any(|argument| argument.starts_with("hide_sub_blocked")),
             "a count no adapter observes is never reported as a number"
         );
     }

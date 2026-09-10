@@ -61,11 +61,14 @@ fn run_hook(arguments: &[String]) {
     let mut discarded = Vec::new();
     let _ = std::io::stdin().take(1 << 16).read_to_end(&mut discarded);
 
-    let Some(event) = argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
+    let Some(event) =
+        argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
     else {
         return;
     };
-    let Some(pane_id) = std::env::var("HERDR_PANE_ID").ok().filter(|value| !value.is_empty())
+    let Some(pane_id) = std::env::var("HERDR_PANE_ID")
+        .ok()
+        .filter(|value| !value.is_empty())
     else {
         // Not inside a Herdr pane: there is no pane to describe.
         return;

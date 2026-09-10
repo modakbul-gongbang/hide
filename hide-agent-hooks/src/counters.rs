@@ -109,12 +109,27 @@ mod tests {
     fn a_started_subagent_counts_until_it_stops_and_then_counts_as_done() {
         let root = home("lifecycle");
         let pane = "w7B:pM";
-        assert_eq!(apply(&root, pane, HookEvent::SessionStart).unwrap(), PaneCounters::default());
+        assert_eq!(
+            apply(&root, pane, HookEvent::SessionStart).unwrap(),
+            PaneCounters::default()
+        );
         apply(&root, pane, HookEvent::SubagentStart).unwrap();
         let two = apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        assert_eq!(two, PaneCounters { working: 2, done: 0 });
+        assert_eq!(
+            two,
+            PaneCounters {
+                working: 2,
+                done: 0
+            }
+        );
         let one = apply(&root, pane, HookEvent::SubagentStop).unwrap();
-        assert_eq!(one, PaneCounters { working: 1, done: 1 });
+        assert_eq!(
+            one,
+            PaneCounters {
+                working: 1,
+                done: 1
+            }
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -137,8 +152,17 @@ mod tests {
         let pane = "w7B:pM";
         apply(&root, pane, HookEvent::SubagentStart).unwrap();
         apply(&root, pane, HookEvent::SubagentStop).unwrap();
-        assert_eq!(read(&root, pane), PaneCounters { working: 0, done: 1 });
-        assert_eq!(apply(&root, pane, HookEvent::SessionStart).unwrap(), PaneCounters::default());
+        assert_eq!(
+            read(&root, pane),
+            PaneCounters {
+                working: 0,
+                done: 1
+            }
+        );
+        assert_eq!(
+            apply(&root, pane, HookEvent::SessionStart).unwrap(),
+            PaneCounters::default()
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 
