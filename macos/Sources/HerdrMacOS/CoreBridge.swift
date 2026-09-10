@@ -949,6 +949,9 @@ struct CoreTabSnapshot: Decodable, Identifiable {
     let label: String?
     let empty: Bool
     let panes: [CorePaneSnapshot]
+    /// A tab holding nothing but delegated children. The core keeps it out of
+    /// the strip; nothing in the shell decides that a second time.
+    let delegated: Bool
 
     var stableID: String {
         id ?? "empty-\(checkoutID ?? workspaceID ?? label ?? "checkout")"
@@ -961,6 +964,7 @@ struct CoreTabSnapshot: Decodable, Identifiable {
         case label
         case empty
         case panes
+        case delegated
     }
 
     init(
@@ -969,7 +973,8 @@ struct CoreTabSnapshot: Decodable, Identifiable {
         checkoutID: String?,
         label: String?,
         empty: Bool,
-        panes: [CorePaneSnapshot]
+        panes: [CorePaneSnapshot],
+        delegated: Bool = false
     ) {
         self.id = id
         self.workspaceID = workspaceID
@@ -977,6 +982,7 @@ struct CoreTabSnapshot: Decodable, Identifiable {
         self.label = label
         self.empty = empty
         self.panes = panes
+        self.delegated = delegated
     }
 
     init(from decoder: Decoder) throws {
@@ -987,6 +993,7 @@ struct CoreTabSnapshot: Decodable, Identifiable {
         label = try container.decodeIfPresent(String.self, forKey: .label)
         empty = try container.decodeIfPresent(Bool.self, forKey: .empty) ?? true
         panes = try container.decodeIfPresent([CorePaneSnapshot].self, forKey: .panes) ?? []
+        delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
     }
 }
 
@@ -1010,6 +1017,11 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let fork: CorePaneFork
     /// Ports listened on from at or below this pane's working directory.
     let ports: [UInt16]
+    /// What this pane's session has spawned, when a session was detected in
+    /// it. Absent means no agent here, which is why nothing is drawn.
+    let children: CorePaneChildren?
+    /// The pane's ancestors, root first, each carrying that layer's siblings.
+    let lineagePath: [CoreLineageStep]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1024,6 +1036,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case requiresCloseConfirmation = "requires_close_confirmation"
         case summary
         case activityAt = "activity_at_unix_ms"
+        case children
+        case lineagePath = "lineage_path"
     }
 
     init(
@@ -1038,7 +1052,9 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         summary: String?,
         activityAt: UInt64?,
         fork: CorePaneFork = CorePaneFork(),
-        ports: [UInt16] = []
+        ports: [UInt16] = [],
+        children: CorePaneChildren? = nil,
+        lineagePath: [CoreLineageStep] = []
     ) {
         self.id = id
         self.content = content
@@ -1052,6 +1068,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.activityAt = activityAt
         self.fork = fork
         self.ports = ports
+        self.children = children
+        self.lineagePath = lineagePath
     }
 
     /// Terminal is the default content when no native content is specified.
@@ -1074,6 +1092,161 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
         ports = try container.decodeIfPresent([UInt16].self, forKey: .ports) ?? []
+        children = try container.decodeIfPresent(CorePaneChildren.self, forKey: .children)
+        lineagePath = try container.decodeIfPresent([CoreLineageStep].self, forKey: .lineagePath) ?? []
+    }
+}
+
+/// One agent as any line of agents draws it: a pane header chip, a breadcrumb
+/// step's sibling, or an Overview worktree row's agent.
+struct CoreAgentChip: Decodable, Equatable, Identifiable {
+    var id: String { paneID }
+    let paneID: String
+    let label: String
+    let detail: String
+    let agentKind: String
+    let demand: String
+    let activity: String
+    let emphasized: Bool
+    let symbol: String
+    let statusLabel: String
+    let delegated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case label
+        case detail
+        case agentKind = "agent_kind"
+        case demand
+        case activity
+        case emphasized
+        case symbol
+        case statusLabel = "status_label"
+        case delegated
+    }
+
+    init(
+        paneID: String,
+        label: String,
+        detail: String = "",
+        agentKind: String = "claude",
+        demand: String = "none",
+        activity: String = "working",
+        emphasized: Bool = false,
+        symbol: String = "\u{25cf}",
+        statusLabel: String = "Working",
+        delegated: Bool = true
+    ) {
+        self.paneID = paneID
+        self.label = label
+        self.detail = detail
+        self.agentKind = agentKind
+        self.demand = demand
+        self.activity = activity
+        self.emphasized = emphasized
+        self.symbol = symbol
+        self.statusLabel = statusLabel
+        self.delegated = delegated
+    }
+}
+
+/// What one pane's session has spawned, and why that is or is not knowable.
+struct CorePaneChildren: Decodable, Equatable {
+    let instrumented: Bool
+    /// The whole explanation, present exactly when `instrumented` is false.
+    let uninstrumentedReason: String?
+    /// The accessible name for the mark, so the symbol never carries the
+    /// meaning by itself.
+    let uninstrumentedLabel: String?
+    /// The reason's stable name, for a view that keys on the cause rather
+    /// than on its sentence.
+    let uninstrumentedCode: String?
+    /// One chip per pane child, in the lineage's own child order.
+    let chips: [CoreAgentChip]
+    /// The one child the parent's badge speaks for.
+    let representative: CoreAgentChip?
+    let subagents: CoreSubagentCounts
+
+    enum CodingKeys: String, CodingKey {
+        case instrumented
+        case uninstrumentedReason = "uninstrumented_reason"
+        case uninstrumentedLabel = "uninstrumented_label"
+        case uninstrumentedCode = "uninstrumented_code"
+        case chips
+        case representative
+        case subagents
+    }
+
+    init(
+        instrumented: Bool = true,
+        uninstrumentedReason: String? = nil,
+        uninstrumentedLabel: String? = nil,
+        uninstrumentedCode: String? = nil,
+        chips: [CoreAgentChip] = [],
+        representative: CoreAgentChip? = nil,
+        subagents: CoreSubagentCounts = CoreSubagentCounts()
+    ) {
+        self.instrumented = instrumented
+        self.uninstrumentedReason = uninstrumentedReason
+        self.uninstrumentedLabel = uninstrumentedLabel
+        self.uninstrumentedCode = uninstrumentedCode
+        self.chips = chips
+        self.representative = representative
+        self.subagents = subagents
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        instrumented = try container.decodeIfPresent(Bool.self, forKey: .instrumented) ?? false
+        uninstrumentedReason = try container.decodeIfPresent(String.self, forKey: .uninstrumentedReason)
+        uninstrumentedLabel = try container.decodeIfPresent(String.self, forKey: .uninstrumentedLabel)
+        uninstrumentedCode = try container.decodeIfPresent(String.self, forKey: .uninstrumentedCode)
+        chips = try container.decodeIfPresent([CoreAgentChip].self, forKey: .chips) ?? []
+        representative = try container.decodeIfPresent(CoreAgentChip.self, forKey: .representative)
+        subagents = try container.decodeIfPresent(CoreSubagentCounts.self, forKey: .subagents)
+            ?? CoreSubagentCounts()
+    }
+}
+
+/// The in-process subagents a session reports.
+///
+/// Each count is separately knowable, and one the adapter cannot observe stays
+/// absent. Absent draws as unknown and never as zero, because a zero claims
+/// the agent is working alone.
+struct CoreSubagentCounts: Decodable, Equatable {
+    let working: UInt32?
+    let done: UInt32?
+    let blocked: UInt32?
+
+    /// Nothing to draw: every count is unknown.
+    var isSilent: Bool { working == nil && done == nil && blocked == nil }
+
+    init(working: UInt32? = nil, done: UInt32? = nil, blocked: UInt32? = nil) {
+        self.working = working
+        self.done = done
+        self.blocked = blocked
+    }
+}
+
+/// One step of a pane's breadcrumb, carrying that layer's siblings.
+struct CoreLineageStep: Decodable, Equatable, Identifiable {
+    var id: String { paneID }
+    let paneID: String
+    let label: String
+    /// Everything at this layer, including the step itself, for the step's
+    /// dropdown. A root has none, so it draws no chevron.
+    let siblings: [CoreAgentChip]
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case label
+        case siblings
+    }
+
+    init(paneID: String, label: String, siblings: [CoreAgentChip] = []) {
+        self.paneID = paneID
+        self.label = label
+        self.siblings = siblings
     }
 }
 
@@ -1137,6 +1310,14 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     var lineageHint: String? = nil
     var raisedHint: String? = nil
     var lineageCollapsed: Bool = false
+    /// Whether this row is somebody else's work. It is derived from the
+    /// lineage by the core, and it lifts when a stall hands the child back.
+    var delegated: Bool = false
+    /// How long a delegated descendant has been waiting: empty, `soft`, or
+    /// `hard`. It is set on the lineage root, not on the stalled child.
+    var stallLevel: String = ""
+    /// The sentence naming that descendant and what it is waiting on.
+    var stallNotice: String? = nil
 
     /// Fixtures and tests build a row directly. Every derived value defaults
     /// to the quiet reading, so a fixture states only what it is exercising.
@@ -1208,6 +1389,9 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         lineageHint = try container.decodeIfPresent(String.self, forKey: .lineageHint)
         raisedHint = try container.decodeIfPresent(String.self, forKey: .raisedHint)
         lineageCollapsed = try container.decodeIfPresent(Bool.self, forKey: .lineageCollapsed) ?? false
+        delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
+        stallLevel = try container.decodeIfPresent(String.self, forKey: .stallLevel) ?? ""
+        stallNotice = try container.decodeIfPresent(String.self, forKey: .stallNotice)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1237,6 +1421,9 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case lineageHint = "lineage_hint"
         case raisedHint = "raised_hint"
         case lineageCollapsed = "lineage_collapsed"
+        case delegated
+        case stallLevel = "stall_level"
+        case stallNotice = "stall_notice"
     }
 }
 
@@ -1748,6 +1935,7 @@ struct CoreStatusSnapshot: Decodable {
     let remote: [CoreRemoteStatus]
     let chromux: CoreChromuxStatus
     let environment: [CoreEnvironmentStatus]
+    let agentHooks: CoreAgentHooks
     let diagnostics: [CoreDiagnostic]
     let lastError: CoreLastError?
 
@@ -1756,6 +1944,7 @@ struct CoreStatusSnapshot: Decodable {
         case remote
         case chromux
         case environment
+        case agentHooks = "agent_hooks"
         case diagnostics
         case lastError = "last_error"
     }
@@ -1766,8 +1955,98 @@ struct CoreStatusSnapshot: Decodable {
         remote = try container.decodeIfPresent([CoreRemoteStatus].self, forKey: .remote) ?? []
         chromux = try container.decode(CoreChromuxStatus.self, forKey: .chromux)
         environment = try container.decodeIfPresent([CoreEnvironmentStatus].self, forKey: .environment) ?? []
+        agentHooks = try container.decodeIfPresent(CoreAgentHooks.self, forKey: .agentHooks)
+            ?? CoreAgentHooks()
         diagnostics = try container.decodeIfPresent([CoreDiagnostic].self, forKey: .diagnostics) ?? []
         lastError = try container.decodeIfPresent(CoreLastError.self, forKey: .lastError)
+    }
+}
+
+/// What the Settings diagnosis says about agent hooks.
+struct CoreAgentHooks: Decodable, Equatable {
+    /// One row per runtime Hide has an adapter for. A runtime that is not on
+    /// this Mac is still a row: "not here" and "not installed" differ.
+    let runtimes: [CoreAgentHookRuntime]
+    /// Panes running a session that started before the hook was installed.
+    /// These are the ones a restart would fix.
+    let sessionsPredatingInstall: [CoreAgentHookPane]
+
+    enum CodingKeys: String, CodingKey {
+        case runtimes
+        case sessionsPredatingInstall = "sessions_predating_install"
+    }
+
+    init(
+        runtimes: [CoreAgentHookRuntime] = [],
+        sessionsPredatingInstall: [CoreAgentHookPane] = []
+    ) {
+        self.runtimes = runtimes
+        self.sessionsPredatingInstall = sessionsPredatingInstall
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        runtimes = try container.decodeIfPresent([CoreAgentHookRuntime].self, forKey: .runtimes) ?? []
+        sessionsPredatingInstall =
+            try container.decodeIfPresent([CoreAgentHookPane].self, forKey: .sessionsPredatingInstall) ?? []
+    }
+}
+
+struct CoreAgentHookRuntime: Decodable, Equatable, Identifiable {
+    let id: String
+    let label: String
+    /// The configuration file this row describes, so the operator can look.
+    let path: String
+    /// The short word beside the runtime's name. The core writes it; no view
+    /// builds a sentence out of a status name.
+    let headline: String
+    let installed: Bool
+    /// Whether the operator can be offered an install. Hide never reinstalls
+    /// on its own after the first run.
+    let offersInstall: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case path
+        case headline
+        case installed
+        case offersInstall = "offers_install"
+    }
+
+    init(
+        id: String,
+        label: String,
+        path: String,
+        headline: String,
+        installed: Bool = false,
+        offersInstall: Bool = false
+    ) {
+        self.id = id
+        self.label = label
+        self.path = path
+        self.headline = headline
+        self.installed = installed
+        self.offersInstall = offersInstall
+    }
+}
+
+struct CoreAgentHookPane: Decodable, Equatable, Identifiable {
+    var id: String { paneID }
+    let paneID: String
+    let label: String
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case label
+        case message
+    }
+
+    init(paneID: String, label: String, message: String) {
+        self.paneID = paneID
+        self.label = label
+        self.message = message
     }
 }
 

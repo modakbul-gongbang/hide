@@ -1,5 +1,44 @@
 import Foundation
 
+/// The Overview worktree row's agent line.
+///
+/// An empty `agents` with no reason is a worktree nobody is working in; an
+/// empty one carrying a reason is a worktree Hide cannot see into. Keeping
+/// those apart is what the line exists for.
+struct CoreWorktreeAgentLine: Decodable, Equatable, Sendable {
+    let agents: [CoreAgentChip]
+    let uninstrumentedReason: String?
+    let uninstrumentedLabel: String?
+    let uninstrumentedCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case agents
+        case uninstrumentedReason = "uninstrumented_reason"
+        case uninstrumentedLabel = "uninstrumented_label"
+        case uninstrumentedCode = "uninstrumented_code"
+    }
+
+    init(
+        agents: [CoreAgentChip] = [],
+        uninstrumentedReason: String? = nil,
+        uninstrumentedLabel: String? = nil,
+        uninstrumentedCode: String? = nil
+    ) {
+        self.agents = agents
+        self.uninstrumentedReason = uninstrumentedReason
+        self.uninstrumentedLabel = uninstrumentedLabel
+        self.uninstrumentedCode = uninstrumentedCode
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agents = try container.decodeIfPresent([CoreAgentChip].self, forKey: .agents) ?? []
+        uninstrumentedReason = try container.decodeIfPresent(String.self, forKey: .uninstrumentedReason)
+        uninstrumentedLabel = try container.decodeIfPresent(String.self, forKey: .uninstrumentedLabel)
+        uninstrumentedCode = try container.decodeIfPresent(String.self, forKey: .uninstrumentedCode)
+    }
+}
+
 struct CoreWorktreeDeletionGate: Decodable, Equatable, Sendable {
     let blockedReason: String?
     let warnings: [String]
@@ -103,6 +142,9 @@ struct CoreGitWorktree: Decodable, Identifiable {
     let lastCommitUnixSeconds: Double?
     let paneCount: Int
     let runningAgentCount: Int
+    /// Who is working in this worktree and on what. Empty with no mark means
+    /// nobody; empty with a mark means Hide cannot see into it.
+    let agentLine: CoreWorktreeAgentLine
     let disk: CoreDiskUsage
     let pullRequest: CorePullRequest?
     let github: CoreGithubStatus
@@ -116,6 +158,7 @@ struct CoreGitWorktree: Decodable, Identifiable {
         case measuredAtUnixMS = "measured_at_unix_ms", lastCommitUnixSeconds = "last_commit_unix_seconds"
         case paneCount = "pane_count", runningAgentCount = "running_agent_count", pullRequest = "pull_request"
         case deletionGate = "deletion_gate", openError = "open_error"
+        case agentLine = "agent_line"
     }
     var label: String { branch ?? String(headSHA?.prefix(8) ?? "unknown") }
     var pushedLabel: String {
