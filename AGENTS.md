@@ -230,31 +230,40 @@ Use the command tooltip modifier and its identical accessibility help for every 
 
 ### The Design Canvas
 
-Screen designs, layout proposals and component sheets live in one Paper file, `Hide Design System`:
+Screen designs, layout proposals and component sheets live in one pen.dev document:
 
-    https://app.paper.design/file/01M2575AVTVPGM48ZMWEKWRSTC
+    design/hide.pen
 
 Put design work there rather than in a new file, an ad-hoc HTML page, or a screenshot pasted into a message.
 One file is what lets two proposals sit side by side on the same canvas and share one token set; a second file loses both.
+It is committed, so a design change shows up in `git diff` beside the code change that answers it.
 
-Paper is a local desktop app reached over MCP, so it answers only while `Paper.app` is running.
-`get_basic_info` reports the artboards and the token set; `list_files` confirms the connection.
-Anything read back out for code comes from `get_jsx` or `get_computed_styles`, never from a screenshot, which is for judging the result rather than measuring it.
+`.pen` is JSON, and pen.dev is a local CLI reached over MCP or headlessly:
 
-**The direction of truth is one-way.** `HideTheme.swift` defines a value, the Paper file receives it.
-The file carries the token set generated from `HideTheme`: colors as `--color-*`, sizes as `--text-*`, `--spacing-*`, `--radius-*`, and named layout dimensions as `--size-*`.
-Design against those variables (`background: var(--color-panel)`), never a literal hex, exactly as the shell designs against `HideTheme`.
-A proposal that needs a value the token set does not carry names the addition it wants; it does not settle it with a literal, and the addition lands in `HideTheme.swift` first.
+    pen interactive --in design/hide.pen --out design/hide.pen
 
-Two substitutions are recorded rather than fixed, because Paper cannot express either.
+Prefer structure a script could have produced over structure only a hand could have clicked, because that is what makes the file reviewable.
+
+**The direction of truth is one-way, and it is enforced.** `HideTheme.swift` defines a value; the canvas receives it.
+
+    node scripts/gen-pen-tokens.mjs     # write HideTheme's values into design/hide.pen
+    node scripts/check-pen-tokens.mjs   # refuse a canvas that disagrees
+
+`scripts/pen-token-map.json` says which HideTheme constant each canvas variable carries, and why each remaining constant stays out.
+The check fails on two things: a mapped value that drifted, and a HideTheme constant claimed by neither list.
+The second is the one worth having - a token can otherwise reach the shell and never reach the design, and nothing says so.
+It runs inside `node scripts/check-design-contract.mjs`, so it rides the existing gate and CI.
+
+Design against those variables (`fill: "$--color-panel"`), never a literal hex, exactly as the shell designs against `HideTheme`.
+A proposal that needs a value the token set does not carry names the addition it wants; the addition lands in `HideTheme.swift` first, then the generator brings it across.
+The canvas also carries variables of its own that the generator never touches - the `--asbuilt-*` family naming the off-scale numbers the app writes directly, the `--proposed-*` family the reconciliation needs, and derived tints pen cannot compute.
+
+Two substitutions are recorded rather than fixed, because pen cannot express either.
 SF Mono is not installed, so the canvas uses **JetBrains Mono**, which `DESIGN.md` accepts as a substitute.
-`font-feature-settings: 'ss03'` cannot ride on a token, so type renders as plain Inter; sizes and spacing are exact, glyph shapes are not.
+`ss03` cannot ride on a token, so type renders as plain Inter; sizes and spacing are exact, glyph shapes are not.
+For the same reason there is no pixel-comparison gate: it would be permanently red or uselessly loose.
 
-**Importing an existing HTML mockup.** Paper's `write_html` reads inline styles only.
-A `<style>` block is discarded and every element that depended on it is dropped, so a class-based page pastes in as an empty artboard; `<use href="#icon">` creates a node that draws nothing once the `<defs>` are gone.
-`scripts/paper-inline.mjs` resolves both ahead of time - it flattens the stylesheet into `style` attributes, splices icon symbols in at their use sites with `currentColor` resolved, renames the page's own custom properties to the Paper token names, and reports what it could not convert:
-
-    node scripts/paper-inline.mjs <body.html> [--css _shared.css] [--icons _icons.html]
-
-It also repairs three differences that only appear once the markup is in Paper: `margin` has no effect (use padding and gap), the `font` shorthand is not read (it expands to longhands), and a bare text span in a flex row is squeezed to one letter per line unless it is pinned open.
-Paste the output one visual group at a time rather than one page at a time, so the canvas fills in visibly and a mistake is cheap to locate.
+**Three traps that cost a run each.**
+pen.dev is not HTML and not CSS - `alignItems: baseline`, `alignItems: stretch`, `margin` and percentage sizes all error, so think in the `.pen` schema rather than translating web properties.
+`--enable-preview` crashes the renderer on the second `execute`; use `TakeScreenshot` inside `execute` instead.
+`width` and `height` silently drop a `$variable` reference and leave the node at zero, so those two properties alone carry numeric literals - which is exactly why the generated check earns its keep on everything else.

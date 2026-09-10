@@ -14,12 +14,23 @@ export const MAP = 'scripts/pen-token-map.json';
 
 // --- Swift ------------------------------------------------------------------
 
+// Drop a trailing line comment, but only one that starts outside a string literal,
+// so a `//` inside a quoted value survives.
+function strip(line) {
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"' && line[i - 1] !== '\\') quoted = !quoted;
+    else if (!quoted && line[i] === '/' && line[i + 1] === '/') return line.slice(0, i);
+  }
+  return line;
+}
+
 // Constants keyed by dotted path from HideTheme: `spacingMD`, `Typography.micro`.
 // Namespaces nest one level in this file and the parser assumes no more; a deeper
 // nesting would silently flatten, so it refuses instead.
 export function constants(source) {
   const found = new Map();
-  const lines = source.split('\n').map(line => line.replace(/\/\/\/.*$/, '').replace(/\s+$/, ''));
+  const lines = source.split('\n').map(line => strip(line).replace(/\s+$/, ''));
   const stack = [];
   let depth = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -108,6 +119,17 @@ export function resolve(pathName, table, seen = new Set()) {
   if (seen.has(pathName)) throw new Error(`Alias cycle at ${pathName}`);
   seen.add(pathName);
 
+  // A CGSize is two numbers under one name; the canvas has no size type, so it
+  // carries the pair and each half names the component it came from.
+  const member = /^(.*)\.(width|height)$/.exec(pathName);
+  if (member && !table.has(pathName)) {
+    const literal = table.get(member[1]);
+    if (literal === undefined) throw new Error(`No HideTheme constant named ${member[1]}`);
+    const size = /^CGSize\(width:\s*(.+?),\s*height:\s*(.+?)\)$/.exec(literal.trim());
+    if (!size) throw new Error(`${member[1]} is not a CGSize literal: ${literal}`);
+    return value(size[member[2] === 'width' ? 1 : 2].trim(), table, seen, pathName);
+  }
+
   const index = /^(.*)\.(\d+)$/.exec(pathName);
   if (index) {
     const literal = table.get(index[1]);
@@ -183,8 +205,23 @@ export function loadCanvas(root) {
 // A HideTheme constant must be mapped or excused. Unclaimed is the failure this
 // whole contract exists to catch: a token reaching the shell and never the design.
 export function unclaimed(map, table) {
-  const claimed = new Set(Object.values(map.mapped).map(p => p.replace(/\.\d+$/, '')));
+  const claimed = new Set(Object.values(map.mapped).map(p => p.replace(/\.(?:\d+|width|height)$/, '')));
   const excused = Object.keys(map.unmapped);
   return [...table.keys()].filter(name =>
     !claimed.has(name) && !excused.some(prefix => name === prefix || name.startsWith(prefix + '.')));
+}
+
+// The generated document, as text. Both scripts go through this one function so
+// the check compares against exactly what the generator would have written.
+// Existing variables keep their position, because the rest of the file is the
+// designer's and a reordered diff hides the change that matters.
+export function apply(document, expected) {
+  const variables = {};
+  for (const [name, variable] of Object.entries(document.variables)) {
+    variables[name] = expected.has(name) ? {...variable, ...expected.get(name)} : variable;
+  }
+  for (const name of [...expected.keys()].filter(name => !(name in variables)).sort()) {
+    variables[name] = expected.get(name);
+  }
+  return JSON.stringify({...document, variables}, null, 2);
 }

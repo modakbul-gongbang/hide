@@ -68,7 +68,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a fixture in [verification-fixtures.md](docs/verification-fixtures.md).
 The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs` and `node --test scripts/tests/design-controls.test.mjs`.
-The shared entrypoint runs the token, component ownership and counted control-policy checks; it performs static checks, not desktop interaction.
+The shared entrypoint runs the token, component ownership and counted control-policy checks, and the design canvas check that regenerates `design/hide.pen`'s tokens from `HideTheme.swift`; it performs static checks, not desktop interaction.
 The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
 
 ### Local design hook

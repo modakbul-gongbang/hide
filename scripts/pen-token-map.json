@@ -156,6 +156,7 @@
   },
   "unmapped": {
     "inter": "a registered CGFont, not a value",
+    "compactControlSize": "the browser pane's control height; that surface is a plugin, not one of the eight boards",
     "Hint.delay": "a TimeInterval; a static canvas has nowhere to put time",
     "Hint.tooltipDelay": "a TimeInterval",
     "Hint.fadeDuration": "a TimeInterval",

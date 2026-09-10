@@ -12636,6 +12636,14 @@
     "--proposed-agent-mark-glyph": {
       "type": "number",
       "value": 8
+    },
+    "--size-hint-horizontal-padding": {
+      "type": "number",
+      "value": 4
+    },
+    "--size-pr-icon": {
+      "type": "number",
+      "value": 14
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
