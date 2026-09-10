@@ -1377,6 +1377,8 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
     let label: String
     let kind: CoreEditorTabKind
     let diffCommitted: Bool?
+    var markdownPreview: Bool? = nil
+    var wrap: Bool? = nil
     let dirty: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -1386,6 +1388,8 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
         case path
         case label
         case kind
+        case markdownPreview = "markdown_preview"
+        case wrap
         case diffCommitted = "diff_committed"
         case dirty
     }
@@ -1965,6 +1969,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var terminalRegistrations: [String: TerminalRegistration] = [:]
     private var restoredPaneSelection = false
     private var pendingFileSave: Task<Void, Never>?
+    private var pendingFileSavePayload: [String: Any]?
     private var commandDevice = CommandDevice.local
     private var routingError: String?
     private let remoteTargets: [[String: String]]
@@ -2776,6 +2781,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_close", payload: ["tab_id": tabID])
     }
 
+    func setFileView(tabID: String, preview: Bool, wrap: Bool) {
+        dispatch(kind: "file_view", payload: ["tab_id": tabID, "markdown_preview": preview, "wrap": wrap])
+    }
+
     func updateDraft(_ contents: String) {
         dispatch(kind: "file_draft", payload: ["contents_utf8": contents])
     }
@@ -2794,27 +2803,28 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func scheduleFileSave(_ contents: String) {
+        guard let editor = snapshot?.editor, let tabID = editor.activeTabID, let path = editor.path else { return }
+        if let previous = pendingFileSavePayload?["tab_id"] as? String, previous != tabID {
+            flushPendingFileSave()
+        }
         pendingFileSave?.cancel()
+        pendingFileSavePayload = [
+            "tab_id": tabID, "path": path, "contents_utf8": contents,
+            "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
+        ]
         pendingFileSave = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(450))
-            } catch {
-                return
-            }
+            do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
             guard !Task.isCancelled else { return }
-            self?.saveFile(contents)
-            self?.pendingFileSave = nil
+            self?.flushPendingFileSave()
         }
     }
 
     func flushPendingFileSave() {
-        guard pendingFileSave != nil,
-              let contents = snapshot?.editor.contentsUTF8,
-              snapshot?.editor.dirty == true
-        else { return }
+        guard let payload = pendingFileSavePayload else { return }
         pendingFileSave?.cancel()
         pendingFileSave = nil
-        saveFile(contents)
+        pendingFileSavePayload = nil
+        dispatch(kind: "file_save", payload: payload)
     }
 
     func resolveConflict(_ action: String) {

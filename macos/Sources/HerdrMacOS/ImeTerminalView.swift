@@ -130,6 +130,28 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        !isHiddenOrHasHiddenAncestor && TerminalFileDrop.accepts(sender.draggingPasteboard) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        pasteDroppedFiles(sender.draggingPasteboard)
+    }
+
+    @discardableResult func pasteDroppedFiles(_ board: NSPasteboard) -> Bool {
+        guard !isHiddenOrHasHiddenAncestor, onPointerFocus != nil else { return false }
+        do {
+            let bytes = try TerminalFileDrop.input(from: board, bracketedPaste: getTerminal().bracketedPasteMode)
+            onPointerFocus?()
+            window?.makeFirstResponder(self)
+            send(data: bytes[...])
+            return true
+        } catch {
+            presentError(error)
+            return false
+        }
+    }
     var onOrdinaryClick: ((Int, Int, Int) -> Void)?
 
     /// SwiftTerm cannot see this shell's design system, so it hands the bar

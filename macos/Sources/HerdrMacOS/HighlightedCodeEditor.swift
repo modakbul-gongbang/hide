@@ -9,13 +9,16 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     /// The file editor is one surface rather than a pane, so it carries the
     /// scale of the pane whose chords last changed it.
     let textScale: CGFloat
+    var wrapsLines = false
+    var findRequest = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let storage = Self.makeTextStorage(text: text, language: language)
+        let storage = Self.makeTextStorage(text: text, language: language,
+            font: NSFont.monospacedSystemFont(ofSize: HideTheme.editorBaseFontSize * textScale, weight: .regular))
 
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
@@ -61,7 +64,7 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         textView.textColor = HideTheme.Native.primary
         textView.insertionPointColor = HideTheme.Native.primary
         Self.enableFindBar(on: textView)
-        let scrollView = NSScrollView()
+        let scrollView = CodeEditorScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
@@ -94,7 +97,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     static func makeTextStorage(
         text: String = "",
         language: String?,
-        highlightr: Highlightr? = Highlightr()
+        highlightr: Highlightr? = Highlightr(),
+        font: NSFont = NSFont.monospacedSystemFont(ofSize: HideTheme.editorBaseFontSize, weight: .regular)
     ) -> NSTextStorage {
         guard let highlightr else {
             let payload = [
@@ -112,9 +116,10 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             return plainTextStorage(text)
         }
 
+        _ = highlightr.setTheme(to: "atom-one-dark")
+        highlightr.theme.setCodeFont(font)
         let storage = CodeAttributedString(highlightr: highlightr)
         storage.language = language
-        _ = highlightr.setTheme(to: "atom-one-dark")
         storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
         if language == nil {
             applyPlainTextColor(to: storage)
@@ -141,18 +146,37 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         textView.isEditable = isEditable
+        if context.coordinator.wrapsLines != wrapsLines {
+            context.coordinator.wrapsLines = wrapsLines
+            textView.isHorizontallyResizable = !wrapsLines
+            textView.textContainer?.widthTracksTextView = wrapsLines
+            textView.textContainer?.containerSize.width = wrapsLines
+                ? scrollView.contentSize.width : .greatestFiniteMagnitude
+            if wrapsLines { textView.setFrameSize(NSSize(width: scrollView.contentSize.width, height: textView.frame.height)) }
+            scrollView.hasHorizontalScroller = !wrapsLines
+        }
+        if context.coordinator.findRequest != findRequest {
+            context.coordinator.findRequest = findRequest
+            textView.window?.makeFirstResponder(textView)
+            let item = NSMenuItem()
+            item.tag = NSTextFinder.Action.showFindInterface.rawValue
+            textView.performFindPanelAction(item)
+        }
         let size = HideTheme.editorBaseFontSize * textScale
         let font = NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight.regular)
+        if let storage = textView.textStorage as? CodeAttributedString {
+            let fontChanged = storage.highlightr.theme.codeFont != font
+            if fontChanged { storage.highlightr.theme.setCodeFont(font) }
+            // Assigning even the same language schedules a full asynchronous
+            // highlight. Its font must agree with the editor, and unrelated
+            // snapshot updates must not continually restart that work.
+            if fontChanged || storage.language != language { storage.language = language }
+            if language == nil { Self.applyPlainTextColor(to: storage) }
+        }
         if textView.font?.pointSize != size {
             textView.font = font
             context.coordinator.lineNumberRuler?.fontSize = size
             context.coordinator.lineNumberRuler?.needsDisplay = true
-        }
-        if let storage = textView.textStorage as? CodeAttributedString {
-            storage.language = language
-            if language == nil {
-                Self.applyPlainTextColor(to: storage)
-            }
         }
         guard textView.string != text, !context.coordinator.isForwardingChange else { return }
         let selection = textView.selectedRange()
@@ -180,6 +204,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         @Binding private var text: String
         weak var textView: NSTextView?
         weak var lineNumberRuler: CodeLineNumberRulerView?
+        var wrapsLines: Bool?
+        var findRequest = 0
         var isApplyingSnapshot = false
         var isForwardingChange = false
 
@@ -194,6 +220,23 @@ struct HighlightedCodeEditor: NSViewRepresentable {
             isForwardingChange = false
             lineNumberRuler?.needsDisplay = true
         }
+    }
+}
+
+/// AppKit can tile a horizontally growing text document underneath its ruler.
+/// Reserve the ruler's actual geometry in the clip view, including after wrap
+/// changes and find-bar layout, so horizontal scrolling never exposes covered text.
+final class CodeEditorScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        guard rulersVisible, hasVerticalRuler, let ruler = verticalRulerView else { return }
+        let frame = contentView.frame
+        let leading = max(frame.minX, ruler.frame.maxX)
+        let available = NSRect(
+            x: leading, y: frame.minY,
+            width: max(0, frame.maxX - leading), height: frame.height
+        )
+        if frame != available { contentView.frame = available }
     }
 }
 
@@ -277,7 +320,9 @@ final class CodeLineNumberRulerView: NSRulerView {
                 withAttributes: attributes
             )
             let next = NSMaxRange(lineRange)
-            if next <= lineRange.location { break }
+            // At EOF without a newline NSString returns the same final line.
+            // Stop before asking for that range again or drawing never ends.
+            if next <= lineRange.location || next >= content.length { break }
             lineRange = content.lineRange(for: NSRange(location: next, length: 0))
             lineNumber += 1
         }

@@ -1222,3 +1222,54 @@ If layout structure remains unresolved, present distinct candidates before imple
 Do not refresh an expected screenshot merely because a new build differs; explain the intended design change and review it.
 Shared controls and their policy checks are implemented; a native component catalog and screenshot-comparison service are not yet available.
 Visual baseline approval remains a separate human review.
+
+## File document toolbar and Markdown
+
+The central file surface uses one document toolbar, preserving the existing tab strip and Explorer.
+The current folder and filename give context; Find uses AppKit's native find bar, Wrap changes the source text container, and reveal actions target Explorer and Finder.
+Controls use HideIconButton and the shared tooltip/accessibility renderer.
+Unsaved drafts and the existing read-only/conflict notices remain visible in either mode.
+Diff tabs retain their existing viewer.
+
+Markdown files alone show the centered Preview/Edit HideChoiceGroup.
+The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Preview with source wrapping off.
+These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
+The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
+Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
+The native editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
+The syntax highlighter and text view use the same scaled monospaced font; unchanged view updates do not restart highlighting or reset its typography.
+Core acknowledgement, switching file identity, and explicitly reloading a disk conflict settle that presentation buffer.
+
+Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.
+The document adds theme tokens for a 720-point readable width, 15-point Inter body and 5-point line spacing; Korean uses the font's native fallback and word wrapping.
+Headers, paragraphs, emphasis, lists, quotes, code and links retain readable structure.
+Tables use visibly separated textual cells rather than a grid; native tab stops must not make adjacent values appear concatenated.
+Raw HTML is inert literal text, never a browser execution surface.
+Local and remote Markdown images both display their description with an explicit preview-disabled label; no image resource is read or fetched by preview.
+HTTP(S) links open only after activation through the existing external-browser owner; relative file links are restricted to existing files inside the current symlink-resolved checkout.
+Unsupported schemes, fragments, outside-checkout paths and missing links show a caller-visible notice.
+Extended Markdown has no execution or plugin mechanism; unsupported syntax remains readable source and can always be inspected in Edit.
+A parse failure displays the reason and original source; an empty document offers Edit.
+
+MarkdownDocumentTests checks rendered text, inert HTML/images and actual Inter Korean/English layout at two widths.
+Native editor tests check complete typed and autosaved content, final lines without a newline, and the first glyph remaining outside the line-number ruler across wrap changes and window widths.
+They exercise real AppKit layout and the core file-save boundary, and reproduced missing/reordered characters, a nonterminating EOF draw, and covered leading glyphs before the fixes.
+These few user-outcome tests retain no mock call graph or exact view hierarchy contract.
+The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
+Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.
+
+## Terminal image attachment boundary
+
+Dropping local file URLs into a visible terminal focuses that receiving pane and inserts quoted paths immediately through the existing ordered writer.
+When the terminal advertises bracketed paste, each path has its own paste frame; the complete drop is enqueued once in file order.
+Otherwise the paths are inserted as shell-quoted text with a trailing space.
+Spaces, Korean and apostrophes survive; shell expansion characters are escaped, and paths containing control characters are rejected with a native error.
+The drop performs no upload, image decoding, temporary copy or automatic Enter, and never replaces existing prompt text.
+It inserts paths even when a provider cannot decode the referenced file; provider validation remains visible in its own composer.
+Hide provides no thumbnail shelf, attachment membership or synchronized removal; subsequent editing and submission remain native provider operations.
+Ordinary clipboard paste and keyboard input retain the existing SwiftTerm paths.
+Provider-native attachment behavior remains owned by the provider; pasting a path is not proof of image acceptance.
+The former shelf was removed because it could not synchronize native attachment deletion or clear confirmed submissions reliably.
+Reintroducing this surface requires a supported provider contract for stable attachment identity, idempotent add/remove, native draft changes and accepted submission events.
+Both surfaces must reflect the same attachment membership, and the shelf must clear only after confirmed submission, preserving items on failure.
+PTY writes, key events and terminal viewport state cannot substitute for that contract.
