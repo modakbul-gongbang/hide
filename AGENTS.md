@@ -244,3 +244,66 @@ When the existing system does not cover a case, say so and propose the addition;
 
 The native shell components live in `macos/Sources/HerdrMacOS/`: `HideTheme.swift` defines tokens, `HideKeycap.swift` draws registry-derived shortcuts, `HideBalloon.swift` draws tooltips and hint chips, `HideIconButton.swift` owns icon controls, `HideBadge.swift` owns labels, and `HideOverlay.swift` attaches the shared renderer to window content.
 Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception; run `node scripts/check-design-contract.mjs` before delivery, which is the same entrypoint `design-contract.yml` runs.
+
+### The Design Canvas
+
+Screen designs, layout proposals and component sheets live in one pen.dev document:
+
+    design/hide.pen
+
+Put design work there rather than in a new file, an ad-hoc HTML page, or a screenshot pasted into a message.
+One file is what lets two proposals sit side by side on the same canvas and share one token set; a second file loses both.
+It is committed, so a design change shows up in `git diff` beside the code change that answers it.
+
+`.pen` is JSON, and pen.dev is a local CLI reached over MCP or headlessly:
+
+    pen interactive --in design/hide.pen --out design/hide.pen                    # drive it yourself
+    pen --repo . --in design/hide.pen --out design/hide.pen --prompt "..."        # hand it to pen's own agent
+
+**`--repo .` is not optional.** It is the only thing that makes pen's agent read this file.
+Without it the agent reads nothing, even when it is launched from inside the checkout - `--repo` does not fall back to the working directory.
+Verified by planting a marker in `AGENTS.md`: with the flag the agent quotes it back, without the flag it reports no project instructions at all.
+
+Prefer structure a script could have produced over structure only a hand could have clicked, because that is what makes the file reviewable.
+
+**The direction of truth is one-way, and it is enforced.** `HideTheme.swift` defines a value; the canvas receives it.
+
+    node scripts/gen-pen-tokens.mjs     # write HideTheme's values into design/hide.pen
+    node scripts/check-pen-tokens.mjs   # refuse a canvas that disagrees
+
+`scripts/pen-token-map.json` says which HideTheme constant each canvas variable carries, and why each remaining constant stays out.
+The check fails on two things: a mapped value that drifted, and a HideTheme constant claimed by neither list.
+The second is the one worth having - a token can otherwise reach the shell and never reach the design, and nothing says so.
+It runs inside `node scripts/check-design-contract.mjs`, so it rides the existing gate and CI.
+
+Design against those variables (`fill: "$--color-panel"`), never a literal hex, exactly as the shell designs against `HideTheme`.
+A proposal that needs a value the token set does not carry names the addition it wants; the addition lands in `HideTheme.swift` first, then the generator brings it across.
+The canvas also carries variables of its own that the generator never touches - the `--asbuilt-*` family naming the off-scale numbers the app writes directly, the `--proposed-*` family the reconciliation needs, and derived tints pen cannot compute.
+
+Two substitutions are recorded rather than fixed, because pen cannot express either.
+SF Mono is not installed, so the canvas uses **JetBrains Mono**, which `DESIGN.md` accepts as a substitute.
+`ss03` cannot ride on a token, so type renders as plain Inter; sizes and spacing are exact, glyph shapes are not.
+For the same reason there is no pixel-comparison gate: it would be permanently red or uselessly loose.
+
+**Five traps, each of which cost a run or a wrong answer.**
+The last two are the dangerous ones, because they fail silently and look like they worked.
+
+- pen.dev is not HTML and not CSS - `alignItems: baseline`, `alignItems: stretch`, `margin` and percentage sizes all error, so think in the `.pen` schema rather than translating web properties.
+- `--enable-preview` crashes the renderer on the second `execute`; use `TakeScreenshot` inside `execute` instead.
+- `width` and `height` silently drop a `$variable` reference and leave the node at zero, so those two properties alone carry numeric literals - which is exactly why the generated check earns its keep on everything else.
+- **A variable reached through `imports` does not resolve, and renders black.** A second `.pen` file importing this one and filling a frame with `$--color-panel` drew `#000000`; the same variable declared locally drew `#1D1F21`, matching the literal exactly. There is no error. This is why there is one canvas file and not a scratch file beside it.
+- **A `context` node does not steer the agent.** A context node carrying a naming rule and "never use a literal hex" was ignored outright: the agent named the frame `Dark Frame` and filled it with `#1A1A1A`. Conventions have to arrive through `--repo .`, or not at all.
+
+### Scratch work on the canvas
+
+Exploration goes in the same file, in a band below the boards:
+
+- name it `Scratch / <topic>`, so it sorts away from the `Sidebar /`, `Panel /`, `Agreed /`, `Audit /` and `Proposal /` prefixes
+- place it at `y: 1000` or below; the boards occupy `y: 0` and are 900 tall, and the components sit above at `y: -1080`
+- when it earns its place, redraw it as a `Proposal /` board and delete the scratch; otherwise just delete it
+
+It goes in `design/hide.pen` rather than a scratch file of its own because that is the only place the tokens resolve; see the import trap above.
+Scratch boards cost the contract nothing - `check-pen-tokens.mjs` reads only the document's `variables`, and the generator preserves every node it finds.
+
+Anything drawn inside the pen desktop app is scratch by default.
+The app's own agent has no way to reach this file, so assume its output carries literal colours and off-scale numbers, and clean it up when you promote it rather than while you are still exploring.
