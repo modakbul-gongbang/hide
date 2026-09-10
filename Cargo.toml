@@ -1,5 +1,5 @@
 [workspace]
-members = ["herdr-core", "hide-ai", "plugins/agent-context-labels"]
+members = ["herdr-core", "hide-agent-hooks", "hide-ai", "plugins/agent-context-labels"]
 resolver = "3"
 
 [profile.release]
