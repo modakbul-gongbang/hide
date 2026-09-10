@@ -649,10 +649,10 @@ pub struct PaneChildrenSnapshot {
     /// One chip per pane child, in the lineage's own child order. Only panes:
     /// an in-process subagent has no pane, so it cannot be a chip the
     /// operator clicks into (PRD D-63).
-    pub chips: Vec<ChildChipSnapshot>,
+    pub chips: Vec<AgentChipSnapshot>,
     /// The parent badge, chosen from the pane children by the same priority
     /// the Workspace summary uses. In-process subagents take no part in it.
-    pub representative: Option<ChildChipSnapshot>,
+    pub representative: Option<AgentChipSnapshot>,
     /// In-process subagents, summarised and never added to the chip count.
     pub subagents: SubagentCountsSnapshot,
 }
@@ -671,9 +671,10 @@ impl PaneChildrenSnapshot {
     }
 }
 
-/// One child in the pane header's chip row.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ChildChipSnapshot {
+/// One agent in a line of them: a pane header chip, a breadcrumb step's
+/// sibling, or an Overview worktree row's agent.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AgentChipSnapshot {
     pub pane_id: String,
     /// The short name the chip shows beside its mark.
     pub label: String,
@@ -719,7 +720,7 @@ pub struct LineageStepSnapshot {
     /// That layer's other agents, in the parent's own child order, so the
     /// step's dropdown can offer them without a second traversal. It includes
     /// the step itself, so the current position is visible in the list.
-    pub siblings: Vec<ChildChipSnapshot>,
+    pub siblings: Vec<AgentChipSnapshot>,
 }
 
 /// The TCP listeners the machine has, with where each was started from.
@@ -1398,6 +1399,10 @@ pub struct WorktreeSnapshot {
     pub measured_at_unix_ms: Option<u64>,
     pub pane_count: usize,
     pub running_agent_count: usize,
+    /// Who is working in this worktree and on what (PRD B34, B35, D-32,
+    /// D-55). Overview's own value is width, so this is one line rather than
+    /// a new area.
+    pub agent_line: WorktreeAgentLineSnapshot,
     pub disk: DiskUsageSnapshot,
     pub pull_request: Option<PullRequestSnapshot>,
     pub github: GithubStatusSnapshot,
@@ -1422,6 +1427,25 @@ pub struct WorktreeSnapshot {
     pub added_lines: u32,
     pub removed_lines: u32,
     pub unpushed: Option<UnpushedSnapshot>,
+}
+
+/// The Overview worktree row's agent line.
+///
+/// An empty `agents` with no reason is a worktree nobody is working in. An
+/// empty one carrying a reason is a worktree Hide cannot see into, which is a
+/// different answer and is drawn as one (PRD B35, D-60, `design/principles.md`
+/// rule 9).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorktreeAgentLineSnapshot {
+    /// The agents attached to this worktree's panes, in the sidebar's own
+    /// order so the two screens name them the same way.
+    pub agents: Vec<AgentChipSnapshot>,
+    /// The same mark and sentence the pane header shows, when one of those
+    /// agents is uninstrumented. The reason is the first in the resolution
+    /// order among them, so the line agrees with the pane it came from.
+    pub uninstrumented_reason: Option<String>,
+    pub uninstrumented_label: Option<String>,
+    pub uninstrumented_code: Option<String>,
 }
 
 /// One policy shared by all worktree deletion surfaces.

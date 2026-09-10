@@ -601,9 +601,12 @@ pub fn apply_lineage(
     }
 }
 
-/// The chip one agent shows as somebody else's child.
-fn child_chip(agent: &SidebarAgentSnapshot) -> crate::model::ChildChipSnapshot {
-    crate::model::ChildChipSnapshot {
+/// One agent, as every surface that names an agent in a line draws it: the
+/// pane header's chip row, a breadcrumb step's sibling list, and the
+/// Overview worktree row's agent line all read the same fields, so they
+/// cannot describe the same agent differently (PRD B5, B10, B34).
+pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapshot {
+    crate::model::AgentChipSnapshot {
         pane_id: agent.pane_id.clone(),
         // The name the operator gave the chat, when there is one; otherwise
         // Herdr's own agent name. Never the missing-summary prompt, which is
@@ -655,14 +658,14 @@ pub fn project_pane_children(
         .lineage_child_pane_ids
         .iter()
         .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
-        .map(child_chip)
+        .map(agent_chip)
         .collect::<Vec<_>>();
     let representative = agent
         .lineage_child_pane_ids
         .iter()
         .filter_map(|child| agents.iter().find(|agent| &agent.pane_id == child))
         .min_by_key(|child| child_representative_rank(child))
-        .map(child_chip);
+        .map(agent_chip);
     Some(crate::model::PaneChildrenSnapshot {
         instrumented: instrumentation.instrumented,
         uninstrumented_reason: instrumentation
@@ -707,12 +710,12 @@ pub fn project_lineage_path(
         .filter_map(|step| agents.iter().find(|agent| &agent.pane_id == step))
         .map(|step| crate::model::LineageStepSnapshot {
             pane_id: step.pane_id.clone(),
-            label: child_chip(step).label,
+            label: agent_chip(step).label,
             siblings: step
                 .lineage_sibling_pane_ids
                 .iter()
                 .filter_map(|sibling| agents.iter().find(|agent| &agent.pane_id == sibling))
-                .map(child_chip)
+                .map(agent_chip)
                 .collect(),
         })
         .collect()

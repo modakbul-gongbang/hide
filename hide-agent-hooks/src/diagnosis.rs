@@ -51,6 +51,22 @@ impl UninstrumentedReason {
         }
     }
 
+    /// Reads a code back, from the same table [`Self::code`] writes. A
+    /// caller holding a projected reason can recover the resolution order
+    /// without a second list of names.
+    pub fn from_code(code: &str) -> Option<Self> {
+        [
+            Self::ConfigUnreadable,
+            Self::RemoteHost,
+            Self::HooksNotInstalled,
+            Self::SessionPredatesInstall,
+            Self::HookOutdated,
+            Self::Unknown,
+        ]
+        .into_iter()
+        .find(|reason| reason.code() == code)
+    }
+
     /// The sentence the tooltip shows. It is the whole explanation: the
     /// operator must be able to tell "installed but this session is old" from
     /// "never installed" without opening anything.

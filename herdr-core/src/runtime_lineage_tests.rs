@@ -1001,3 +1001,107 @@ fn an_approved_install_is_queued_once_and_an_unknown_runtime_is_reported() {
     assert_eq!(error.kind, "agent_hooks.unknown_runtime");
     assert!(error.message.contains("emacs"), "got {}", error.message);
 }
+
+// PRD B34, B35, D-32, D-55, D-60: Overview says who is working here, and an
+// empty line is not the same answer as one Hide cannot fill.
+#[test]
+fn the_overview_agent_line_separates_nobody_working_here_from_cannot_see() {
+    let rows = instrumented_rows("claude");
+    let chips = rows
+        .iter()
+        .map(|agent| (agent.pane_id.clone(), crate::sidebar::agent_chip(agent)))
+        .collect::<HashMap<_, _>>();
+    let reason_for = |code: hide_agent_hooks::diagnosis::UninstrumentedReason| {
+        crate::model::PaneChildrenSnapshot {
+            instrumented: false,
+            uninstrumented_reason: Some(code.message().to_owned()),
+            uninstrumented_label: Some(code.accessibility_label().to_owned()),
+            uninstrumented_code: Some(code.code().to_owned()),
+            ..Default::default()
+        }
+    };
+    let panes = |ids: &[&str]| {
+        ids.iter()
+            .map(|id| (*id).to_owned())
+            .collect::<HashSet<String>>()
+    };
+
+    // A worktree Hide has no pane rows for at all.
+    let none = worktree_agent_line(None, &chips, &HashMap::new(), &rows);
+    assert!(none.agents.is_empty() && none.uninstrumented_code.is_none());
+
+    // Panes, but nobody working in them: an empty line and no claim.
+    let quiet = worktree_agent_line(Some(&panes(&["idle"])), &chips, &HashMap::new(), &rows);
+    assert!(quiet.agents.is_empty());
+    assert_eq!(
+        quiet.uninstrumented_code, None,
+        "no agents is an answer, not a gap"
+    );
+
+    // Two agents here and one elsewhere, all instrumented.
+    let instrumented = HashMap::from([
+        (
+            "parent".to_owned(),
+            crate::model::PaneChildrenSnapshot {
+                instrumented: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "child".to_owned(),
+            crate::model::PaneChildrenSnapshot {
+                instrumented: true,
+                ..Default::default()
+            },
+        ),
+    ]);
+    let working = worktree_agent_line(
+        Some(&panes(&["parent", "child"])),
+        &chips,
+        &instrumented,
+        &rows,
+    );
+    assert_eq!(
+        working
+            .agents
+            .iter()
+            .map(|agent| agent.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        rows.iter()
+            .filter(|agent| agent.pane_id != "sibling")
+            .map(|agent| agent.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        "the line follows the sidebar's own order"
+    );
+    assert!(working.agents.iter().any(|agent| !agent.label.is_empty()));
+    assert_eq!(working.uninstrumented_code, None);
+
+    // One of them is uninstrumented, and two reasons are in play: the line
+    // shows the first in the crate's resolution order, not the first pane.
+    let mixed = HashMap::from([
+        (
+            "parent".to_owned(),
+            reason_for(hide_agent_hooks::diagnosis::UninstrumentedReason::SessionPredatesInstall),
+        ),
+        (
+            "child".to_owned(),
+            reason_for(hide_agent_hooks::diagnosis::UninstrumentedReason::HooksNotInstalled),
+        ),
+    ]);
+    let unseen = worktree_agent_line(Some(&panes(&["parent", "child"])), &chips, &mixed, &rows);
+    assert_eq!(unseen.agents.len(), 2, "the agents are still named");
+    assert_eq!(
+        unseen.uninstrumented_code.as_deref(),
+        Some("hooks_not_installed")
+    );
+    assert_eq!(
+        unseen.uninstrumented_reason,
+        Some(
+            hide_agent_hooks::diagnosis::UninstrumentedReason::HooksNotInstalled
+                .message()
+                .to_owned()
+        ),
+        "the same sentence the pane header shows (PRD B21)"
+    );
+    assert!(unseen.uninstrumented_label.is_some(), "the mark is named");
+}

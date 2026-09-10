@@ -4560,6 +4560,26 @@ impl Runtime {
             .filter(|agent| agent.activity == "working")
             .map(|agent| agent.pane_id.as_str())
             .collect::<HashSet<_>>();
+        // The agent line reads the rows the sidebar already projected and the
+        // instrumentation the pane header already resolved, so Overview
+        // repeats neither judgement (PRD B34, B35, engineering rule 7).
+        let agent_chips = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .map(|agent| (agent.pane_id.clone(), crate::sidebar::agent_chip(agent)))
+            .collect::<HashMap<_, _>>();
+        let pane_instrumentation = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .filter_map(|pane| Some((pane.id.clone(), pane.children.clone()?)))
+            .collect::<HashMap<_, _>>();
         let requested_github: HashSet<_> = self
             .github_request()
             .projects
@@ -4590,6 +4610,12 @@ impl Runtime {
                         .filter(|pane_id| running.contains(pane_id.as_str()))
                         .count()
                 });
+                worktree.agent_line = worktree_agent_line(
+                    panes,
+                    &agent_chips,
+                    &pane_instrumentation,
+                    &self.snapshot.navigator.agents,
+                );
                 worktree.disk = disk_usage
                     .iter()
                     .find(|disk| disk.path.as_deref() == Some(worktree.path.as_str()))
@@ -11112,6 +11138,43 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
 /// It names the demand when there is one, because "waiting for an approval"
 /// and "running with nothing to show for it" ask different things of the
 /// operator.
+/// The agent line for one worktree row.
+///
+/// Empty with no reason is nobody working here; empty with a reason is a
+/// worktree Hide cannot see into. Keeping those two apart is the whole point
+/// of the third uninstrumented position (PRD B35, D-60).
+fn worktree_agent_line(
+    panes: Option<&HashSet<String>>,
+    chips: &HashMap<String, crate::model::AgentChipSnapshot>,
+    instrumentation: &HashMap<String, crate::model::PaneChildrenSnapshot>,
+    order: &[SidebarAgentSnapshot],
+) -> crate::model::WorktreeAgentLineSnapshot {
+    let Some(panes) = panes else {
+        return crate::model::WorktreeAgentLineSnapshot::default();
+    };
+    // The sidebar's order, so the two screens read the same way.
+    let agents = order
+        .iter()
+        .filter(|agent| panes.contains(&agent.pane_id))
+        .filter_map(|agent| chips.get(&agent.pane_id).cloned())
+        .collect::<Vec<_>>();
+    // The first reason in the resolution order the crate declares, rather
+    // than the first one the pane iteration happened to reach.
+    let worst = order
+        .iter()
+        .filter(|agent| panes.contains(&agent.pane_id))
+        .filter_map(|agent| instrumentation.get(&agent.pane_id))
+        .filter_map(|children| children.uninstrumented_code.as_deref())
+        .filter_map(hide_agent_hooks::diagnosis::UninstrumentedReason::from_code)
+        .min();
+    crate::model::WorktreeAgentLineSnapshot {
+        agents,
+        uninstrumented_reason: worst.map(|reason| reason.message().to_owned()),
+        uninstrumented_label: worst.map(|reason| reason.accessibility_label().to_owned()),
+        uninstrumented_code: worst.map(|reason| reason.code().to_owned()),
+    }
+}
+
 /// How badly one waiting child needs an answer, worst first. It breaks ties
 /// between descendants that have waited exactly as long.
 fn stall_priority(agent: &SidebarAgentSnapshot) -> u8 {
