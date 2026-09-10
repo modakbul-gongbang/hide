@@ -488,8 +488,14 @@ impl StripTabSnapshot {
     /// remote projection build their Herdr entries here, so the rule that
     /// decides which tabs earn a slot and what an unlabelled one reads as has
     /// one implementation to change.
+    /// The Herdr tabs a checkout draws in its strip.
+    ///
+    /// A tab holding only delegated children is left out: the canvas keeps
+    /// one pane, and a strip slot for every child would put the pile back
+    /// where the split used to be (PRD B1).
     pub fn from_herdr_tabs(tabs: &[TabSnapshot]) -> Vec<Self> {
         tabs.iter()
+            .filter(|tab| !tab.delegated)
             .filter_map(|tab| {
                 Some(Self::herdr(
                     tab.id.clone()?,
@@ -570,6 +576,11 @@ pub struct TabSnapshot {
     pub checkout_id: Option<String>,
     pub label: Option<String>,
     pub empty: bool,
+    /// Every agent in this tab is somebody else's delegated child, so the tab
+    /// exists only to hold work the operator did not ask to look at. The tab
+    /// strip leaves it out; the sidebar and the breadcrumb still reach it
+    /// (PRD B1, B4, D-40).
+    pub delegated: bool,
     pub panes: Vec<PaneSnapshot>,
 }
 
@@ -1716,6 +1727,7 @@ impl Snapshot {
                 checkout_id: None,
                 label: None,
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             },
             connection: ConnectionSnapshot {

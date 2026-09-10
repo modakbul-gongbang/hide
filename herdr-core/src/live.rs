@@ -314,6 +314,13 @@ pub enum PaneControlAction {
     Close {
         pane_id: String,
     },
+    /// Takes a delegated child out of the tab it was split into and gives it
+    /// a tab of its own, so the canvas stays one pane (PRD B1, D-15).
+    MoveToNewTab {
+        pane_id: String,
+        workspace_id: String,
+        label: String,
+    },
 }
 
 impl PaneControlAction {
@@ -325,6 +332,21 @@ impl PaneControlAction {
             Self::Resize { .. } => "pane.resize",
             Self::ToggleZoom { .. } => "pane.zoom",
             Self::Close { .. } => "pane.close",
+            Self::MoveToNewTab { .. } => "pane.move",
+        }
+    }
+
+    /// The pane the action is about, for the caller that has to match a
+    /// result back to what it asked for.
+    pub fn pane_id(&self) -> &str {
+        match self {
+            Self::Project { pane_id }
+            | Self::Focus { pane_id }
+            | Self::Split { pane_id, .. }
+            | Self::Resize { pane_id, .. }
+            | Self::ToggleZoom { pane_id }
+            | Self::Close { pane_id }
+            | Self::MoveToNewTab { pane_id, .. } => pane_id,
         }
     }
 }
@@ -441,7 +463,11 @@ fn execute_remote_control(
                     return Err("remote pane mutation returned a layout projection".to_owned());
                 }
             },
-            PaneControlAction::Project { .. } | PaneControlAction::Resize { .. } => {
+            // A remote pane is never relocated: Hide leaves another
+            // machine's layout alone (PRD D-28, D-49).
+            PaneControlAction::Project { .. }
+            | PaneControlAction::Resize { .. }
+            | PaneControlAction::MoveToNewTab { .. } => {
                 return Err("unsupported remote pane control action".to_owned());
             }
         },
@@ -548,6 +574,18 @@ fn execute_pane_control(
             control_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
             None
         }
+        PaneControlAction::MoveToNewTab {
+            pane_id,
+            workspace_id,
+            label,
+        } => {
+            let params = wire::pane_move_to_new_tab_params(pane_id, workspace_id, label)?;
+            let result = control_request(connector, "pane.move", params)?;
+            // The created tab is checked here so a refusal Herdr reported as
+            // an unchanged move fails the action rather than reading as done.
+            wire::moved_pane_tab(result)?;
+            None
+        }
         PaneControlAction::Project { .. }
         | PaneControlAction::Focus { .. }
         | PaneControlAction::Resize { .. } => unreachable!("handled above"),
@@ -585,6 +623,7 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
         }
         PaneControlAction::ToggleZoom { .. } => "herdr-core-pane-zoom".to_owned(),
         PaneControlAction::Close { .. } => "herdr-core-pane-close".to_owned(),
+        PaneControlAction::MoveToNewTab { .. } => "herdr-core-pane-move".to_owned(),
     };
     thread::Builder::new()
         .name(worker_name)
@@ -813,6 +852,9 @@ pub fn spawn_remote_control(
         }
         RemoteControlAction::Pane(PaneControlAction::Close { .. }) => {
             format!("herdr-core-remote-{target_id}-pane-close")
+        }
+        RemoteControlAction::Pane(PaneControlAction::MoveToNewTab { .. }) => {
+            format!("herdr-core-remote-{target_id}-pane-move")
         }
         RemoteControlAction::Pane(
             PaneControlAction::Project { .. } | PaneControlAction::Resize { .. },

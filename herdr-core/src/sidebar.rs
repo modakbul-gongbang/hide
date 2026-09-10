@@ -1125,6 +1125,7 @@ mod tests {
                 checkout_id: None,
                 label: None,
                 empty: false,
+                delegated: false,
             }],
             ..Default::default()
         };

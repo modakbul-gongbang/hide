@@ -454,3 +454,131 @@ fn the_breadcrumb_is_the_ancestors_then_the_pane_with_each_layers_siblings() {
         "the step's dropdown offers that layer, including where the operator is"
     );
 }
+
+// PRD B1, B3, B4, D-15, D-43, D-44: the canvas keeps one pane, and the tab
+// holding the delegated child never reaches the strip.
+fn split_lineage_payload() -> crate::sidebar::SessionSnapshotPayload {
+    serde_json::from_value(serde_json::json!({
+        "agents": [
+            {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
+             "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture"},
+            {"id":"Implementor","pane_id":"w1:p2","agent":"claude","agent_status":"working",
+             "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture",
+             "spawned_from_pane_id":"w1:p1"}
+        ],
+        "panes": [
+            {"pane_id":"w1:p1","cwd":"/fixture"},
+            {"pane_id":"w1:p2","cwd":"/fixture"}
+        ],
+        "tabs": [{"workspace_id":"w1","tab_id":"t1","label":""}],
+        "layouts": [{
+            "workspace_id":"w1","tab_id":"t1","zoomed":false,
+            "area":{"x":0,"y":0,"width":80,"height":24},
+            "focused_pane_id":"w1:p1",
+            "panes":[
+                {"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":40,"height":24}},
+                {"pane_id":"w1:p2","rect":{"x":40,"y":0,"width":40,"height":24}}
+            ],
+            "splits":[{"direction":"right","ratio":0.5,
+                       "rect":{"x":0,"y":0,"width":80,"height":24}}]
+        }]
+    }))
+    .expect("session payload")
+}
+
+#[test]
+fn a_tab_holding_only_delegated_children_is_kept_off_the_strip() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(split_lineage_payload()));
+
+    let tabs = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .flat_map(|checkout| &checkout.tabs)
+        .collect::<Vec<_>>();
+    assert!(!tabs.is_empty(), "the fixture placed its tab");
+    // The parent and the child share one tab here, so that tab is still the
+    // operator's and stays on the strip; the move is what separates them.
+    assert!(
+        tabs.iter().all(|tab| !tab.delegated),
+        "a tab holding the operator's own agent is never hidden"
+    );
+
+    // Once the child has its own tab, that tab holds nothing but delegated
+    // work and leaves the strip while staying in the checkout.
+    for workspace in &mut runtime.snapshot.navigator.workspaces {
+        for checkout in &mut workspace.checkouts {
+            let child = checkout.tabs[0]
+                .panes
+                .iter()
+                .position(|pane| pane.id == "w1:p2")
+                .map(|index| checkout.tabs[0].panes.remove(index));
+            if let Some(child) = child {
+                let mut moved = checkout.tabs[0].clone();
+                moved.id = Some("t2".to_owned());
+                moved.panes = vec![child];
+                checkout.tabs.push(moved);
+            }
+        }
+    }
+    runtime.sync_pane_lineage();
+
+    let checkout = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+    let child_tab = checkout
+        .tabs
+        .iter()
+        .find(|tab| tab.id.as_deref() == Some("t2"))
+        .expect("the child's own tab");
+    assert!(child_tab.delegated);
+    assert!(
+        !checkout
+            .strip
+            .iter()
+            .any(|entry| entry.source_id == "t2"),
+        "the delegated tab is off the strip"
+    );
+    assert!(
+        checkout.tabs.iter().any(|tab| tab.id.as_deref() == Some("t2")),
+        "and still in the checkout, so the sidebar and breadcrumb reach it"
+    );
+}
+
+#[test]
+fn moving_a_delegated_child_asks_for_a_new_tab_in_the_workspace_it_is_already_in() {
+    let params = crate::wire::pane_move_to_new_tab_params("w1:p2", "w1", "Implementor")
+        .expect("params encode");
+    assert_eq!(
+        params,
+        serde_json::json!({
+            "pane_id": "w1:p2",
+            "destination": {"type": "new_tab", "workspace_id": "w1", "label": "Implementor"},
+            "focus": false
+        }),
+        "a new workspace would split one checkout into two rows for one path"
+    );
+}
+
+#[test]
+fn a_move_herdr_declined_is_an_error_rather_than_a_silent_success() {
+    // Herdr reports a refusal as an unchanged move with a reason, not as an
+    // error, so the decision has to read `changed` rather than assume that a
+    // successful request moved anything.
+    let refused = crate::wire::move_outcome(false, Some("SameTab".to_owned()), None)
+        .expect_err("a refusal is not a move");
+    assert!(refused.contains("declined") && refused.contains("SameTab"), "got {refused}");
+    assert!(
+        crate::wire::move_outcome(false, None, Some("t2".to_owned())).is_err(),
+        "an unchanged move is a refusal even when a tab id came back"
+    );
+    assert_eq!(
+        crate::wire::move_outcome(true, None, Some("t2".to_owned())).unwrap(),
+        "t2"
+    );
+    assert!(
+        crate::wire::move_outcome(true, None, None).is_err(),
+        "a move with no tab to show for it is not a success"
+    );
+}

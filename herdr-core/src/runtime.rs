@@ -289,6 +289,14 @@ const DIAGNOSTIC_RETENTION: usize = 256;
 /// the screen.
 const ATTACHED_TAB_LIMIT: usize = 5;
 
+/// How long a relocation waits before Hide asks again.
+///
+/// A failed move is retried on the next ingest that finds the child still
+/// split, and a delegated child changes state often enough that one arrives.
+/// The window keeps a persistently refusing Herdr from being asked once per
+/// event without adding a timer of its own (PRD B36).
+const RELOCATION_RETRY_INTERVAL_MS: u64 = 5_000;
+
 /// What Herdr says about its tabs, kept per Herdr workspace.
 ///
 /// A checkout is keyed by path, so several Herdr workspaces can share one
@@ -1202,6 +1210,12 @@ pub struct Runtime {
     /// released. Herdr renders a pane for every attached client, so an attach
     /// nobody is looking at costs a child process here and a render there for
     /// the life of the process.
+    /// Delegated child panes Hide has asked Herdr to move out of their
+    /// parent's tab, and when it asked. A move that fails is retried quietly
+    /// on a later ingest; it never reaches the pane header, because the
+    /// operator did not ask for the move and cannot act on its failure
+    /// (PRD B2, D-45).
+    pane_relocations_in_flight: BTreeMap<String, u64>,
     /// What Hide's hook last reported for each pane, read out of the pane
     /// tokens the session snapshot already carries. Kept between ingests so
     /// the projection does not have to hold the whole payload alive.
@@ -1469,6 +1483,7 @@ impl Runtime {
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
+            pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
             recent_visible_tabs: Vec::new(),
@@ -2649,6 +2664,7 @@ impl Runtime {
                     &session_tab.tab_id,
                 )),
                 empty: panes.is_empty(),
+                delegated: false,
                 panes,
             };
             if let Some(existing) = checkout
@@ -3441,6 +3457,7 @@ impl Runtime {
                 checkout_id: None,
                 label: None,
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             };
             return;
@@ -3464,6 +3481,7 @@ impl Runtime {
                 checkout_id: None,
                 label: None,
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             };
             return;
@@ -3488,6 +3506,7 @@ impl Runtime {
                 checkout_id: Some(checkout.id.clone()),
                 label: Some("No tabs".to_owned()),
                 empty: true,
+                delegated: false,
                 panes: Vec::new(),
             };
         }
@@ -4215,6 +4234,7 @@ impl Runtime {
                 changed = true;
             }
             changed |= self.sync_pane_lineage();
+            changed |= self.relocate_delegated_child_panes();
         }
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
@@ -5445,6 +5465,33 @@ impl Runtime {
                 .cloned()
         };
         let mut changed = false;
+        let mut delegated_tabs_changed = false;
+        // A tab is the operator's whenever it holds an agent they own. One
+        // holding only delegated children is the pile this change exists to
+        // take off the strip (PRD B1).
+        for tab in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+        {
+            let mut holds_an_agent = false;
+            let mut all_delegated = true;
+            for pane in &tab.panes {
+                let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane.id) else {
+                    continue;
+                };
+                holds_an_agent = true;
+                all_delegated &= agent.delegated;
+            }
+            let delegated = holds_an_agent && all_delegated;
+            if tab.delegated != delegated {
+                tab.delegated = delegated;
+                delegated_tabs_changed = true;
+            }
+        }
         for pane in self
             .snapshot
             .navigator
@@ -5485,7 +5532,98 @@ impl Runtime {
             }
         }
         self.snapshot.navigator.agents = agents;
-        changed
+        if delegated_tabs_changed {
+            self.rebuild_tab_strips();
+        }
+        changed || delegated_tabs_changed
+    }
+
+    /// Marks the tabs that exist only to hold delegated children, and asks
+    /// Herdr to move any child still sharing its parent's tab into one.
+    ///
+    /// Detection is the same on every pass, so a child that arrives while
+    /// Hide is running and a child already split when Hide started are the
+    /// same case and take the same path (PRD B1, B3, D-44). Herdr keeps
+    /// owning split geometry and the PTY size, so the pane is really moved
+    /// rather than merely left undrawn (PRD D-15).
+    fn relocate_delegated_child_panes(&mut self) -> bool {
+        // Where Herdr currently holds each pane. The layout is the only place
+        // that carries Herdr's own workspace and tab ids for a pane.
+        let placement = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .flat_map(|layout| {
+                layout
+                    .pane_ids()
+                    .into_iter()
+                    .map(|pane_id| {
+                        (
+                            pane_id.to_owned(),
+                            (layout.workspace_id.clone(), layout.tab_id.clone()),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<BTreeMap<_, _>>();
+        let now = unix_milliseconds();
+        let mut requests = Vec::new();
+        for agent in &self.snapshot.navigator.agents {
+            if !agent.delegated || crate::agent_hooks::is_remote_pane(&agent.pane_id) {
+                continue;
+            }
+            let Some(parent_pane_id) = agent.lineage_parent_pane_id.as_deref() else {
+                continue;
+            };
+            let (Some((workspace_id, tab_id)), Some((_, parent_tab_id))) =
+                (placement.get(&agent.pane_id), placement.get(parent_pane_id))
+            else {
+                continue;
+            };
+            if tab_id != parent_tab_id {
+                continue;
+            }
+            if self
+                .pane_relocations_in_flight
+                .get(&agent.pane_id)
+                .is_some_and(|asked| now.saturating_sub(*asked) < RELOCATION_RETRY_INTERVAL_MS)
+            {
+                continue;
+            }
+            requests.push((
+                agent.pane_id.clone(),
+                workspace_id.clone(),
+                agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+            ));
+        }
+        // A pane Herdr no longer reports can never answer, so its record is
+        // dropped rather than held forever.
+        self.pane_relocations_in_flight
+            .retain(|pane_id, _| placement.contains_key(pane_id));
+        if requests.is_empty() {
+            return false;
+        }
+        let Some(context) = self.live.as_ref().cloned() else {
+            return false;
+        };
+        for (pane_id, workspace_id, label) in requests {
+            self.pane_relocations_in_flight.insert(pane_id.clone(), now);
+            if let Err(message) = live::spawn_pane_control(
+                context.clone(),
+                PaneControlAction::MoveToNewTab {
+                    pane_id: pane_id.clone(),
+                    workspace_id,
+                    label,
+                },
+            ) {
+                self.pane_relocations_in_flight.remove(&pane_id);
+                self.push_diagnostic(
+                    "lineage.relocate_failed",
+                    format!("Could not move delegated pane {pane_id}: {message}"),
+                );
+            }
+        }
+        true
     }
 
     /// Takes the hook-install judgement the coordinator read off the lock.
@@ -6203,6 +6341,30 @@ impl Runtime {
                     "duration_ms": elapsed_ms,
                 }));
                 self.apply_pane_layout(layout);
+                true
+            }
+            (PaneControlAction::MoveToNewTab { pane_id, .. }, outcome) => {
+                self.pane_relocations_in_flight.remove(&pane_id);
+                match outcome {
+                    Ok(_) => {
+                        self.push_diagnostic(
+                            "lineage.relocated",
+                            format!(
+                                "Delegated pane {pane_id} moved to its own tab in {elapsed_ms} ms"
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        // Deliberately not a `pane.` diagnostic: the pane
+                        // header reads those, and this failure must not
+                        // appear over a child the operator never asked to
+                        // move (PRD B2).
+                        self.push_diagnostic(
+                            "lineage.relocate_failed",
+                            format!("Could not move delegated pane {pane_id}: {error}"),
+                        );
+                    }
+                }
                 true
             }
             (PaneControlAction::Focus { pane_id }, Ok(PaneControlOutcome::Acknowledged { .. })) => {
@@ -11583,6 +11745,7 @@ mod tests {
             checkout_id: Some(checkout_id.to_owned()),
             label: Some("Inactive".to_owned()),
             empty: false,
+            delegated: false,
             panes: vec![pane(inactive_pane_id, "/tmp/herdr-remote-terminal")],
         });
         let mut remote_workspace = workspace(
@@ -13009,6 +13172,7 @@ mod tests {
             checkout_id: Some(checkout_id.to_owned()),
             label: Some("Session".to_owned()),
             empty: pane.is_none(),
+            delegated: false,
             panes: pane.into_iter().collect(),
         }
     }
@@ -17517,6 +17681,7 @@ mod tests {
             checkout_id: Some(stale_checkout_id.to_owned()),
             label: Some("Old context".to_owned()),
             empty: false,
+            delegated: false,
             panes: vec![pane("w3P:p1", "/tmp/old-context")],
         };
         // The user chose this checkout against a running session, so it is an
@@ -17845,6 +18010,7 @@ mod tests {
                 checkout_id: Some("remote:checkout".to_owned()),
                 label: Some("Session".to_owned()),
                 empty: false,
+                delegated: false,
                 panes,
             }];
             RemoteSessionSnapshot {

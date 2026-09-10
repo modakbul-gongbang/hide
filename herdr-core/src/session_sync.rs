@@ -1434,6 +1434,7 @@ impl SessionReplica {
                             checkout_id: Some(checkout_id.clone()),
                             label: Some(crate::model::display_tab_label(&tab.label, &tab.tab_id)),
                             empty: panes.is_empty(),
+                            delegated: false,
                             panes,
                         }
                     })
