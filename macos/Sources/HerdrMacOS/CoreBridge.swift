@@ -1309,6 +1309,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     var lineageOrphan: Bool = false
     var lineageHint: String? = nil
     var raisedHint: String? = nil
+    var spawnOriginPaneID: String? = nil
     var lineageCollapsed: Bool = false
     /// Whether this row is somebody else's work. It is derived from the
     /// lineage by the core, and it lifts when a stall hands the child back.
@@ -1388,6 +1389,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         lineageOrphan = try container.decodeIfPresent(Bool.self, forKey: .lineageOrphan) ?? false
         lineageHint = try container.decodeIfPresent(String.self, forKey: .lineageHint)
         raisedHint = try container.decodeIfPresent(String.self, forKey: .raisedHint)
+        spawnOriginPaneID = try container.decodeIfPresent(String.self, forKey: .spawnOriginPaneID)
         lineageCollapsed = try container.decodeIfPresent(Bool.self, forKey: .lineageCollapsed) ?? false
         delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
         stallLevel = try container.decodeIfPresent(String.self, forKey: .stallLevel) ?? ""
@@ -1420,6 +1422,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case lineageOrphan = "lineage_orphan"
         case lineageHint = "lineage_hint"
         case raisedHint = "raised_hint"
+        case spawnOriginPaneID = "spawn_origin_pane_id"
         case lineageCollapsed = "lineage_collapsed"
         case delegated
         case stallLevel = "stall_level"

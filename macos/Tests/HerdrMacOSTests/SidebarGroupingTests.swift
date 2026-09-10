@@ -149,3 +149,78 @@ private func scratchTab(id: String, paneIDs: [String], title: String?) throws
     #expect(titled.displayName == "build me a parser")
     #expect(untitled.displayName == "Tab 1")
 }
+
+/// One row per line of the tree the connector has to draw, at the depths the
+/// visible preorder produces:
+///
+///     root
+///     ├ a
+///     │ └ a1
+///     └ b
+///
+private func treeRow(_ id: String, depth: Int) -> SidebarAgent {
+    var row = agent(id: id, paneID: "w1:\(id)", group: "working")
+    row.lineageDepth = depth
+    return row
+}
+
+@Test func theTreeGuideCarriesATrunkThroughEveryRowBetweenAParentAndItsLastChild() {
+    let guides = SidebarGrouping.lineageGuides([
+        treeRow("root", depth: 0),
+        treeRow("a", depth: 1),
+        treeRow("a1", depth: 2),
+        treeRow("b", depth: 1),
+    ])
+
+    // `a` has `b` still to come, so its own trunk carries on down.
+    #expect(guides[1].isLastChild == false)
+    // `a1` sits between `a` and `b`, so level 1's trunk passes straight
+    // through it. Without this the line breaks at every nested row, which is
+    // the defect this covers.
+    #expect(guides[2].continuing == [1])
+    #expect(guides[2].isLastChild == true)
+    // `b` ends the run: its trunk stops at the elbow and nothing passes it.
+    #expect(guides[3].isLastChild == true)
+    #expect(guides[3].continuing.isEmpty)
+    // A root draws no guide at all.
+    #expect(guides[0].continuing.isEmpty)
+}
+
+@Test func aDeeperBranchDoesNotReopenARunItsParentAlreadyClosed() {
+    let guides = SidebarGrouping.lineageGuides([
+        treeRow("root", depth: 0),
+        treeRow("a", depth: 1),
+        treeRow("a1", depth: 2),
+        treeRow("a2", depth: 2),
+        treeRow("c", depth: 0),
+    ])
+
+    // `a1` is followed by a sibling at its own depth.
+    #expect(guides[2].isLastChild == false)
+    #expect(guides[3].isLastChild == true)
+    // `c` is a second root, so level 1 is closed by the time it is reached
+    // and no trunk is drawn through it.
+    #expect(guides[4].continuing.isEmpty)
+}
+
+@Test func aChildsStatusMarkIsCenteredUnderItsParentsAgentBadge() {
+    // The indent is the row's own column step, so the elbow arrives on the
+    // mark rather than near it. Measured the way the row lays out: the mark
+    // is agentMarkWidth wide, then iconSpacing, then the badge.
+    let step = HideTheme.lineageIndent
+    let markCenter = HideTheme.agentMarkWidth / 2
+    let badgeCenter = HideTheme.agentMarkWidth + HideTheme.spacingXS
+        + HideTheme.compactAgentBadgeSize / 2
+    #expect(step + markCenter == badgeCenter)
+
+    // And the inset is uniform, so level three lines up with level two the
+    // same way level two lines up with level one.
+    #expect(HideTheme.lineageInset(depth: 3) - HideTheme.lineageInset(depth: 2) == step)
+    #expect(HideTheme.lineageInset(depth: 0) == 0)
+
+    // The trunk for a level lands on that level's own mark center, which is
+    // the column its children's marks occupy one step over.
+    #expect(
+        HideTheme.lineageTrunkX(depth: 1) - HideTheme.lineageTrunkX(depth: 0) == step
+    )
+}

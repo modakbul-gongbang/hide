@@ -309,6 +309,7 @@ mod tests {
             lineage_orphan: false,
             lineage_hint: None,
             raised_hint: None,
+            spawn_origin_pane_id: None,
             lineage_collapsed: false,
         }
     }

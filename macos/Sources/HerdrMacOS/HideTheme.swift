@@ -196,8 +196,17 @@ enum HideTheme {
     }
     static let gitSectionIcon = "externaldrive.badge.checkmark"
     static let gitPullRequestIcon = "arrow.triangle.pull"
-    static let lineageIndent: CGFloat = 12
-    static let lineageDeepIndent: CGFloat = 6
+    /// One step down the agent tree.
+    ///
+    /// It is not a spacing value chosen by eye: it is exactly the distance
+    /// from a row's status mark to its agent badge, so a child's mark lands
+    /// centered under its parent's badge and every level reads as one column.
+    /// Compact is the density the tree uses; the flat views do not indent.
+    static let lineageIndent: CGFloat =
+        agentMarkWidth + spacingXS + (compactAgentBadgeSize - agentMarkWidth) / 2
+    /// The compact row's agent badge, repeated here because the indent is
+    /// derived from it and `AgentRowDensity` reads it back.
+    static let compactAgentBadgeSize: CGFloat = 16
     static let lineageChevronWidth: CGFloat = 16
     static let worktreeDialogWidth: CGFloat = 440
     static let formControlHeight: CGFloat = 36
@@ -208,10 +217,25 @@ enum HideTheme {
     static let compactAgentLeadingInset = spacingSM + agentMarkWidth + spacingSM
         + checkoutIconWidth / 2 - lineageChevronWidth - agentMarkWidth / 2
     static let tabTitleMaxWidth: CGFloat = 200
-    /// A descendant's inset in the agent tree: two full steps, then a shallower
-    /// step per level so a deep lineage still fits the sidebar's width.
+    /// A descendant's inset in the agent tree: one column per level.
+    ///
+    /// The step used to shrink after two levels to keep a deep lineage on
+    /// screen, which broke the column the connector and the marks share -
+    /// only the first two levels lined up with anything. Depth is what the
+    /// guide draws, so it stays uniform and the guide stays true.
     static func lineageInset(depth: Int) -> CGFloat {
-        CGFloat(min(depth, 2)) * lineageIndent + CGFloat(max(0, depth - 2)) * lineageDeepIndent
+        CGFloat(max(0, depth)) * lineageIndent
+    }
+
+    /// Where the trunk descending from a row at `depth` is drawn, measured
+    /// from the leading edge of the tree's rows.
+    ///
+    /// It is that row's own status mark center: the connector drops from
+    /// under the parent's mark and turns into its child's, which is the same
+    /// column the child's mark occupies one step over.
+    static func lineageTrunkX(depth: Int) -> CGFloat {
+        lineageInset(depth: depth) + lineageChevronWidth + compactAgentLeadingInset
+            + agentMarkWidth / 2
     }
 
     static let compactControlSize: CGFloat = 36

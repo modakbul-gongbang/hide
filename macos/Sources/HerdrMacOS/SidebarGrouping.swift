@@ -108,6 +108,41 @@ enum SidebarGrouping {
         return visible
     }
 
+    /// Where one visible row sits in the tree, in the terms the guide draws.
+    ///
+    /// The tree is already flattened to a preorder by `tree(_:checkoutID:)`,
+    /// and that order carries the shape: a row's trunk continues past it when
+    /// a later row shares its depth before any shallower row ends the run.
+    /// Deriving it here rather than in the view is what lets the connector be
+    /// asserted without rendering anything.
+    struct LineageGuide: Equatable {
+        /// Ancestor levels, 1-based, whose sibling run has not finished yet,
+        /// so their trunk is drawn straight through this row.
+        var continuing: Set<Int> = []
+        /// Whether this row ends its own sibling run. The last child stops
+        /// its trunk at the elbow; every earlier one carries it down.
+        var isLastChild: Bool = true
+    }
+
+    /// The guide for each visible row, in the same order.
+    ///
+    /// One backward pass: walking from the end, `openRun[depth]` is true while
+    /// a sibling at that depth is still to come above, which is exactly the
+    /// question both fields ask. A depth is closed as soon as a shallower row
+    /// passes it, because that row ends every run below it.
+    static func lineageGuides(_ rows: [SidebarAgent]) -> [LineageGuide] {
+        var guides = Array(repeating: LineageGuide(), count: rows.count)
+        var openRun: [Int: Bool] = [:]
+        for index in rows.indices.reversed() {
+            let depth = max(0, rows[index].lineageDepth)
+            for deeper in openRun.keys where deeper > depth { openRun[deeper] = false }
+            guides[index].isLastChild = !(openRun[depth] ?? false)
+            guides[index].continuing = Set(openRun.filter { $0.key < depth && $0.value }.keys)
+            openRun[depth] = true
+        }
+        return guides
+    }
+
     /// The agents running in a checkout, found through the panes that checkout
     /// owns. Herdr reports the pane an agent runs in and the checkout already
     /// carries its panes, so no second grouping key is needed.

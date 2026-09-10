@@ -88,7 +88,14 @@ fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     assert_eq!(child.lineage_depth, 0);
     assert_eq!(child.lineage_root_checkout_id.as_deref(), Some("feature"));
     assert!(child.lineage_orphan);
-    assert_eq!(child.lineage_hint.as_deref(), Some("↳ from parent"));
+    // The parent is gone, so there is no name to give and the line says that
+    // rather than printing the pane id it was keyed by. It used to read
+    // "↳ from parent", which looked like a name and was an internal handle.
+    assert_eq!(
+        child.lineage_hint.as_deref(),
+        Some("↳ from an agent that has since ended")
+    );
+    assert_eq!(child.spawn_origin_pane_id, None);
 }
 
 #[test]
@@ -252,6 +259,41 @@ fn ownership_marks_descendants_delegated_and_hands_an_orphan_back_to_the_operato
     assert!(!orphan.delegated, "a lost parent returns ownership to the operator");
     assert!(orphan.lineage_orphan);
     assert!(row(&rows, "grandchild").delegated, "its own descendants stay delegated");
+}
+
+#[test]
+fn a_lost_origin_is_named_as_ended_rather_than_shown_as_a_pane_id() {
+    let mut rows = lineage_rows();
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let row = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().find(|row| row.pane_id == id).unwrap().clone()
+    };
+    // While the origin is an agent Hide can see, the line names it and
+    // carries the pane, which is what the shell turns into a jump.
+    let child = row(&rows, "child");
+    assert_eq!(child.raised_hint.as_deref(), Some("↳ from Parent"));
+    assert_eq!(child.spawn_origin_pane_id.as_deref(), Some("parent"));
+
+    // Once that agent is gone the line says so. A pane id is an internal
+    // handle, not a name, and it is never rendered as one; with nothing to
+    // go to, no destination is offered either.
+    rows.retain(|row| row.pane_id != "parent");
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let orphan = row(&rows, "child");
+    assert_eq!(
+        orphan.lineage_hint.as_deref(),
+        Some("↳ from an agent that has since ended")
+    );
+    assert_eq!(orphan.spawn_origin_pane_id, None);
+    for row in &rows {
+        let shown = row.lineage_hint.iter().chain(row.raised_hint.iter());
+        for hint in shown {
+            assert!(
+                !hint.contains("parent"),
+                "a pane id never reaches the operator as a name: {hint}"
+            );
+        }
+    }
 }
 
 // PRD B7, B9, B10, D-18, D-19: the breadcrumb and its per-step sibling list

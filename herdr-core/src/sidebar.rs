@@ -553,12 +553,18 @@ pub fn apply_lineage(
             })
             .unwrap_or_default();
         let parent_pane_id = parents[index].map(|parent| agents[parent].pane_id.clone());
-        let hint = agents[index].spawned_from_pane_id.as_ref().map(|pane| {
-            let name = by_pane
-                .get(pane)
-                .map(|parent| agents[*parent].id.as_str())
-                .unwrap_or(pane.as_str());
-            format!("↳ from {name}")
+        // Where this row came from, for a row whose parent is not drawn above
+        // it. The name is the parent agent's when Hide can still see that
+        // agent; a pane id is not a name and is never shown as one, because
+        // the operator cannot act on an internal id (design principle 10).
+        let spawned_from = agents[index].spawned_from_pane_id.clone();
+        let spawn_parent = spawned_from
+            .as_ref()
+            .and_then(|pane| by_pane.get(pane))
+            .map(|parent| agents[*parent].id.clone());
+        let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
+            Some(name) => format!("↳ from {name}"),
+            None => "↳ from an agent that has since ended".to_owned(),
         });
         let orphan = agents[index].spawned_from_pane_id.is_some() && parents[index].is_none();
         let own_checkout = checkouts.get(agents[index].pane_id.as_str());
@@ -588,6 +594,10 @@ pub fn apply_lineage(
         agent.lineage_orphan = orphan;
         agent.lineage_hint = orphan.then(|| hint.clone()).flatten();
         agent.raised_hint = hint;
+        // The pane the line points at, so the shell can offer the jump rather
+        // than printing a dead end. Only set while that pane still holds an
+        // agent Hide can name; an ended one is text and nothing more.
+        agent.spawn_origin_pane_id = spawn_parent.and(spawned_from);
         agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
     }
     // Ownership was unknown when the rows were first derived, because it is
@@ -908,6 +918,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_orphan: false,
         lineage_hint: None,
         raised_hint: None,
+        spawn_origin_pane_id: None,
         lineage_collapsed: false,
     })
 }

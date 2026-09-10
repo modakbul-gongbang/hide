@@ -1299,8 +1299,16 @@ private struct WorkspaceNavigatorRow: View {
                 hasAgents: !visibleAgents.isEmpty
             )
             if model.isCheckoutExpanded(checkout) {
-                ForEach(visibleAgents) { agent in
-                    AgentNavigatorRow(agent: agent, showsWorkspace: false)
+                // The connector needs the shape of the run, not just each
+                // row's depth, so it is derived once for the whole visible
+                // preorder rather than guessed per row.
+                let guides = SidebarGrouping.lineageGuides(visibleAgents)
+                ForEach(Array(visibleAgents.enumerated()), id: \.element.id) { index, agent in
+                    AgentNavigatorRow(
+                        agent: agent,
+                        showsWorkspace: false,
+                        guide: guides[index]
+                    )
                 }
             }
         }
@@ -1529,6 +1537,9 @@ private struct AgentNavigatorRow: View {
     /// Under a checkout the project name is the heading above the row, so
     /// repeating it wastes the line the summary needs.
     let showsWorkspace: Bool
+    /// Where this row sits in the visible run, for the connector. The flat
+    /// views draw no tree and pass the default.
+    var guide = SidebarGrouping.LineageGuide()
 
     private var density: AgentRowDensity { showsWorkspace ? .prominent : .compact }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1575,22 +1586,39 @@ private struct AgentNavigatorRow: View {
                 HideBadge(label: badge, color: HideTheme.secondary)
             }
             if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
-                Text(hint).hideFont(size: HideTheme.Typography.caption).foregroundStyle(HideTheme.muted)
-            }
-        }
-        .overlay(alignment: .leading) {
-            if !showsWorkspace && agent.lineageDepth > 0 {
-                HStack(spacing: HideTheme.spacingNone) {
-                    Rectangle().frame(width: HideTheme.Layout.hairlineWidth)
-                    Rectangle().frame(width: HideTheme.spacingSM, height: HideTheme.Layout.hairlineWidth)
+                // The line says where this row came from, and when that
+                // origin is still a live agent it goes there. A row whose
+                // parent is not drawn above it is the only place this shows,
+                // so the jump is the only way to reach it from here
+                // (design principle 3).
+                if let origin = agent.spawnOriginPaneID {
+                    Button {
+                        model.selectAgent(paneID: origin)
+                    } label: {
+                        Text(hint)
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(HideTheme.secondary)
+                            .underline()
+                    }
+                    .buttonStyle(HideInteractiveButtonStyle())
+                    .accessibilityLabel("Go to \(hint.replacingOccurrences(of: "↳ from ", with: ""))")
+                    .hideTooltip("Go to the agent that started this one")
+                } else {
+                    Text(hint)
+                        .hideFont(size: HideTheme.Typography.caption)
+                        .foregroundStyle(HideTheme.muted)
                 }
-                .foregroundStyle(HideTheme.divider)
-                .frame(width: HideTheme.lineageChevronWidth, alignment: .leading)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
             }
         }
         .padding(.leading, showsWorkspace ? HideTheme.spacingNone : HideTheme.lineageInset(depth: agent.lineageDepth))
+        // Drawn over the padded row, so the guide's own geometry and the
+        // row's inset are measured from the same leading edge and the elbow
+        // lands on the child's mark rather than near it.
+        .overlay(alignment: .leading) {
+            if !showsWorkspace && (agent.lineageDepth > 0 || !guide.continuing.isEmpty) {
+                LineageGuideView(depth: agent.lineageDepth, guide: guide)
+            }
+        }
 
         .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (shortcutVisible))
         .accessibilityIdentifier("hide-agent-\(agent.id)")

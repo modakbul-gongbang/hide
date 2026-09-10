@@ -49,7 +49,7 @@ enum AgentRowDensity {
     /// already the heading above it.
     case compact
 
-    var badgeSize: CGFloat { self == .prominent ? 19 : 16 }
+    var badgeSize: CGFloat { self == .prominent ? 19 : HideTheme.compactAgentBadgeSize }
     var titleWeight: Font.Weight { self == .prominent ? .semibold : .regular }
     var titleColor: Color { self == .prominent ? HideTheme.primary : HideTheme.secondary }
     /// Compact marks align beneath the Workspace branch icon.

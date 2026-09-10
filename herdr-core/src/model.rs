@@ -335,6 +335,10 @@ pub struct SidebarAgentSnapshot {
     pub lineage_orphan: bool,
     pub lineage_hint: Option<String>,
     pub raised_hint: Option<String>,
+    /// The pane the hint points at, when that pane still holds an agent Hide
+    /// can name. It is what makes the line something to follow rather than
+    /// something to read.
+    pub spawn_origin_pane_id: Option<String>,
     pub lineage_collapsed: bool,
 }
 
