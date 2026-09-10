@@ -335,7 +335,7 @@ fn migrate_branch(
         &request.repository_root,
         &["checkout", "--no-overwrite-ignore", base],
     )
-        .map_err(|error| format!("checkout base branch: {error}"))?;
+    .map_err(|error| format!("checkout base branch: {error}"))?;
 
     let create_request = WorktreeTaskRequest {
         branch: original.clone(),

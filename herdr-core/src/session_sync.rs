@@ -1212,6 +1212,7 @@ struct ApplyOutcome {
 /// test asserts the pinned Herdr declares each one required, so a pin whose
 /// snapshot cannot feed the replica fails in CI rather than at the user's
 /// first launch with "snapshot is missing lineage".
+#[cfg(test)]
 pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
     "version",
     "protocol",
@@ -2493,6 +2494,9 @@ fn upsert_layout(layouts: &mut Vec<SessionLayoutPayload>, layout: SessionLayoutP
 }
 
 /// Inputs to replica transitions, with transport details removed by the boundary.
+// The generated event boundary projects owned values directly into this
+// transition enum; changing its representation belongs with measured sync work.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub(crate) enum ReplicaEvent {
     WorkspaceCreated {
@@ -2601,6 +2605,9 @@ pub(crate) struct ReplicaEnvelope {
     pub(crate) fingerprint: String,
 }
 
+// Boxing Event would add an allocation to every subscription line merely to
+// shrink the uncommon error variant's stack footprint.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SubscriptionLine {
     Event(ReplicaEnvelope),
     Error { code: String, message: String },

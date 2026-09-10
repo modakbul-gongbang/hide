@@ -101,7 +101,9 @@ pub(crate) fn snapshot(
     Ok(convert_snapshot(snapshot))
 }
 
-pub(crate) fn snapshot_response(value: Value) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
+pub(crate) fn snapshot_response(
+    value: Value,
+) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
     decode_snapshot_response(value).map(convert_snapshot)
 }
 
@@ -110,17 +112,26 @@ pub(crate) fn snapshot_response(value: Value) -> Result<(HostScope, u64, Project
 pub(crate) fn cleanup_usage_paths(value: Value) -> Result<Vec<Option<String>>, SessionFetchError> {
     let snapshot = decode_snapshot_response(value)?;
     let mut paths = Vec::new();
-    for (cwd, foreground) in snapshot.panes.into_iter().map(|p| (p.cwd, p.foreground_cwd))
-        .chain(snapshot.agents.into_iter().map(|a| (a.cwd, a.foreground_cwd))) {
-        if cwd.is_none() && foreground.is_none() { paths.push(None); }
+    for (cwd, foreground) in snapshot
+        .panes
+        .into_iter()
+        .map(|p| (p.cwd, p.foreground_cwd))
+        .chain(
+            snapshot
+                .agents
+                .into_iter()
+                .map(|a| (a.cwd, a.foreground_cwd)),
+        )
+    {
+        if cwd.is_none() && foreground.is_none() {
+            paths.push(None);
+        }
         paths.extend(cwd.into_iter().chain(foreground).map(Some));
     }
     Ok(paths)
 }
 
-fn decode_snapshot_response(
-    value: Value,
-) -> Result<res::SessionSnapshot, SessionFetchError> {
+fn decode_snapshot_response(value: Value) -> Result<res::SessionSnapshot, SessionFetchError> {
     validate_snapshot(
         value
             .get("snapshot")
@@ -154,12 +165,12 @@ fn convert_snapshot(snapshot: res::SessionSnapshot) -> (HostScope, u64, Projecti
 }
 
 pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
-    if let Some(kind) = value.get("type").and_then(Value::as_str) {
-        if kind != "agent_list" {
-            return Err(malformed(format!(
-                "agent.list returned unexpected result type {kind:?}"
-            )));
-        }
+    if let Some(kind) = value.get("type").and_then(Value::as_str)
+        && kind != "agent_list"
+    {
+        return Err(malformed(format!(
+            "agent.list returned unexpected result type {kind:?}"
+        )));
     }
     let response: res::ResponseResult = serde_json::from_value(value)
         .map_err(|e| malformed(format!("agent.list response is malformed: {e}")))?;
@@ -378,9 +389,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         ),
         ev::EventData::WorkspaceClosed { workspace_id, .. } => (
             "workspace_closed",
-            ReplicaEvent::WorkspaceClosed {
-                workspace_id: workspace_id,
-            },
+            ReplicaEvent::WorkspaceClosed { workspace_id },
         ),
         ev::EventData::WorkspaceRenamed {
             label,
@@ -389,8 +398,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "workspace_renamed",
             ReplicaEvent::WorkspaceRenamed {
-                label: label,
-                workspace_id: workspace_id,
+                label,
+                workspace_id,
             },
         ),
         ev::EventData::WorkspaceMoved {
@@ -402,7 +411,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
             "workspace_moved",
             ReplicaEvent::WorkspaceMoved {
                 insert_index: insert_index as usize,
-                workspace_id: workspace_id,
+                workspace_id,
                 workspaces: workspaces.into_iter().map(Into::into).collect(),
             },
         ),
@@ -413,15 +422,13 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "workspace_reordered",
             ReplicaEvent::WorkspaceReordered {
-                workspace_ids: workspace_ids,
+                workspace_ids,
                 workspaces: workspaces.into_iter().map(Into::into).collect(),
             },
         ),
         ev::EventData::WorkspaceFocused { workspace_id, .. } => (
             "workspace_focused",
-            ReplicaEvent::WorkspaceFocused {
-                workspace_id: workspace_id,
-            },
+            ReplicaEvent::WorkspaceFocused { workspace_id },
         ),
         ev::EventData::WorktreeCreated { workspace, .. } => (
             "worktree_created",
@@ -443,7 +450,7 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
             "worktree_removed",
             ReplicaEvent::WorktreeRemoved {
                 workspace: workspace.map(Into::into),
-                workspace_id: workspace_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabCreated { tab, .. } => {
@@ -456,8 +463,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "tab_closed",
             ReplicaEvent::TabClosed {
-                tab_id: tab_id,
-                workspace_id: workspace_id,
+                tab_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabRenamed {
@@ -468,9 +475,9 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "tab_renamed",
             ReplicaEvent::TabRenamed {
-                label: label,
-                tab_id: tab_id,
-                workspace_id: workspace_id,
+                label,
+                tab_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabMoved {
@@ -483,9 +490,9 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
             "tab_moved",
             ReplicaEvent::TabMoved {
                 insert_index: insert_index as usize,
-                tab_id: tab_id,
+                tab_id,
                 tabs: tabs.into_iter().map(Into::into).collect(),
-                workspace_id: workspace_id,
+                workspace_id,
             },
         ),
         ev::EventData::TabFocused {
@@ -495,8 +502,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "tab_focused",
             ReplicaEvent::TabFocused {
-                tab_id: tab_id,
-                workspace_id: workspace_id,
+                tab_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneCreated { pane, .. } => (
@@ -510,8 +517,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_closed",
             ReplicaEvent::PaneClosed {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneUpdated { pane, .. } => (
@@ -525,8 +532,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_focused",
             ReplicaEvent::PaneFocused {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneExited {
@@ -536,8 +543,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_exited",
             ReplicaEvent::PaneExited {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::PaneAgentDetected {
@@ -547,8 +554,8 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
         } => (
             "pane_agent_detected",
             ReplicaEvent::PaneAgentDetected {
-                pane_id: pane_id,
-                workspace_id: workspace_id,
+                pane_id,
+                workspace_id,
             },
         ),
         ev::EventData::LayoutUpdated { layout, .. } => (
@@ -1225,8 +1232,16 @@ mod tests {
              "cwd":"/fixture/main", "foreground_cwd":"/fixture/linked/subdir"},
             {"pane_id":"w1:p2", "surface":{"kind":"terminal","attach":{"terminal_id":"fixture-terminal","protocol":HERDR_PROTOCOL_REVISION,"transport":"herdr_client","host":{"host_id":"fixture-host","session_id":"fixture"}}}, "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1}
         ]);
-        let paths = cleanup_usage_paths(json!({"type":"session_snapshot", "snapshot": value})).unwrap();
-        assert_eq!(paths, vec![Some("/fixture/main".into()), Some("/fixture/linked/subdir".into()), None]);
+        let paths =
+            cleanup_usage_paths(json!({"type":"session_snapshot", "snapshot": value})).unwrap();
+        assert_eq!(
+            paths,
+            vec![
+                Some("/fixture/main".into()),
+                Some("/fixture/linked/subdir".into()),
+                None
+            ]
+        );
     }
 
     #[test]

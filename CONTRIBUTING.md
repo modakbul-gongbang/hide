@@ -12,6 +12,8 @@ Run the same three lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
 
 ```sh
+cargo fmt --manifest-path herdr-core/Cargo.toml --check
+cargo clippy --locked --manifest-path herdr-core/Cargo.toml --all-targets -- -D warnings
 cargo test --locked --manifest-path herdr-core/Cargo.toml
 cargo build --release --locked -p herdr-core      # the shell links target/release/libherdr_core.a
 swift test --package-path macos
@@ -43,6 +45,8 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 
 | Gate | Protects | Local command | When it blocks you |
 | --- | --- | --- | --- |
+| `cargo fmt` | Rust formatting stays deterministic, so reviews do not accumulate unrelated style drift | `cargo fmt --manifest-path herdr-core/Cargo.toml --check` | Run the same command without `--check` and commit the machine-generated formatting separately. |
+| `cargo clippy` | Every Rust target is warning-free, including tests and generated-contract consumers | `cargo clippy --locked --manifest-path herdr-core/Cargo.toml --all-targets -- -D warnings` | Fix a warning when that clarifies the code; use a narrow, explained allowance when the alternative would obscure a generated or performance-sensitive boundary. |
 | `cargo test` | The core's behavior, including its Herdr fixtures | `cargo test --locked --manifest-path herdr-core/Cargo.toml` | Fix the test or the code. A fixture that no longer matches Herdr means the pin moved; see `AGENTS.md`, Herdr API Contract. |
 | `swift test` | The shell's rendering and event contracts | `swift test --package-path macos` after the release core build | Same. `--filter <TestName>` narrows a run. |
 | right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Overview, Explorer, Changes, and Git; rename, do not reintroduce. |

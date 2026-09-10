@@ -124,8 +124,7 @@ pub fn is_roam_allowed(summary: PetSummary, idle_ms: u64, dragging: bool) -> boo
         && summary.needs_you == 0
         && summary.working == 0
         && summary.seen > 0
-        && idle_ms >= FREE_ROAM_IDLE_MS
-        && idle_ms < SLEEP_IDLE_MS
+        && (FREE_ROAM_IDLE_MS..SLEEP_IDLE_MS).contains(&idle_ms)
 }
 
 /// The single pose the renderer draws.

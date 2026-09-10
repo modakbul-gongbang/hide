@@ -223,7 +223,7 @@ fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>, String> {
             )?
         })
         .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
     candidates.truncate(CODEX_CANDIDATE_LIMIT);
     Ok(candidates.into_iter().map(|(_, path)| path).collect())
 }

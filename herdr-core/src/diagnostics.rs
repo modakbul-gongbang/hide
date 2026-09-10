@@ -4,12 +4,18 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, SyncSender};
+#[cfg(not(test))]
+use std::sync::mpsc;
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[cfg(not(test))]
 const FILE_LIMIT: u64 = 1024 * 1024;
+#[cfg(not(test))]
 const LINE_LIMIT: usize = 64 * 1024;
 static SINK: OnceLock<Mutex<Option<DiagnosticSink>>> = OnceLock::new();
 
@@ -23,9 +29,12 @@ struct DiagnosticSink {
 /// that is not JSON cannot be written; the sink never has to parse its input.
 #[macro_export]
 macro_rules! diagnostic {
-    ($value:expr) => { $crate::diagnostics::emit($value) };
+    ($value:expr) => {
+        $crate::diagnostics::emit($value)
+    };
 }
 
+#[cfg(not(test))]
 pub(crate) fn install(state_path: &Path) -> io::Result<()> {
     let directory = state_path
         .parent()

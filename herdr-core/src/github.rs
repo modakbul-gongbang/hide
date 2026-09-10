@@ -23,7 +23,7 @@ use serde::Deserialize;
 
 use crate::model::{
     GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
-    PullRequestSnapshot, PullRequestChecks, ReviewDecision,
+    PullRequestChecks, PullRequestSnapshot, ReviewDecision,
 };
 use crate::reader::BackgroundRead;
 
@@ -129,18 +129,17 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
         // One line per pass naming each project read and why, with the
         // generation that asked for it.
         crate::diagnostic!(serde_json::json!({
-                "component": "github",
-                "kind": "pull_requests.read",
-                "projects": due
-                    .iter()
-                    .map(|(project, reason)| serde_json::json!({
-                        "project": project.root.to_string_lossy(),
-                        "generation": project.generation,
-                        "reason": reason.as_str(),
-                    }))
-                    .collect::<Vec<_>>(),
-            })
-        );
+            "component": "github",
+            "kind": "pull_requests.read",
+            "projects": due
+                .iter()
+                .map(|(project, reason)| serde_json::json!({
+                    "project": project.root.to_string_lossy(),
+                    "generation": project.generation,
+                    "reason": reason.as_str(),
+                }))
+                .collect::<Vec<_>>(),
+        }));
         // One authentication check for the pass, not one per repository: `gh
         // auth status` is the same answer every time and it is the expensive
         // half of an unauthenticated machine's cost.
@@ -201,21 +200,20 @@ fn read_root(
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
     crate::diagnostic!(serde_json::json!({
-            "component": "github",
-            "kind": if project.status.unavailable_reason.is_some() {
-                "pull_requests.failed"
-            } else if project.pull_requests.is_empty() {
-                "pull_requests.empty"
-            } else {
-                "pull_requests.ok"
-            },
-            "generation": generation,
-            "project": project.root_path,
-            "available": project.status.available,
-            "pull_requests": project.pull_requests.len(),
-            "message": project.status.unavailable_reason,
-        })
-    );
+        "component": "github",
+        "kind": if project.status.unavailable_reason.is_some() {
+            "pull_requests.failed"
+        } else if project.pull_requests.is_empty() {
+            "pull_requests.empty"
+        } else {
+            "pull_requests.ok"
+        },
+        "generation": generation,
+        "project": project.root_path,
+        "available": project.status.available,
+        "pull_requests": project.pull_requests.len(),
+        "message": project.status.unavailable_reason,
+    }));
     project
 }
 
@@ -302,35 +300,62 @@ struct GhPullRequest {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "__typename")]
 enum GhCheck {
-    CheckRun { status: String, conclusion: Option<String> },
-    StatusContext { state: String },
+    CheckRun {
+        status: String,
+        conclusion: Option<String>,
+    },
+    StatusContext {
+        state: String,
+    },
     #[serde(other)]
     Unknown,
 }
 
 fn rollup_checks(checks: Option<&[GhCheck]>) -> PullRequestChecks {
-    let Some(checks) = checks else { return PullRequestChecks::Unknown; };
-    if checks.is_empty() { return PullRequestChecks::None; }
+    let Some(checks) = checks else {
+        return PullRequestChecks::Unknown;
+    };
+    if checks.is_empty() {
+        return PullRequestChecks::None;
+    }
     let mut pending = false;
     let mut unknown = false;
     for check in checks {
         match check {
             GhCheck::CheckRun { status, conclusion } if status == "COMPLETED" => {
                 match conclusion.as_deref() {
-                    Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => {},
-                    Some("FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE" | "STALE") => return PullRequestChecks::Failed,
+                    Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => {}
+                    Some(
+                        "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED"
+                        | "STARTUP_FAILURE" | "STALE",
+                    ) => return PullRequestChecks::Failed,
                     _ => unknown = true,
                 }
-            },
-            GhCheck::CheckRun { status, .. } if matches!(status.as_str(), "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED") => pending = true,
+            }
+            GhCheck::CheckRun { status, .. }
+                if matches!(
+                    status.as_str(),
+                    "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED"
+                ) =>
+            {
+                pending = true
+            }
             GhCheck::StatusContext { state } => match state.as_str() {
-                "SUCCESS" => {}, "FAILURE" | "ERROR" => return PullRequestChecks::Failed,
-                "PENDING" | "EXPECTED" => pending = true, _ => unknown = true,
+                "SUCCESS" => {}
+                "FAILURE" | "ERROR" => return PullRequestChecks::Failed,
+                "PENDING" | "EXPECTED" => pending = true,
+                _ => unknown = true,
             },
             _ => unknown = true,
         }
     }
-    if pending { PullRequestChecks::Pending } else if unknown { PullRequestChecks::Unknown } else { PullRequestChecks::Passing }
+    if pending {
+        PullRequestChecks::Pending
+    } else if unknown {
+        PullRequestChecks::Unknown
+    } else {
+        PullRequestChecks::Passing
+    }
 }
 
 /// Reduces `gh pr list --json` to at most one pull request per branch.
@@ -446,7 +471,9 @@ fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
         let previous = year - 1;
         previous / 4 - previous / 100 + previous / 400
     };
-    let leap = |year: u64| year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = |year: u64| {
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    };
     let leaps = leap_days_before(year) - leap_days_before(1970);
     let leap_day_this_year = u64::from(leap(year) && month > 2);
     365 * (year - 1970) + leaps + CUMULATIVE[(month - 1) as usize] + leap_day_this_year + day - 1
@@ -650,11 +677,34 @@ mod tests {
         let decode = |json: &str| serde_json::from_str::<Vec<GhCheck>>(json).unwrap();
         assert_eq!(rollup_checks(None), PullRequestChecks::Unknown);
         assert_eq!(rollup_checks(Some(&[])), PullRequestChecks::None);
-        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]"#))), PullRequestChecks::Passing);
-        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"QUEUED","conclusion":null}]"#))), PullRequestChecks::Pending);
-        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"IN_PROGRESS"},{"__typename":"StatusContext","state":"ERROR"}]"#))), PullRequestChecks::Failed);
-        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"CANCELLED"}]"#))), PullRequestChecks::Failed);
-        assert_eq!(rollup_checks(Some(&decode(r#"[{"__typename":"FutureCheck"}]"#))), PullRequestChecks::Unknown);
+        assert_eq!(
+            rollup_checks(Some(&decode(
+                r#"[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]"#
+            ))),
+            PullRequestChecks::Passing
+        );
+        assert_eq!(
+            rollup_checks(Some(&decode(
+                r#"[{"__typename":"CheckRun","status":"QUEUED","conclusion":null}]"#
+            ))),
+            PullRequestChecks::Pending
+        );
+        assert_eq!(
+            rollup_checks(Some(&decode(
+                r#"[{"__typename":"CheckRun","status":"IN_PROGRESS"},{"__typename":"StatusContext","state":"ERROR"}]"#
+            ))),
+            PullRequestChecks::Failed
+        );
+        assert_eq!(
+            rollup_checks(Some(&decode(
+                r#"[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"CANCELLED"}]"#
+            ))),
+            PullRequestChecks::Failed
+        );
+        assert_eq!(
+            rollup_checks(Some(&decode(r#"[{"__typename":"FutureCheck"}]"#))),
+            PullRequestChecks::Unknown
+        );
     }
 
     #[test]

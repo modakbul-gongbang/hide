@@ -449,7 +449,7 @@ pub(crate) fn apply_worktrees(
 pub(crate) fn checkout_row_label(branch: Option<&str>, path: &Path) -> String {
     branch.map(str::to_owned).unwrap_or_else(|| {
         path.file_name()
-            .unwrap_or_else(|| path.as_os_str())
+            .unwrap_or(path.as_os_str())
             .to_string_lossy()
             .into_owned()
     })
@@ -813,7 +813,11 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         }];
 
-        let catalog = build_catalog(&[registration.clone()], &spaces, &no_worktrees());
+        let catalog = build_catalog(
+            std::slice::from_ref(&registration),
+            &spaces,
+            &no_worktrees(),
+        );
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration.id);
@@ -838,8 +842,12 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let occupied = build_catalog(&[registration.clone()], &[space], &no_worktrees());
-        let released = build_catalog(&[registration.clone()], &[], &no_worktrees());
+        let occupied = build_catalog(
+            std::slice::from_ref(&registration),
+            &[space],
+            &no_worktrees(),
+        );
+        let released = build_catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
 
         assert_eq!(occupied[0].id, released[0].id);
         assert_eq!(occupied[0].label, released[0].label);
@@ -868,7 +876,7 @@ mod tests {
             registration(second.to_str().unwrap(), "Second", LOCAL_DEVICE_ID).expect("second"),
         ];
 
-        let unregistered = build_catalog(&[], &[space.clone()], &no_worktrees());
+        let unregistered = build_catalog(&[], std::slice::from_ref(&space), &no_worktrees());
         let catalog = build_catalog(&registrations, &[space], &no_worktrees());
 
         assert_eq!(unregistered.len(), 2);
@@ -1083,7 +1091,7 @@ mod tests {
         let registration =
             registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
 
-        let before = build_catalog(&[registration.clone()], &[], &no_worktrees());
+        let before = build_catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
         let unrelated = build_catalog(
             &[registration],
             &[],

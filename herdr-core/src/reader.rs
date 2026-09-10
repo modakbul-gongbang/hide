@@ -120,11 +120,10 @@ where
                 // A thread the OS refused is a real failure, not an empty
                 // answer: it is stated once here and the next wake retries.
                 Err(error) => crate::diagnostic!(serde_json::json!({
-                        "component": "reader",
-                        "kind": "worker.spawn_failed",
-                        "message": error.to_string(),
-                    })
-                ),
+                    "component": "reader",
+                    "kind": "worker.spawn_failed",
+                    "message": error.to_string(),
+                })),
             }
         }
         answer

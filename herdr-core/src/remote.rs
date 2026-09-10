@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
-use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -1226,12 +1225,11 @@ impl Drop for RusshApiConnection {
             "en",
         )) {
             crate::diagnostic!(serde_json::json!({
-                    "component": "remote_herdr_api",
-                    "kind": "disconnect.failed",
-                    "target": self.client.host.host_id,
-                    "message": error.to_string(),
-                })
-            );
+                "component": "remote_herdr_api",
+                "kind": "disconnect.failed",
+                "target": self.client.host.host_id,
+                "message": error.to_string(),
+            }));
         }
     }
 }
@@ -2074,35 +2072,30 @@ impl RusshRemoteClient {
         )
     }
 
-    fn connect(
-        &self,
-        handler: KnownHostHandler,
-    ) -> impl Future<Output = RemoteResult<Handle<KnownHostHandler>>> + Send + '_ {
-        async move {
-            let config = client::Config {
-                inactivity_timeout: Some(SSH_OPERATION_TIMEOUT),
-                keepalive_interval: Some(Duration::from_secs(5)),
-                ..client::Config::default()
-            };
-            let mut session = client::connect(
-                Arc::new(config),
-                (self.host.hostname.as_str(), self.host.port),
-                handler,
+    async fn connect(&self, handler: KnownHostHandler) -> RemoteResult<Handle<KnownHostHandler>> {
+        let config = client::Config {
+            inactivity_timeout: Some(SSH_OPERATION_TIMEOUT),
+            keepalive_interval: Some(Duration::from_secs(5)),
+            ..client::Config::default()
+        };
+        let mut session = client::connect(
+            Arc::new(config),
+            (self.host.hostname.as_str(), self.host.port),
+            handler,
+        )
+        .await
+        .map_err(|error| {
+            remote_error(
+                "remote-connect",
+                &self.host.host_id,
+                RemoteStage::Ssh,
+                error,
+                true,
+                false,
             )
-            .await
-            .map_err(|error| {
-                remote_error(
-                    "remote-connect",
-                    &self.host.host_id,
-                    RemoteStage::Ssh,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            authenticate(&mut session, &self.host).await?;
-            Ok(session)
-        }
+        })?;
+        authenticate(&mut session, &self.host).await?;
+        Ok(session)
     }
 
     fn sftp_read(&self, path: &str) -> RemoteResult<Vec<u8>> {
@@ -2398,14 +2391,14 @@ pub(crate) struct RemoteTerminalProcess {
     shutdown: Box<dyn FnOnce() + Send>,
 }
 
+type RemoteTerminalParts = (
+    Box<dyn Read + Send>,
+    Option<Box<dyn Write + Send>>,
+    Box<dyn FnOnce() + Send>,
+);
+
 impl RemoteTerminalProcess {
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Box<dyn Read + Send>,
-        Option<Box<dyn Write + Send>>,
-        Box<dyn FnOnce() + Send>,
-    ) {
+    pub(crate) fn into_parts(self) -> RemoteTerminalParts {
         (self.reader, self.writer, self.shutdown)
     }
 }
@@ -2501,13 +2494,12 @@ impl RemoteTerminalConnection {
             "en",
         )) {
             crate::diagnostic!(json!({
-                    "component": "remote_terminal_session",
-                    "kind": "disconnect.failed",
-                    "target": self.target_id,
-                    "pane_id": self.pane_id,
-                    "message": error.to_string(),
-                })
-            );
+                "component": "remote_terminal_session",
+                "kind": "disconnect.failed",
+                "target": self.target_id,
+                "pane_id": self.pane_id,
+                "message": error.to_string(),
+            }));
         }
     }
 }
@@ -3134,17 +3126,17 @@ impl RemotePtySession {
             })?
             .take();
         let mut first_error = None;
-        if let Some(channel) = channel {
-            if let Err(error) = self.runtime.block_on(channel.eof()) {
-                first_error = Some(remote_error(
-                    "remote-pty-close",
-                    &self.endpoint.pane_id,
-                    RemoteStage::Cleanup,
-                    format!("PTY EOF failed: {error}"),
-                    true,
-                    false,
-                ));
-            }
+        if let Some(channel) = channel
+            && let Err(error) = self.runtime.block_on(channel.eof())
+        {
+            first_error = Some(remote_error(
+                "remote-pty-close",
+                &self.endpoint.pane_id,
+                RemoteStage::Cleanup,
+                format!("PTY EOF failed: {error}"),
+                true,
+                false,
+            ));
         }
         let session = self
             .session
@@ -3160,23 +3152,22 @@ impl RemotePtySession {
                 )
             })?
             .take();
-        if let Some(session) = session {
-            if let Err(error) = self.runtime.block_on(session.disconnect(
+        if let Some(session) = session
+            && let Err(error) = self.runtime.block_on(session.disconnect(
                 Disconnect::ByApplication,
                 "PTY closed",
                 "en",
-            )) {
-                if first_error.is_none() {
-                    first_error = Some(remote_error(
-                        "remote-pty-close",
-                        &self.endpoint.pane_id,
-                        RemoteStage::Cleanup,
-                        error,
-                        true,
-                        false,
-                    ));
-                }
-            }
+            ))
+            && first_error.is_none()
+        {
+            first_error = Some(remote_error(
+                "remote-pty-close",
+                &self.endpoint.pane_id,
+                RemoteStage::Cleanup,
+                error,
+                true,
+                false,
+            ));
         }
         first_error.map_or(Ok(()), Err)
     }
@@ -3543,6 +3534,10 @@ impl RemoteTunnelRegistry {
 
     pub fn len(&self) -> usize {
         self.leases.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.leases.is_empty()
     }
 }
 
@@ -4472,6 +4467,7 @@ mod tests {
             .unwrap();
         assert_eq!(released.descriptor.state, RemoteTunnelState::Closed);
         assert_eq!(registry.len(), 0);
+        assert!(registry.is_empty());
     }
 
     #[test]

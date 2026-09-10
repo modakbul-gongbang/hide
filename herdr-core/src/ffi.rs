@@ -121,10 +121,12 @@ impl Drop for HerdrCore {
         self._session_sync.take();
         self._remote_session_sync.clear();
         let worker = { lock_recover(&self.runtime).take_state_save_worker() };
-        if let Some(worker) = worker {
-            if worker.join().is_err() {
-                crate::diagnostic!(serde_json::json!({"component":"ui_state", "kind":"save.join_failed"}));
-            }
+        if let Some(worker) = worker
+            && worker.join().is_err()
+        {
+            crate::diagnostic!(
+                serde_json::json!({"component":"ui_state", "kind":"save.join_failed"})
+            );
         }
     }
 }
@@ -289,12 +291,11 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                     Ok(handle) => remote_session_sync.push(handle),
                     Err(message) => {
                         crate::diagnostic!(serde_json::json!({
-                                "component": "remote_session_sync",
-                                "kind": "coordinator.spawn_failed",
-                                "target": target.id,
-                                "message": message,
-                            })
-                        );
+                            "component": "remote_session_sync",
+                            "kind": "coordinator.spawn_failed",
+                            "target": target.id,
+                            "message": message,
+                        }));
                         let changed = lock_recover(&runtime).ingest_remote_session(
                             &target.id,
                             Err(crate::live::SessionFetchError::Unreachable(message)),

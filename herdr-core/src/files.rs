@@ -194,10 +194,22 @@ mod tests {
 
     #[test]
     fn viewer_languages_cover_extensionless_configuration_and_json() {
-        assert_eq!(language_for(Path::new(".gitignore")).as_deref(), Some("bash"));
-        assert_eq!(language_for(Path::new("Makefile")).as_deref(), Some("makefile"));
-        assert_eq!(language_for(Path::new("settings.jsonc")).as_deref(), Some("json"));
-        assert_eq!(language_for(Path::new("manifest.json")).as_deref(), Some("json"));
+        assert_eq!(
+            language_for(Path::new(".gitignore")).as_deref(),
+            Some("bash")
+        );
+        assert_eq!(
+            language_for(Path::new("Makefile")).as_deref(),
+            Some("makefile")
+        );
+        assert_eq!(
+            language_for(Path::new("settings.jsonc")).as_deref(),
+            Some("json")
+        );
+        assert_eq!(
+            language_for(Path::new("manifest.json")).as_deref(),
+            Some("json")
+        );
         assert_eq!(language_for(Path::new("LICENSE")), None);
     }
 }

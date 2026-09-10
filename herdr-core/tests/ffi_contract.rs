@@ -395,16 +395,27 @@ fn failed_ui_state_save_is_visible_and_free_finishes() {
     let options = options_with_state(&blocked_parent.join("state.json"));
     let core = create_with_socket_override_hidden(&options);
     assert!(!core.is_null());
-    dispatch(core, json!({"schema_version":2, "kind":"pet_set_visible", "payload":{"visible":false}}));
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"pet_set_visible", "payload":{"visible":false}}),
+    );
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        if snapshot(core)["status"]["last_error"]["kind"] == "ui_state.save_failed" { break; }
-        assert!(Instant::now() < deadline, "The caller must see a failed save");
+        if snapshot(core)["status"]["last_error"]["kind"] == "ui_state.save_failed" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "The caller must see a failed save"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     let started = Instant::now();
     herdr_core_destroy(core);
-    assert!(started.elapsed() < Duration::from_secs(2), "A failed save must not hang free");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "A failed save must not hang free"
+    );
     fs::remove_file(blocked_parent).unwrap();
 }
 
