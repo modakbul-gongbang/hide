@@ -409,6 +409,8 @@ private struct HideAppearanceSettings: View {
 }
 
 private struct HideAgentSettings: View {
+    @EnvironmentObject private var model: ShellModel
+
     var body: some View {
         HideSettingsGroup(
             title: "Installed CLIs",
@@ -418,12 +420,105 @@ private struct HideAgentSettings: View {
             HideCLIStatus(name: "codex", showsDivider: false)
         }
 
+        HideAgentHookSettings(hooks: model.agentHooks) { runtimeID in
+            model.core.dispatch(kind: "install_agent_hooks", payload: ["runtime_id": runtimeID])
+        }
+
         HideSettingsGroup(title: "Launch safety") {
             HideSettingsNote(
                 text: "Permission bypass is a choice the composer remembers, and the chip says so while it is on.",
                 systemImage: "shield.lefthalf.filled",
                 showsDivider: false
             )
+        }
+    }
+}
+
+/// Why Hide can or cannot see what an agent has spawned inside its own
+/// process, and the one place an install is offered.
+///
+/// Hide installs once on first run and then leaves the operator's
+/// configuration alone, so every later install is a button here that they
+/// press (PRD B27, B28, D-31, D-48).
+private struct HideAgentHookSettings: View {
+    let hooks: CoreAgentHooks
+    let onInstall: (String) -> Void
+
+    var body: some View {
+        HideSettingsGroup(
+            title: "Subagent visibility",
+            note: "A hook reports what each agent spawns inside its own process. Hide installs it once and does not reattach it on later launches, so a hook you remove stays removed."
+        ) {
+            if hooks.runtimes.isEmpty {
+                HideSettingsNote(
+                    text: "Hook state has not been read yet.",
+                    systemImage: "clock",
+                    showsDivider: false
+                )
+            } else {
+                ForEach(Array(hooks.runtimes.enumerated()), id: \.element.id) { index, runtime in
+                    HideAgentHookRow(
+                        runtime: runtime,
+                        showsDivider: index < hooks.runtimes.count - 1
+                            || !hooks.sessionsPredatingInstall.isEmpty,
+                        onInstall: { onInstall(runtime.id) }
+                    )
+                }
+            }
+
+            ForEach(Array(hooks.sessionsPredatingInstall.enumerated()), id: \.element.id) { index, pane in
+                // The hook is installed and this session still predates it,
+                // which is the one uninstrumented cause a restart fixes.
+                HideSettingsNote(
+                    text: "\(pane.label) (\(pane.paneID)): \(pane.message)",
+                    systemImage: "arrow.clockwise",
+                    color: HideTheme.warning,
+                    showsDivider: index < hooks.sessionsPredatingInstall.count - 1
+                )
+            }
+        }
+    }
+}
+
+private struct HideAgentHookRow: View {
+    let runtime: CoreAgentHookRuntime
+    var showsDivider = true
+    let onInstall: () -> Void
+
+    var body: some View {
+        VStack(spacing: HideTheme.spacingNone) {
+            HStack(spacing: HideTheme.spacingSM) {
+                Image(systemName: runtime.installed ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                    .foregroundStyle(runtime.installed ? HideTheme.success : HideTheme.warning)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                    Text(runtime.label)
+                        .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                    Text(runtime.path)
+                        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: HideTheme.spacingSM)
+                HideSettingsValue(text: runtime.headline, isMonospaced: false)
+                if runtime.offersInstall {
+                    Button("Install hook", action: onInstall)
+                        .buttonStyle(HideTextButtonStyle(density: .compact))
+                        .accessibilityLabel("Install the Hide hook for \(runtime.label)")
+                }
+            }
+            .padding(.horizontal, HideTheme.spacingMD)
+            .padding(.vertical, HideTheme.spacingMD - HideTheme.spacingXXS)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(runtime.label): \(runtime.headline)")
+            if showsDivider {
+                Rectangle()
+                    .fill(HideTheme.divider)
+                    .frame(height: HideTheme.Layout.hairlineWidth)
+            }
         }
     }
 }

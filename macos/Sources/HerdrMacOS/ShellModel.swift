@@ -512,6 +512,12 @@ final class ShellModel: ObservableObject {
         core.snapshot?.navigator.devices ?? []
     }
 
+    /// What the Settings diagnosis draws. The core resolves every judgement;
+    /// this is the read.
+    var agentHooks: CoreAgentHooks {
+        core.snapshot?.status.agentHooks ?? CoreAgentHooks()
+    }
+
     var agentsConnected: Bool {
         if let device = activeRemoteDevice {
             return core.snapshot?.status.remote.first { $0.targetID == device.id }?.state == "connected"
