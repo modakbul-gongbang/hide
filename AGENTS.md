@@ -34,6 +34,23 @@ This rule exists because they were: `docs/verification/`, `docs/screenshots/`, a
 - When a document needs to cite evidence, state the finding and how it was measured. Do not commit the artifact so a path can be linked.
 - A verification claim is proven to the person reading the run, not to the repository. The receipt and the run directory are where it lives.
 
+## Build Output Belongs To Its Worktree
+
+`target/` and `macos/.build/` stay inside the worktree that produced them.
+Do not redirect either with `CARGO_TARGET_DIR`, `--target-dir`, or `--build-path` to a shared location.
+Two things break.
+`macos/scripts/build_dev_app.sh`, `scripts/build-app.sh`, and `scripts/swift-test.sh` read the Rust archive and the Swift binary from fixed paths under the worktree, so a redirected build leaves them reading a path nothing wrote.
+And Cargo holds an exclusive lock on its target directory, so worktrees sharing one serialize the parallel builds this layout exists to allow.
+Local checks resolve their own record tree from the worktree and cannot follow output out of it either.
+
+The cost of that isolation is one full build cache per worktree, so the cache is removed with the work rather than left behind.
+`git worktree remove` takes both directories with it; a worktree kept alive after its branch lands keeps its cache alive too.
+On 2026-09-09 one abandoned worktree held 5.3 GB, over half of the 10 GB across all eight.
+
+`[profile.dev] incremental = false` in the workspace manifest is deliberate, not a leftover.
+An agent worktree is built a few times and discarded, which never repays an incremental cache; what it does instead is grow one per worktree, and those had reached 1.5 GB.
+Debug output is what makes a stale worktree expensive, because nothing strips it: the debug `libherdr_core.a` measured 288 MB against 92 MB for the release archive.
+
 ## Runtime Architecture
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
