@@ -192,6 +192,8 @@ Keep these invariants during implementation:
 - No subprocesses, blocking I/O, or large serialization under `Mutex<Runtime>`; precompute outside and keep serialization separate from the locked payload read.
   `snapshot_delta_payload` takes owned data under the lock; `serialize_snapshot_delta` serializes it outside the lock.
 - No per-tick/per-tab git forks; reuse `PrecomputedCatalog`, `CatalogCache`, and `RootIndex`.
+  The catalog reads repository root, main worktree and branch from the repository's own files (`herdr-core/src/git_dir.rs`), never from a `git` process: it is rebuilt on the session-sync coordinator, the thread that applies Herdr's events, and on 2026-09-10 one `git rev-parse` per fact per pane directory held tab, zoom and focus events for 4-15 s.
+  `initialize_git` is the one git spawn left in `workspace.rs`, and `git_calls_on_this_thread` counts it so a test can prove a catalog path ran none.
 - Snapshot traffic follows changes, not total retained state; use stream cursors and do not dirty revisioned `rest` with idle timestamps.
 - Send every whole-row wheel promptly and coalesce only consecutive requests already waiting in the writer queue; never wait for a terminal frame or timer, and preserve Herdr routing, real geometry, and direct keyboard delivery.
 - Resolve the first wheel at its real AppKit target, then reuse that route only while events stay consecutive and stationary; a non-terminal scroll gesture must not repeat SwiftUI hit testing on every tick.

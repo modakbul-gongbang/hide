@@ -6664,9 +6664,9 @@ impl Runtime {
                 true
             }
             (PaneControlAction::MoveToNewTab { pane_id, .. }, outcome) => {
-                self.pane_relocations_in_flight.remove(&pane_id);
                 match outcome {
                     Ok(_) => {
+                        self.pane_relocations_in_flight.remove(&pane_id);
                         self.push_diagnostic(
                             "lineage.relocated",
                             format!(
@@ -6675,6 +6675,9 @@ impl Runtime {
                         );
                     }
                     Err(error) => {
+                        // The request's stamp stays, so the next attempt waits
+                        // out RELOCATION_RETRY_INTERVAL_MS: dropping it here
+                        // re-sent a refused move on every tick.
                         // Deliberately not a `pane.` diagnostic: the pane
                         // header reads those, and this failure must not
                         // appear over a child the operator never asked to
@@ -13269,6 +13272,46 @@ mod tests {
         assert!(
             runtime.snapshot.card.panes.is_empty(),
             "A pane moved away is no longer checkout context"
+        );
+    }
+
+    // A refused `pane.move` used to drop its request stamp, so the next
+    // session update re-sent it: one refusal per tick for as long as the
+    // tab stayed zoomed (2026-09-10 audit, ~2 refusals per second).
+    #[test]
+    fn a_refused_relocation_keeps_its_stamp_and_a_completed_one_drops_it() {
+        let mut runtime = runtime();
+        let action = || PaneControlAction::MoveToNewTab {
+            pane_id: "w1:p2".to_owned(),
+            workspace_id: "w1".to_owned(),
+            label: "Child".to_owned(),
+        };
+        let asked_at = unix_milliseconds();
+        runtime
+            .pane_relocations_in_flight
+            .insert("w1:p2".to_owned(), asked_at);
+
+        runtime.ingest_pane_control_result(
+            action(),
+            Err("Herdr declined the move: ZoomedTab".to_owned()),
+            3,
+        );
+        assert_eq!(
+            runtime.pane_relocations_in_flight.get("w1:p2"),
+            Some(&asked_at),
+            "a refusal waits out the retry interval"
+        );
+
+        runtime.ingest_pane_control_result(
+            action(),
+            Ok(live::PaneControlOutcome::Acknowledged {
+                created_pane_id: None,
+            }),
+            3,
+        );
+        assert!(
+            !runtime.pane_relocations_in_flight.contains_key("w1:p2"),
+            "a completed move is no longer in flight"
         );
     }
 

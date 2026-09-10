@@ -10,6 +10,7 @@ mod files;
 pub mod find;
 pub mod fixture;
 mod fork;
+mod git_dir;
 mod github;
 mod herdr_api;
 pub mod herdr_contract;
