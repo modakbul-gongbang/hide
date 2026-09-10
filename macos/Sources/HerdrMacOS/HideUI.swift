@@ -1560,6 +1560,10 @@ private struct AgentNavigatorRow: View {
                     }
                     .buttonStyle(HideInteractiveButtonStyle())
                     .frame(width: HideTheme.lineageChevronWidth)
+                    // The toggle sits directly above the line it opens, so
+                    // the branch starts at its own control instead of
+                    // floating a column away from it.
+                    .padding(.leading, HideTheme.compactAgentLeadingInset)
                     .opacity(agent.lineageChildPaneIDs.isEmpty ? 0 : 1)
                     .disabled(agent.lineageChildPaneIDs.isEmpty)
                     .accessibilityHidden(agent.lineageChildPaneIDs.isEmpty)
@@ -1579,6 +1583,7 @@ private struct AgentNavigatorRow: View {
                     isFocused: model.focusedPaneID == agent.paneID,
                     shortcutNumber: model.agentShortcutNumber(paneID: agent.paneID),
                     shortcutVisible: shortcutVisible,
+                    leadingInset: showsWorkspace ? nil : HideTheme.spacingNone,
                     action: { model.selectAgent(agent) }
                 )
             }
@@ -1615,8 +1620,12 @@ private struct AgentNavigatorRow: View {
         // row's inset are measured from the same leading edge and the elbow
         // lands on the child's mark rather than near it.
         .overlay(alignment: .leading) {
-            if !showsWorkspace && (agent.lineageDepth > 0 || !guide.continuing.isEmpty) {
-                LineageGuideView(depth: agent.lineageDepth, guide: guide)
+            if !showsWorkspace && (agent.lineageDepth > 0 || guide.startsChildren || !guide.continuing.isEmpty) {
+                LineageGuideView(
+                    depth: agent.lineageDepth,
+                    guide: guide,
+                    hasToggle: !agent.lineageChildPaneIDs.isEmpty
+                )
             }
         }
 

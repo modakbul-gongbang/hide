@@ -218,9 +218,28 @@ private func treeRow(_ id: String, depth: Int) -> SidebarAgent {
     #expect(HideTheme.lineageInset(depth: 3) - HideTheme.lineageInset(depth: 2) == step)
     #expect(HideTheme.lineageInset(depth: 0) == 0)
 
-    // The trunk for a level lands on that level's own mark center, which is
-    // the column its children's marks occupy one step over.
+    // The trunk for a level is that level's own toggle column, so the line
+    // and the control that opens it are one column, and it steps with depth.
     #expect(
         HideTheme.lineageTrunkX(depth: 1) - HideTheme.lineageTrunkX(depth: 0) == step
     )
+    #expect(
+        HideTheme.lineageTrunkX(depth: 0)
+            == HideTheme.compactAgentLeadingInset + HideTheme.lineageChevronWidth / 2
+    )
+
+    // A row with a toggle ends its line at that toggle; one without runs on
+    // to the status mark rather than stopping in an empty column.
+    #expect(
+        HideTheme.lineageElbowEndX(depth: 1, hasToggle: true)
+            < HideTheme.lineageElbowEndX(depth: 1, hasToggle: false)
+    )
+    #expect(
+        HideTheme.lineageElbowEndX(depth: 1, hasToggle: false)
+            - HideTheme.lineageElbowEndX(depth: 1, hasToggle: true)
+            == HideTheme.lineageChevronWidth
+    )
+    // Either way the line stops before the glyph it points at, never through
+    // it: the toggle's own center is further right than where the line ends.
+    #expect(HideTheme.lineageElbowEndX(depth: 1, hasToggle: true) < HideTheme.lineageTrunkX(depth: 1))
 }

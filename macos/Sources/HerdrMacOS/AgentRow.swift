@@ -56,7 +56,7 @@ enum AgentRowDensity {
     var leadingPadding: CGFloat { self == .prominent ? 14 : HideTheme.compactAgentLeadingInset }
     var iconSpacing: CGFloat { self == .compact ? HideTheme.spacingXS : HideTheme.spacingSM }
     var trailingPadding: CGFloat { self == .prominent ? 14 : 9 }
-    var verticalPadding: CGFloat { self == .prominent ? 7 : 5 }
+    var verticalPadding: CGFloat { self == .prominent ? 7 : HideTheme.compactAgentRowVerticalPadding }
 }
 
 /// A row's resolved visual policy. Surface wrappers choose it once so the
@@ -204,6 +204,11 @@ struct AgentRow: View {
     var isFocused: Bool = false
     var shortcutNumber: Int?
     var shortcutVisible = true
+    /// The agent tree draws its own toggle in the column this inset would
+    /// otherwise fill, so it starts the row flush against it. Every other
+    /// compact caller keeps the inset that lines the mark up with the
+    /// checkout row above.
+    var leadingInset: CGFloat?
     let action: () -> Void
     @Environment(\.hidePetAppearance) private var petAppearance
 
@@ -307,7 +312,7 @@ struct AgentRow: View {
                 }
             }
         }
-        .padding(.leading, density.leadingPadding)
+        .padding(.leading, leadingInset ?? density.leadingPadding)
         .padding(.trailing, density.trailingPadding)
         .padding(.vertical, density.verticalPadding)
         .background(

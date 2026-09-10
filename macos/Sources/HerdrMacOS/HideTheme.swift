@@ -227,15 +227,32 @@ enum HideTheme {
         CGFloat(max(0, depth)) * lineageIndent
     }
 
+    /// How far below a row's top its status mark is centered.
+    ///
+    /// A fixed offset, not a fraction of the row: a row grows downward when
+    /// it carries a stall notice or a second summary line, and an elbow tied
+    /// to the height would slide off the mark exactly when it did.
+    static let lineageElbowY: CGFloat = compactAgentRowVerticalPadding + compactAgentBadgeSize / 2
+    /// The compact row's vertical padding, shared with `AgentRowDensity` so
+    /// the guide and the row cannot disagree about where the mark sits.
+    static let compactAgentRowVerticalPadding: CGFloat = 5
+
     /// Where the trunk descending from a row at `depth` is drawn, measured
     /// from the leading edge of the tree's rows.
     ///
-    /// It is that row's own status mark center: the connector drops from
-    /// under the parent's mark and turns into its child's, which is the same
-    /// column the child's mark occupies one step over.
+    /// It is that row's collapse toggle: the line leaves the control that
+    /// opens it, so a branch and the thing that shows or hides it are the
+    /// same column rather than two.
     static func lineageTrunkX(depth: Int) -> CGFloat {
-        lineageInset(depth: depth) + lineageChevronWidth + compactAgentLeadingInset
-            + agentMarkWidth / 2
+        lineageInset(depth: depth) + compactAgentLeadingInset + lineageChevronWidth / 2
+    }
+
+    /// Where a row's guide stops: at its toggle when it has one, and at its
+    /// status mark when it does not, so the line arrives at something the
+    /// operator can see rather than crossing an empty column.
+    static func lineageElbowEndX(depth: Int, hasToggle: Bool) -> CGFloat {
+        let leading = lineageInset(depth: depth) + compactAgentLeadingInset
+        return hasToggle ? leading : leading + lineageChevronWidth
     }
 
     static let compactControlSize: CGFloat = 36

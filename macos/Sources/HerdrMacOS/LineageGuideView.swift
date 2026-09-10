@@ -14,28 +14,48 @@ import SwiftUI
 struct LineageGuideView: View {
     let depth: Int
     let guide: SidebarGrouping.LineageGuide
-
-    /// The trunk stops at the mark's center on the last child and runs the
-    /// whole row otherwise, which is what makes a sibling run read as one
-    /// line and its end read as an end.
-    private var elbowFraction: CGFloat { 0.5 }
+    /// Whether this row shows a collapse toggle, which is where its own line
+    /// ends. A row without one has the line run on to its status mark.
+    var hasToggle = false
 
     var body: some View {
         GeometryReader { proxy in
             let height = proxy.size.height
-            let elbowY = height * elbowFraction
+            let elbowY = HideTheme.lineageElbowY
             Path { path in
+                // Levels above this row whose sibling run is still open pass
+                // straight through, which is what keeps a nested branch from
+                // breaking the line of every level above it.
                 for level in guide.continuing where level < depth {
                     let x = HideTheme.lineageTrunkX(depth: level)
                     path.move(to: CGPoint(x: x, y: 0))
                     path.addLine(to: CGPoint(x: x, y: height))
                 }
-                guard depth > 0 else { return }
-                let x = HideTheme.lineageTrunkX(depth: depth - 1)
-                path.move(to: CGPoint(x: x, y: 0))
-                path.addLine(to: CGPoint(x: x, y: guide.isLastChild ? elbowY : height))
-                path.move(to: CGPoint(x: x, y: elbowY))
-                path.addLine(to: CGPoint(x: HideTheme.lineageTrunkX(depth: depth), y: elbowY))
+                if depth > 0 {
+                    // This row's own join: down from the parent's column, then
+                    // across into this row's status mark. A last child ends
+                    // the run at that corner; an earlier one carries it down
+                    // to the sibling below.
+                    let parentX = HideTheme.lineageTrunkX(depth: depth - 1)
+                    path.move(to: CGPoint(x: parentX, y: 0))
+                    path.addLine(to: CGPoint(x: parentX, y: guide.isLastChild ? elbowY : height))
+                    path.move(to: CGPoint(x: parentX, y: elbowY))
+                    // Stops at the leading edge of what it points at rather
+                    // than its center, so the line arrives at the glyph
+                    // instead of running underneath it.
+                    path.addLine(to: CGPoint(
+                        x: HideTheme.lineageElbowEndX(depth: depth, hasToggle: hasToggle),
+                        y: elbowY
+                    ))
+                }
+                if guide.startsChildren {
+                    // The line has to leave this row for its first child to
+                    // join onto. Without it the trunk began below the parent
+                    // and connected to nothing above.
+                    let x = HideTheme.lineageTrunkX(depth: depth)
+                    path.move(to: CGPoint(x: x, y: elbowY))
+                    path.addLine(to: CGPoint(x: x, y: height))
+                }
             }
             .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
         }

@@ -122,6 +122,10 @@ enum SidebarGrouping {
         /// Whether this row ends its own sibling run. The last child stops
         /// its trunk at the elbow; every earlier one carries it down.
         var isLastChild: Bool = true
+        /// Whether a child of this row is drawn directly below it. The line
+        /// has to leave the parent for the first child to have anything to
+        /// join, so the parent's own row carries the top of the trunk.
+        var startsChildren: Bool = false
     }
 
     /// The guide for each visible row, in the same order.
@@ -138,6 +142,8 @@ enum SidebarGrouping {
             for deeper in openRun.keys where deeper > depth { openRun[deeper] = false }
             guides[index].isLastChild = !(openRun[depth] ?? false)
             guides[index].continuing = Set(openRun.filter { $0.key < depth && $0.value }.keys)
+            guides[index].startsChildren =
+                rows.indices.contains(index + 1) && rows[index + 1].lineageDepth > depth
             openRun[depth] = true
         }
         return guides
