@@ -11,10 +11,10 @@ mod log;
 mod router;
 mod schema;
 
-pub use claude::ClaudeInteractiveBackend;
+pub use claude::{ClaudeCliBackend, ClaudeConfig};
 pub use codex::{CodexAppServerBackend, CodexConfig};
 pub use log::{AiLogEvent, AiLogSink, NoopLogSink};
-pub use router::{AiRouter, RouterConfig};
+pub use router::{AiRouter, Degraded, ProviderState, RouterConfig};
 
 use std::fmt;
 use std::sync::Arc;

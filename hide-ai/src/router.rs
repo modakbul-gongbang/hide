@@ -39,6 +39,78 @@ impl Default for RouterConfig {
     }
 }
 
+/// Which provider answers now, and why the selected one is not.
+///
+/// The router already names the answering provider in each `AiResult`; what
+/// a consumer could not ask before is the standing question, "who answers
+/// right now and why is it not my choice". This is that answer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderState {
+    /// The provider the configured priority puts first: the user's choice.
+    pub selected: ProviderId,
+    /// The provider a request made now would run on, or `None` when every
+    /// provider is degraded. That state is reachable, so it is reported
+    /// rather than filled in with a provider that cannot answer.
+    pub active: Option<ProviderId>,
+    /// Why `selected` stepped aside; absent when it did not.
+    pub degraded: Option<Degraded>,
+}
+
+/// Why one provider is not answering, and until when when that is known.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Degraded {
+    pub provider: ProviderId,
+    pub reason: Availability,
+    /// What remains of an account-wide cooldown. `None` when the reason has
+    /// no end the provider told us about, such as a missing login.
+    pub until: Option<Duration>,
+}
+
+/// What selection decided about one provider.
+///
+/// `Parked` exists so a provider under an account-wide cooldown is never
+/// asked anything: the cooldown already answers, and probing a provider that
+/// cannot answer for hours is the poke that sticky failover exists to stop.
+#[derive(Clone, Debug)]
+enum Selection {
+    Ready,
+    Parked(Duration),
+    Blocked(Availability),
+}
+
+impl Selection {
+    fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    /// The availability a caller is told about, including the cooldown that
+    /// was never a provider answer.
+    fn availability(&self) -> Availability {
+        match self {
+            Self::Ready => Availability::Ready,
+            Self::Parked(remaining) => Availability::Unavailable {
+                reason: format!("usage_limited;retry_after_s={}", remaining.as_secs()),
+            },
+            Self::Blocked(state) => state.clone(),
+        }
+    }
+
+    /// Short machine-readable reason for a log line.
+    fn detail(&self) -> String {
+        match self {
+            Self::Ready => "ready".to_owned(),
+            Self::Parked(remaining) => {
+                format!("usage_limited;retry_after_s={}", remaining.as_secs())
+            }
+            Self::Blocked(
+                state @ (Availability::Unavailable { reason }
+                | Availability::Unsupported { reason }),
+            ) => format!("{}:{reason}", state.class()),
+            Self::Blocked(state) => state.class().to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DedupKey {
     feature_id: &'static str,
@@ -91,6 +163,10 @@ struct State {
     in_flight: HashMap<DedupKey, Arc<InFlight>>,
     cooldown_until: HashMap<ProviderId, Instant>,
     availability: HashMap<ProviderId, (Availability, Instant)>,
+    /// The selected provider a degradation event has already been logged
+    /// for, so entering and leaving failover are each announced once rather
+    /// than on every request.
+    announced_degraded: Option<ProviderId>,
     rollup: Rollup,
 }
 
@@ -129,6 +205,7 @@ impl AiRouter {
                 in_flight: HashMap::new(),
                 cooldown_until: HashMap::new(),
                 availability: HashMap::new(),
+                announced_degraded: None,
                 rollup: Rollup {
                     day: utc_day(),
                     counts: HashMap::new(),
@@ -138,12 +215,31 @@ impl AiRouter {
     }
 
     /// Current availability of every registered provider, refreshed when the
-    /// cached answer is older than the configured window.
+    /// cached answer is older than the configured window. A provider parked
+    /// by an account-wide cooldown reports that park instead of being asked.
     pub fn availability(&self) -> Vec<(ProviderId, Availability)> {
-        self.backends
-            .iter()
-            .map(|backend| (backend.id(), self.cached_availability(backend.as_ref())))
+        self.select()
+            .into_iter()
+            .map(|(backend, selection)| (backend.id(), selection.availability()))
             .collect()
+    }
+
+    /// Which provider answers a request made now, and why the selected one
+    /// stepped aside. `None` when the router has no registered provider,
+    /// which is a wiring mistake rather than a runtime state.
+    ///
+    /// This is a query: it never logs and never runs a request. It may
+    /// refresh a stale availability answer, which is what makes the return
+    /// to the selected provider visible once its cooldown has expired.
+    pub fn provider_state(&self) -> Option<ProviderState> {
+        let selection = self.select();
+        let (first, chosen) = selection.first()?;
+        let selected = first.id();
+        Some(ProviderState {
+            selected,
+            active: active_provider(&selection),
+            degraded: degraded_of(selected, chosen),
+        })
     }
 
     /// Forces the next selection to ask each provider again, for a caller
@@ -247,20 +343,41 @@ impl AiRouter {
         cancel: &CancelToken,
     ) -> Result<AiResult, AiError> {
         let started = Instant::now();
-        let ordered = self.ordered_backends();
-        let states: Vec<(ProviderId, Availability)> = ordered
+        // Availability is read once per request, and a parked provider is
+        // not read at all.
+        let selection = self.select();
+        self.announce_degradation(request, &selection);
+        let connected: Vec<&Arc<dyn AiBackend>> = selection
             .iter()
-            .map(|backend| (backend.id(), self.cached_availability(backend.as_ref())))
-            .collect();
-        let connected: Vec<&Arc<dyn AiBackend>> = ordered
-            .iter()
-            .zip(states.iter())
-            .filter(|(_, (_, state))| state.is_ready())
+            .filter(|(_, state)| state.is_ready())
             .map(|(backend, _)| backend)
             .collect();
         if connected.is_empty() {
-            let error = AiError::NoProvider(states);
-            self.finish(request, None, &Err(error.clone()), started, 0);
+            // A parked provider is the more useful answer than "no provider":
+            // it says the account is waiting, which is what a caller decides
+            // its own retry on, and it names the wait.
+            let parked = selection.iter().find_map(|(backend, state)| match state {
+                Selection::Parked(remaining) => Some((backend.id(), *remaining)),
+                _ => None,
+            });
+            let (provider, error) = match parked {
+                Some((provider, remaining)) => (
+                    Some(provider),
+                    AiError::UsageLimited {
+                        retry_after: Some(remaining),
+                    },
+                ),
+                None => (
+                    None,
+                    AiError::NoProvider(
+                        selection
+                            .iter()
+                            .map(|(backend, state)| (backend.id(), state.availability()))
+                            .collect(),
+                    ),
+                ),
+            };
+            self.finish(request, provider, &Err(error.clone()), started, 0);
             return Err(error);
         }
 
@@ -325,14 +442,6 @@ impl AiRouter {
         cancel: &CancelToken,
     ) -> Result<(Value, u8), (AiError, u8)> {
         let provider = backend.id();
-        if let Some(remaining) = self.cooldown_remaining(provider) {
-            return Err((
-                AiError::UsageLimited {
-                    retry_after: Some(remaining),
-                },
-                0,
-            ));
-        }
         let mut attempt: u8 = 0;
         loop {
             attempt = attempt.saturating_add(1);
@@ -407,6 +516,70 @@ impl AiRouter {
         }
     }
 
+    /// Decides every provider's standing in priority order without running
+    /// anything. A provider under a live cooldown is skipped rather than
+    /// probed: that skip is what makes a failover sticky, because the reason
+    /// it stepped aside outlives the request that discovered it.
+    fn select(&self) -> Vec<(Arc<dyn AiBackend>, Selection)> {
+        self.ordered_backends()
+            .into_iter()
+            .map(|backend| {
+                let selection = match self.cooldown_remaining(backend.id()) {
+                    Some(remaining) => Selection::Parked(remaining),
+                    None => match self.cached_availability(backend.as_ref()) {
+                        state if state.is_ready() => Selection::Ready,
+                        state => Selection::Blocked(state),
+                    },
+                };
+                (backend, selection)
+            })
+            .collect()
+    }
+
+    /// Logs the two edges of a failover.
+    ///
+    /// `ai.fallback` only exists when one request tries two providers. Once
+    /// the failover is sticky the parked provider is never tried, so without
+    /// these events the log would show the provider silently change and
+    /// silently change back.
+    fn announce_degradation(
+        &self,
+        request: &AiRequest,
+        selection: &[(Arc<dyn AiBackend>, Selection)],
+    ) {
+        let Some((backend, chosen)) = selection.first() else {
+            return;
+        };
+        let selected = backend.id();
+        let announced = self.lock().announced_degraded;
+        match (announced, chosen.is_ready()) {
+            (None, false) => {
+                self.lock().announced_degraded = Some(selected);
+                let active = active_provider(selection);
+                let reason = chosen.detail();
+                self.log(request, |event| {
+                    event.event = "ai.provider.degraded";
+                    event.provider = active;
+                    event.outcome_class = Some(chosen.availability().class());
+                    event.detail = Some(format!(
+                        "selected={selected};reason={reason};active={}",
+                        active.map_or("none".to_owned(), |provider| provider.to_string())
+                    ));
+                });
+            }
+            (Some(_), true) => {
+                self.lock().announced_degraded = None;
+                self.log(request, |event| {
+                    event.event = "ai.provider.recovered";
+                    event.provider = Some(selected);
+                    event.outcome_class = Some("ready");
+                    event.detail = Some(format!("selected={selected}"));
+                });
+            }
+            _ => {}
+        }
+    }
+
     fn ordered_backends(&self) -> Vec<Arc<dyn AiBackend>> {
         let mut ordered: Vec<Arc<dyn AiBackend>> = Vec::new();
         for provider in &self.config.priority {
@@ -442,6 +615,10 @@ impl AiRouter {
         let now = Instant::now();
         if until <= now {
             state.cooldown_until.remove(&provider);
+            // The park is over. Drop the cached answer with it so the next
+            // question is asked of the provider once, rather than answered
+            // from a cache filled while it could not answer at all.
+            state.availability.remove(&provider);
             return None;
         }
         Some(until - now)
@@ -491,6 +668,30 @@ impl AiRouter {
     }
 }
 
+/// The highest-priority provider that can answer now, if any.
+fn active_provider(selection: &[(Arc<dyn AiBackend>, Selection)]) -> Option<ProviderId> {
+    selection
+        .iter()
+        .find(|(_, state)| state.is_ready())
+        .map(|(backend, _)| backend.id())
+}
+
+fn degraded_of(selected: ProviderId, chosen: &Selection) -> Option<Degraded> {
+    match chosen {
+        Selection::Ready => None,
+        Selection::Parked(remaining) => Some(Degraded {
+            provider: selected,
+            reason: chosen.availability(),
+            until: Some(*remaining),
+        }),
+        Selection::Blocked(reason) => Some(Degraded {
+            provider: selected,
+            reason: reason.clone(),
+            until: None,
+        }),
+    }
+}
+
 fn input_hash(request: &AiRequest) -> u64 {
     let mut hasher = DefaultHasher::new();
     request.system.hash(&mut hasher);
@@ -514,10 +715,12 @@ mod tests {
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Scripted provider: answers from a queue of outcomes and counts calls.
+    /// Scripted provider: answers from a queue of outcomes and counts both
+    /// the requests and the availability probes it was asked for.
     struct Scripted {
         id: ProviderId,
-        availability: Availability,
+        availability: Mutex<Availability>,
+        probes: AtomicUsize,
         outcomes: Mutex<VecDeque<Result<Value, AiError>>>,
         calls: AtomicUsize,
         delay: Duration,
@@ -529,7 +732,8 @@ mod tests {
         fn new(id: ProviderId, outcomes: Vec<Result<Value, AiError>>) -> Arc<Self> {
             Arc::new(Self {
                 id,
-                availability: Availability::Ready,
+                availability: Mutex::new(Availability::Ready),
+                probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(outcomes.into()),
                 calls: AtomicUsize::new(0),
                 delay: Duration::ZERO,
@@ -539,7 +743,8 @@ mod tests {
         fn with_availability(id: ProviderId, availability: Availability) -> Arc<Self> {
             Arc::new(Self {
                 id,
-                availability,
+                availability: Mutex::new(availability),
+                probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(VecDeque::new()),
                 calls: AtomicUsize::new(0),
                 delay: Duration::ZERO,
@@ -549,6 +754,18 @@ mod tests {
         fn calls(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
         }
+
+        fn probes(&self) -> usize {
+            self.probes.load(Ordering::SeqCst)
+        }
+
+        fn set_availability(&self, state: Availability) {
+            *self.availability.lock().unwrap() = state;
+        }
+
+        fn queue(&self, outcomes: Vec<Result<Value, AiError>>) {
+            self.outcomes.lock().unwrap().extend(outcomes);
+        }
     }
 
     impl AiBackend for Scripted {
@@ -556,7 +773,8 @@ mod tests {
             self.id
         }
         fn availability(&self) -> Availability {
-            self.availability.clone()
+            self.probes.fetch_add(1, Ordering::SeqCst);
+            self.availability.lock().unwrap().clone()
         }
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -948,7 +1166,8 @@ mod tests {
         let sink = Arc::new(Recorder::default());
         let codex = Arc::new(Scripted {
             id: ProviderId::Codex,
-            availability: Availability::Ready,
+            availability: Mutex::new(Availability::Ready),
+            probes: AtomicUsize::new(0),
             outcomes: Mutex::new(vec![ok("shared")].into()),
             calls: AtomicUsize::new(0),
             delay: Duration::from_millis(200),
@@ -974,6 +1193,250 @@ mod tests {
             .execute(&request("same", "other input"), &CancelToken::new())
             .unwrap();
         assert_eq!(codex.calls(), 2);
+    }
+
+    /// The availability cache is deliberately switched off here, so what
+    /// keeps a parked provider from being asked is the cooldown itself and
+    /// not a cache window that happens to be open.
+    fn make_sticky_router(backends: Vec<Arc<dyn AiBackend>>, sink: Arc<Recorder>) -> AiRouter {
+        let config = RouterConfig {
+            availability_ttl: Duration::ZERO,
+            backoff_base: Duration::from_millis(1),
+            ..RouterConfig::default()
+        };
+        AiRouter::with_sleep(backends, config, sink, Box::new(|_| {}))
+    }
+
+    /// A consumer has to be able to ask the standing question rather than
+    /// infer it from the last result it happened to see.
+    #[test]
+    fn provider_state_names_the_active_provider_and_why_the_selected_one_stepped_aside() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::with_availability(ProviderId::Codex, Availability::Ready);
+        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink);
+        assert_eq!(
+            router.provider_state().unwrap(),
+            ProviderState {
+                selected: ProviderId::Codex,
+                active: Some(ProviderId::Codex),
+                degraded: None,
+            }
+        );
+        codex.set_availability(Availability::NeedsLogin);
+        assert_eq!(
+            router.provider_state().unwrap(),
+            ProviderState {
+                selected: ProviderId::Codex,
+                active: Some(ProviderId::Claude),
+                degraded: Some(Degraded {
+                    provider: ProviderId::Codex,
+                    reason: Availability::NeedsLogin,
+                    until: None,
+                }),
+            }
+        );
+        // A query answers; it does not run the request.
+        assert_eq!(claude.calls(), 0);
+    }
+
+    /// A router with nothing registered has no selected provider, and says so
+    /// instead of naming one.
+    #[test]
+    fn a_router_without_providers_has_no_provider_state() {
+        let router = make_router(Vec::new(), Arc::new(Recorder::default()));
+        assert_eq!(router.provider_state(), None);
+    }
+
+    /// Sticky means the reason outlives the request that found it: the parked
+    /// provider is not asked for an answer, and is not even asked whether it
+    /// is logged in, until its cooldown expires.
+    #[test]
+    fn a_usage_limit_is_sticky_and_stops_asking_the_parked_provider_anything() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::new(
+            ProviderId::Codex,
+            vec![Err(AiError::UsageLimited {
+                retry_after: Some(Duration::from_secs(600)),
+            })],
+        );
+        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone());
+        assert_eq!(
+            router
+                .execute(&request("p1", "x"), &CancelToken::new())
+                .unwrap()
+                .provider,
+            ProviderId::Claude
+        );
+        let probes_after_park = codex.probes();
+        for subject in ["p2", "p3", "p4"] {
+            assert_eq!(
+                router
+                    .execute(&request(subject, subject), &CancelToken::new())
+                    .unwrap()
+                    .provider,
+                ProviderId::Claude
+            );
+        }
+        // One request spent on the parked provider, and nothing since.
+        assert_eq!(codex.calls(), 1);
+        assert_eq!(codex.probes(), probes_after_park, "the park was re-probed");
+
+        let state = router.provider_state().unwrap();
+        assert_eq!(state.selected, ProviderId::Codex);
+        assert_eq!(state.active, Some(ProviderId::Claude));
+        let degraded = state.degraded.expect("the reason stays queryable");
+        assert_eq!(degraded.provider, ProviderId::Codex);
+        assert!(degraded.until.expect("a cooldown ends") > Duration::from_secs(500));
+        assert_eq!(degraded.reason.class(), "unavailable");
+        assert_eq!(codex.probes(), probes_after_park);
+    }
+
+    /// When the reason ends the router asks the selected provider once and
+    /// goes back to it; nobody has to tell it the limit reset.
+    #[test]
+    fn an_expired_cooldown_re_reads_availability_once_and_returns_to_the_selected_provider() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::new(
+            ProviderId::Codex,
+            vec![Err(AiError::UsageLimited {
+                retry_after: Some(Duration::from_millis(200)),
+            })],
+        );
+        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone());
+        router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        let parked_probes = codex.probes();
+        std::thread::sleep(Duration::from_millis(250));
+        codex.queue(vec![ok("codex is back")]);
+
+        let state = router.provider_state().unwrap();
+        assert_eq!(state.active, Some(ProviderId::Codex));
+        assert_eq!(state.degraded, None);
+        assert_eq!(
+            codex.probes(),
+            parked_probes + 1,
+            "the return asks the provider exactly once"
+        );
+        assert_eq!(
+            router
+                .execute(&request("p2", "y"), &CancelToken::new())
+                .unwrap()
+                .value["summary"],
+            "codex is back"
+        );
+    }
+
+    /// Both providers down is reachable now that both can answer, so it is a
+    /// reported state: no provider is claimed to be active, and the caller is
+    /// told the wait it can act on rather than that nothing is installed.
+    #[test]
+    fn every_provider_degraded_is_reported_and_claims_no_active_provider() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::with_availability(ProviderId::Codex, Availability::NeedsLogin);
+        let claude = Scripted::new(
+            ProviderId::Claude,
+            vec![Err(AiError::UsageLimited {
+                retry_after: Some(Duration::from_secs(600)),
+            })],
+        );
+        let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone());
+        assert!(matches!(
+            router.execute(&request("p1", "x"), &CancelToken::new()),
+            Err(AiError::UsageLimited { .. })
+        ));
+
+        let state = router.provider_state().unwrap();
+        assert_eq!(state.selected, ProviderId::Codex);
+        assert_eq!(state.active, None, "no provider can answer");
+        assert_eq!(
+            state.degraded,
+            Some(Degraded {
+                provider: ProviderId::Codex,
+                reason: Availability::NeedsLogin,
+                until: None,
+            })
+        );
+        // Every provider's own reason is still readable next to it.
+        let availability = router.availability();
+        assert_eq!(availability[0].1, Availability::NeedsLogin);
+        match &availability[1].1 {
+            Availability::Unavailable { reason } => {
+                assert!(reason.starts_with("usage_limited"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // The parked wait is the answer, not "no provider": a caller decides
+        // its own retry on it.
+        match router.execute(&request("p2", "y"), &CancelToken::new()) {
+            Err(AiError::UsageLimited { retry_after }) => {
+                assert!(retry_after.expect("the wait is named") > Duration::from_secs(500));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(claude.calls(), 1, "the parked provider was asked again");
+    }
+
+    /// `ai.fallback` is per-request and a sticky failover has no second
+    /// provider to try, so entering and leaving get their own events.
+    #[test]
+    fn entering_and_leaving_failover_each_leave_their_own_event() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::new(
+            ProviderId::Codex,
+            vec![Err(AiError::ProviderUnavailable("gone".to_owned()))],
+        );
+        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude"), ok("claude again")]);
+        // The availability cache is the mechanism here: an outage discovered
+        // during a request is what keeps the next one off that provider.
+        let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
+
+        // The first request discovers the outage mid-flight, so it is the
+        // per-request fallback line that records it.
+        router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(sink.events("ai.fallback").len(), 1);
+        assert!(sink.events("ai.provider.degraded").is_empty());
+
+        // The next request never tries codex, so without this event the log
+        // would show the provider change with no reason.
+        router
+            .execute(&request("p2", "y"), &CancelToken::new())
+            .unwrap();
+        let degraded = sink.events("ai.provider.degraded");
+        assert_eq!(degraded.len(), 1);
+        assert_eq!(degraded[0].provider, Some(ProviderId::Claude));
+        let detail = degraded[0].detail.clone().expect("a reason");
+        assert!(detail.contains("selected=codex"), "{detail}");
+        assert!(detail.contains("active=claude"), "{detail}");
+        assert!(detail.contains("gone"), "{detail}");
+        assert_eq!(sink.events("ai.fallback").len(), 1, "no second fallback");
+
+        // Announced once, not once per request.
+        router
+            .execute(&request("p3", "z"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(sink.events("ai.provider.degraded").len(), 1);
+        assert!(sink.events("ai.provider.recovered").is_empty());
+
+        codex.queue(vec![ok("codex is back")]);
+        router.invalidate_availability();
+        assert_eq!(
+            router
+                .execute(&request("p4", "w"), &CancelToken::new())
+                .unwrap()
+                .value["summary"],
+            "codex is back"
+        );
+        let recovered = sink.events("ai.provider.recovered");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].provider, Some(ProviderId::Codex));
+        assert_eq!(recovered[0].outcome_class, Some("ready"));
     }
 
     #[test]
