@@ -1016,6 +1016,28 @@ struct InstallAgentHooksPayload {
     runtime_id: String,
 }
 
+/// One Background AI settings event, carrying whatever it is about.
+///
+/// It folds three things a single screen does into one event, the way
+/// `ui_state_update` already folds that screen's other state: the group
+/// appearing or going away, a chosen agent, and a chosen model. Nothing here
+/// is filled in on the core's side, so an event that names a model without
+/// its provider is refused rather than guessed at.
+#[derive(Deserialize)]
+struct AiSettingsPayload {
+    /// True while the Background AI group is on screen. The provider probe
+    /// starts child processes, so it runs only while somebody is looking.
+    #[serde(default)]
+    observing: Option<bool>,
+    /// The provider the operator chose.
+    #[serde(default)]
+    provider: Option<String>,
+    /// The model for `provider`; never for whichever provider happens to be
+    /// selected.
+    #[serde(default)]
+    model: Option<String>,
+}
+
 /// One pane search. An empty `term` clears the search rather than needing its
 /// own event, and `step` folds "search this" and "go to the next one" into one
 /// path: 0 searches and keeps the current match, +1 and -1 move.
@@ -1142,6 +1164,7 @@ enum ValidatedEvent {
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     InstallAgentHooks(InstallAgentHooksPayload),
+    AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
     TerminalViewport(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
@@ -1275,6 +1298,19 @@ pub struct Runtime {
     /// Runtimes the operator has approved an install for, waiting for the
     /// coordinator to do the file write off the mutex.
     pending_hook_installs: BTreeSet<hide_agent_hooks::AgentRuntime>,
+    /// The operator's background AI choice as the core holds it. `None` until
+    /// the coordinator's first read lands, which reads as "not known yet"
+    /// rather than as "the defaults".
+    ai_settings: Option<hide_ai::AiSettings>,
+    /// A choice waiting for the coordinator to write it to the settings file
+    /// off the mutex, the same way an approved hook install waits.
+    pending_ai_settings_save: Option<hide_ai::AiSettings>,
+    /// True while the Background AI group is on screen, which is the only
+    /// time the provider probe runs.
+    ai_observing: bool,
+    /// What the providers last answered. Held beside the snapshot so a
+    /// changed choice can restamp the rows without asking again.
+    background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1539,6 +1575,10 @@ impl Runtime {
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
             pending_hook_installs: BTreeSet::new(),
+            ai_settings: None,
+            pending_ai_settings_save: None,
+            ai_observing: false,
+            background_ai_providers: Vec::new(),
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             #[cfg(test)]
@@ -5940,6 +5980,157 @@ impl Runtime {
         true
     }
 
+    /// Applies one Background AI settings event.
+    ///
+    /// The choice takes effect on the snapshot at once, so the control moves
+    /// under the operator's hand rather than after a file write; the write
+    /// itself is queued for the coordinator, because nothing that touches the
+    /// disk runs under this mutex.
+    fn apply_ai_settings(&mut self, payload: AiSettingsPayload) -> bool {
+        let mut changed = false;
+        if let Some(observing) = payload.observing
+            && self.ai_observing != observing
+        {
+            self.ai_observing = observing;
+            changed = true;
+        }
+
+        // A model without the provider it belongs to is not applied to
+        // whichever provider happens to be selected: the event is refused and
+        // says so.
+        if payload.provider.is_none() && payload.model.is_some() {
+            self.set_error(
+                "ai_settings.model_without_provider",
+                "A background AI model must name the provider it belongs to",
+                false,
+            );
+            return true;
+        }
+
+        if let Some(id) = payload.provider.as_deref() {
+            let Some(provider) = hide_ai::ProviderId::from_id(id) else {
+                self.set_error(
+                    "ai_settings.unknown_provider",
+                    format!("Hide has no background AI provider called {id}"),
+                    false,
+                );
+                return true;
+            };
+            let mut settings = self.ai_settings.clone().unwrap_or_default();
+            // Naming a model keeps the current selection; naming only a
+            // provider selects it. Choosing a model for the provider that is
+            // already selected does both, which is the same thing.
+            match payload.model {
+                Some(model) => settings.set_model(provider, model),
+                None => settings.provider = provider,
+            }
+            if self.ai_settings.as_ref() != Some(&settings) {
+                self.ai_settings = Some(settings.clone());
+                self.pending_ai_settings_save = Some(settings);
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.refresh_background_ai();
+        }
+        true
+    }
+
+    /// What the provider probe should ask, and whether it should ask at all.
+    ///
+    /// An empty answer while the group is off screen is intentional, the same
+    /// way an empty disk request is: an idle Hide must never start a provider
+    /// process.
+    pub fn ai_request(&self) -> crate::ai::AiRequest {
+        let settings = self.ai_settings.clone().unwrap_or_default();
+        crate::ai::AiRequest {
+            observing: self.ai_observing,
+            models: hide_ai::PROVIDERS
+                .iter()
+                .map(|provider| (*provider, settings.model(*provider).to_owned()))
+                .collect(),
+        }
+    }
+
+    /// Hands a queued settings write to the caller that can perform it.
+    pub(crate) fn take_ai_settings_save(&mut self) -> Option<hide_ai::AiSettings> {
+        self.pending_ai_settings_save.take()
+    }
+
+    /// Stores the choice the coordinator read from the settings file, and
+    /// whether reading it failed.
+    ///
+    /// A failed read is not taken as the defaults in silence: the defaults
+    /// are used and the reason travels to the screen with them.
+    pub(crate) fn ingest_ai_settings(
+        &mut self,
+        settings: hide_ai::AiSettings,
+        chosen: bool,
+        unavailable_reason: Option<String>,
+    ) -> bool {
+        let same = self.ai_settings.as_ref() == Some(&settings)
+            && self.snapshot.status.background_ai.chosen == chosen
+            && self.snapshot.status.background_ai.unavailable_reason == unavailable_reason;
+        if same {
+            return false;
+        }
+        self.ai_settings = Some(settings);
+        self.snapshot.status.background_ai.chosen = chosen;
+        self.snapshot.status.background_ai.unavailable_reason = unavailable_reason;
+        self.refresh_background_ai();
+        true
+    }
+
+    /// Stores what the providers answered.
+    pub(crate) fn ingest_background_ai(
+        &mut self,
+        read: crate::model::BackgroundAiSnapshot,
+    ) -> bool {
+        if self.background_ai_providers == read.providers {
+            return false;
+        }
+        self.background_ai_providers = read.providers;
+        self.refresh_background_ai();
+        true
+    }
+
+    /// Reports a settings write that did not happen, so a choice the operator
+    /// made and the file on disk cannot silently disagree.
+    pub(crate) fn report_ai_settings_failure(&mut self, reason: String) -> bool {
+        if self
+            .snapshot
+            .status
+            .background_ai
+            .unavailable_reason
+            .as_deref()
+            == Some(reason.as_str())
+        {
+            return false;
+        }
+        self.snapshot.status.background_ai.unavailable_reason = Some(reason);
+        true
+    }
+
+    /// Rebuilds the Background AI section from the choice and the last
+    /// provider answers. The model each row reports is the configured one,
+    /// which is what the probe was run with.
+    fn refresh_background_ai(&mut self) {
+        let settings = self.ai_settings.clone().unwrap_or_default();
+        let mut providers = if self.background_ai_providers.is_empty() {
+            crate::model::BackgroundAiSnapshot::unread().providers
+        } else {
+            self.background_ai_providers.clone()
+        };
+        for row in &mut providers {
+            if let Some(provider) = hide_ai::ProviderId::from_id(&row.id) {
+                row.model = settings.model(provider).to_owned();
+            }
+        }
+        self.snapshot.status.background_ai.provider = settings.provider.as_str().to_owned();
+        self.snapshot.status.background_ai.providers = providers;
+    }
+
     /// Hands the queued installs to the caller that can perform them.
     pub(crate) fn take_agent_hook_installs(&mut self) -> Vec<hide_agent_hooks::AgentRuntime> {
         std::mem::take(&mut self.pending_hook_installs)
@@ -8661,6 +8852,7 @@ impl Runtime {
             ValidatedEvent::InstallAgentHooks(payload) => {
                 self.request_agent_hook_install(&payload.runtime_id)
             }
+            ValidatedEvent::AiSettings(payload) => self.apply_ai_settings(payload),
             ValidatedEvent::RetryConnect(payload) => {
                 if let Some(remote) = self
                     .snapshot
@@ -11031,6 +11223,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
+        "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
@@ -13313,6 +13506,215 @@ mod tests {
             !runtime.pane_relocations_in_flight.contains_key("w1:p2"),
             "a completed move is no longer in flight"
         );
+    }
+
+    /// The Background AI group's state travels on the ordinary snapshot, and
+    /// nothing on the way asks a provider anything under the mutex: this
+    /// runtime has no coordinator, and every assertion here still holds.
+    #[test]
+    fn the_snapshot_carries_the_choice_the_providers_and_their_models() {
+        let mut runtime = runtime();
+        let section = &runtime.snapshot.status.background_ai;
+        assert_eq!(
+            section.provider, "codex",
+            "the default choice is on the snapshot before anything is read"
+        );
+        assert!(!section.chosen, "nobody has chosen yet");
+        assert_eq!(
+            section
+                .providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["codex", "claude"],
+            "every provider is a row, in the offered order"
+        );
+        assert!(
+            section
+                .providers
+                .iter()
+                .all(|provider| provider.state == "unread"),
+            "a provider nobody has asked is unread, never a guessed state"
+        );
+
+        let read = crate::model::BackgroundAiSnapshot {
+            providers: vec![
+                crate::model::BackgroundAiProviderSnapshot {
+                    id: "codex".to_owned(),
+                    label: "Codex".to_owned(),
+                    state: "ready".to_owned(),
+                    headline: "Signed in".to_owned(),
+                    message: None,
+                    model: "gpt-5.6-luna".to_owned(),
+                    models: vec!["gpt-5.6-luna".to_owned(), "gpt-5.6".to_owned()],
+                    models_unavailable_reason: None,
+                },
+                crate::model::BackgroundAiProviderSnapshot {
+                    id: "claude".to_owned(),
+                    label: "Claude Code".to_owned(),
+                    state: "needs_login".to_owned(),
+                    headline: "Sign in required".to_owned(),
+                    message: Some("Run `claude login` and check again".to_owned()),
+                    model: "haiku".to_owned(),
+                    models: vec!["haiku".to_owned(), "sonnet".to_owned()],
+                    models_unavailable_reason: None,
+                },
+            ],
+            ..crate::model::BackgroundAiSnapshot::default()
+        };
+        assert!(runtime.ingest_background_ai(read.clone()));
+        assert!(
+            !runtime.ingest_background_ai(read),
+            "an unchanged read publishes nothing"
+        );
+        let section = &runtime.snapshot.status.background_ai;
+        assert_eq!(section.providers[0].state, "ready");
+        assert_eq!(section.providers[1].headline, "Sign in required");
+        assert_eq!(
+            section.providers[0].models,
+            vec!["gpt-5.6-luna".to_owned(), "gpt-5.6".to_owned()],
+            "the model list the providers answered reaches the snapshot"
+        );
+
+        // The whole section survives the wire the shell actually reads.
+        let encoded =
+            serde_json::to_value(&runtime.snapshot.status.background_ai).expect("it serializes");
+        assert_eq!(encoded["provider"], "codex");
+        assert_eq!(encoded["providers"][1]["state"], "needs_login");
+        assert_eq!(encoded["providers"][0]["models"][1], "gpt-5.6");
+    }
+
+    #[test]
+    fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
+        let mut runtime = runtime();
+        let event = |payload: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 2, "kind": "ai_settings", "payload": payload
+            }))
+            .expect("the event encodes")
+        };
+
+        assert!(
+            runtime.take_ai_settings_save().is_none(),
+            "nothing is written until the operator chooses"
+        );
+        assert!(!runtime.ai_request().observing, "nobody is looking yet");
+
+        assert!(runtime.dispatch_json(&event(serde_json::json!({"observing": true}))));
+        assert!(
+            runtime.ai_request().observing,
+            "the group being on screen is what lets the probe run"
+        );
+        assert!(
+            runtime.take_ai_settings_save().is_none(),
+            "looking at the screen is not a choice to save"
+        );
+
+        assert!(runtime.dispatch_json(&event(serde_json::json!({"provider": "claude"}))));
+        assert_eq!(
+            runtime.snapshot.status.background_ai.provider, "claude",
+            "the choice is on the snapshot before the file write happens"
+        );
+        assert!(runtime.dispatch_json(&event(
+            serde_json::json!({"provider": "claude", "model": "sonnet"})
+        )));
+        assert_eq!(
+            runtime.ai_request().models[&hide_ai::ProviderId::Claude],
+            "sonnet",
+            "the probe asks about the model the operator chose"
+        );
+
+        let saved = runtime
+            .take_ai_settings_save()
+            .expect("the choice is queued for the coordinator to write");
+        assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
+        assert_eq!(saved.model(hide_ai::ProviderId::Claude), "sonnet");
+        assert_eq!(
+            saved.router_config().priority,
+            vec![hide_ai::ProviderId::Claude, hide_ai::ProviderId::Codex],
+            "the chosen provider leads and failover still has somewhere to go"
+        );
+        assert!(
+            runtime.take_ai_settings_save().is_none(),
+            "a taken write is not performed twice"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_choice_and_a_failed_write_are_stated_rather_than_dropped() {
+        let mut runtime = runtime();
+        assert!(runtime.ingest_ai_settings(
+            hide_ai::AiSettings::default(),
+            false,
+            Some("The saved choice could not be read; the defaults are in use".to_owned()),
+        ));
+        assert_eq!(
+            runtime.snapshot.status.background_ai.provider, "codex",
+            "the defaults are used"
+        );
+        assert!(
+            runtime
+                .snapshot
+                .status
+                .background_ai
+                .unavailable_reason
+                .is_some(),
+            "and the reason travels with them rather than being swallowed"
+        );
+
+        assert!(runtime.report_ai_settings_failure("The choice could not be saved".to_owned()));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .background_ai
+                .unavailable_reason
+                .as_deref(),
+            Some("The choice could not be saved")
+        );
+        assert!(
+            !runtime.report_ai_settings_failure("The choice could not be saved".to_owned()),
+            "the same failure publishes once"
+        );
+    }
+
+    #[test]
+    fn an_unknown_provider_or_a_model_with_no_provider_is_refused() {
+        let mut runtime = runtime();
+        let event = |payload: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 2, "kind": "ai_settings", "payload": payload
+            }))
+            .expect("the event encodes")
+        };
+
+        assert!(runtime.dispatch_json(&event(serde_json::json!({"provider": "gemini"}))));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .expect("the refusal is visible")
+                .kind,
+            "ai_settings.unknown_provider"
+        );
+        assert_eq!(runtime.snapshot.status.background_ai.provider, "codex");
+        assert!(runtime.take_ai_settings_save().is_none());
+
+        assert!(runtime.dispatch_json(&event(serde_json::json!({"model": "sonnet"}))));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .expect("the refusal is visible")
+                .kind,
+            "ai_settings.model_without_provider",
+            "a model is never applied to whichever provider happens to be selected"
+        );
+        assert!(runtime.take_ai_settings_save().is_none());
     }
 
     fn runtime() -> Runtime {

@@ -100,6 +100,7 @@
     "--size-tab-indicator": "Control.tabIndicatorHeight",
     "--size-form-control": "formControlHeight",
     "--size-settings-field": "settingsFieldHeight",
+    "--size-settings-control-w": "settingsControlWidth",
     "--size-checkout-row": "checkoutRowHeight",
     "--size-checkout-icon": "checkoutIconWidth",
     "--size-lineage-indent": "lineageIndent",

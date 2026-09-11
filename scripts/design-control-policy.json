@@ -43,9 +43,10 @@
     },
     "HideFormPicker.swift": {
       "kind": "owner",
-      "reason": "Owns the form menu picker while retaining native menu selection behaviour.",
+      "reason": "Owns the form menu picker while retaining native menu selection behaviour, and decides inline presentation for the settings-row variant whose label the row already carries.",
       "rules": {
-        "control:Picker": 1
+        "control:Picker": 1,
+        "native-style:pickerStyle:inline": 1
       }
     },
     "HideIconButton.swift": {

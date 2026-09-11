@@ -448,6 +448,172 @@ fn setting_automatic_summaries_is_idempotent() {
     }
 }
 
+/// The setting reaches the plugin: the router it builds follows the file, and
+/// a changed file is picked up on the same scan boundary that already re-reads
+/// this plugin's own settings.
+#[test]
+fn the_saved_choice_decides_the_routers_priority_and_a_changed_file_is_re_read() {
+    let root = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    fs::create_dir_all(&paths.root).unwrap();
+
+    // No file at all is the defaults, and the router's own order.
+    assert_eq!(
+        provider::settings(home.path()).0.router_config().priority,
+        RouterConfig::default().priority,
+        "nobody has chosen, so nothing is reordered"
+    );
+
+    let mut chosen = hide_ai::AiSettings {
+        provider: ProviderId::Claude,
+        ..hide_ai::AiSettings::default()
+    };
+    chosen.set_model(ProviderId::Claude, "sonnet");
+    hide_ai::settings::save(home.path(), &chosen).unwrap();
+
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        no_provider(),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.follow_ai_settings(home.path());
+    assert_eq!(
+        watcher.router.provider_state().map(|state| state.selected),
+        Some(ProviderId::Claude),
+        "the router the watcher runs on starts from the saved choice"
+    );
+
+    // A choice written while the watcher is running is picked up by the next
+    // scan, without restarting it.
+    let moved = hide_ai::AiSettings {
+        provider: ProviderId::Codex,
+        ..chosen.clone()
+    };
+    hide_ai::settings::save(home.path(), &moved).unwrap();
+    watcher.scan().unwrap();
+    assert_eq!(
+        watcher.router.provider_state().map(|state| state.selected),
+        Some(ProviderId::Codex),
+        "the changed file moved the router without a restart"
+    );
+    assert!(
+        fs::read_to_string(paths.log())
+            .unwrap()
+            .contains("ai_settings_changed"),
+        "the move is recorded rather than silent"
+    );
+
+    // An unchanged file does not rebuild anything.
+    let before = Arc::as_ptr(&watcher.router);
+    watcher.scan().unwrap();
+    assert_eq!(
+        Arc::as_ptr(&watcher.router),
+        before,
+        "an unchanged choice leaves the router, and its sticky state, alone"
+    );
+}
+
+/// A settings file that cannot be read is not taken as the defaults in
+/// silence: the reason lands in the plugin's own log and the defaults are then
+/// used.
+#[test]
+fn an_unreadable_choice_is_logged_before_the_defaults_are_used() {
+    let root = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    fs::create_dir_all(&paths.root).unwrap();
+    write_broken_ai_settings(home.path());
+
+    assert_eq!(
+        provider::settings_once(home.path(), &paths),
+        hide_ai::AiSettings::default(),
+        "the defaults are used"
+    );
+    assert!(
+        fs::read_to_string(paths.log())
+            .unwrap()
+            .contains("ai_settings_unreadable"),
+        "and the reason is stated first"
+    );
+}
+
+/// The reason is a state, not a tick. The watcher re-reads the file every
+/// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken file
+/// logged on every scan would grow it without end; the reason is written when
+/// it changes, and so is the recovery.
+#[test]
+fn a_broken_choice_is_logged_once_and_its_repair_is_logged_once() {
+    let root = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    fs::create_dir_all(&paths.root).unwrap();
+    write_broken_ai_settings(home.path());
+
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        no_provider(),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.follow_ai_settings(home.path());
+    for _ in 0..5 {
+        watcher.scan().unwrap();
+    }
+
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_unreadable"),
+        1,
+        "six reads of the same broken file state the reason once"
+    );
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_readable"),
+        0,
+        "nothing has been repaired yet"
+    );
+
+    // Repairing the file is visible: it reads again, and it says so once.
+    let chosen = hide_ai::AiSettings {
+        provider: ProviderId::Claude,
+        ..hide_ai::AiSettings::default()
+    };
+    hide_ai::settings::save(home.path(), &chosen).unwrap();
+    for _ in 0..3 {
+        watcher.scan().unwrap();
+    }
+
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_readable"),
+        1,
+        "the repair is stated once, not on every scan after it"
+    );
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_unreadable"),
+        1,
+        "and the old reason is not repeated"
+    );
+    assert_eq!(
+        watcher.router.provider_state().map(|state| state.selected),
+        Some(ProviderId::Claude),
+        "the repaired choice is the one in force"
+    );
+}
+
+fn write_broken_ai_settings(home: &Path) {
+    let settings_path = hide_ai::settings::settings_path(home);
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(&settings_path, "{ this is not json").unwrap();
+}
+
+fn count_log_lines(paths: &StatePaths, event: &str) -> usize {
+    fs::read_to_string(paths.log())
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains(event))
+        .count()
+}
+
 #[test]
 fn corrupt_state_files_do_not_stop_the_watcher() {
     let root = tempdir().unwrap();
@@ -1423,6 +1589,10 @@ impl AiBackend for ScriptedBackend {
         Availability::Ready
     }
 
+    fn models(&self) -> hide_ai::ModelCatalog {
+        hide_ai::ModelCatalog::Offered(vec![format!("{}-model", self.id)])
+    }
+
     fn execute(
         &self,
         _: &hide_ai::AiRequest,
@@ -1470,6 +1640,10 @@ impl AiBackend for PanickingBackend {
 
     fn availability(&self) -> Availability {
         Availability::Ready
+    }
+
+    fn models(&self) -> hide_ai::ModelCatalog {
+        hide_ai::ModelCatalog::Offered(Vec::new())
     }
 
     fn execute(

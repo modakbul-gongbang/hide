@@ -40,10 +40,52 @@ Hide reads no token file and adds no environment variable.
   One child per request, never a persistent one: a second request to a live child reuses its `session_id` and the conversation accumulates.
   A cancelled or expired request kills the child, which is safe because print mode holds no state worth draining.
 
+## The operator's choice
+
+Which agent answers, and which of its models, is a setting.
+It lives in `~/Library/Application Support/hide/ai.json`, a sibling of Hide's own `state.json`, and `hide-ai/src/settings.rs` owns the path, the schema and the rule that turns a choice into a `RouterConfig`.
+
+Both processes that care link this crate, which is why the file is where it is.
+Hide writes it: the Settings `Background AI` group dispatches one `ai_settings` event, the core applies it to the snapshot at once and queues the write, and the session-sync coordinator performs the write off the runtime mutex.
+The context-label plugin reads it: `provider::settings` loads it at startup and the watcher re-reads it on every scan, on the same boundary that already re-reads the plugin's own `settings.json`, so a choice made in Settings reaches the next label without restarting the watcher.
+A changed choice rebuilds the router, because a backend is constructed with its model; an unchanged one leaves the router and its sticky failover state alone.
+
+A path under a plugin's configuration directory was rejected: it would tie Hide to one plugin id and break when a second plugin consumes the boundary.
+A Herdr plugin action was rejected because an action takes no parameters, and a new daemon or socket was rejected as a third contract between two consumers.
+
+The file names a provider and a model per provider:
+
+```json
+{
+  "provider": "codex",
+  "models": { "codex": "gpt-5.6-luna", "claude": "haiku" }
+}
+```
+
+The defaults are the backends' own constants: `codex` with `gpt-5.6-luna`, `claude` with `haiku`.
+A file that is not there means nobody has chosen, so the defaults stand and nothing is reported.
+A field that is missing takes its default and a field the crate does not know is ignored, so an older Hide reads a file a newer one wrote.
+A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Settings group and the plugin writes `ai_settings_unreadable` to its log, and only then do the defaults apply.
+The plugin writes that line when the reason changes, not when it reads the file.
+It re-reads the choice on every scan and rotates nothing, so a line per read would grow its log for as long as the file stayed broken; a repaired file is recorded once too, as `ai_settings_readable`, so fixing it is visible in the same place.
+A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
+A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
+
+Choosing a provider reorders the priority and changes nothing else.
+The chosen one leads, the other still follows it, and every retry, cooldown and stickiness constant is still `RouterConfig::default()`'s, so the fallback described below is the same fallback.
+
+Settings shows each provider's availability and the models it offers.
+Both come from asking the provider, so no model list is written into the core or the shell; `AiRouter::availability()` and `AiRouter::models()` are the source.
+Asking costs child processes, so the probe is a capability reader like the project panel's: the session-sync coordinator drives it, the work runs on a worker thread, the runtime mutex is never held across it, and it asks nothing at all while the group is off screen.
+`scripts/check-capability-readers-off-lock.sh` asserts that structurally, by name.
+
+There is no usage cap and no budget surface; that is a decision, not a gap.
+
 ## Selection and fallback
 
 With one provider connected, that provider is used.
-With more than one, the configured priority decides: `codex`, then `claude`.
+With more than one, the configured priority decides: the operator's chosen provider, then the other.
+Nobody having chosen means the default order, `codex` then `claude`.
 
 `AiRouter::provider_state()` answers the standing question a result alone cannot: the `selected` provider is the one the priority puts first, `active` is the provider a request made now would run on, and `degraded` says why `selected` stepped aside and what remains of its wait.
 `active` is `None` when every provider is degraded, which is a reachable state now that both providers can answer, and is reported rather than filled in with a provider that cannot answer.
@@ -111,6 +153,9 @@ Still give a development build its own home so it never writes next to the insta
   Closing this properly needs a structured reset field in the result frame, not a parser for that sentence.
 - The Claude backend does not check that the configured model is one the account offers, because Claude Code exposes no model list command; the codex backend checks `model/list`.
   A model the account cannot use is therefore discovered as a request failure rather than as an availability state.
+  The same gap is why `ClaudeCliBackend::models()` answers from `claude::MODEL_ALIASES` rather than from the CLI: `claude --help` documents `--model` with three of the four aliases as examples and there is no list subcommand, and parsing that sentence would be a worse contract than naming them.
+  It is the one model list in the codebase a provider is not asked for, and it stays inside the provider boundary; neither the core nor the shell holds one.
+  The Settings model control always offers the configured model even when it is not on the provider's list, so reaching the screen never silently changes the operator's choice.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each status and reading the frame it printed; see `agents/runs/hide-ai-claude-backend/claude-print-mode-measurements.md`.
 - Usage display in the sidebar reads what the CLIs cache locally (`herdr-core/src/usage.rs`); the router's daily rollup is a log line, not a sidebar value.

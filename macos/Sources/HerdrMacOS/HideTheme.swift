@@ -211,6 +211,9 @@ enum HideTheme {
     static let worktreeDialogWidth: CGFloat = 440
     static let formControlHeight: CGFloat = 36
     static let settingsFieldHeight: CGFloat = 24
+    /// The right-hand control column in a settings row. Wide enough for a
+    /// full model name and narrow enough that the row still reads as a table.
+    static let settingsControlWidth: CGFloat = 200
     static let checkoutRowHeight: CGFloat = 36
     static let checkoutIconWidth: CGFloat = 14
     /// Align the root agent mark center with the checkout branch center.

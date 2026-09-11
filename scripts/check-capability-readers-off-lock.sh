@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The capabilities that shell out - the changes view's Git reader, the port
-# reader, and the project panel's worktree, GitHub, and disk readers - run on
-# the session-sync coordinator thread and never under the runtime mutex or on a
-# per-event path.
+# reader, the project panel's worktree, GitHub, and disk readers, and the
+# Background AI provider probe - run on the session-sync coordinator thread and
+# never under the runtime mutex or on a per-event path.
 #
 # Both properties are structural, so they are asserted structurally: the
 # runtime module holds the mutex, so it must fork nothing; and the readers'
@@ -11,13 +11,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readers=(changes ports worktrees github disk)
+readers=(changes ports worktrees github disk ai)
 
-# The three project-panel readers reach the network or walk a whole tree, so
-# they must also move the blocking part off the coordinator thread itself.
-# `gh pr list` takes seconds and `du` over a build tree takes longer; run
-# inline, either would be that much added latency on every Herdr pane event.
-worker_readers=(worktrees github disk)
+# These readers reach the network, walk a whole tree, or start a provider CLI,
+# so they must also move the blocking part off the coordinator thread itself.
+# `gh pr list` takes seconds, `du` over a build tree takes longer, and the AI
+# probe starts a `codex app-server` child and runs `claude auth status`; run
+# inline, any of them would be that much added latency on every Herdr pane
+# event.
+worker_readers=(worktrees github disk ai)
 
 # 1. The module that holds the mutex, and the file module it calls
 #    synchronously while holding it, execute no subprocess at all. The test
@@ -73,8 +75,11 @@ done
 
 # 5. The coordinator reads each request under the lock and releases it before
 #    the reader runs.
-for request in read_changes_request read_worktrees_request read_github_request read_disk_request; do
-    if ! grep -q "let Some(request) = ${request}" herdr-core/src/session_sync.rs; then
+for request in read_changes_request read_worktrees_request read_github_request read_disk_request read_ai_request; do
+    # The binding may destructure - one lock acquisition can answer for more
+    # than the request - so what is asserted is that the request is read out of
+    # a `let Some(...)` before the reader runs, not the exact binding shape.
+    if ! grep -qE "let Some\([^=]*request[^=]*\) = ${request}\(" herdr-core/src/session_sync.rs; then
         printf 'the coordinator no longer reads %s before running its subprocess\n' "$request" >&2
         exit 1
     fi

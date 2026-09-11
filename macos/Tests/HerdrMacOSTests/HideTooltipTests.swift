@@ -39,8 +39,15 @@ struct HideTooltipTests {
         // A fixed sleep can resume before the already-due reveal task runs.
         // Assert eventual delivery here; delayAndDismissalEvents checks the
         // exact 400 ms threshold without depending on scheduler timing.
+        //
+        // The bound is generous because it is not the assertion: the loop
+        // exits the moment the reveal lands, so a healthy run pays nothing
+        // for it. Three seconds was not generous enough. Running this suite
+        // beside a full `cargo test` starves the main actor past it, which
+        // failed this one test in three runs out of four while the same suite
+        // passed every time it ran alone.
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(3))
+        let deadline = clock.now.advanced(by: .seconds(30))
         while controller.state.visibleID == nil && clock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }

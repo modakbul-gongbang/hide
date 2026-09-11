@@ -1015,6 +1015,7 @@ dependencies = [
  "anyhow",
  "base64",
  "hide-agent-hooks",
+ "hide-ai",
  "libc",
  "regex",
  "regress 0.12.0",

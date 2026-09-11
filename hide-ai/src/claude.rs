@@ -28,12 +28,25 @@ use serde_json::Value;
 
 use crate::codex::resolve_binary;
 use crate::{
-    AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ProviderId,
+    AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
+    ProviderId,
 };
 
 /// The user's decision for background features: the cheapest alias that
 /// answered the measured classification correctly.
 pub const DEFAULT_MODEL: &str = "haiku";
+
+/// The aliases `--model` accepts, cheapest first.
+///
+/// This is the one model list in the crate that a provider is not asked for,
+/// because Claude Code has no command that answers the question: `--help`
+/// documents `--model` with three of the four aliases as examples and there is
+/// no list subcommand. Parsing that sentence would be a worse contract than
+/// naming the aliases here, so the gap is recorded in `AI_PROVIDERS.md`
+/// instead, and an account that cannot use the chosen alias still discovers it
+/// as a request failure. It stays inside the provider boundary: no list of
+/// Claude models exists in the core or the shell.
+pub const MODEL_ALIASES: &[&str] = &["haiku", "sonnet", "opus", "fable"];
 
 /// The availability probe is a local process that reads a token file; it has
 /// no reason to take longer than this, and the router must not stall on it.
@@ -156,6 +169,23 @@ impl AiBackend for ClaudeCliBackend {
                 reason: "auth_status_without_logged_in".to_owned(),
             },
         }
+    }
+
+    /// The documented aliases, which is all the CLI offers; see
+    /// [`MODEL_ALIASES`]. A CLI that is not installed answers nothing, the
+    /// same as its availability does.
+    fn models(&self) -> ModelCatalog {
+        if self.resolved_binary().is_none() {
+            return ModelCatalog::Unknown {
+                reason: "claude_not_installed".to_owned(),
+            };
+        }
+        ModelCatalog::Offered(
+            MODEL_ALIASES
+                .iter()
+                .map(|alias| (*alias).to_owned())
+                .collect(),
+        )
     }
 
     fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {

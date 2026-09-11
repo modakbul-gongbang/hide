@@ -243,6 +243,13 @@ fn run_coordinator(
         .then(crate::worktrees::WorktreeReader::new);
     let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
     let mut disk_reader = context.is_local().then(crate::disk::DiskReader::new);
+    // The provider probe starts a `codex app-server` child and runs
+    // `claude auth status`, so it is a reader like the three above and it
+    // reads nothing at all while the Background AI group is off screen.
+    let mut ai_reader = context.is_local().then(crate::ai::AiReader::new);
+    if let Some(home) = hook_home.as_deref() {
+        publish_ai_settings(&context, home);
+    }
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -441,6 +448,47 @@ fn run_coordinator(
             };
             if let Some(disk) = reader.read_if_due(request)
                 && !publish_disk_usage(&context, disk)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = ai_reader.as_mut() {
+            let Some((request, queued_settings)) = read_ai_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            // The settings write is file I/O, so it happens here rather than
+            // under the runtime mutex that took the operator's choice.
+            if let Some(settings) = queued_settings {
+                // The choice has already been taken out of the runtime, so a
+                // home this process could not resolve must not swallow it in
+                // silence; it is the same failure as a refused write and it
+                // reaches the same line on the group.
+                let saved = match hook_home.as_deref() {
+                    Some(home) => save_ai_settings(&context, home, &settings),
+                    None => {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "ai_settings",
+                            "kind": "settings.write_skipped",
+                            "message": "no home directory on this session",
+                        }));
+                        report_ai_settings_failure(
+                            &context,
+                            "The choice could not be saved (no home directory); \
+                             it applies to this session only"
+                                .to_string(),
+                        )
+                    }
+                };
+                if !saved {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+            if let Some(background_ai) = reader.read_if_due(request)
+                && !publish_background_ai(&context, background_ai)
             {
                 stop_subscription(&mut subscription);
                 return;
@@ -1085,6 +1133,100 @@ fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRe
     Some(request)
 }
 
+/// What the provider probe should ask, and any choice waiting to be written.
+///
+/// Both come out of one lock acquisition rather than two. The coordinator
+/// takes this lock once per wake for each reader it drives, and a settings
+/// write is rare enough that it does not deserve a wake of its own.
+fn read_ai_request(
+    context: &SessionSyncContext,
+) -> Option<(crate::ai::AiRequest, Option<hide_ai::AiSettings>)> {
+    let runtime = context.runtime.upgrade()?;
+    let read = {
+        let mut guard = runtime.lock().ok()?;
+        (guard.ai_request(), guard.take_ai_settings_save())
+    };
+    drop(runtime);
+    Some(read)
+}
+
+/// Reads the operator's saved background AI choice once at startup.
+///
+/// A file that is not there means nobody has chosen, so the defaults stand
+/// and nothing is reported. A file that exists and cannot be read is stated
+/// once, here, and the defaults are used with that reason attached rather
+/// than in silence.
+fn publish_ai_settings(context: &SessionSyncContext, home: &std::path::Path) {
+    let path = hide_ai::settings::settings_path(home);
+    let (settings, chosen, reason) = match hide_ai::settings::load(home) {
+        Ok(settings) => (settings, path.exists(), None),
+        Err(error) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "ai_settings",
+                "kind": "settings.unreadable",
+                "message": error.to_string(),
+            }));
+            (
+                hide_ai::AiSettings::default(),
+                false,
+                Some(format!(
+                    "The saved choice could not be read ({error}); the defaults are in use"
+                )),
+            )
+        }
+    };
+    let Some(runtime) = context.runtime.upgrade() else {
+        return;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_ai_settings(settings, chosen, reason),
+        Err(_) => return,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+}
+
+/// Writes a choice the runtime queued. `false` means the runtime is gone.
+fn save_ai_settings(
+    context: &SessionSyncContext,
+    home: &std::path::Path,
+    settings: &hide_ai::AiSettings,
+) -> bool {
+    let Err(error) = hide_ai::settings::save(home, settings) else {
+        return true;
+    };
+    crate::diagnostic!(serde_json::json!({
+        "component": "ai_settings",
+        "kind": "settings.write_failed",
+        "message": error.to_string(),
+    }));
+    report_ai_settings_failure(
+        context,
+        format!("The choice could not be saved ({error}); it applies to this session only"),
+    )
+}
+
+/// Puts the reason a choice was not written on the group that took it, and
+/// reports whether the coordinator can carry on. A choice the runtime has
+/// already handed over is gone either way; what this decides is whether the
+/// operator is told.
+fn report_ai_settings_failure(context: &SessionSyncContext, message: String) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.report_ai_settings_failure(message),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
 /// Invalidates the local reader when Herdr reports a worktree topology event.
 /// This only changes an in-memory generation while the mutex is held; the git
 /// read itself starts later on `WorktreeReader`'s background worker.
@@ -1136,6 +1278,24 @@ fn publish_disk_usage(
     };
     let changed = match runtime.lock() {
         Ok(mut guard) => guard.ingest_disk_usage(disk),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_background_ai(
+    context: &SessionSyncContext,
+    background_ai: crate::model::BackgroundAiSnapshot,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_background_ai(background_ai),
         Err(_) => return false,
     };
     drop(runtime);
@@ -2989,6 +3149,34 @@ mod tests {
             .expect("write response");
     }
 
+    /// Accepts requests until the coordinator asks for the named method.
+    ///
+    /// The coordinator refreshes agent telemetry once a second, on its own
+    /// clock, so an `agent.list` can land between any two requests a test is
+    /// interested in. Asserting that the very next request is the awaited one
+    /// therefore asserts the scheduler: these tests failed on it in one run
+    /// out of three with no change to the code under test. Each interleaved
+    /// refresh is answered with an empty list, which is what the coordinator
+    /// expects and what leaves its projection untouched.
+    fn accept_request_for(listener: &UnixListener, method: &str) -> (UnixStream, Value) {
+        for _ in 0..32 {
+            let (mut stream, request) = accept_request(listener);
+            if request["method"] == method {
+                return (stream, request);
+            }
+            assert_eq!(
+                request["method"], "agent.list",
+                "only an agent refresh may interleave while {method} is awaited"
+            );
+            write_result(
+                &mut stream,
+                &request,
+                json!({"type": "agent_list", "agents": []}),
+            );
+        }
+        panic!("the coordinator never asked for {method}");
+    }
+
     fn wait_until(deadline: Instant, mut predicate: impl FnMut() -> bool) {
         while Instant::now() < deadline {
             if predicate() {
@@ -3970,7 +4158,8 @@ mod tests {
         let resumed = Arc::new(AtomicBool::new(false));
         let resumed_from_server = Arc::clone(&resumed);
         let server = thread::spawn(move || {
-            let (mut snapshot_stream, snapshot_request) = accept_request(&listener);
+            let (mut snapshot_stream, snapshot_request) =
+                accept_request_for(&listener, "session.snapshot");
             assert_eq!(snapshot_request["method"], "session.snapshot");
             write_result(
                 &mut snapshot_stream,
@@ -3978,7 +4167,8 @@ mod tests {
                 json!({"type": "session_snapshot", "snapshot": snapshot()}),
             );
 
-            let (mut first_subscription, first_subscribe_request) = accept_request(&listener);
+            let (mut first_subscription, first_subscribe_request) =
+                accept_request_for(&listener, "events.subscribe");
             assert_eq!(first_subscribe_request["method"], "events.subscribe");
             assert_eq!(first_subscribe_request["params"]["after_sequence"], 40);
             write_result(
@@ -4005,7 +4195,8 @@ mod tests {
             .expect("write replayable event");
             drop(first_subscription);
 
-            let (mut resumed_subscription, resumed_request) = accept_request(&listener);
+            let (mut resumed_subscription, resumed_request) =
+                accept_request_for(&listener, "events.subscribe");
             assert_eq!(
                 resumed_request["method"], "events.subscribe",
                 "a clean disconnect must resume the cursor instead of fetching a snapshot"
@@ -4062,7 +4253,8 @@ mod tests {
         let state_path = root.join("state.json");
         let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
         let server = thread::spawn(move || {
-            let (mut first_snapshot_stream, first_snapshot_request) = accept_request(&listener);
+            let (mut first_snapshot_stream, first_snapshot_request) =
+                accept_request_for(&listener, "session.snapshot");
             assert_eq!(first_snapshot_request["method"], "session.snapshot");
             write_result(
                 &mut first_snapshot_stream,
@@ -4070,7 +4262,8 @@ mod tests {
                 json!({"type": "session_snapshot", "snapshot": snapshot()}),
             );
 
-            let (mut first_subscription, first_subscribe_request) = accept_request(&listener);
+            let (mut first_subscription, first_subscribe_request) =
+                accept_request_for(&listener, "events.subscribe");
             assert_eq!(first_subscribe_request["method"], "events.subscribe");
             assert_eq!(first_subscribe_request["params"]["after_sequence"], 40);
             write_result(
@@ -4097,7 +4290,8 @@ mod tests {
             .expect("write event gap");
             drop(first_subscription);
 
-            let (mut second_snapshot_stream, second_snapshot_request) = accept_request(&listener);
+            let (mut second_snapshot_stream, second_snapshot_request) =
+                accept_request_for(&listener, "session.snapshot");
             assert_eq!(second_snapshot_request["method"], "session.snapshot");
             let mut recovered = snapshot();
             recovered["event_sequence"] = json!(50);
@@ -4110,7 +4304,8 @@ mod tests {
                 json!({"type": "session_snapshot", "snapshot": recovered}),
             );
 
-            let (mut final_subscription, final_subscribe_request) = accept_request(&listener);
+            let (mut final_subscription, final_subscribe_request) =
+                accept_request_for(&listener, "events.subscribe");
             assert_eq!(final_subscribe_request["method"], "events.subscribe");
             assert_eq!(final_subscribe_request["params"]["after_sequence"], 50);
             write_result(

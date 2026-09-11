@@ -10,11 +10,13 @@ mod codex;
 mod log;
 mod router;
 mod schema;
+pub mod settings;
 
 pub use claude::{ClaudeCliBackend, ClaudeConfig};
 pub use codex::{CodexAppServerBackend, CodexConfig};
 pub use log::{AiLogEvent, AiLogSink, NoopLogSink};
 pub use router::{AiRouter, Degraded, ProviderState, RouterConfig};
+pub use settings::{AiSettings, PROVIDERS};
 
 use std::fmt;
 use std::sync::Arc;
@@ -25,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Stable provider name; also the log field value.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
     Codex,
@@ -39,11 +41,55 @@ impl ProviderId {
             Self::Claude => "claude",
         }
     }
+
+    /// The provider's name as a person reads it. The shell renders this
+    /// rather than capitalising `as_str` itself.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude Code",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "codex" => Some(Self::Codex),
+            "claude" => Some(Self::Claude),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for ProviderId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// What models a provider offers, or why that is not known.
+///
+/// A provider that cannot be asked reports the reason rather than an empty
+/// list, because an empty list and an unanswered question look the same to a
+/// menu and only one of them is a real answer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelCatalog {
+    Offered(Vec<String>),
+    Unknown { reason: String },
+}
+
+impl ModelCatalog {
+    pub fn offered(&self) -> &[String] {
+        match self {
+            Self::Offered(models) => models,
+            Self::Unknown { .. } => &[],
+        }
+    }
+
+    pub fn unknown_reason(&self) -> Option<&str> {
+        match self {
+            Self::Offered(_) => None,
+            Self::Unknown { reason } => Some(reason),
+        }
     }
 }
 
@@ -239,5 +285,8 @@ impl CancelToken {
 pub trait AiBackend: Send + Sync {
     fn id(&self) -> ProviderId;
     fn availability(&self) -> Availability;
+    /// Which models this provider offers the logged-in account. Every backend
+    /// answers, so nothing above this layer keeps a model list of its own.
+    fn models(&self) -> ModelCatalog;
     fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError>;
 }

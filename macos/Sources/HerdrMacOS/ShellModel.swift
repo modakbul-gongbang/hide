@@ -521,6 +521,12 @@ final class ShellModel: ObservableObject {
         core.snapshot?.status.agentHooks ?? CoreAgentHooks()
     }
 
+    /// The Background AI group's state. The core resolves the choice, each
+    /// provider's availability and its model list; this is the read.
+    var backgroundAI: CoreBackgroundAI {
+        core.snapshot?.status.backgroundAI ?? CoreBackgroundAI()
+    }
+
     var agentsConnected: Bool {
         if let device = activeRemoteDevice {
             return core.snapshot?.status.remote.first { $0.targetID == device.id }?.state == "connected"

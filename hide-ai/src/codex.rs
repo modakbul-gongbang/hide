@@ -15,7 +15,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 
 use crate::{
-    AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ProviderId,
+    AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
+    ProviderId,
 };
 
 /// The user's decision for background features.
@@ -347,6 +348,44 @@ impl AiBackend for CodexAppServerBackend {
                 }
             }
             Err(error) => Availability::Unavailable {
+                reason: error.to_string(),
+            },
+        }
+    }
+
+    /// `model/list` is the app-server's own answer, so nothing above this
+    /// backend keeps a list of Codex models.
+    fn models(&self) -> ModelCatalog {
+        if self.resolved_binary().is_none() {
+            return ModelCatalog::Unknown {
+                reason: "codex_not_installed".to_owned(),
+            };
+        }
+        let mut guard = self.lock();
+        let session = match self.ensure_session(&mut guard) {
+            Ok(session) => session,
+            Err(error) => {
+                return ModelCatalog::Unknown {
+                    reason: error.to_string(),
+                };
+            }
+        };
+        match session.request("model/list", json!({}), CONTROL_TIMEOUT) {
+            Ok(models) => match models.get("data").and_then(Value::as_array) {
+                Some(offered) => ModelCatalog::Offered(
+                    offered
+                        .iter()
+                        .filter_map(|model| model.get("id").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect(),
+                ),
+                // The field is the contract; without it the list is unknown
+                // rather than empty.
+                None => ModelCatalog::Unknown {
+                    reason: "model_list_without_data".to_owned(),
+                },
+            },
+            Err(error) => ModelCatalog::Unknown {
                 reason: error.to_string(),
             },
         }

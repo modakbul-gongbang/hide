@@ -1492,6 +1492,15 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     analysis_in_flight: HashSet<String>,
     analysis_sender: mpsc::Sender<AnalysisOutcome>,
     analysis_receiver: mpsc::Receiver<AnalysisOutcome>,
+    /// The home whose `hide-ai` settings file this watcher follows, and the
+    /// choice it last read from it. `None` for a watcher given its router
+    /// directly, which is what a test does.
+    ai_settings: Option<(PathBuf, hide_ai::AiSettings)>,
+    /// Why that file last failed to read, so a reason is logged when it
+    /// changes rather than on every scan. The file is read every
+    /// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken
+    /// file logged unconditionally would grow it without end.
+    ai_settings_failure: Option<String>,
 }
 
 impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
@@ -1518,7 +1527,58 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             analysis_in_flight: HashSet::new(),
             analysis_sender,
             analysis_receiver,
+            ai_settings: None,
+            ai_settings_failure: None,
         }
+    }
+
+    /// Follows the operator's saved provider and model choice from this home.
+    ///
+    /// The choice is re-read on every scan, beside this plugin's own settings,
+    /// and a changed one rebuilds the router: a backend is constructed with
+    /// its model, and the priority is what the choice reorders. Rebuilding
+    /// also drops the sticky failover state, which is right, because the
+    /// reason it was sticky was about the provider that is no longer chosen.
+    pub fn follow_ai_settings(&mut self, home: &Path) {
+        let settings = self.read_ai_settings(home);
+        self.router = crate::provider::router(&settings, &self.paths);
+        self.ai_settings = Some((home.to_path_buf(), settings));
+    }
+
+    /// Reads the choice and records a change in whether it could be read at
+    /// all: the reason a file is unreadable is written once, and so is the
+    /// recovery, so fixing the file is visible in the same log.
+    fn read_ai_settings(&mut self, home: &Path) -> hide_ai::AiSettings {
+        let (settings, failure) = crate::provider::settings(home);
+        if failure != self.ai_settings_failure {
+            match failure.as_deref() {
+                Some(reason) => {
+                    let _ = append_log(&self.paths, "ai_settings_unreadable", None, Some(reason));
+                }
+                None => {
+                    let _ = append_log(&self.paths, "ai_settings_readable", None, None);
+                }
+            }
+            self.ai_settings_failure = failure;
+        }
+        settings
+    }
+
+    /// Re-reads the choice and rebuilds the router when it moved. Returns
+    /// whether it moved, so the caller can record it.
+    fn refresh_ai_settings(&mut self) -> bool {
+        let Some((home, current)) = self.ai_settings.as_ref() else {
+            return false;
+        };
+        let home = home.clone();
+        let current = current.clone();
+        let read = self.read_ai_settings(&home);
+        if read == current {
+            return false;
+        }
+        self.router = crate::provider::router(&read, &self.paths);
+        self.ai_settings = Some((home, read));
+        true
     }
 
     pub fn scan(&mut self) -> Result<usize> {
@@ -1526,6 +1586,14 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         // Both files are read once per scan rather than once per pane.
         self.hook_states = load_hook_states(&self.paths);
         self.settings = load_settings(&self.paths);
+        // The operator's provider and model choice lives in `hide-ai`'s own
+        // file, read on this same boundary rather than on a third schedule.
+        if self.refresh_ai_settings()
+            && let Some((_, settings)) = self.ai_settings.as_ref()
+        {
+            let detail = crate::provider::settings_detail(settings);
+            let _ = append_log(&self.paths, "ai_settings_changed", None, Some(&detail));
+        }
         let refresh_requested = self.take_refresh_request();
         let mut processed = 0;
 

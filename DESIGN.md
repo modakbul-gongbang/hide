@@ -855,6 +855,7 @@ The context menu groups creation, branch configuration, path access, and guarded
 New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
 `HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
+Inside a settings row the same picker drops its stacked label and takes the `settingsControlWidth` (200pt) right-hand column, because the row already carries the label on the left; its accessibility label stays the picker's own.
 Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
 The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
