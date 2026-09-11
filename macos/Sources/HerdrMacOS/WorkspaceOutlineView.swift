@@ -221,7 +221,10 @@ final class WorkspaceNSOutlineView: NSOutlineView {
 
     private var hoveredRow = -1
 
+    /// `super` records `clickedRow` and draws the row's contextual ring; the
+    /// menu itself is the coordinator's, because it depends on the item.
     override func menu(for event: NSEvent) -> NSMenu? {
+        _ = super.menu(for: event)
         let point = convert(event.locationInWindow, from: nil)
         return contextMenu?(row(at: point))
     }
@@ -820,9 +823,13 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         func contextMenu(forRow row: Int) -> NSMenu? {
             guard let outline, let rootNode else { return nil }
             let node = row >= 0 ? outline.item(atRow: row) as? WorkspaceOutlineNode : nil
+            // The root row stands for the tree as the empty area does: it can
+            // take a new item but is not itself renamed or moved.
             let target: WorkspaceOutlineMenuTarget
             switch node?.role {
             case .none:
+                target = .emptyArea
+            case .entry where node === rootNode:
                 target = .emptyArea
             case .entry:
                 target = .item(isDirectory: node?.isDirectory == true)

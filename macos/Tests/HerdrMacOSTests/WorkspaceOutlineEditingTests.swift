@@ -131,6 +131,8 @@ import Testing
         )
         let emptyArea = try #require(host.coordinator.contextMenu(forRow: -1))
         #expect(emptyArea.items.map(\.title) == ["New File", "New Folder"])
+        let rootRow = try #require(host.coordinator.contextMenu(forRow: 0))
+        #expect(rootRow.items.map(\.title) == ["New File", "New Folder"])
 
         host.choose("Copy Relative Path", in: try #require(host.menu(forRowNamed: "src")))
         #expect(NSPasteboard.general.string(forType: .string) == "src")
