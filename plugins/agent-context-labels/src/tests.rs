@@ -460,9 +460,7 @@ fn the_saved_choice_decides_the_routers_priority_and_a_changed_file_is_re_read()
 
     // No file at all is the defaults, and the router's own order.
     assert_eq!(
-        provider::settings(home.path(), &paths)
-            .router_config()
-            .priority,
+        provider::settings(home.path()).0.router_config().priority,
         RouterConfig::default().priority,
         "nobody has chosen, so nothing is reordered"
     );
@@ -526,12 +524,10 @@ fn an_unreadable_choice_is_logged_before_the_defaults_are_used() {
     let home = tempdir().unwrap();
     let paths = StatePaths::for_tests(root.path());
     fs::create_dir_all(&paths.root).unwrap();
-    let settings_path = hide_ai::settings::settings_path(home.path());
-    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
-    fs::write(&settings_path, "{ this is not json").unwrap();
+    write_broken_ai_settings(home.path());
 
     assert_eq!(
-        provider::settings(home.path(), &paths),
+        provider::settings_once(home.path(), &paths),
         hide_ai::AiSettings::default(),
         "the defaults are used"
     );
@@ -541,6 +537,81 @@ fn an_unreadable_choice_is_logged_before_the_defaults_are_used() {
             .contains("ai_settings_unreadable"),
         "and the reason is stated first"
     );
+}
+
+/// The reason is a state, not a tick. The watcher re-reads the file every
+/// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken file
+/// logged on every scan would grow it without end; the reason is written when
+/// it changes, and so is the recovery.
+#[test]
+fn a_broken_choice_is_logged_once_and_its_repair_is_logged_once() {
+    let root = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    fs::create_dir_all(&paths.root).unwrap();
+    write_broken_ai_settings(home.path());
+
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        no_provider(),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.follow_ai_settings(home.path());
+    for _ in 0..5 {
+        watcher.scan().unwrap();
+    }
+
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_unreadable"),
+        1,
+        "six reads of the same broken file state the reason once"
+    );
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_readable"),
+        0,
+        "nothing has been repaired yet"
+    );
+
+    // Repairing the file is visible: it reads again, and it says so once.
+    let chosen = hide_ai::AiSettings {
+        provider: ProviderId::Claude,
+        ..hide_ai::AiSettings::default()
+    };
+    hide_ai::settings::save(home.path(), &chosen).unwrap();
+    for _ in 0..3 {
+        watcher.scan().unwrap();
+    }
+
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_readable"),
+        1,
+        "the repair is stated once, not on every scan after it"
+    );
+    assert_eq!(
+        count_log_lines(&paths, "ai_settings_unreadable"),
+        1,
+        "and the old reason is not repeated"
+    );
+    assert_eq!(
+        watcher.router.provider_state().map(|state| state.selected),
+        Some(ProviderId::Claude),
+        "the repaired choice is the one in force"
+    );
+}
+
+fn write_broken_ai_settings(home: &Path) {
+    let settings_path = hide_ai::settings::settings_path(home);
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(&settings_path, "{ this is not json").unwrap();
+}
+
+fn count_log_lines(paths: &StatePaths, event: &str) -> usize {
+    fs::read_to_string(paths.log())
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains(event))
+        .count()
 }
 
 #[test]

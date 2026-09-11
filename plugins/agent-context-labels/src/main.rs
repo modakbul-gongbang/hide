@@ -77,7 +77,9 @@ fn watch(home: &Path) -> Result<()> {
     if !migrated.is_empty() {
         append_log(paths, "state_migrated", None, Some(&migrated.join(";")))?;
     }
-    let ai_settings = provider::settings(home, paths);
+    // Quiet on purpose: the watcher follows this same file below, and it is
+    // what writes a reason, once per change of reason rather than per scan.
+    let (ai_settings, _) = provider::settings(home);
     let router = provider::router(&ai_settings, paths);
     append_log(paths, "watcher_started", None, Some(PLUGIN_ID))?;
     append_log(
@@ -196,7 +198,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Action::AnalyzeStdin => {
-            let router = provider::router(&provider::settings(&home, &paths), &paths);
+            let router = provider::router(&provider::settings_once(&home, &paths), &paths);
             let mut input = String::new();
             std::io::stdin()
                 .read_to_string(&mut input)
@@ -206,7 +208,8 @@ fn main() -> Result<()> {
         }
         Action::VerifyProvider { provider } => {
             let provider = ProviderId::from(provider);
-            let router = provider::router_for(provider, &provider::settings(&home, &paths), &paths);
+            let router =
+                provider::router_for(provider, &provider::settings_once(&home, &paths), &paths);
             let states = router.availability();
             println!("availability {}", provider::availability_detail(&states));
             let ready = states.iter().any(|(_, state)| state.is_ready());

@@ -29,24 +29,30 @@ pub fn router_for(
     build(backends, settings, paths)
 }
 
-/// The operator's saved choice, from the file `hide-ai` owns.
+/// The operator's saved choice, from the file `hide-ai` owns, and the reason
+/// it could not be read when it could not.
 ///
-/// A file that cannot be read is not taken as the defaults in silence: the
-/// reason is written to the plugin's own log once, and the defaults are then
-/// used.
-pub fn settings(home: &Path, paths: &StatePaths) -> AiSettings {
+/// This function writes nothing to the log, because the watcher calls it on
+/// every scan: a line written here would repeat every `POLL_INTERVAL` for as
+/// long as the file stays broken, and this plugin does not rotate its log. It
+/// hands the reason back instead, and the caller decides when a reason is new.
+pub fn settings(home: &Path) -> (AiSettings, Option<String>) {
     match hide_ai::settings::load(home) {
-        Ok(settings) => settings,
-        Err(error) => {
-            let _ = append_log(
-                paths,
-                "ai_settings_unreadable",
-                None,
-                Some(&error.to_string()),
-            );
-            AiSettings::default()
-        }
+        Ok(settings) => (settings, None),
+        Err(error) => (AiSettings::default(), Some(error.to_string())),
     }
+}
+
+/// The saved choice for a command that reads it once and exits.
+///
+/// A file that cannot be read is not taken as the defaults in silence; here
+/// the reason can go straight to the log, because the process ends after it.
+pub fn settings_once(home: &Path, paths: &StatePaths) -> AiSettings {
+    let (settings, failure) = settings(home);
+    if let Some(reason) = failure {
+        let _ = append_log(paths, "ai_settings_unreadable", None, Some(&reason));
+    }
+    settings
 }
 
 /// `provider=codex;model=gpt-5.6-luna`: what the startup log records about the

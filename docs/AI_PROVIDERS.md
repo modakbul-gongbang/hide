@@ -66,7 +66,10 @@ The defaults are the backends' own constants: `codex` with `gpt-5.6-luna`, `clau
 A file that is not there means nobody has chosen, so the defaults stand and nothing is reported.
 A field that is missing takes its default and a field the crate does not know is ignored, so an older Hide reads a file a newer one wrote.
 A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Settings group and the plugin writes `ai_settings_unreadable` to its log, and only then do the defaults apply.
+The plugin writes that line when the reason changes, not when it reads the file.
+It re-reads the choice on every scan and rotates nothing, so a line per read would grow its log for as long as the file stayed broken; a repaired file is recorded once too, as `ai_settings_readable`, so fixing it is visible in the same place.
 A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
+A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
 
 Choosing a provider reorders the priority and changes nothing else.
 The chosen one leads, the other still follows it, and every retry, cooldown and stickiness constant is still `RouterConfig::default()`'s, so the fallback described below is the same fallback.

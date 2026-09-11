@@ -1496,6 +1496,11 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     /// choice it last read from it. `None` for a watcher given its router
     /// directly, which is what a test does.
     ai_settings: Option<(PathBuf, hide_ai::AiSettings)>,
+    /// Why that file last failed to read, so a reason is logged when it
+    /// changes rather than on every scan. The file is read every
+    /// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken
+    /// file logged unconditionally would grow it without end.
+    ai_settings_failure: Option<String>,
 }
 
 impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
@@ -1523,6 +1528,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             analysis_sender,
             analysis_receiver,
             ai_settings: None,
+            ai_settings_failure: None,
         }
     }
 
@@ -1534,9 +1540,28 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     /// also drops the sticky failover state, which is right, because the
     /// reason it was sticky was about the provider that is no longer chosen.
     pub fn follow_ai_settings(&mut self, home: &Path) {
-        let settings = crate::provider::settings(home, &self.paths);
+        let settings = self.read_ai_settings(home);
         self.router = crate::provider::router(&settings, &self.paths);
         self.ai_settings = Some((home.to_path_buf(), settings));
+    }
+
+    /// Reads the choice and records a change in whether it could be read at
+    /// all: the reason a file is unreadable is written once, and so is the
+    /// recovery, so fixing the file is visible in the same log.
+    fn read_ai_settings(&mut self, home: &Path) -> hide_ai::AiSettings {
+        let (settings, failure) = crate::provider::settings(home);
+        if failure != self.ai_settings_failure {
+            match failure.as_deref() {
+                Some(reason) => {
+                    let _ = append_log(&self.paths, "ai_settings_unreadable", None, Some(reason));
+                }
+                None => {
+                    let _ = append_log(&self.paths, "ai_settings_readable", None, None);
+                }
+            }
+            self.ai_settings_failure = failure;
+        }
+        settings
     }
 
     /// Re-reads the choice and rebuilds the router when it moved. Returns
@@ -1546,8 +1571,9 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             return false;
         };
         let home = home.clone();
-        let read = crate::provider::settings(&home, &self.paths);
-        if read == *current {
+        let current = current.clone();
+        let read = self.read_ai_settings(&home);
+        if read == current {
             return false;
         }
         self.router = crate::provider::router(&read, &self.paths);

@@ -461,11 +461,31 @@ fn run_coordinator(
             };
             // The settings write is file I/O, so it happens here rather than
             // under the runtime mutex that took the operator's choice.
-            if let (Some(home), Some(settings)) = (hook_home.as_deref(), queued_settings)
-                && !save_ai_settings(&context, home, &settings)
-            {
-                stop_subscription(&mut subscription);
-                return;
+            if let Some(settings) = queued_settings {
+                // The choice has already been taken out of the runtime, so a
+                // home this process could not resolve must not swallow it in
+                // silence; it is the same failure as a refused write and it
+                // reaches the same line on the group.
+                let saved = match hook_home.as_deref() {
+                    Some(home) => save_ai_settings(&context, home, &settings),
+                    None => {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "ai_settings",
+                            "kind": "settings.write_skipped",
+                            "message": "no home directory on this session",
+                        }));
+                        report_ai_settings_failure(
+                            &context,
+                            "The choice could not be saved (no home directory); \
+                             it applies to this session only"
+                                .to_string(),
+                        )
+                    }
+                };
+                if !saved {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
             }
             if let Some(background_ai) = reader.read_if_due(request)
                 && !publish_background_ai(&context, background_ai)
@@ -1182,13 +1202,22 @@ fn save_ai_settings(
         "kind": "settings.write_failed",
         "message": error.to_string(),
     }));
+    report_ai_settings_failure(
+        context,
+        format!("The choice could not be saved ({error}); it applies to this session only"),
+    )
+}
+
+/// Puts the reason a choice was not written on the group that took it, and
+/// reports whether the coordinator can carry on. A choice the runtime has
+/// already handed over is gone either way; what this decides is whether the
+/// operator is told.
+fn report_ai_settings_failure(context: &SessionSyncContext, message: String) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.report_ai_settings_failure(format!(
-            "The choice could not be saved ({error}); it applies to this session only"
-        )),
+        Ok(mut guard) => guard.report_ai_settings_failure(message),
         Err(_) => return false,
     };
     drop(runtime);
