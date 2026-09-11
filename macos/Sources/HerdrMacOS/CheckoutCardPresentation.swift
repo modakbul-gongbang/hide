@@ -45,7 +45,7 @@ enum CheckoutCardPresentation {
     @MainActor private static let pullRequestImages: [String: NSImage] = {
         let names = ["git-merge-16", "git-pull-request-closed-16", "git-pull-request-draft-16", "git-pull-request-16"]
         return Dictionary(uniqueKeysWithValues: names.map { name in
-            guard let url = Bundle.module.url(forResource: name, withExtension: "pdf"),
+            guard let url = PackagedResourceBundle.app?.url(forResource: name, withExtension: "pdf"),
                   let image = NSImage(contentsOf: url), image.isValid else {
                 preconditionFailure("The bundled pull request icon is missing or unreadable: \(name)")
             }

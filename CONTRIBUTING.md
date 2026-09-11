@@ -23,6 +23,7 @@ bash scripts/check-harness-ignore-anchor.sh
 bash scripts/check-agent-asset-committed.sh
 bash scripts/check-capability-readers-off-lock.sh
 bash scripts/check-terminal-row-cache.sh
+bash scripts/check-packaged-resource-access.sh
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash scripts/check-no-workstation-identity.sh
 bash scripts/check-git-worktree-presentation.sh
@@ -55,6 +56,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | agent asset committed | The simplification subagent stays a tracked file | `bash scripts/check-agent-asset-committed.sh` | `git add` it; it once became uncommittable through an unanchored ignore rule. |
 | capability readers off lock | No production code forks a subprocess while the runtime mutex is held, and every production reader runs from the session-sync coordinator; inline test modules are excluded | `bash scripts/check-capability-readers-off-lock.sh` | Move the subprocess to a reader driven by the coordinator; see `AGENTS.md`, Performance Guide. |
 | terminal row cache | The terminal draw loop builds a row only when something it is drawn from changed | `bash scripts/check-terminal-row-cache.sh` | Reach text building through `preparedRow`, never from `drawTerminalContents`. This is a cost property, so no test fails when it is lost; see `AGENTS.md`, Performance Guide. |
+| packaged resource access | Every shell resource is read through `PackagedResourceBundle.app`, which finds the bundle under `Contents/Resources` | `bash scripts/check-packaged-resource-access.sh` | Replace the `Bundle.module` read. SwiftPM's accessor finds the bundle only through the build tree that produced the binary, so the installed app dies at launch once that tree is gone. |
 | no workstation identity | No tracked text file names a real home directory or machine, no run-artifact path is tracked, and no browser profile file is tracked | `bash scripts/check-no-workstation-identity.sh` | Use `/Users/example` in fixtures and a neutral placeholder in UI. Move run artifacts under `agents/runs/<slug>/`; a `git add -f` past the ignore rule is what this refuses. |
 | script suite | Measurement semantics stay honest, and no gate a workflow runs calls a tool the runner lacks or a script that is untracked or absent | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Fix the measurement semantics; do not trim inconvenient observations. For a portability failure, reach for `git grep` rather than installing the tool on the runner. |
 | toolchain reuse | Every script that runs cargo sources `scripts/toolchain-env.sh`, so a runner HOME reuses the machine's toolchain instead of installing a private copy | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Source the resolver rather than recovering the toolchain yourself. rustup auto-installs into an empty `$HOME/.rustup` and still exits 0, which is what made the two earlier failure-guarded workarounds dead code. |
