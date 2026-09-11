@@ -44,6 +44,7 @@ Hide의 File Explorer에서 사람이 VS Code처럼 항목을 우클릭해 새 �
 | D-09 | 테스트: Rust 단위 테스트(`files.rs`: 생성·이름 바꾸기·이동 성공, 덮어쓰기 거부, 루트 밖 거부)와 Swift 프레젠테이션 테스트(노드 종류별 메뉴 항목 집합, 이름 검증, 상대 경로, 드롭 대상 계산). 러너는 `scripts/rust-test.sh`, `scripts/swift-test.sh`. | 기존 `RightPanelPresentationTests.swift`, `HerdrMacOSTests` 타깃 |
 | D-10 | 증거: 실행 중인 dev 빌드에서 메뉴가 열린 상태, 인라인 새 파일 입력, 드래그 중 드롭 표시의 스크린샷을 찍어 task-factory `evidence/explorer-file-operations` 브랜치에 올린다. hide 리포에는 스크린샷을 커밋하지 않는다. 네이티브 검증은 Hide 인스턴스가 정확히 하나여야 하므로 운영자 앱이 열려 있으면 QA 창을 질문한다. | hide `AGENTS.md` 33-38행: 스크린샷은 커밋 금지; `docs/PERFORMANCE_TESTING.md` 129행 |
 | D-11 | Delivery: hide의 sasu PR 모드(`agents/config.json`, base `main`, worktree, CI watch)로 Implementor가 PR을 열고 사람이 머지한다. | task-factory D-07 |
+| D-12 | New File로 파일을 만들어 확정하면 그 파일이 곧바로 에디터 탭으로 열린다(`file_open`과 같은 효과). 이 열기는 `file_create` 성공 결과의 일부로 코어가 한 이벤트 안에서 처리해 트리 선택과 탭 열기가 같은 프레임에 떨어지고, 별도 클릭이나 두 번째 dispatch가 없다. New Folder, Rename, 드래그 이동은 탭을 열지 않는다. 파일 생성은 성공했지만 탭을 열 수 없는 경우는 B10과 같이 한 줄 이유로 보이고 파일은 남는다. | 사용자(PR #53 리뷰, 2026-09-11 verbatim): "근데 근데 파일 생성했으면 새 탭에 바로 열어줘야 되는거 아냐?"; VS Code의 New File 동작; D-04 한 이벤트 원칙 |
 
 ## Behaviors
 
@@ -61,6 +62,7 @@ Hide의 File Explorer에서 사람이 VS Code처럼 항목을 우클릭해 새 �
 | B10 | 어떤 작업이든 실패하면 트리는 작업 전과 같고 이유가 한 줄 보인다. 반쯤 적용된 상태는 없다. | D-08, D-04 |
 | B11 | 변경 뒤 펼쳐져 있던 다른 폴더는 그대로 펼쳐져 있다. | D-05 |
 | B12 | `scripts/rust-test.sh`에 코어 파일 작업 테스트가, `scripts/swift-test.sh`에 메뉴·이름 검증·상대 경로·드롭 대상 테스트가 있고 통과한다. | D-09 |
+| B13 | New File 인라인 입력에서 Enter로 파일을 만들면 그 파일이 즉시 에디터 탭으로 열려 편집할 수 있고, 트리에서도 선택돼 있다. New Folder를 만들거나 이름을 바꾸거나 드래그로 옮길 때는 탭이 열리지 않는다. | D-12, D-04 |
 
 ## Technical structure
 
