@@ -149,8 +149,10 @@ import Testing
         #expect(host.coordinator.visibleRowNames == [host.root.lastPathComponent, "draft", "src", "README.md"])
         #expect(host.coordinator.isEditingInline)
 
-        _ = host.type("notes.md")
-        host.press(#selector(NSResponder.insertNewline(_:)))
+        let editor = host.type("notes.md")
+        // Return goes through the field editor, as a key press does, so the
+        // delegate wiring itself is what is exercised here.
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         #expect(host.calls.created.map(\.1) == ["notes.md"])
         #expect(host.calls.created.first?.0 == host.root)
         // The row waits for the core; a second Enter sends nothing more.
