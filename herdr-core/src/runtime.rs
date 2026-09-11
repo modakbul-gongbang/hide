@@ -7592,9 +7592,12 @@ impl Runtime {
                         .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
                     {
                         match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
-                            Ok(prepared) => {
-                                self.show_file_tab(prepared, &workspace_id, &checkout_id, &destination)
-                            }
+                            Ok(prepared) => self.show_file_tab(
+                                prepared,
+                                &workspace_id,
+                                &checkout_id,
+                                &destination,
+                            ),
                             Err(message) => {
                                 if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
                                     slot.message = Some(message.clone());
