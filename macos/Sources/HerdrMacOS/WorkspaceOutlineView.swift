@@ -766,7 +766,10 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         /// Re-reads a loaded folder and keeps every child that is still
         /// there, so the folders inside it stay expanded and loaded rather
         /// than being rebuilt from the persisted set one level at a time.
-        private func refreshChildren(of node: WorkspaceOutlineNode) {
+        private func refreshChildren(
+            of node: WorkspaceOutlineNode,
+            then completion: (@MainActor () -> Void)? = nil
+        ) {
             guard node.isDirectory, let loadRoot = rootNode else { return }
             guard case .loaded = node.state else {
                 if case .unloaded = node.state { loadChildren(of: node) }
@@ -798,6 +801,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 }
                 outline?.reloadItem(node, reloadChildren: true)
                 restoreVisibleState()
+                completion?()
             }
         }
 
@@ -1116,9 +1120,23 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 var parents = [WorkspaceOutlinePathPresentation.parentPath(operation.path)]
                 let destinationParent = WorkspaceOutlinePathPresentation.parentPath(operation.destination)
                 if destinationParent != parents[0] { parents.append(destinationParent) }
+                // D-12: a created file that could not open an editor tab still
+                // exists, so the reason rides the finished slot and shows as
+                // the same one-line failure under the created row (B10). The
+                // row appears only after the destination folder reloads, so
+                // the reason waits for that reload to land.
+                let openFailure = operation.message
+                let destination = operation.destination
                 for path in parents {
                     guard let node = loadedNode(at: path) else { continue }
-                    refreshChildren(of: node)
+                    if path == destinationParent, let message = openFailure {
+                        refreshChildren(of: node) { [weak self] in
+                            guard let self, let created = self.loadedNode(at: destination) else { return }
+                            self.showFailure(message, under: created)
+                        }
+                    } else {
+                        refreshChildren(of: node)
+                    }
                 }
             case "failed":
                 let message = operation.message ?? "The change was not applied"

@@ -174,6 +174,32 @@ import Testing
         #expect(host.window.firstResponder === host.outline)
     }
 
+    /// D-12, B10: the core created the file but could not open its editor tab.
+    /// The finished slot carries the reason, so the file stays in the tree and
+    /// the one-line reason shows under its row.
+    @Test func aCreatedFileThatCannotOpenKeepsTheFileAndShowsTheReasonUnderIt() async throws {
+        let host = try await Self.makeHost()
+        defer { host.tearDown() }
+
+        let created = host.root.appendingPathComponent("notes.md")
+        #expect(FileManager.default.createFile(atPath: created.path, contents: Data()))
+        host.apply(
+            operation: CoreExplorerOperation(
+                id: 1, kind: "file_create", phase: "finished",
+                path: created.path, destination: created.path,
+                message: "notes.md could not be opened"
+            ),
+            selected: created.path
+        )
+        try await host.settle {
+            host.coordinator.visibleRowNames
+                == [
+                    host.root.lastPathComponent, "src", "notes.md",
+                    "failure:notes.md could not be opened", "README.md",
+                ]
+        }
+    }
+
     @Test func refusedNamesKeepTheFieldWithTheReasonUnderItAndEscapeDropsTheDraft() async throws {
         let host = try await Self.makeHost()
         defer { host.tearDown() }

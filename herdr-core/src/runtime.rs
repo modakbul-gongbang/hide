@@ -7580,6 +7580,33 @@ impl Runtime {
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),
                 );
+                // A created file opens as an editor tab in this same result,
+                // so the tree selection and the tab land in one frame with no
+                // second dispatch from the shell. New Folder, Rename and move
+                // open nothing. If the file cannot be read into a tab it still
+                // exists on disk, so the reason rides the finished slot's
+                // message and the tree keeps the created file (B10 pattern).
+                if operation.kind == files::ExplorerOperationKind::FileCreate {
+                    if let Some((workspace_id, checkout_id)) = self
+                        .focused_local_checkout()
+                        .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
+                    {
+                        match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
+                            Ok(prepared) => {
+                                self.show_file_tab(prepared, &workspace_id, &checkout_id, &destination)
+                            }
+                            Err(message) => {
+                                if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
+                                    slot.message = Some(message.clone());
+                                }
+                                self.push_diagnostic(
+                                    "explorer.file_create.open_failed",
+                                    format!("{destination}: {message}"),
+                                );
+                            }
+                        }
+                    }
+                }
                 self.persist_current_ui_state();
             }
             Err(message) => {
@@ -20641,6 +20668,114 @@ mod tests {
         );
         assert!(!outside.join("leak").exists());
         std::fs::remove_dir_all(&outside).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// D-12, B13: New File opens the created file as an editor tab in the
+    /// same result - one frame, no second dispatch - and it is the active
+    /// tab. New Folder opens nothing, and Rename opens no new tab.
+    #[test]
+    fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
+        let root = std::env::temp_dir().join(format!(
+            "hide-explorer-open-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("fixture tree");
+        let root = root.canonicalize().expect("a real root");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&root)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        let mut runtime = runtime();
+        runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+            id: "workspace:0".to_owned(),
+            label: "workspace 0".to_owned(),
+            path: root.to_string_lossy().into_owned(),
+            device_id: "local".to_owned(),
+        }];
+        runtime.rebuild_catalog();
+        let checkout_id = workspace::checkout_id_for_path("workspace:0", &root);
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:0".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
+
+        let src = root.join("src").to_string_lossy().into_owned();
+        assert!(runtime.dispatch_json(&explorer_event(
+            "file_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": src, "name": "new.rs"})
+        )));
+
+        let created = root.join("src/new.rs");
+        assert!(created.is_file());
+        let snapshot = runtime.snapshot();
+        let file_tabs: Vec<_> = snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.kind == EditorTabKind::File)
+            .collect();
+        assert_eq!(file_tabs.len(), 1, "the created file takes exactly one tab");
+        assert_eq!(file_tabs[0].path, created.to_string_lossy());
+        assert_eq!(
+            snapshot.editor.active_tab_id.as_deref(),
+            Some(file_tabs[0].id.as_str()),
+            "the created file's tab is active"
+        );
+        assert_eq!(
+            snapshot
+                .explorer_operation
+                .as_ref()
+                .and_then(|operation| operation.message.as_deref()),
+            None,
+            "a readable created file opens without a failure reason"
+        );
+
+        // A folder created next opens no tab.
+        assert!(runtime.dispatch_json(&explorer_event(
+            "dir_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": src, "name": "docs"})
+        )));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .editor
+                .tabs
+                .iter()
+                .filter(|tab| tab.kind == EditorTabKind::File)
+                .count(),
+            1,
+            "New Folder opens no editor tab"
+        );
+
+        // Renaming the created file opens no new tab; its one tab is
+        // retargeted to the new path.
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_rename",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": created.to_string_lossy(),
+                "name": "renamed.rs"
+            })
+        )));
+        let snapshot = runtime.snapshot();
+        let file_tabs: Vec<_> = snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.kind == EditorTabKind::File)
+            .collect();
+        assert_eq!(file_tabs.len(), 1, "Rename opens no new tab");
+        assert_eq!(
+            file_tabs[0].path,
+            root.join("src/renamed.rs").to_string_lossy()
+        );
+
         std::fs::remove_dir_all(&root).ok();
     }
 
