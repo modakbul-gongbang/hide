@@ -7586,27 +7586,23 @@ impl Runtime {
                 // open nothing. If the file cannot be read into a tab it still
                 // exists on disk, so the reason rides the finished slot's
                 // message and the tree keeps the created file (B10 pattern).
-                if operation.kind == files::ExplorerOperationKind::FileCreate {
-                    if let Some((workspace_id, checkout_id)) = self
+                if operation.kind == files::ExplorerOperationKind::FileCreate
+                    && let Some((workspace_id, checkout_id)) = self
                         .focused_local_checkout()
                         .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
-                    {
-                        match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
-                            Ok(prepared) => self.show_file_tab(
-                                prepared,
-                                &workspace_id,
-                                &checkout_id,
-                                &destination,
-                            ),
-                            Err(message) => {
-                                if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
-                                    slot.message = Some(message.clone());
-                                }
-                                self.push_diagnostic(
-                                    "explorer.file_create.open_failed",
-                                    format!("{destination}: {message}"),
-                                );
+                {
+                    match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
+                        Ok(prepared) => {
+                            self.show_file_tab(prepared, &workspace_id, &checkout_id, &destination)
+                        }
+                        Err(message) => {
+                            if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
+                                slot.message = Some(message.clone());
                             }
+                            self.push_diagnostic(
+                                "explorer.file_create.open_failed",
+                                format!("{destination}: {message}"),
+                            );
                         }
                     }
                 }
