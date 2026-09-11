@@ -43,7 +43,8 @@ private func presentationCheckout(
 }
 
 private func presentationWorkspace(
-    checkouts: [CoreCheckoutSnapshot]
+    checkouts: [CoreCheckoutSnapshot],
+    lastActivityUnixMS: UInt64? = nil
 ) -> CoreWorkspaceSnapshot {
     CoreWorkspaceSnapshot(
         id: "workspace-1",
@@ -57,6 +58,7 @@ private func presentationWorkspace(
         defaultBranch: "main",
         registered: true,
         temporary: false,
+        lastActivityUnixMS: lastActivityUnixMS,
         checkouts: checkouts
     )
 }
@@ -145,6 +147,96 @@ private func presentationAgent(
     #expect(presentation.paneCount == 2)
     #expect(presentation.agentCount == 1)
     #expect(presentation.activityLabel == "1 agent")
+}
+
+/// B4, B5. The row keeps the count it already showed and adds how long ago
+/// this project last did anything, in the app's own one-token elapsed form.
+@Test func workspaceRowShowsTheRelativeTimeOfTheLastActivity() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let checkout = presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-1"])
+    let agents = [presentationAgent(id: "inside", paneID: "pane-1", group: "working")]
+
+    let cases: [(TimeInterval, String)] = [
+        (0, "now"),
+        (59, "now"),
+        (60, "1m"),
+        (59 * 60, "59m"),
+        (60 * 60, "1h"),
+        (23 * 3600 + 3599, "23h"),
+        (24 * 3600, "1d"),
+        (5 * 24 * 3600, "5d"),
+    ]
+    for (age, expected) in cases {
+        let workspace = presentationWorkspace(
+            checkouts: [checkout],
+            lastActivityUnixMS: UInt64((now.timeIntervalSince1970 - age) * 1000)
+        )
+        let presentation = SidebarWorkspacePresentation(
+            workspace: workspace,
+            agents: agents,
+            now: now
+        )
+        #expect(presentation.lastActivity == expected)
+        #expect(presentation.activityLabel == "1 agent · \(expected)")
+    }
+}
+
+/// B4. A project the core reported no activity for shows the label it always
+/// showed and no time. An empty time is the honest answer; "now" would claim
+/// a recency nothing measured.
+@Test func workspaceRowWithoutActivityKeepsItsExistingLabel() {
+    let checkout = presentationCheckout(id: "main", path: "/tmp/hide")
+    let workspace = presentationWorkspace(checkouts: [checkout])
+
+    let presentation = SidebarWorkspacePresentation(workspace: workspace, agents: [])
+
+    #expect(presentation.lastActivity == nil)
+    #expect(presentation.activityLabel == "1 workspace")
+}
+
+/// B5. A timestamp ahead of this machine's clock is still "now": a remote
+/// device's clock is not this one's, and a negative age is not a time.
+@Test func workspaceRowReadsAFutureTimestampAsNow() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let workspace = presentationWorkspace(
+        checkouts: [presentationCheckout(id: "main", path: "/tmp/hide")],
+        lastActivityUnixMS: UInt64((now.timeIntervalSince1970 + 3600) * 1000)
+    )
+
+    let presentation = SidebarWorkspacePresentation(
+        workspace: workspace,
+        agents: [],
+        now: now
+    )
+
+    #expect(presentation.lastActivity == "now")
+    #expect(presentation.activityLabel == "1 workspace · now")
+}
+
+/// B5. The label is recomputed from each snapshot's own timestamp against the
+/// current clock, so a project nobody touched still ages as the app stays
+/// open rather than freezing at the value it was first drawn with.
+@Test func theRelativeTimeAgesWithEachNewSnapshot() {
+    let activity = Date(timeIntervalSince1970: 1_700_000_000)
+    let workspace = presentationWorkspace(
+        checkouts: [presentationCheckout(id: "main", path: "/tmp/hide")],
+        lastActivityUnixMS: UInt64(activity.timeIntervalSince1970 * 1000)
+    )
+
+    let first = SidebarWorkspacePresentation(
+        workspace: workspace,
+        agents: [],
+        now: activity.addingTimeInterval(120)
+    )
+    let later = SidebarWorkspacePresentation(
+        workspace: workspace,
+        agents: [],
+        now: activity.addingTimeInterval(7200)
+    )
+
+    #expect(first.lastActivity == "2m")
+    #expect(later.lastActivity == "2h")
+    #expect(first != later)
 }
 
 @Test func agentShortcutNumbersFollowListOrderAndStopAtNine() {

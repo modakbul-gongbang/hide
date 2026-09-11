@@ -13655,6 +13655,7 @@ mod tests {
             registered: true,
             temporary: false,
             session_workspace_ids: Vec::new(),
+            last_activity_unix_ms: None,
             checkouts,
         }
     }

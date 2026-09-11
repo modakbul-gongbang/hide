@@ -375,6 +375,14 @@ pub struct WorkspaceSnapshot {
     /// and the persisted focus in place. Commands that need a Herdr workspace
     /// target the first entry; an empty list means Herdr has none here yet.
     pub session_workspace_ids: Vec<String>,
+    /// The newest activity anywhere in this project, in Unix milliseconds:
+    /// the latest of its checkouts' last commit and its agents' last activity,
+    /// the same signal `project_context::sort_projects` orders the list by.
+    /// Absent when the project has neither, so the row can leave its time
+    /// blank instead of claiming the epoch. An additive snapshot field: the
+    /// shell reads it when present and keeps its previous behavior when not.
+    #[serde(default)]
+    pub last_activity_unix_ms: Option<u64>,
     pub checkouts: Vec<CheckoutSnapshot>,
 }
 

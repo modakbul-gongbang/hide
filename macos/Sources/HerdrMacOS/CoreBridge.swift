@@ -503,6 +503,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     let branches: [String]
     let registered: Bool
     let temporary: Bool
+    /// The core's own ordering key: the newest of this project's commit and
+    /// agent activity, in Unix milliseconds. Absent when the project has
+    /// neither, which is what lets the row leave its time blank.
+    let lastActivityUnixMS: UInt64?
     let checkouts: [CoreCheckoutSnapshot]
 
     enum CodingKeys: String, CodingKey {
@@ -518,6 +522,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case branches
         case registered
         case temporary
+        case lastActivityUnixMS = "last_activity_unix_ms"
         case checkouts
     }
 
@@ -534,6 +539,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         branches: [String] = [],
         registered: Bool,
         temporary: Bool,
+        lastActivityUnixMS: UInt64? = nil,
         checkouts: [CoreCheckoutSnapshot]
     ) {
         self.id = id
@@ -548,6 +554,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         self.branches = branches
         self.registered = registered
         self.temporary = temporary
+        self.lastActivityUnixMS = lastActivityUnixMS
         self.checkouts = checkouts
     }
 
@@ -565,6 +572,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         branches = try container.decodeIfPresent([String].self, forKey: .branches) ?? []
         registered = try container.decodeIfPresent(Bool.self, forKey: .registered) ?? true
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+        lastActivityUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .lastActivityUnixMS)
         checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
     }
 }
