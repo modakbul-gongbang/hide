@@ -1291,6 +1291,27 @@ These few user-outcome tests retain no mock call graph or exact view hierarchy c
 The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
 Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.
 
+## Explorer file management
+
+The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename.
+The empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
+Delete is not here yet; a later change appends it below Rename.
+`WorkspaceOutlineMenuPresentation` decides the item set, so the menu a click gets is a value a test can ask for.
+
+New File, New Folder and Rename take the name in the row itself: a draft row is inserted at the top of the target folder, or the item's own label becomes the field.
+Enter sends, Esc and any other loss of focus cancel, and an unchanged rename closes the field without asking anything.
+An empty name, a name with `/`, and a name already in that folder are refused before the round trip; the field stays and the reason is one row directly under it, in the danger color with no icon.
+The field draws on the elevated surface so it reads as an input among labels; nothing else about the row changes.
+
+The filesystem change is the core's: one event carries the request, the core refuses paths outside the focused checkout and any overwrite, runs the exclusive call off the runtime mutex, and settles one `explorer_operation` slot.
+The tree reads a finished slot to re-read only the folders it touched, keeping every loaded folder and its expansion, and a failed slot to place the reason under the row the change started from.
+The selection moves to the new or moved item because the core sets `selected_path`; expanded folders and open file tabs inside a renamed folder follow it.
+
+A drag moves one item inside the tree.
+Dropping on a folder puts the item inside it, on a file puts it beside that file, and on the empty area puts it at the root; the receiving folder row is what highlights.
+The same parent, the item itself and a folder inside the item show no drop indicator and accept nothing.
+The pasteboard type is private to the tree, so Finder never reads the drag as a file and nothing is copied out.
+
 ## Terminal image attachment boundary
 
 Dropping local file URLs into a visible terminal focuses that receiving pane and inserts quoted paths immediately through the existing ordered writer.

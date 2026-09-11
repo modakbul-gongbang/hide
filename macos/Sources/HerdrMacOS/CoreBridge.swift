@@ -37,6 +37,7 @@ struct CoreSnapshot {
     var gitWorktreesRemote: Bool = false
     var worktreeRemoval: CoreWorktreeRemoval? = nil
     var taskOperation: CoreTaskOperation? = nil
+    var explorerOperation: CoreExplorerOperation? = nil
 
     /// Rebuilds the snapshot with only the independently revisioned sections
     /// that arrived, so a delta carrying one of them leaves the rest alone.
@@ -61,7 +62,7 @@ struct CoreSnapshot {
             pet: pet,
             gitWorktrees: gitWorktrees, gitWorktreesLoading: gitWorktreesLoading,
             gitWorktreesRemote: gitWorktreesRemote, worktreeRemoval: worktreeRemoval,
-            taskOperation: taskOperation
+            taskOperation: taskOperation, explorerOperation: explorerOperation
         )
     }
 }
@@ -130,6 +131,7 @@ struct CoreRestSnapshot: Decodable {
     var gitWorktreesRemote: Bool = false
     var worktreeRemoval: CoreWorktreeRemoval? = nil
     var taskOperation: CoreTaskOperation? = nil
+    var explorerOperation: CoreExplorerOperation? = nil
 
     enum CodingKeys: String, CodingKey {
         case navigator
@@ -145,6 +147,7 @@ struct CoreRestSnapshot: Decodable {
         case gitWorktreesRemote = "git_worktrees_remote"
         case worktreeRemoval = "worktree_removal"
         case taskOperation = "task_operation"
+        case explorerOperation = "explorer_operation"
     }
 
     init(from decoder: Decoder) throws {
@@ -162,6 +165,7 @@ struct CoreRestSnapshot: Decodable {
         gitWorktreesRemote = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesRemote) ?? false
         worktreeRemoval = try container.decodeIfPresent(CoreWorktreeRemoval.self, forKey: .worktreeRemoval)
         taskOperation = try container.decodeIfPresent(CoreTaskOperation.self, forKey: .taskOperation)
+        explorerOperation = try container.decodeIfPresent(CoreExplorerOperation.self, forKey: .explorerOperation)
     }
 }
 
@@ -3176,6 +3180,26 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_focus", payload: ["tab_id": tabID])
     }
 
+    /// The explorer's four filesystem changes. Each is one event: the core
+    /// decides the paths, runs the call off the runtime mutex, and reports
+    /// through `explorerOperation`, so the tree never touches the disk and
+    /// never shows a half-applied change.
+    func createFile(root: URL, parent: URL, name: String) {
+        dispatch(kind: "file_create", payload: ["root": root.path, "parent": parent.path, "name": name])
+    }
+
+    func createDirectory(root: URL, parent: URL, name: String) {
+        dispatch(kind: "dir_create", payload: ["root": root.path, "parent": parent.path, "name": name])
+    }
+
+    func renamePath(root: URL, path: URL, name: String) {
+        dispatch(kind: "path_rename", payload: ["root": root.path, "path": path.path, "name": name])
+    }
+
+    func movePath(root: URL, path: URL, destination: URL) {
+        dispatch(kind: "path_move", payload: ["root": root.path, "path": path.path, "destination": destination.path])
+    }
+
     func closeFileTab(_ tabID: String) {
         if snapshot?.editor.activeTabID == tabID {
             flushPendingFileSave()
@@ -3453,7 +3477,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     pet: rest.pet,
                     gitWorktrees: rest.gitWorktrees, gitWorktreesLoading: rest.gitWorktreesLoading,
                     gitWorktreesRemote: rest.gitWorktreesRemote, worktreeRemoval: rest.worktreeRemoval,
-                    taskOperation: rest.taskOperation
+                    taskOperation: rest.taskOperation,
+                    explorerOperation: rest.explorerOperation
                 ))
             } else if decoded.editor != nil
                 || decoded.changes != nil

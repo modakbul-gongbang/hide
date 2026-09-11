@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RightPanel: View {
@@ -58,10 +59,17 @@ struct RightPanel: View {
                 expandedPaths: Set(model.core.snapshot?.uiState.expandedPaths ?? []),
                 selectedPath: model.core.snapshot?.uiState.selectedPath,
                 fontScale: fontScale,
+                operation: model.core.snapshot?.explorerOperation,
                 openFile: model.openFile,
                 updateExpandedPaths: { paths in
                     model.core.persistUIState(expandedPaths: paths)
-                }
+                },
+                fileOperations: WorkspaceFileOperations(
+                    createFile: { parent, name in model.core.createFile(root: activeRoot, parent: parent, name: name) },
+                    createDirectory: { parent, name in model.core.createDirectory(root: activeRoot, parent: parent, name: name) },
+                    rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
+                    move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) }
+                )
             )
         } else {
             HideEmptyState {
@@ -134,6 +142,20 @@ struct RightPanel: View {
                         .padding(.horizontal, HideTheme.spacingMD)
                         .frame(height: 22)
                         .contentShape(Rectangle())
+                        .contextMenu {
+                            // A remote tree is read-only, so the menu is the
+                            // two copies and nothing that would write.
+                            ForEach(
+                                Array(WorkspaceOutlineMenuPresentation.items(
+                                    for: .item(isDirectory: node.isDirectory), isRemote: true
+                                ).enumerated()),
+                                id: \.offset
+                            ) { _, item in
+                                Button(item.title) {
+                                    remoteCopy(item, path: node.path, root: activeRoot?.path ?? "")
+                                }
+                            }
+                        }
                         .accessibilityIdentifier("remote-workspace-item-\(node.path)")
                     }
                 }
@@ -147,6 +169,16 @@ struct RightPanel: View {
             }
         }
     }
+}
+
+private func remoteCopy(_ item: WorkspaceOutlineMenuItem, path: String, root: String) {
+    let value: String
+    switch item {
+    case .copyRelativePath: value = WorkspaceOutlinePathPresentation.relativePath(path, root: root)
+    default: value = path
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(value, forType: .string)
 }
 
 /// The right panel's changes section is the checkout's changed-file list.

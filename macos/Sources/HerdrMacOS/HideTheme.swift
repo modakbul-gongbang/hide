@@ -156,6 +156,7 @@ enum HideTheme {
         static let primary = NSColor(HideTheme.primary)
         static let secondary = NSColor(HideTheme.secondary)
         static let muted = NSColor(HideTheme.muted)
+        static let danger = NSColor(HideTheme.danger)
         static let searchMatchHighlight = NSColor(HideTheme.searchMatchHighlight)
     }
 
