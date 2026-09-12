@@ -1,0 +1,33 @@
+{
+  "delivery": {
+    "mode": "pr",
+    "baseBranch": "main",
+    "branchPrefix": "gen-prd",
+    "ci": {
+      "watch": true,
+      "maxFixAttempts": 2,
+      "timeoutSeconds": 240
+    }
+  },
+  "worktree": {
+    "enabled": true,
+    "link": [],
+    "copy": [],
+    "setup": []
+  },
+  "principles": [
+    "~/projects/oh-my-principle"
+  ],
+  "judge": {
+    "retryBudget": 15,
+    "readMaxRounds": 60
+  },
+  "verify": {
+    "commands": {
+      "test": "bash scripts/verify-cargo.sh test",
+      "build": "bash scripts/verify-cargo.sh build",
+      "typecheck": "bash scripts/verify-swift.sh build",
+      "lint": "bash scripts/verify-swift.sh test"
+    }
+  }
+}
