@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-git grep -q 'Git section refreshes local worktree state only when repository metadata' -- AGENTS.md
+git grep -q 'Git section refreshes local worktree state only when repository metadata' -- docs/ARCHITECTURE.md
 for token in lineageIndent lineageElbowY gitRowFontSize gitDetailFontSize; do
   git grep -q "$token" -- DESIGN.md
   git grep -q "static let $token" -- macos/Sources/HerdrMacOS/HideTheme.swift
