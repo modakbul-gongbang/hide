@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
 
-const commands = ['check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-design-controls.mjs', 'check-pen-tokens.mjs'];
+const commands = ['check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-design-controls.mjs', 'check-pen-tokens.mjs', 'check-pen-layout.mjs'];
 function run(root) {
   for (const command of commands) {
     const result = spawnSync(process.execPath, [path.join(root, 'scripts', command)], {cwd: root, stdio: 'inherit'});
@@ -25,7 +25,7 @@ try {
       const tab = entry.indexOf('\t'), [mode, object, stage] = entry.slice(0, tab).split(' '), file = entry.slice(tab + 1);
       const input = (file.startsWith('macos/Sources/HerdrMacOS/') && file.endsWith('.swift'))
         || file === 'design/hide.pen'
-        || [...commands, 'swift-source-tokens.mjs', 'design-control-policy.json', 'pen-tokens.mjs', 'pen-token-map.json'].some(name => file === 'scripts/' + name);
+        || [...commands, 'swift-source-tokens.mjs', 'design-control-policy.json', 'pen-tokens.mjs', 'pen-token-map.json', 'pen-bands.mjs'].some(name => file === 'scripts/' + name);
       if (!input) continue;
       if (stage !== '0') throw new Error(`Resolve staged conflict before design check: ${file}`);
       if (!['100644', '100755'].includes(mode)) throw new Error(`Design inputs must be ordinary files: ${file}`);
