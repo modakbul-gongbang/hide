@@ -20,11 +20,10 @@ export const FOUNDATIONS = 'System / Foundations';
 // a review's findings table is 2320.
 export const BANDS = [
   {prefix: 'System /', y: -4200, holds: 'token sheets and primitives generated from or tracking HideTheme'},
-  {prefix: 'Component /', y: -1200, holds: 'the agreed component set; Screen and Feature boards reference these'},
-  {prefix: 'Screen /', y: 0, holds: 'what the app draws today'},
+  {prefix: 'Component /', y: -1200, holds: 'the agreed component set, one sheet each; Screen boards reference the masters inside'},
+  {prefix: 'Screen /', y: 0, holds: 'what the app draws at this commit; on a PRD branch, what it will draw'},
   {prefix: 'Review /', y: 1200, holds: 'an audit, its proposal, and the as-built evidence beside them; deleted once adopted'},
-  {prefix: 'Feature /', y: 3800, holds: 'a PRD\'s design, named by its slug; does not outlive the PRD'},
-  {prefix: 'Scratch /', y: 5800, holds: 'exploration; deleted or promoted'},
+  {prefix: 'Scratch /', y: 3800, holds: 'exploration; deleted or redrawn as a Screen or Review board before a pull request'},
 ];
 
 export const GAP = 80;

@@ -261,11 +261,10 @@ It is committed, so a design change shows up in `git diff` beside the code chang
 | Band | Prefix | Holds | Lifetime |
 |---|---|---|---|
 | System | `System /` | the Foundations sheet and the primitive sheets (badge, keycap, icon button, panel tab) | Foundations is generated; a primitive sheet is kept in step with `HideTheme` |
-| Component | `Component /` | one sheet per agreed component | `Screen /` and `Feature /` boards reference the masters inside with `ref` nodes |
-| Screen | `Screen /<area> /<name>` | what the app draws today | updated with the code that changes it |
+| Component | `Component /` | one sheet per agreed component | `Screen /` boards reference the masters inside with `ref` nodes |
+| Screen | `Screen /<area> /<name>` | what the app draws at this commit | a PRD draws or changes the board first, the code catches up in the same pull request |
 | Review | `Review /<date> <topic> / Audit`, `/ Proposal`, `/ As built / ...` | one audit, its proposal, and the as-built evidence beside them | deleted once the proposal lands in code |
-| Feature | `Feature /<prd-slug> /<screen>` | a PRD's design, one frame per state the data can produce | does not outlive its PRD: promoted into `Screen /` or deleted at merge |
-| Scratch | `Scratch /<topic>` | exploration | deleted, or redrawn as a `Review /` or `Feature /` board |
+| Scratch | `Scratch /<topic>` | exploration, candidates side by side | deleted or redrawn as a `Screen /` or `Review /` board before the pull request opens |
 
     node scripts/gen-pen-layout.mjs      # place every board at its band's y, packed left to right in its existing order
     node scripts/check-pen-layout.mjs    # refuse a board with no band prefix, or a canvas the generator would move
@@ -283,7 +282,11 @@ The check rides `check-design-contract.mjs` beside the token check, so a board d
 Name a board first; the generator decides where it goes.
 
 A review moves upward when it is adopted: the tokens it needs land in `HideTheme.swift`, `gen-pen-tokens.mjs` brings them across, the proposal's components are renamed into `Component /`, the `Screen /` boards are redrawn on those components in the same pull request as the code, and the `Review /` boards are deleted.
-A feature board is drawn from `Component /` refs and `$--` variables only; a component it needs and does not have is drawn inside the board under a `Proposed /` name and recorded in the PRD's Decisions table, so the addition is a decision a reviewer sees rather than a shape that appeared.
+
+There is no band for a feature's design, because `main` takes a PRD and its implementation in one squash merge and nothing runs at the merge to move a board.
+A PRD draws the screen it changes as the `Screen /` board itself, one frame per state the data can produce, from `Component /` refs and `$--` variables only; on that branch the board is the target until the code catches up, and on `main` it is what was built.
+The target is kept for the run outside the canvas: the PRD commit's `hide.pen`, and the boards exported to `agents/runs/<slug>/design/` when implementation starts.
+A component the design needs and does not have is drawn inside the board under a `Proposed /` name and recorded in the PRD's Decisions table, so the addition is a decision a reviewer sees rather than a shape that appeared.
 
 `.pen` is JSON, and pen.dev is a local CLI reached over MCP or headlessly:
 
@@ -329,7 +332,7 @@ The last two are the dangerous ones, because they fail silently and look like th
 Exploration goes in the same file, in the `Scratch /` band:
 
 - name it `Scratch / <topic>`, and let `gen-pen-layout.mjs` place it
-- when it earns its place, redraw it as a `Review /` or `Feature /` board and delete the scratch; otherwise just delete it
+- when it earns its place, redraw it as a `Screen /` or `Review /` board and delete the scratch; otherwise just delete it
 
 It goes in `design/hide.pen` rather than a scratch file of its own because that is the only place the tokens resolve; see the import trap above.
 Scratch boards cost the contract nothing - `check-pen-tokens.mjs` reads only the document's `variables`, and both generators preserve every node they find.

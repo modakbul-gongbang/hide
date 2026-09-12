@@ -4036,7 +4036,7 @@
           "id": "band-component-holds",
           "name": "Holds",
           "fill": "$--color-muted",
-          "content": "Component /  the agreed component set; Screen and Feature boards reference these",
+          "content": "Component /  the agreed component set, one sheet each; Screen boards reference the masters inside",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -5388,7 +5388,7 @@
           "id": "band-screen-holds",
           "name": "Holds",
           "fill": "$--color-muted",
-          "content": "Screen /  what the app draws today",
+          "content": "Screen /  what the app draws at this commit; on a PRD branch, what it will draw",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -16452,49 +16452,9 @@
     },
     {
       "type": "frame",
-      "id": "band-feature",
-      "x": 0,
-      "y": 3700,
-      "name": "Band / Feature",
-      "width": 1200,
-      "layout": "vertical",
-      "gap": "$--spacing-sm",
-      "children": [
-        {
-          "type": "text",
-          "id": "band-feature-title",
-          "name": "Title",
-          "fill": "$--color-secondary",
-          "content": "Feature",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-display",
-          "fontWeight": "600"
-        },
-        {
-          "type": "text",
-          "id": "band-feature-holds",
-          "name": "Holds",
-          "fill": "$--color-muted",
-          "content": "Feature /  a PRD's design, named by its slug; does not outlive the PRD",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "rectangle",
-          "id": "band-feature-rule",
-          "name": "Rule",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$--color-divider"
-        }
-      ]
-    },
-    {
-      "type": "frame",
       "id": "band-scratch",
       "x": 0,
-      "y": 5700,
+      "y": 3700,
       "name": "Band / Scratch",
       "width": 1200,
       "layout": "vertical",
@@ -16515,7 +16475,7 @@
           "id": "band-scratch-holds",
           "name": "Holds",
           "fill": "$--color-muted",
-          "content": "Scratch /  exploration; deleted or promoted",
+          "content": "Scratch /  exploration; deleted or redrawn as a Screen or Review board before a pull request",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
