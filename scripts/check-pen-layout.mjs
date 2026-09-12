@@ -10,10 +10,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {CANVAS, BANDS, layout, serialize} from './pen-bands.mjs';
+import {MAP} from './pen-tokens.mjs';
 
 const file = path.join(process.cwd(), CANVAS);
 const before = fs.readFileSync(file, 'utf8');
-const {document, unknown} = layout(JSON.parse(before));
+const {mapped} = JSON.parse(fs.readFileSync(path.join(process.cwd(), MAP), 'utf8'));
+const {document, unknown} = layout(JSON.parse(before), mapped);
 const failures = [];
 
 if (unknown.length) {

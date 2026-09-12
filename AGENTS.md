@@ -260,8 +260,8 @@ It is committed, so a design change shows up in `git diff` beside the code chang
 
 | Band | Prefix | Holds | Lifetime |
 |---|---|---|---|
-| System | `System /` | token sheets and primitives that track `HideTheme` | generated or kept in step; never designed by hand |
-| Component | `Component /` | the agreed component set | `Screen /` and `Feature /` boards reference these with `ref` nodes |
+| System | `System /` | the Foundations sheet and the primitive sheets (badge, keycap, icon button, panel tab) | Foundations is generated; a primitive sheet is kept in step with `HideTheme` |
+| Component | `Component /` | one sheet per agreed component | `Screen /` and `Feature /` boards reference the masters inside with `ref` nodes |
 | Screen | `Screen /<area> /<name>` | what the app draws today | updated with the code that changes it |
 | Review | `Review /<date> <topic> / Audit`, `/ Proposal`, `/ As built / ...` | one audit, its proposal, and the as-built evidence beside them | deleted once the proposal lands in code |
 | Feature | `Feature /<prd-slug> /<screen>` | a PRD's design, one frame per state the data can produce | does not outlive its PRD: promoted into `Screen /` or deleted at merge |
@@ -269,6 +269,14 @@ It is committed, so a design change shows up in `git diff` beside the code chang
 
     node scripts/gen-pen-layout.mjs      # place every board at its band's y, packed left to right in its existing order
     node scripts/check-pen-layout.mjs    # refuse a board with no band prefix, or a canvas the generator would move
+
+`System / Foundations` is generated too: `scripts/pen-foundations.mjs` draws the surface ladder, inks, semantic colours, type scale, spacing, radius, layout sizes and opacities from the canvas's own variables on every layout run, so the sheet cannot say something `HideTheme` does not.
+
+**A component is a sheet, and the sheet is one column: title, master, then one row per state.**
+The master is the `reusable` frame the rest of the canvas references; it sits inside its sheet, and a `ref` from a `Screen /` board resolves to it there.
+Every state row is a `ref` of the master with `descendants` overrides (`enabled: false` hides a slot, `<refId>/<childId>` reaches a node inside a nested ref), never a redrawn copy, so a change to the master reaches every state.
+The states are the ones the code produces and the sheet's spec line says where they come from (`ChangedFileRow` for the line row's letters, `HideIconButton` for hover, selected, pressed and disabled); a state the app cannot reach is not drawn.
+Components read left to right across the band and states top to bottom within a sheet.
 
 The generator also draws a `Band / <name>` label above each band - the name, what it holds, and a hairline the width of the row - and rebuilds it on every run, so nothing drawn into a label survives and the bands are visible on the canvas, not only in the file.
 The check rides `check-design-contract.mjs` beside the token check, so a board dragged out of its band or named outside the scheme fails the gate rather than disappearing into the file.

@@ -9,14 +9,18 @@
 // a board dragged somewhere by hand, or named outside the scheme, is reported
 // rather than lost in a 12,000-line JSON file.
 
+import {foundations} from './pen-foundations.mjs';
+
 export const CANVAS = 'design/hide.pen';
+export const FOUNDATIONS = 'System / Foundations';
 
 // Bands from top to bottom. A fit-content frame carries no height in the file,
 // so the y values cannot be derived; they are spaced for the tallest board each
-// band holds today, measured by rendering: a review's findings table is 2320.
+// band holds today, measured by rendering: the Foundations sheet is 2426 and
+// a review's findings table is 2320.
 export const BANDS = [
-  {prefix: 'System /', y: -1600, holds: 'token sheets and primitives generated from or tracking HideTheme'},
-  {prefix: 'Component /', y: -900, holds: 'the agreed component set; Screen and Feature boards reference these'},
+  {prefix: 'System /', y: -4200, holds: 'token sheets and primitives generated from or tracking HideTheme'},
+  {prefix: 'Component /', y: -1200, holds: 'the agreed component set; Screen and Feature boards reference these'},
   {prefix: 'Screen /', y: 0, holds: 'what the app draws today'},
   {prefix: 'Review /', y: 1200, holds: 'an audit, its proposal, and the as-built evidence beside them; deleted once adopted'},
   {prefix: 'Feature /', y: 3800, holds: 'a PRD\'s design, named by its slug; does not outlive the PRD'},
@@ -65,12 +69,20 @@ function label(band, extent) {
 
 // Returns the laid-out document and the names of boards no band claims. Those
 // are left exactly where they are so the caller can decide what to do.
-export function layout(document) {
+// `mapped` is pen-token-map.json's mapped table, which the Foundations sheet
+// uses to name the HideTheme constant beside each size.
+export function layout(document, mapped) {
   const unknown = [];
   const rows = new Map(BANDS.map(band => [band, []]));
+  // The Foundations sheet is generator-owned like the labels: rebuilt from the
+  // variables on every run, and always the first board of the System band.
+  const sheet = foundations(document.variables, mapped);
+  sheet.x = 0;
+  sheet.y = -Infinity;
+  rows.get(BANDS[0]).push(sheet);
   for (const node of document.children) {
     const name = node.name ?? '';
-    if (name.startsWith(LABEL_PREFIX)) continue;
+    if (name.startsWith(LABEL_PREFIX) || name === FOUNDATIONS) continue;
     const band = bandOf(name);
     if (band) rows.get(band).push(node);
     else unknown.push(name || `<${node.type} ${node.id}>`);
@@ -88,7 +100,7 @@ export function layout(document) {
     }
     children.push(label(band, x - GAP), ...nodes);
   }
-  for (const node of document.children) if (!children.includes(node) && !(node.name ?? '').startsWith(LABEL_PREFIX)) children.push(node);
+  for (const node of document.children) if (!children.includes(node) && !(node.name ?? '').startsWith(LABEL_PREFIX) && node.name !== FOUNDATIONS) children.push(node);
   return {document: {...document, children}, unknown};
 }
 
