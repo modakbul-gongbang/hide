@@ -13,6 +13,8 @@ import Testing
             .revealInFinder, .copyPath, .copyRelativePath,
             .separator,
             .rename,
+            .separator,
+            .delete,
         ]
         #expect(WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: true), isRemote: false) == expected)
         #expect(WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: false), isRemote: false) == expected)
@@ -29,6 +31,64 @@ import Testing
                 == [.copyPath, .copyRelativePath]
         )
         #expect(WorkspaceOutlineMenuItem.copyRelativePath.title == "Copy Relative Path")
+    }
+
+    /// B1, D-04: Delete is the last item, alone behind its separator, and it
+    /// is the one item that carries the catalog chord; a remote tree has no
+    /// Delete at all.
+    @Test func deleteIsLastAloneBehindItsSeparatorAndCarriesTheTrashChord() {
+        let local = WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: false), isRemote: false)
+        #expect(local.suffix(2) == [.separator, .delete])
+        #expect(WorkspaceOutlineMenuItem.delete.title == "Delete")
+        #expect(WorkspaceOutlineMenuItem.delete.command == .moveToTrash)
+        #expect(local.filter { $0.command != nil } == [.delete])
+        #expect(!WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: true), isRemote: true).contains(.delete))
+        #expect(!WorkspaceOutlineMenuPresentation.items(for: .emptyArea, isRemote: false).contains(.delete))
+    }
+
+    /// B3, D-03: the title names the item, a folder is told its contents go
+    /// too, and both say where the item can be restored from.
+    @Test func trashPromptNamesTheItemAndWarnsAboutAFoldersContents() {
+        let root = URL(fileURLWithPath: "/repo", isDirectory: true)
+        let file = WorkspaceOutlineTrashPrompt(
+            root: root, path: root.appendingPathComponent("src/lib.rs"), isDirectory: false,
+            selectAfter: root.appendingPathComponent("src/main.rs")
+        )
+        #expect(file.title == "Move 'lib.rs' to Trash?")
+        #expect(file.message == "You can restore it from Finder.")
+        let folder = WorkspaceOutlineTrashPrompt(
+            root: root, path: root.appendingPathComponent("src"), isDirectory: true,
+            selectAfter: root
+        )
+        #expect(folder.title == "Move 'src' to Trash?")
+        #expect(folder.message == "This folder and everything in it will move to the Trash. You can restore it from Finder.")
+        #expect(WorkspaceOutlineTrashPrompt.confirmTitle == "Move to Trash")
+        #expect(file.id == "/repo/src/lib.rs")
+    }
+
+    /// B4, D-05: the next sibling, else the previous, else the parent.
+    @Test func selectionAfterRemovalPrefersTheNextSiblingThenThePreviousThenTheParent() {
+        let siblings = ["/repo/src/a.rs", "/repo/src/b.rs", "/repo/src/c.rs"]
+        #expect(
+            WorkspaceOutlineSelectionPolicy.selectionAfterRemoving("/repo/src/a.rs", from: siblings, parent: "/repo/src")
+                == "/repo/src/b.rs"
+        )
+        #expect(
+            WorkspaceOutlineSelectionPolicy.selectionAfterRemoving("/repo/src/b.rs", from: siblings, parent: "/repo/src")
+                == "/repo/src/c.rs"
+        )
+        #expect(
+            WorkspaceOutlineSelectionPolicy.selectionAfterRemoving("/repo/src/c.rs", from: siblings, parent: "/repo/src")
+                == "/repo/src/b.rs"
+        )
+        #expect(
+            WorkspaceOutlineSelectionPolicy.selectionAfterRemoving("/repo/src/only.rs", from: ["/repo/src/only.rs"], parent: "/repo/src")
+                == "/repo/src"
+        )
+        #expect(
+            WorkspaceOutlineSelectionPolicy.selectionAfterRemoving("/repo/src/gone.rs", from: siblings, parent: "/repo/src")
+                == "/repo/src"
+        )
     }
 
     @Test func nameVerdictRefusesEmptySlashDotsAndSiblingsAndReportsAnUnchangedRename() {

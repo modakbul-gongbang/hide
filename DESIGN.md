@@ -1293,10 +1293,15 @@ Native screenshots remain necessary to approve toolbar spacing, font fallback an
 
 ## Explorer file management
 
-The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename.
+The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
 The empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
-Delete is not here yet; a later change appends it below Rename.
 `WorkspaceOutlineMenuPresentation` decides the item set, so the menu a click gets is a value a test can ask for.
+
+Delete has two entry points, the menu item and `⌘⌫` while the tree holds the keyboard, and both end in the same confirmation: an alert titled `Move 'name' to Trash?`, a folder told that everything in it goes too, and both told the item can be restored from Finder, with Cancel as the default and Move to Trash as the destructive button.
+Nothing reaches the core without that alert; Cancel and Esc send nothing.
+The `⌘⌫` chord is declared in `ShellMenuCommand` with the tree as its scope so the collision checks see it and a pane command cannot be rebound onto it, and the application menu builds no item for it, because the same chord anywhere else must reach the terminal untouched.
+The item goes to the macOS Trash through the core's `path_trash` event, never to a permanent delete; the selection moves to the next sibling, else the previous one, else the parent, decided by the tree and carried in the event so the cursor lands in the same frame as the removal.
+A failed move keeps the item and puts the reason on the row under it, the way a refused name is shown.
 
 New File, New Folder and Rename take the name in the row itself: a draft row is inserted at the top of the target folder, or the item's own label becomes the field.
 Enter sends, Esc and any other loss of focus cancel, and an unchanged rename closes the field without asking anything.

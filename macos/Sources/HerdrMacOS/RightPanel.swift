@@ -68,7 +68,8 @@ struct RightPanel: View {
                     createFile: { parent, name in model.core.createFile(root: activeRoot, parent: parent, name: name) },
                     createDirectory: { parent, name in model.core.createDirectory(root: activeRoot, parent: parent, name: name) },
                     rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
-                    move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) }
+                    move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) },
+                    requestTrash: model.requestExplorerTrash
                 )
             )
         } else {

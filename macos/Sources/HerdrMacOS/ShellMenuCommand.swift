@@ -11,6 +11,14 @@ import SwiftUI
 ///
 /// Per-pane commands are not here: they are user-rebindable and live in
 /// `PaneCommand`, which owns its own defaults and its own settings surface.
+///
+/// One chord is declared here without an application menu item: `⌘⌫` moves
+/// the Explorer's selected item to the Trash, and it is answered only by
+/// the tree's own `keyDown` while the tree has the keyboard, because the
+/// same chord elsewhere must reach the terminal untouched. It is in the
+/// catalog so the collision checks see it and so a pane command cannot be
+/// rebound onto it; `scope` says which commands the application menu
+/// builds and which it deliberately leaves out.
 enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
     case recentTab = "recent_tab"
     case previousRecentTab = "previous_recent_tab"
@@ -26,8 +34,23 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
     case toggleSidebarView = "toggle_sidebar_view"
     case toggleRightPanel = "toggle_right_panel"
     case findInPane = "find_in_pane"
+    case moveToTrash = "move_to_trash"
 
     var id: String { rawValue }
+
+    /// Where the chord is answered. The application menu builds every
+    /// `.applicationMenu` command and none of the others.
+    enum Scope: Equatable {
+        case applicationMenu
+        case explorerTree
+    }
+
+    var scope: Scope {
+        switch self {
+        case .moveToTrash: .explorerTree
+        default: .applicationMenu
+        }
+    }
 
     var title: String {
         switch self {
@@ -45,6 +68,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .toggleSidebarView: "Toggle Sidebar View"
         case .toggleRightPanel: "Toggle Right Panel"
         case .findInPane: "Find in Pane"
+        case .moveToTrash: "Move to Trash"
         }
     }
 
@@ -64,6 +88,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .toggleSidebarView: PaneShortcut(key: "e", modifiers: [.command])
         case .toggleRightPanel: PaneShortcut(key: "b", modifiers: [.command, .shift])
         case .findInPane: PaneShortcut(key: "f", modifiers: [.command])
+        case .moveToTrash: PaneShortcut(key: "delete", modifiers: [.command])
         }
     }
 

@@ -29,6 +29,25 @@ struct ShellMenuCommandTests {
         }
     }
 
+    /// D-04: ⌘⌫ is declared so the collision checks and the pane-rebind
+    /// reservation see it, and scoped to the tree so the application menu
+    /// never builds an item for it: outside the tree the chord must reach
+    /// the terminal untouched.
+    @Test func moveToTrashIsDeclaredForTheExplorerTreeAndReservedFromPaneRebinding() {
+        #expect(ShellMenuCommand.moveToTrash.shortcut.canonical == "command+delete")
+        #expect(ShellMenuCommand.moveToTrash.displayShortcut == "⌘⌫")
+        #expect(ShellMenuCommand.moveToTrash.shortcut.menuKeyEquivalent == "\u{8}")
+        #expect(ShellMenuCommand.moveToTrash.shortcut.modifierFlags == [.command])
+        #expect(ShellMenuCommand.moveToTrash.scope == .explorerTree)
+        #expect(ShellMenuCommand.allCases.filter { $0.scope == .explorerTree } == [.moveToTrash])
+        // A stored pane binding on the chord is refused: the parser takes
+        // one printable key or Return, and the reservation stands behind it.
+        let stored = ["close_pane": "command+delete"]
+        let resolution = PaneShortcutPolicy.resolve(stored: stored)
+        #expect(resolution.bindings == PaneShortcutPolicy.defaults)
+        #expect(resolution.diagnostic != nil)
+    }
+
     @Test func noTwoMenuCommandsClaimTheSameChord() {
         let chords = ShellMenuCommand.allCases.map(\.shortcut.canonical)
         #expect(Set(chords).count == chords.count)

@@ -172,6 +172,14 @@ struct ShellView: View {
                 secondaryButton: .cancel()
             )
         }
+        .alert(item: $model.explorerTrashPrompt) { prompt in
+            Alert(
+                title: Text(prompt.title),
+                message: Text(prompt.message),
+                primaryButton: .destructive(Text(WorkspaceOutlineTrashPrompt.confirmTitle), action: model.confirmExplorerTrash),
+                secondaryButton: .cancel()
+            )
+        }
         .sheet(item: $model.worktreeToDelete) { worktree in
             VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
                 Text("Delete worktree \(worktree.label)?")

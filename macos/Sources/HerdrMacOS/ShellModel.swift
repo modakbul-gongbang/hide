@@ -345,6 +345,8 @@ final class ShellModel: ObservableObject {
         set { recentNavigation.tabCycle = newValue }
     }
     @Published var workspaceToRemove: CoreWorkspaceSnapshot?
+    /// The Explorer item waiting for the Move to Trash modal's answer.
+    @Published var explorerTrashPrompt: WorkspaceOutlineTrashPrompt?
     @Published var worktreeToDelete: CoreGitWorktree?
     @Published var deleteWorktreeBranch = false
     private var handledRemovalIDs: Set<UInt64> = []
@@ -1405,6 +1407,18 @@ final class ShellModel: ObservableObject {
         guard let workspace = workspaceToRemove else { return }
         core.removeWorkspace(workspace.id)
         workspaceToRemove = nil
+    }
+
+    func requestExplorerTrash(_ prompt: WorkspaceOutlineTrashPrompt) {
+        explorerTrashPrompt = prompt
+    }
+
+    /// The one call that sends `path_trash`. Cancel and Esc clear the
+    /// prompt through the alert binding and send nothing (D-03).
+    func confirmExplorerTrash() {
+        guard let prompt = explorerTrashPrompt else { return }
+        core.trashPath(root: prompt.root, path: prompt.path, selectAfter: prompt.selectAfter)
+        explorerTrashPrompt = nil
     }
 
     func worktree(for path: String) -> CoreGitWorktree? {

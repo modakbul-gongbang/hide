@@ -24,6 +24,7 @@ enum WorkspaceOutlineMenuItem: Equatable {
     case copyPath
     case copyRelativePath
     case rename
+    case delete
     case separator
 
     var title: String {
@@ -34,7 +35,18 @@ enum WorkspaceOutlineMenuItem: Equatable {
         case .copyPath: "Copy Path"
         case .copyRelativePath: "Copy Relative Path"
         case .rename: "Rename"
+        case .delete: "Delete"
         case .separator: ""
+        }
+    }
+
+    /// The catalog chord the item also answers to, drawn beside its title.
+    /// Only Delete has one: the chord is bound inside the tree, and the
+    /// catalog declares it so nothing else can claim it (D-04).
+    var command: ShellMenuCommand? {
+        switch self {
+        case .delete: .moveToTrash
+        default: nil
         }
     }
 }
@@ -49,8 +61,9 @@ enum WorkspaceOutlineMenuTarget: Equatable {
 /// Decides the menu from what was clicked and where the tree lives.
 ///
 /// A remote tree is read-only, so it offers only the two copies; the empty
-/// area has no item to reveal, copy or rename, so it offers only creation.
-/// Delete belongs to a later change that appends below Rename.
+/// area has no item to reveal, copy, rename or delete, so it offers only
+/// creation. Delete is last and behind its own separator, as VS Code has
+/// it, so the one destructive item is not a neighbour of Rename.
 enum WorkspaceOutlineMenuPresentation {
     static func items(for target: WorkspaceOutlineMenuTarget, isRemote: Bool) -> [WorkspaceOutlineMenuItem] {
         if isRemote {
@@ -66,8 +79,52 @@ enum WorkspaceOutlineMenuPresentation {
                 .revealInFinder, .copyPath, .copyRelativePath,
                 .separator,
                 .rename,
+                .separator,
+                .delete,
             ]
         }
+    }
+}
+
+/// The confirmation the tree asks for before an item goes to the Trash,
+/// and everything the shell needs to act on the answer.
+///
+/// The prompt is a value the tree hands to the shell model, which shows it
+/// through `.alert(item:)` as the workspace removal prompt is shown. Nothing
+/// reaches the core without this value passing through the modal: the
+/// tree's two entry points, the menu item and ⌘⌫, both end here (D-03).
+struct WorkspaceOutlineTrashPrompt: Identifiable, Equatable, Sendable {
+    let root: URL
+    let path: URL
+    let isDirectory: Bool
+    /// The row selected once the item is gone (D-05).
+    let selectAfter: URL
+
+    var id: String { path.path }
+    var name: String { path.lastPathComponent }
+
+    var title: String { "Move '\(name)' to Trash?" }
+
+    var message: String {
+        isDirectory
+            ? "This folder and everything in it will move to the Trash. You can restore it from Finder."
+            : "You can restore it from Finder."
+    }
+
+    static let confirmTitle = "Move to Trash"
+}
+
+/// Decides where the selection goes once a row leaves the tree.
+enum WorkspaceOutlineSelectionPolicy {
+    /// The next sibling, else the previous one, else the parent (D-05).
+    /// `siblings` is the parent's entries in row order and `removed` the
+    /// one leaving; a `removed` not among them means the tree and the
+    /// request disagree, so the parent is the only honest answer.
+    static func selectionAfterRemoving(_ removed: String, from siblings: [String], parent: String) -> String {
+        guard let index = siblings.firstIndex(of: removed) else { return parent }
+        if index + 1 < siblings.count { return siblings[index + 1] }
+        if index > 0 { return siblings[index - 1] }
+        return parent
     }
 }
 
