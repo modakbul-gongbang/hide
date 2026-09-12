@@ -3180,7 +3180,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_focus", payload: ["tab_id": tabID])
     }
 
-    /// The explorer's four filesystem changes. Each is one event: the core
+    /// The explorer's five filesystem changes. Each is one event: the core
     /// decides the paths, runs the call off the runtime mutex, and reports
     /// through `explorerOperation`, so the tree never touches the disk and
     /// never shows a half-applied change.
@@ -3198,6 +3198,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func movePath(root: URL, path: URL, destination: URL) {
         dispatch(kind: "path_move", payload: ["root": root.path, "path": path.path, "destination": destination.path])
+    }
+
+    /// Only the confirmed modal calls this; the tree itself never does.
+    /// `selectAfter` is the row the tree chose to select once the item is
+    /// gone, so the selection lands in the same frame as the removal.
+    func trashPath(root: URL, path: URL, selectAfter: URL, inode: UInt64?) {
+        var payload: [String: Any] = ["root": root.path, "path": path.path, "select_after": selectAfter.path]
+        if let inode {
+            payload["inode"] = inode
+        }
+        dispatch(kind: "path_trash", payload: payload)
     }
 
     func closeFileTab(_ tabID: String) {

@@ -127,14 +127,17 @@ enum WorkspaceOutlineDraftKind: Equatable {
     case folder
 }
 
-/// The four changes the tree can ask the core for. They are closures rather
-/// than a `ShellModel` reference so the outline stays testable without one
-/// and so the view cannot reach any other event.
+/// The changes the tree can ask for. They are closures rather than a
+/// `ShellModel` reference so the outline stays testable without one and so
+/// the view cannot reach any other event. Four go to the core directly; a
+/// trash goes to the shell as a prompt, and only the modal's confirmation
+/// turns it into the core event (D-03).
 struct WorkspaceFileOperations {
     var createFile: (_ parent: URL, _ name: String) -> Void
     var createDirectory: (_ parent: URL, _ name: String) -> Void
     var rename: (_ path: URL, _ name: String) -> Void
     var move: (_ path: URL, _ destination: URL) -> Void
+    var requestTrash: (WorkspaceOutlineTrashPrompt) -> Void
 }
 
 /// A row draws hover, but it does not decide it.
@@ -216,6 +219,9 @@ private final class WorkspaceOutlineRowView: NSTableRowView {
 
 final class WorkspaceNSOutlineView: NSOutlineView {
     var onActivate: (() -> Void)?
+    /// ⌘⌫ on the selected row. Answered here and nowhere else, so the chord
+    /// reaches a file only while the tree holds the keyboard (D-04).
+    var onTrash: (() -> Void)?
     /// Asked with the row under the pointer, or -1 for the empty area.
     var contextMenu: ((Int) -> NSMenu?)?
 
@@ -292,6 +298,10 @@ final class WorkspaceNSOutlineView: NSOutlineView {
             onActivate?()
             return
         }
+        if ShellMenuCommand.moveToTrash.shortcut.matches(event) {
+            onTrash?()
+            return
+        }
         super.keyDown(with: event)
     }
 }
@@ -357,6 +367,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         outline.action = #selector(Coordinator.activateClickedRow)
         outline.onActivate = { [weak coordinator] in
             coordinator?.activateSelection()
+        }
+        outline.onTrash = { [weak coordinator] in
+            coordinator?.requestTrashOfSelection()
         }
         outline.contextMenu = { [weak coordinator] row in
             coordinator?.contextMenu(forRow: row)
@@ -799,7 +812,17 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                     node.state = .failed("Could not read \(url.lastPathComponent): \(error.localizedDescription)")
                     Self.reportFailure(path: url.path, message: error.localizedDescription)
                 }
+                // The reload drops the selection of any row under the
+                // folder; a kept node is the same object, so the row the
+                // operator had is found again and stays selected.
+                let selected = outline.flatMap { outline in
+                    outline.selectedRow >= 0 ? outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode : nil
+                }
                 outline?.reloadItem(node, reloadChildren: true)
+                if let outline, let selected {
+                    let row = outline.row(forItem: selected)
+                    if row >= 0 { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+                }
                 restoreVisibleState()
                 completion?()
             }
@@ -850,6 +873,10 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                     let entry = NSMenuItem(title: item.title, action: selector(for: item), keyEquivalent: "")
                     entry.target = self
                     entry.representedObject = subject
+                    if let command = item.command {
+                        entry.keyEquivalent = command.shortcut.menuKeyEquivalent
+                        entry.keyEquivalentModifierMask = command.shortcut.modifierFlags
+                    }
                     menu.addItem(entry)
                 }
             }
@@ -864,6 +891,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             case .copyPath: #selector(menuCopyPath(_:))
             case .copyRelativePath: #selector(menuCopyRelativePath(_:))
             case .rename: #selector(menuRename(_:))
+            case .delete: #selector(menuDelete(_:))
             case .separator: nil
             }
         }
@@ -907,6 +935,56 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         @objc private func menuRename(_ sender: Any?) {
             guard let node = subject(of: sender), node !== rootNode else { return }
             beginRename(node)
+        }
+
+        @objc private func menuDelete(_ sender: Any?) {
+            guard let node = subject(of: sender) else { return }
+            requestTrash(node)
+        }
+
+        /// ⌘⌫ with the tree focused: the selected row, if it is an item.
+        /// The root row, a placeholder, a draft and the failure line are not
+        /// items, and no selection is nothing to ask about (D-01).
+        func requestTrashOfSelection() {
+            guard let outline, outline.selectedRow >= 0,
+                  let node = outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode
+            else { return }
+            requestTrash(node)
+        }
+
+        // MARK: Trash
+
+        /// Hands the shell the prompt for the modal. Nothing is sent to the
+        /// core from here: the shell dispatches only when the modal's
+        /// destructive button is pressed (D-03). The successor row is
+        /// decided now, from the parent's rows as they stand, so the
+        /// selection has somewhere to go the moment the item is gone (D-05).
+        private func requestTrash(_ node: WorkspaceOutlineNode) {
+            guard node.isEntry, node !== rootNode, let rootPath,
+                  let parent = loadedNode(at: WorkspaceOutlinePathPresentation.parentPath(node.url.path))
+            else { return }
+            cancelInlineEdit()
+            clearFailure()
+            let siblings = parent.children.filter(\.isEntry).map(\.url.path)
+            let selectAfter = WorkspaceOutlineSelectionPolicy.selectionAfterRemoving(
+                node.url.path, from: siblings, parent: parent.url.path
+            )
+            fileOperations.requestTrash(WorkspaceOutlineTrashPrompt(
+                root: URL(fileURLWithPath: rootPath, isDirectory: true),
+                path: node.url,
+                isDirectory: node.isDirectory,
+                selectAfter: URL(fileURLWithPath: selectAfter),
+                inode: Self.inode(atPath: node.url.path)
+            ))
+        }
+
+        /// `attributesOfItem` does not follow a terminal symlink, so a
+        /// symlink row reports its own inode, the one the core compares.
+        static func inode(atPath path: String) -> UInt64? {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+                  let number = attributes[.systemFileNumber] as? NSNumber
+            else { return nil }
+            return number.uint64Value
         }
 
         private func copyToPasteboard(_ string: String) {
@@ -1247,7 +1325,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
 
         /// Walks from the root toward `path`, expanding and loading each
         /// ancestor. Returns the node once every ancestor on the way is loaded,
-        /// and nil while a load is still in flight.
+        /// and nil while a load is still in flight. The target itself is not
+        /// expanded: a folder selected as the cursor's landing place after a
+        /// removal, or as a new item, is highlighted, not opened.
         private func revealNode(
             path: String,
             from node: WorkspaceOutlineNode,
@@ -1262,7 +1342,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             guard let child = node.children.first(where: {
                 $0.isEntry && ($0.url.path == path || path.hasPrefix($0.url.path + "/"))
             }) else { return nil }
-            if child.isDirectory, !outline.isItemExpanded(child) {
+            if child.isDirectory, child.url.path != path, !outline.isItemExpanded(child) {
                 outline.expandItem(child)
             }
             return revealNode(path: path, from: child, in: outline)

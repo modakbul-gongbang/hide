@@ -83,12 +83,36 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
         // declared: control, option, shift, command.
         let order: [Modifier] = [.control, .option, .shift, .command]
         let prefix = order.filter(modifiers.contains).compactMap { symbols[$0] }.joined()
-        return prefix + (key == "return" ? "↩" : key.uppercased())
+        let glyph = switch key {
+        case "return": "↩"
+        case "delete": "⌫"
+        default: key.uppercased()
+        }
+        return prefix + glyph
     }
 
     var keyEquivalent: KeyEquivalent {
-        if key == "tab" { return .tab }
-        return key == "return" ? .return : KeyEquivalent(Character(key))
+        switch key {
+        case "tab": .tab
+        case "return": .return
+        case "delete": .delete
+        default: KeyEquivalent(Character(key))
+        }
+    }
+
+    /// The same chord for an `NSMenuItem`, which takes the key as the
+    /// character it would type: Delete is the backspace character.
+    var menuKeyEquivalent: String {
+        key == "delete" ? "\u{8}" : key
+    }
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        var expected: NSEvent.ModifierFlags = []
+        if modifiers.contains(.command) { expected.insert(.command) }
+        if modifiers.contains(.control) { expected.insert(.control) }
+        if modifiers.contains(.option) { expected.insert(.option) }
+        if modifiers.contains(.shift) { expected.insert(.shift) }
+        return expected
     }
 
     var eventModifiers: EventModifiers {
@@ -105,16 +129,12 @@ struct PaneShortcut: Equatable, Hashable, Sendable {
         let relevantFlags = event.modifierFlags.intersection([
             .command, .control, .option, .shift,
         ])
-        var expectedFlags: NSEvent.ModifierFlags = []
-        if modifiers.contains(.command) { expectedFlags.insert(.command) }
-        if modifiers.contains(.control) { expectedFlags.insert(.control) }
-        if modifiers.contains(.option) { expectedFlags.insert(.option) }
-        if modifiers.contains(.shift) { expectedFlags.insert(.shift) }
-        guard relevantFlags == expectedFlags else { return false }
+        guard relevantFlags == modifierFlags else { return false }
         if key == "tab" { return event.keyCode == 48 }
         if key == "return" {
             return event.keyCode == 36 || event.keyCode == 76
         }
+        if key == "delete" { return event.keyCode == 51 }
         // Identity is the physical key, never the produced character. With a
         // Hangul, Kana, or Cyrillic input source selected, macOS reports the
         // character that source produces - the D key comes through as "ㅇ" -

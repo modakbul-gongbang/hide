@@ -172,6 +172,27 @@ struct ShellView: View {
                 secondaryButton: .cancel()
             )
         }
+        // The same alert presentation as the workspace removal above, on the
+        // current API because the older `Alert` value makes Cancel the
+        // Return key's button whenever the other one is destructive. Here
+        // Return is Move to Trash and Esc is Cancel (D-03): the chord that
+        // opened the modal is a keyboard flow, and its answer stays on the
+        // keyboard. Dismissing by any route clears the prompt through the
+        // binding and sends nothing.
+        .alert(
+            model.explorerTrashPrompt?.title ?? "",
+            isPresented: Binding(
+                get: { model.explorerTrashPrompt != nil },
+                set: { if !$0 { model.explorerTrashPrompt = nil } }
+            ),
+            presenting: model.explorerTrashPrompt
+        ) { _ in
+            Button(WorkspaceOutlineTrashPrompt.confirmTitle, role: .destructive, action: model.confirmExplorerTrash)
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { model.explorerTrashPrompt = nil }
+        } message: { prompt in
+            Text(prompt.message)
+        }
         .sheet(item: $model.worktreeToDelete) { worktree in
             VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
                 Text("Delete worktree \(worktree.label)?")
