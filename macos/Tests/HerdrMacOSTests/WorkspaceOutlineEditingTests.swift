@@ -335,6 +335,11 @@ import Testing
         #expect(fromKey.path == host.root.appendingPathComponent("README.md"))
         #expect(!fromKey.isDirectory)
         #expect(fromKey.selectAfter.path == host.root.appendingPathComponent("src").path)
+        // The prompt carries the file's identity, so a confirm names this
+        // README.md and not whatever sits at the path by then (D-03).
+        let attributes = try FileManager.default.attributesOfItem(atPath: fromKey.path.path)
+        let inode = try #require(attributes[.systemFileNumber] as? NSNumber).uint64Value
+        #expect(fromKey.inode == inode)
 
         // The modal was confirmed and the core moved the file: the row goes
         // and the selection is the successor the core was told about.

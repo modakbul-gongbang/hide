@@ -99,6 +99,11 @@ struct WorkspaceOutlineTrashPrompt: Identifiable, Equatable, Sendable {
     let isDirectory: Bool
     /// The row selected once the item is gone (D-05).
     let selectAfter: URL
+    /// The item's inode when the prompt was built, so the core moves the
+    /// item the modal named and refuses one that replaced it at the same
+    /// path while the modal was open (D-03). Nil when it could not be read;
+    /// the core then checks existence only.
+    let inode: UInt64?
 
     var id: String { path.path }
     var name: String { path.lastPathComponent }

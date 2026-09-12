@@ -173,6 +173,12 @@ pub struct ExplorerOperation {
     /// for a creation, rename or move, and the tree's chosen neighbour for
     /// a trash, whose item is no longer there to select.
     pub selection: PathBuf,
+    /// The inode the operator was shown when a trash was confirmed, when the
+    /// shell could read one. The call refuses an item with another inode:
+    /// what leaves is what the modal named, not whatever replaced it at that
+    /// path while the modal was open. `None` leaves only the existence
+    /// check, which is all a rename or move has ever had.
+    pub expected_inode: Option<u64>,
 }
 
 impl ExplorerOperation {
@@ -196,6 +202,7 @@ impl ExplorerOperation {
             source: path.clone(),
             destination: path.clone(),
             selection: path,
+            expected_inode: None,
         })
     }
 
@@ -214,6 +221,7 @@ impl ExplorerOperation {
             source,
             destination: destination.clone(),
             selection: destination,
+            expected_inode: None,
         })
     }
 
@@ -235,6 +243,7 @@ impl ExplorerOperation {
             source,
             destination: destination.clone(),
             selection: destination,
+            expected_inode: None,
         })
     }
 
@@ -243,7 +252,12 @@ impl ExplorerOperation {
     /// other change: the root itself and anything outside it never reach
     /// the call, and a selection that would leave with the item is refused
     /// rather than pointed at nothing.
-    pub fn trash(root: &Path, path: &Path, select_after: &Path) -> Result<Self, String> {
+    pub fn trash(
+        root: &Path,
+        path: &Path,
+        select_after: &Path,
+        expected_inode: Option<u64>,
+    ) -> Result<Self, String> {
         let source = path_inside_root(root, path, false)?;
         let selection = path_inside_root(root, select_after, true)?;
         if selection == source || selection.starts_with(&source) {
@@ -256,6 +270,7 @@ impl ExplorerOperation {
             source: source.clone(),
             destination: source,
             selection,
+            expected_inode,
         })
     }
 
@@ -295,7 +310,15 @@ pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), Str
             rename_exclusive(&operation.source, &operation.destination).map_err(describe)
         }
         ExplorerOperationKind::PathTrash => {
-            require_source(operation, describe)?;
+            let present = require_source(operation, describe)?;
+            if let Some(expected) = operation.expected_inode
+                && inode_of(&present) != expected
+            {
+                return Err(format!(
+                    "{} changed while the prompt was open; nothing was moved",
+                    operation.item_name()
+                ));
+            }
             move_to_trash(&operation.source).map_err(|error| {
                 format!(
                     "{} could not be moved to the Trash: {error}",
@@ -307,13 +330,14 @@ pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), Str
 }
 
 /// A rename, move or trash of an item that is already gone is named as
-/// such rather than reported as a failed write.
+/// such rather than reported as a failed write. The metadata comes back so
+/// a trash can compare the inode without a second read.
 fn require_source(
     operation: &ExplorerOperation,
     describe: impl FnOnce(io::Error) -> String,
-) -> Result<(), String> {
+) -> Result<fs::Metadata, String> {
     match fs::symlink_metadata(&operation.source) {
-        Ok(_) => Ok(()),
+        Ok(metadata) => Ok(metadata),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Err(format!(
             "{} no longer exists",
             operation
@@ -324,6 +348,19 @@ fn require_source(
         )),
         Err(error) => Err(describe(error)),
     }
+}
+
+/// The inode is the identity the shell captured when it built the prompt
+/// and the one the core checks before the move; see `expected_inode`.
+#[cfg(unix)]
+pub(crate) fn inode_of(metadata: &fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.ino()
+}
+
+#[cfg(not(unix))]
+pub(crate) fn inode_of(_metadata: &fs::Metadata) -> u64 {
+    0
 }
 
 /// Moves the item to the Trash through `NSFileManager` rather than through
@@ -482,7 +519,7 @@ fn language_for(path: &Path) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -535,6 +572,46 @@ mod tests {
         fs::write(root.join("README.md"), "readme").unwrap();
         fs::write(root.join("src/lib.rs"), "lib").unwrap();
         root
+    }
+
+    /// Names no other Trash entry can carry, so a trashed fixture can be
+    /// found and removed by exact name without touching anything else.
+    pub(crate) fn unique_trash_names() -> (String, String) {
+        let stamp = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        (
+            format!("hide-test-trash-file-{stamp}.txt"),
+            format!("hide-test-trash-folder-{stamp}"),
+        )
+    }
+
+    /// Removes the named fixtures from `~/.Trash`; a name that is not there
+    /// is left alone. `HOME` is read because that is where macOS keeps the
+    /// account Trash; the move itself ignores the variable, so a test cannot
+    /// redirect it and can only clean up after it.
+    pub(crate) fn remove_from_trash(names: &[&str]) {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let trash = Path::new(&home).join(".Trash");
+        for name in names {
+            let entry = trash.join(name);
+            match fs::symlink_metadata(&entry) {
+                Ok(metadata) if metadata.is_dir() => {
+                    fs::remove_dir_all(&entry).ok();
+                }
+                Ok(_) => {
+                    fs::remove_file(&entry).ok();
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     #[test]
@@ -612,63 +689,96 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-    /// The moved item lands in the account's Trash, which this test does not
-    /// read back: where the Trash is depends on the volume, and emptying it
-    /// is not this test's to do. What it asserts is what the tree observes,
-    /// that the item is gone and nothing beside it moved.
+    /// The moved items really land in the account's Trash: the crate has no
+    /// fixture Trash and `NSFileManager` ignores `HOME`. So they carry names
+    /// nothing else in the Trash has, and the test removes them from
+    /// `~/.Trash` afterwards. On a volume whose Trash is elsewhere the
+    /// removal finds nothing and the item stays there, which is the one
+    /// side effect this test cannot avoid.
     #[test]
     fn explorer_moves_a_file_and_a_folder_to_the_trash() {
         let root = explorer_fixture();
+        let (file_name, folder_name) = unique_trash_names();
+        let file_path = root.join("src").join(&file_name);
+        let folder_path = root.join(&folder_name);
+        fs::write(&file_path, "trashed").unwrap();
+        fs::create_dir(&folder_path).unwrap();
+        fs::write(folder_path.join("inside.txt"), "inside").unwrap();
+
         let file =
-            ExplorerOperation::trash(&root, &root.join("src/lib.rs"), &root.join("src/nested"))
-                .unwrap();
+            ExplorerOperation::trash(&root, &file_path, &root.join("src/nested"), None).unwrap();
         assert_eq!(file.kind, ExplorerOperationKind::PathTrash);
-        assert_eq!(file.destination, root.join("src/lib.rs"));
+        assert_eq!(file.destination, file_path);
         assert_eq!(file.selection, root.join("src/nested"));
         apply_explorer_operation(&file).unwrap();
-        assert!(!root.join("src/lib.rs").exists());
+        assert!(!file_path.exists());
+        assert!(root.join("src/lib.rs").is_file());
         assert!(root.join("src/nested").is_dir());
-        assert_eq!(
-            fs::read_to_string(root.join("README.md")).unwrap(),
-            "readme"
-        );
 
-        let folder = ExplorerOperation::trash(&root, &root.join("src"), &root).unwrap();
+        let folder = ExplorerOperation::trash(&root, &folder_path, &root, None).unwrap();
         assert_eq!(folder.selection, root);
         apply_explorer_operation(&folder).unwrap();
-        assert!(!root.join("src").exists());
+        assert!(!folder_path.exists());
         assert!(root.join("README.md").is_file());
+        fs::remove_dir_all(&root).unwrap();
+        remove_from_trash(&[&file_name, &folder_name]);
+    }
+
+    /// D-03: the item the modal named is the item that moves. A different
+    /// inode at the same path is refused and left where it is.
+    #[test]
+    fn explorer_refuses_to_trash_an_item_whose_inode_changed_under_the_prompt() {
+        let root = explorer_fixture();
+        let lib = root.join("src/lib.rs");
+        let shown = inode_of(&fs::symlink_metadata(&lib).unwrap());
+        // Keep the shown inode alive so the filesystem cannot hand its
+        // number to the replacement.
+        fs::rename(&lib, root.join("src/old.rs")).unwrap();
+        fs::write(&lib, "rewritten").unwrap();
+        assert_ne!(inode_of(&fs::symlink_metadata(&lib).unwrap()), shown);
+
+        let stale = ExplorerOperation::trash(&root, &lib, &root.join("src"), Some(shown)).unwrap();
+        let error = apply_explorer_operation(&stale).unwrap_err();
+        assert_eq!(
+            error,
+            "lib.rs changed while the prompt was open; nothing was moved"
+        );
+        assert_eq!(fs::read_to_string(&lib).unwrap(), "rewritten");
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn explorer_refuses_to_trash_outside_the_root_or_the_root_itself() {
         let root = Path::new("/repo");
-        let outside = ExplorerOperation::trash(root, Path::new("/repo-other/a"), root);
+        let outside = ExplorerOperation::trash(root, Path::new("/repo-other/a"), root, None);
         assert!(outside.unwrap_err().contains("outside the workspace"));
-        let escaping = ExplorerOperation::trash(root, Path::new("/repo/../etc/passwd"), root);
+        let escaping = ExplorerOperation::trash(root, Path::new("/repo/../etc/passwd"), root, None);
         assert!(escaping.unwrap_err().contains("not a normal path"));
-        let root_itself = ExplorerOperation::trash(root, root, root);
+        let root_itself = ExplorerOperation::trash(root, root, root, None);
         assert!(root_itself.unwrap_err().contains("root itself"));
-        let relative = ExplorerOperation::trash(root, Path::new("src/a"), root);
+        let relative = ExplorerOperation::trash(root, Path::new("src/a"), root, None);
         assert!(relative.unwrap_err().contains("not an absolute path"));
 
         let selection_outside =
-            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo-other"));
+            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo-other"), None);
         assert!(
             selection_outside
                 .unwrap_err()
                 .contains("outside the workspace")
         );
-        let selection_inside =
-            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo/src/a.rs"));
+        let selection_inside = ExplorerOperation::trash(
+            root,
+            Path::new("/repo/src"),
+            Path::new("/repo/src/a.rs"),
+            None,
+        );
         assert!(
             selection_inside
                 .unwrap_err()
                 .contains("cannot move into the item")
         );
         let selection_itself =
-            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo/src"));
+            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo/src"), None);
         assert!(
             selection_itself
                 .unwrap_err()
@@ -680,7 +790,8 @@ mod tests {
     fn explorer_reports_a_missing_item_instead_of_trashing_it() {
         let root = explorer_fixture();
         let missing =
-            ExplorerOperation::trash(&root, &root.join("src/gone.rs"), &root.join("src")).unwrap();
+            ExplorerOperation::trash(&root, &root.join("src/gone.rs"), &root.join("src"), None)
+                .unwrap();
         let error = apply_explorer_operation(&missing).unwrap_err();
         assert_eq!(error, "gone.rs no longer exists");
         assert!(root.join("src/lib.rs").is_file());

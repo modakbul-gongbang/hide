@@ -917,6 +917,11 @@ struct PathTrashPayload {
     /// because only the tree knows its own row order; the core still
     /// refuses one outside the checkout or inside the item.
     select_after: String,
+    /// The inode the tree read when it built the prompt, so the core moves
+    /// the item the modal named and refuses one that replaced it while the
+    /// modal was open. Absent when the tree could not read one.
+    #[serde(default)]
+    inode: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -10193,6 +10198,7 @@ impl Runtime {
                         root,
                         Path::new(&payload.path),
                         Path::new(&payload.select_after),
+                        payload.inode,
                     )
                 },
                 &payload.root,
@@ -20648,9 +20654,14 @@ mod tests {
     #[test]
     fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         let (mut runtime, root) = explorer_runtime();
-        let src = root.join("src");
-        let lib = src.join("lib.rs");
+        // The items really reach the account Trash; they carry names nothing
+        // else there has and are removed from it at the end (files.rs).
+        let (file_name, folder_name) = crate::files::tests::unique_trash_names();
+        let src = root.join(&folder_name);
+        let lib = src.join(&file_name);
         let nested = src.join("nested");
+        std::fs::create_dir_all(&nested).expect("fixture folder");
+        std::fs::write(&lib, "lib\n").expect("fixture file");
         runtime.snapshot.ui_state.expanded_paths = vec![
             src.to_string_lossy().into_owned(),
             nested.to_string_lossy().into_owned(),
@@ -20660,7 +20671,7 @@ mod tests {
             workspace_id: "workspace:0".to_owned(),
             checkout_id: "checkout:0".to_owned(),
             path: lib.to_string_lossy().into_owned(),
-            label: "lib.rs".to_owned(),
+            label: file_name.clone(),
             kind: EditorTabKind::File,
             diff_committed: None,
             markdown_preview: false,
@@ -20721,6 +20732,41 @@ mod tests {
             "expanded folders inside the trashed folder are dropped: {:?}",
             snapshot.ui_state.expanded_paths
         );
+        std::fs::remove_dir_all(&root).ok();
+        crate::files::tests::remove_from_trash(&[&file_name, &folder_name]);
+    }
+
+    /// D-03: the confirm carries the inode the prompt was built from, and an
+    /// item replaced under the open modal is refused rather than moved.
+    #[test]
+    fn explorer_trash_refuses_an_item_replaced_while_the_prompt_was_open() {
+        let (mut runtime, root) = explorer_runtime();
+        let lib = root.join("src/lib.rs");
+        let shown = crate::files::inode_of(&std::fs::symlink_metadata(&lib).expect("fixture"));
+        std::fs::rename(&lib, root.join("src/old.rs")).expect("keep the shown inode alive");
+        std::fs::write(&lib, "rewritten").expect("replacement");
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_trash",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": lib.to_string_lossy(),
+                "select_after": root.join("src").to_string_lossy(),
+                "inode": shown,
+            })
+        )));
+        let snapshot = runtime.snapshot();
+        let operation = snapshot.explorer_operation.as_ref().expect("a failed slot");
+        assert_eq!(operation.phase, "failed");
+        assert_eq!(
+            operation.message.as_deref(),
+            Some("lib.rs changed while the prompt was open; nothing was moved")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&lib).expect("still there"),
+            "rewritten"
+        );
+        assert_eq!(snapshot.ui_state.selected_path, None);
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -3203,8 +3203,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     /// Only the confirmed modal calls this; the tree itself never does.
     /// `selectAfter` is the row the tree chose to select once the item is
     /// gone, so the selection lands in the same frame as the removal.
-    func trashPath(root: URL, path: URL, selectAfter: URL) {
-        dispatch(kind: "path_trash", payload: ["root": root.path, "path": path.path, "select_after": selectAfter.path])
+    func trashPath(root: URL, path: URL, selectAfter: URL, inode: UInt64?) {
+        var payload: [String: Any] = ["root": root.path, "path": path.path, "select_after": selectAfter.path]
+        if let inode {
+            payload["inode"] = inode
+        }
+        dispatch(kind: "path_trash", payload: payload)
     }
 
     func closeFileTab(_ tabID: String) {

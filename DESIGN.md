@@ -1301,6 +1301,7 @@ Delete has two entry points, the menu item and `⌘⌫` while the tree holds the
 Nothing reaches the core without that alert; Cancel and Esc send nothing.
 The `⌘⌫` chord is declared in `ShellMenuCommand` with the tree as its scope so the collision checks see it and a pane command cannot be rebound onto it, and the application menu builds no item for it, because the same chord anywhere else must reach the terminal untouched.
 The item goes to the macOS Trash through the core's `path_trash` event, never to a permanent delete; the selection moves to the next sibling, else the previous one, else the parent, decided by the tree and carried in the event so the cursor lands in the same frame as the removal.
+The event also carries the item's inode as read when the prompt opened, and the core refuses an item that was replaced at that path while the modal was open, so what leaves is what the modal named.
 A failed move keeps the item and puts the reason on the row under it, the way a refused name is shown.
 
 New File, New Folder and Rename take the name in the row itself: a draft row is inserted at the top of the target folder, or the item's own label becomes the field.

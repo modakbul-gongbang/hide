@@ -973,8 +973,18 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 root: URL(fileURLWithPath: rootPath, isDirectory: true),
                 path: node.url,
                 isDirectory: node.isDirectory,
-                selectAfter: URL(fileURLWithPath: selectAfter)
+                selectAfter: URL(fileURLWithPath: selectAfter),
+                inode: Self.inode(atPath: node.url.path)
             ))
+        }
+
+        /// `attributesOfItem` does not follow a terminal symlink, so a
+        /// symlink row reports its own inode, the one the core compares.
+        static func inode(atPath path: String) -> UInt64? {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+                  let number = attributes[.systemFileNumber] as? NSNumber
+            else { return nil }
+            return number.uint64Value
         }
 
         private func copyToPasteboard(_ string: String) {

@@ -52,13 +52,13 @@ import Testing
         let root = URL(fileURLWithPath: "/repo", isDirectory: true)
         let file = WorkspaceOutlineTrashPrompt(
             root: root, path: root.appendingPathComponent("src/lib.rs"), isDirectory: false,
-            selectAfter: root.appendingPathComponent("src/main.rs")
+            selectAfter: root.appendingPathComponent("src/main.rs"), inode: 42
         )
         #expect(file.title == "Move 'lib.rs' to Trash?")
         #expect(file.message == "You can restore it from Finder.")
         let folder = WorkspaceOutlineTrashPrompt(
             root: root, path: root.appendingPathComponent("src"), isDirectory: true,
-            selectAfter: root
+            selectAfter: root, inode: nil
         )
         #expect(folder.title == "Move 'src' to Trash?")
         #expect(folder.message == "This folder and everything in it will move to the Trash. You can restore it from Finder.")

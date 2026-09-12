@@ -1417,7 +1417,7 @@ final class ShellModel: ObservableObject {
     /// prompt through the alert binding and send nothing (D-03).
     func confirmExplorerTrash() {
         guard let prompt = explorerTrashPrompt else { return }
-        core.trashPath(root: prompt.root, path: prompt.path, selectAfter: prompt.selectAfter)
+        core.trashPath(root: prompt.root, path: prompt.path, selectAfter: prompt.selectAfter, inode: prompt.inode)
         explorerTrashPrompt = nil
     }
 
