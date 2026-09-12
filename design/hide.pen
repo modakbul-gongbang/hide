@@ -75,7 +75,7 @@
               "id": "fnd-title-sub",
               "name": "Single dark mode. Four-s",
               "fill": "$--color-secondary",
-              "content": "Single dark mode. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen-tokens.mjs writes from HideTheme.swift; the sheet itself is rebuilt by gen-pen-layout.mjs.",
+              "content": "Single dark mode. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen.mjs writes from HideTheme.swift, and the sheet itself is redrawn by the same run.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-subhead",
               "fontWeight": "normal",

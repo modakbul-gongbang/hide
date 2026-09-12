@@ -4,8 +4,8 @@
 // the only structure the file can carry is the board's name and where it sits.
 // This module binds the two and draws a label above each band. A board's name prefix says which band it belongs
 // to, the band says its y, and the boards in a band are laid out left to right
-// in their existing order. gen-pen-layout.mjs writes that placement and
-// check-pen-layout.mjs refuses a canvas whose placement or naming disagrees, so
+// in their existing order. gen-pen.mjs writes that placement and check-pen.mjs
+// refuses a canvas whose placement or naming disagrees, so
 // a board dragged somewhere by hand, or named outside the scheme, is reported
 // rather than lost in a 12,000-line JSON file.
 

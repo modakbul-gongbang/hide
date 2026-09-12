@@ -266,10 +266,10 @@ It is committed, so a design change shows up in `git diff` beside the code chang
 | Review | `Review /<date> <topic> / Audit`, `/ Proposal`, `/ As built / ...` | one audit, its proposal, and the as-built evidence beside them | deleted once the proposal lands in code |
 | Scratch | `Scratch /<topic>` | exploration, candidates side by side | deleted or redrawn as a `Screen /` or `Review /` board before the pull request opens |
 
-    node scripts/gen-pen-layout.mjs      # place every board at its band's y, packed left to right in its existing order
-    node scripts/check-pen-layout.mjs    # refuse a board with no band prefix, or a canvas the generator would move
+    node scripts/gen-pen.mjs      # tokens from HideTheme, boards placed by band, labels and Foundations redrawn
+    node scripts/check-pen.mjs    # refuse a canvas that is not what gen-pen.mjs writes, and say which part
 
-`System / Foundations` is generated too: `scripts/pen-foundations.mjs` draws the surface ladder, inks, semantic colours, type scale, spacing, radius, layout sizes and opacities from the canvas's own variables on every layout run, so the sheet cannot say something `HideTheme` does not.
+`System / Foundations` is generated too: `scripts/pen-foundations.mjs` draws the surface ladder, inks, semantic colours, type scale, spacing, radius, layout sizes and opacities from the canvas's own variables on every run, so the sheet cannot say something `HideTheme` does not.
 
 **A component is a sheet, and the sheet is one column: title, master, then one row per state.**
 The master is the `reusable` frame the rest of the canvas references; it sits inside its sheet, and a `ref` from a `Screen /` board resolves to it there.
@@ -278,10 +278,10 @@ The states are the ones the code produces and the sheet's spec line says where t
 Components read left to right across the band and states top to bottom within a sheet.
 
 The generator also draws a `Band / <name>` label above each band - the name, what it holds, and a hairline the width of the row - and rebuilds it on every run, so nothing drawn into a label survives and the bands are visible on the canvas, not only in the file.
-The check rides `check-design-contract.mjs` beside the token check, so a board dragged out of its band or named outside the scheme fails the gate rather than disappearing into the file.
+The check rides `check-design-contract.mjs`, so a board dragged out of its band or named outside the scheme fails the gate rather than disappearing into the file.
 Name a board first; the generator decides where it goes.
 
-A review moves upward when it is adopted: the tokens it needs land in `HideTheme.swift`, `gen-pen-tokens.mjs` brings them across, the proposal's components are renamed into `Component /`, the `Screen /` boards are redrawn on those components in the same pull request as the code, and the `Review /` boards are deleted.
+A review moves upward when it is adopted: the tokens it needs land in `HideTheme.swift`, `gen-pen.mjs` brings them across, the proposal's components are renamed into `Component /`, the `Screen /` boards are redrawn on those components in the same pull request as the code, and the `Review /` boards are deleted.
 
 There is no band for a feature's design, because `main` takes a PRD and its implementation in one squash merge and nothing runs at the merge to move a board.
 A PRD draws the screen it changes as the `Screen /` board itself, one frame per state the data can produce, from `Component /` refs and `$--` variables only; on that branch the board is the target until the code catches up, and on `main` it is what was built.
@@ -301,8 +301,8 @@ Prefer structure a script could have produced over structure only a hand could h
 
 **The direction of truth is one-way, and it is enforced.** `HideTheme.swift` defines a value; the canvas receives it.
 
-    node scripts/gen-pen-tokens.mjs     # write HideTheme's values into design/hide.pen
-    node scripts/check-pen-tokens.mjs   # refuse a canvas that disagrees
+    node scripts/gen-pen.mjs      # write HideTheme's values into design/hide.pen, with the layout pass above
+    node scripts/check-pen.mjs    # refuse a canvas that disagrees
 
 `scripts/pen-token-map.json` says which HideTheme constant each canvas variable carries, and why each remaining constant stays out.
 The check fails on two things: a mapped value that drifted, and a HideTheme constant claimed by neither list.
@@ -331,11 +331,11 @@ The last two are the dangerous ones, because they fail silently and look like th
 
 Exploration goes in the same file, in the `Scratch /` band:
 
-- name it `Scratch / <topic>`, and let `gen-pen-layout.mjs` place it
+- name it `Scratch / <topic>`, and let `gen-pen.mjs` place it
 - when it earns its place, redraw it as a `Screen /` or `Review /` board and delete the scratch; otherwise just delete it
 
 It goes in `design/hide.pen` rather than a scratch file of its own because that is the only place the tokens resolve; see the import trap above.
-Scratch boards cost the contract nothing - `check-pen-tokens.mjs` reads only the document's `variables`, and both generators preserve every node they find.
+Scratch boards cost the contract nothing - the token check reads only the document's `variables`, and the generator preserves every node it does not own.
 
 Anything drawn inside the pen desktop app is scratch by default.
 The app's own agent has no way to reach this file, so assume its output carries literal colours and off-scale numbers, and clean it up when you promote it rather than while you are still exploring.

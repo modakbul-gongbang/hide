@@ -1,8 +1,8 @@
 // Draw the System / Foundations sheet from the canvas's own variables.
 //
-// The sheet is generator-owned: gen-pen-layout.mjs rebuilds it on every run
-// from the document's variables, which gen-pen-tokens.mjs has already made
-// agree with HideTheme.swift. Every fill and font size on it is a `$--`
+// The sheet is generator-owned: gen-pen.mjs rebuilds it on every run from the
+// document's variables, which the same run's token pass has already made agree
+// with HideTheme.swift. Every fill and font size on it is a `$--`
 // reference, so the swatches resolve through the same variables the boards
 // use; the only literals are the hex and pixel labels, which are read off the
 // variable values so they cannot disagree with the swatch beside them.
@@ -118,7 +118,7 @@ export function foundations(variables, mapped) {
     children: [
       column('title', 'Title block', [
         text('title-name', 'Hide', {size: '$--text-display', weight: '600'}),
-        text('title-sub', 'Single dark mode. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen-tokens.mjs writes from HideTheme.swift; the sheet itself is rebuilt by gen-pen-layout.mjs.', {size: '$--text-subhead', fill: '$--color-secondary', width: 'fill_container'}),
+        text('title-sub', 'Single dark mode. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen.mjs writes from HideTheme.swift, and the sheet itself is redrawn by the same run.', {size: '$--text-subhead', fill: '$--color-secondary', width: 'fill_container'}),
       ], {gap: '$--spacing-sm'}),
 
       section('surface', 'Surface ladder', null, swatchLadder(v, 'surface-ladder', [
@@ -175,4 +175,14 @@ export function foundations(variables, mapped) {
       ])),
     ],
   };
+}
+
+// The variables the sheet reads, for a fixture that has to carry them. Found by
+// building the sheet against a recording stub rather than kept as a list that
+// would drift from the builder above.
+export function requiredVariables() {
+  const seen = new Set();
+  const stub = new Proxy({}, {get: (_, name) => { seen.add(name); return {type: 'number', value: 0}; }});
+  foundations(stub, new Proxy({}, {get: () => 'stub'}));
+  return [...seen];
 }
