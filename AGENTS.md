@@ -267,7 +267,7 @@ It is committed, so a design change shows up in `git diff` beside the code chang
 | Scratch | `Scratch /<topic>` | exploration, candidates side by side | deleted or redrawn as a `Screen /` or `Review /` board before the pull request opens |
 
     node scripts/gen-pen.mjs      # tokens from HideTheme, boards placed by band, labels and Foundations redrawn
-    node scripts/check-pen.mjs    # refuse a canvas that is not what gen-pen.mjs writes, and say which part
+    node scripts/check-pen.mjs    # refuse a canvas that is not what gen-pen.mjs writes, positions excepted
 
 `System / Foundations` is generated too: `scripts/pen-foundations.mjs` draws the surface ladder, inks, semantic colours, type scale, spacing, radius, layout sizes and opacities from the canvas's own variables on every run, so the sheet cannot say something `HideTheme` does not.
 
@@ -278,7 +278,8 @@ The states are the ones the code produces and the sheet's spec line says where t
 Components read left to right across the band and states top to bottom within a sheet.
 
 The generator also draws a `Band / <name>` label above each band - the name, what it holds, and a hairline the width of the row - and rebuilds it on every run, so nothing drawn into a label survives and the bands are visible on the canvas, not only in the file.
-The check rides `check-design-contract.mjs`, so a board dragged out of its band or named outside the scheme fails the gate rather than disappearing into the file.
+The check rides `check-design-contract.mjs`, so a board named outside the scheme fails the gate rather than disappearing into the file.
+Where a board sits is not checked: a board dragged elsewhere in the pen app is still in its band by name, and the next `gen-pen.mjs` run puts it back.
 Name a board first; the generator decides where it goes.
 
 A review moves upward when it is adopted: the tokens it needs land in `HideTheme.swift`, `gen-pen.mjs` brings them across, the proposal's components are renamed into `Component /`, the `Screen /` boards are redrawn on those components in the same pull request as the code, and the `Review /` boards are deleted.

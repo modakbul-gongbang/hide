@@ -8,12 +8,13 @@
 // the shell and never reaches the design, and nothing else says so. A value
 // that drifted is visible, and named with both sides. A board with no band
 // prefix cannot be found by the scheme. Anything else the generator would
-// change - a board dragged out of its band, a stale label or Foundations sheet
-// - is reported as one difference, with the command that repairs it.
+// change - a stale label or Foundations sheet, a token value written by hand -
+// is reported as one difference, with the command that repairs it. Where a
+// board sits is not checked; see `unplaced`.
 
 import {CANVAS, MAP} from './pen-tokens.mjs';
 import {BANDS} from './pen-bands.mjs';
-import {generate} from './pen-canvas.mjs';
+import {generate, unplaced} from './pen-canvas.mjs';
 
 const {map, expected, document, orphans, unknown, before, after} = generate(process.cwd());
 const failures = [];
@@ -36,7 +37,7 @@ if (unknown.length) {
     unknown.map(name => `    ${name}`).join('\n') +
     `\n  Name each with one of: ${BANDS.map(band => `\`${band.prefix}\``).join(', ')}.`);
 }
-if (!failures.length && before !== after) {
+if (!failures.length && unplaced(before) !== unplaced(after)) {
   failures.push(`${CANVAS} is not what the generator writes; run node scripts/gen-pen.mjs`);
 }
 
