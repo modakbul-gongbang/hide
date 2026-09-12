@@ -2,8 +2,8 @@
 
 hide is a macOS shell over the [Herdr](https://herdr.dev) runtime.
 The Rust core in `herdr-core/` owns every piece of state; the SwiftUI shell in `macos/` renders a snapshot of it and dispatches typed events back.
-`AGENTS.md` describes that architecture, the Herdr API contract, and the performance rules that came out of real incidents.
-Read it before changing anything under `herdr-core/` or `macos/`; `DESIGN.md` before changing anything a user looks at.
+`AGENTS.md` keeps the rules; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) owns the architecture and the Herdr wire boundary with their reasons, [docs/BUILD.md](docs/BUILD.md) the build output and worktree rules, and [docs/PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md) the performance rules that came out of real incidents.
+Read `AGENTS.md` and the architecture guide before changing anything under `herdr-core/` or `macos/`; `DESIGN.md` before changing anything a user looks at.
 Use [docs/README.md](docs/README.md) to find current guides and distinguish historical/reference-only material.
 
 ## Before you open a pull request
