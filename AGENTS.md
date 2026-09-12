@@ -270,6 +270,7 @@ It is committed, so a design change shows up in `git diff` beside the code chang
     node scripts/gen-pen-layout.mjs      # place every board at its band's y, packed left to right in its existing order
     node scripts/check-pen-layout.mjs    # refuse a board with no band prefix, or a canvas the generator would move
 
+The generator also draws a `Band / <name>` label above each band - the name, what it holds, and a hairline the width of the row - and rebuilds it on every run, so nothing drawn into a label survives and the bands are visible on the canvas, not only in the file.
 The check rides `check-design-contract.mjs` beside the token check, so a board dragged out of its band or named outside the scheme fails the gate rather than disappearing into the file.
 Name a board first; the generator decides where it goes.
 

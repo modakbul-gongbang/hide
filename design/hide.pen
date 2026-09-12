@@ -3,9 +3,49 @@
   "children": [
     {
       "type": "frame",
+      "id": "band-system",
+      "x": 0,
+      "y": -1700,
+      "name": "Band / System",
+      "width": 1200,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-system-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "System",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-system-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "System /  token sheets and primitives generated from or tracking HideTheme",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-system-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "eHAjc",
       "x": 0,
-      "y": -2400,
+      "y": -1600,
       "name": "System / Badge",
       "reusable": true,
       "height": 16,
@@ -36,7 +76,7 @@
       "type": "frame",
       "id": "Ec2W1",
       "x": 200,
-      "y": -2400,
+      "y": -1600,
       "name": "System / Keycap",
       "reusable": true,
       "height": 18,
@@ -68,7 +108,7 @@
       "type": "frame",
       "id": "Nyvom",
       "x": 400,
-      "y": -2400,
+      "y": -1600,
       "name": "System / Icon Button",
       "reusable": true,
       "width": 24,
@@ -91,9 +131,49 @@
     },
     {
       "type": "frame",
+      "id": "band-component",
+      "x": 0,
+      "y": -1000,
+      "name": "Band / Component",
+      "width": 2017,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-component-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "Component",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-component-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "Component /  the agreed component set; Screen and Feature boards reference these",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-component-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "Lyc6J",
       "x": 0,
-      "y": -1200,
+      "y": -900,
       "name": "Component / Panel Header (32, inset 12)",
       "reusable": true,
       "width": 355,
@@ -210,7 +290,7 @@
       "type": "frame",
       "id": "O79KF",
       "x": 435,
-      "y": -1200,
+      "y": -900,
       "name": "Component / Section Header",
       "reusable": true,
       "width": 355,
@@ -288,7 +368,7 @@
       "type": "frame",
       "id": "jJJqB",
       "x": 870,
-      "y": -1200,
+      "y": -900,
       "name": "Component / Line Row (22, inset 12, fixed slots)",
       "reusable": true,
       "width": 355,
@@ -390,7 +470,7 @@
       "type": "frame",
       "id": "cfYc8",
       "x": 1305,
-      "y": -1200,
+      "y": -900,
       "name": "Component / Card Row (3 lines, inset 12, fixed slots)",
       "reusable": true,
       "width": 292,
@@ -561,7 +641,7 @@
       "type": "frame",
       "id": "AYjmy",
       "x": 1677,
-      "y": -1200,
+      "y": -900,
       "name": "Component / Sidebar Row - states the data produces",
       "width": 340,
       "fill": "$--color-sidebar",
@@ -780,6 +860,46 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "band-screen",
+      "x": 0,
+      "y": -100,
+      "name": "Band / Screen",
+      "width": 2404,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-screen-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "Screen",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-screen-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "Screen /  what the app draws today",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-screen-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     },
@@ -5898,6 +6018,46 @@
               "fontWeight": "normal"
             }
           ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "band-review",
+      "x": 0,
+      "y": 1100,
+      "name": "Band / Review",
+      "width": 5385,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-review-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "Review",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-review-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "Review /  an audit, its proposal, and the as-built evidence beside them; deleted once adopted",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-review-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     },
@@ -11820,6 +11980,86 @@
               "fill": "$--color-muted"
             }
           ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "band-feature",
+      "x": 0,
+      "y": 3700,
+      "name": "Band / Feature",
+      "width": 1200,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-feature-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "Feature",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-feature-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "Feature /  a PRD's design, named by its slug; does not outlive the PRD",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-feature-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "band-scratch",
+      "x": 0,
+      "y": 5700,
+      "name": "Band / Scratch",
+      "width": 1200,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-scratch-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "Scratch",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-scratch-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "Scratch /  exploration; deleted or promoted",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-scratch-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     }
