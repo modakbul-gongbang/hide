@@ -909,6 +909,17 @@ struct PathMovePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct PathTrashPayload {
+    root: String,
+    path: String,
+    /// The row the tree selects once the item is gone: its next sibling,
+    /// else its previous sibling, else its parent. The tree decides it
+    /// because only the tree knows its own row order; the core still
+    /// refuses one outside the checkout or inside the item.
+    select_after: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileViewPayload {
     tab_id: String,
     markdown_preview: bool,
@@ -1201,6 +1212,7 @@ enum ValidatedEvent {
     DirCreate(ExplorerCreatePayload),
     PathRename(PathRenamePayload),
     PathMove(PathMovePayload),
+    PathTrash(PathTrashPayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     InstallAgentHooks(InstallAgentHooksPayload),
@@ -7524,11 +7536,13 @@ impl Runtime {
     }
 
     /// Settles the slot with what the filesystem said. Success moves the
-    /// selection to the item and carries the paths the core owns - the
-    /// tree's expanded folders and any open file tab - from the old path to
-    /// the new one, so a renamed folder stays open and a renamed file's tab
-    /// still saves to the file it shows. Failure changes no core state
-    /// beyond the message.
+    /// selection to the operation's `selection` and carries the paths the
+    /// core owns - the tree's expanded folders and any open file tab - from
+    /// the old path to the new one, so a renamed folder stays open and a
+    /// renamed file's tab still saves to the file it shows. An item moved to
+    /// the Trash drops its expanded folders and keeps its file tabs: the tab
+    /// is the operator's draft, and saving it recreates the file (D-05).
+    /// Failure changes no core state beyond the message.
     pub(crate) fn ingest_explorer_operation_result(
         &mut self,
         id: u64,
@@ -7575,7 +7589,13 @@ impl Runtime {
                     }
                     self.sync_active_editor_document();
                 }
-                self.snapshot.ui_state.selected_path = Some(destination.clone());
+                if operation.kind == files::ExplorerOperationKind::PathTrash {
+                    self.snapshot.ui_state.expanded_paths.retain(|expanded| {
+                        expanded != &source && !expanded.starts_with(&format!("{source}/"))
+                    });
+                }
+                self.snapshot.ui_state.selected_path =
+                    Some(operation.selection.to_string_lossy().into_owned());
                 self.push_diagnostic(
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),
@@ -10167,6 +10187,17 @@ impl Runtime {
                 &payload.root,
                 &payload.path,
             ),
+            ValidatedEvent::PathTrash(payload) => self.start_explorer_operation(
+                |root| {
+                    files::ExplorerOperation::trash(
+                        root,
+                        Path::new(&payload.path),
+                        Path::new(&payload.select_after),
+                    )
+                },
+                &payload.root,
+                &payload.path,
+            ),
             ValidatedEvent::TerminalClick(payload) => {
                 // D8 explicitly chooses Herdr's detected agent as the policy
                 // boundary until its frame protocol carries mouse mode.
@@ -11493,6 +11524,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "dir_create" => decode!(ExplorerCreatePayload, DirCreate),
         "path_rename" => decode!(PathRenamePayload, PathRename),
         "path_move" => decode!(PathMovePayload, PathMove),
+        "path_trash" => decode!(PathTrashPayload, PathTrash),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
@@ -20606,6 +20638,144 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(nested.join("lib.rs")).unwrap(),
             "lib\n"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// B4, B6, D-05: a trash removes the item, moves the selection to the
+    /// row the tree named, drops the expanded folders that left with it,
+    /// and keeps the file tab that was open on it.
+    #[test]
+    fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
+        let (mut runtime, root) = explorer_runtime();
+        let src = root.join("src");
+        let lib = src.join("lib.rs");
+        let nested = src.join("nested");
+        runtime.snapshot.ui_state.expanded_paths = vec![
+            src.to_string_lossy().into_owned(),
+            nested.to_string_lossy().into_owned(),
+        ];
+        runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
+            id: "file:lib".to_owned(),
+            workspace_id: "workspace:0".to_owned(),
+            checkout_id: "checkout:0".to_owned(),
+            path: lib.to_string_lossy().into_owned(),
+            label: "lib.rs".to_owned(),
+            kind: EditorTabKind::File,
+            diff_committed: None,
+            markdown_preview: false,
+            wrap: false,
+            dirty: false,
+        });
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_trash",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": lib.to_string_lossy(),
+                "select_after": nested.to_string_lossy(),
+            })
+        )));
+        assert!(!lib.exists(), "the file left the tree");
+        let snapshot = runtime.snapshot();
+        let operation = snapshot
+            .explorer_operation
+            .as_ref()
+            .expect("a settled slot");
+        assert_eq!(operation.kind, "path_trash");
+        assert_eq!(operation.phase, "finished");
+        assert_eq!(operation.path, lib.to_string_lossy());
+        assert_eq!(
+            snapshot.ui_state.selected_path.as_deref(),
+            Some(nested.to_string_lossy().as_ref()),
+            "the selection moves to the row the tree named"
+        );
+        assert_eq!(
+            snapshot
+                .editor
+                .tabs
+                .iter()
+                .map(|tab| tab.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![lib.to_string_lossy().as_ref()],
+            "the open tab stays (B6)"
+        );
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_trash",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": src.to_string_lossy(),
+                "select_after": root.to_string_lossy(),
+            })
+        )));
+        assert!(!src.exists(), "the folder left the tree");
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.ui_state.selected_path.as_deref(),
+            Some(root.to_string_lossy().as_ref()),
+            "with no sibling the parent is selected"
+        );
+        assert!(
+            snapshot.ui_state.expanded_paths.is_empty(),
+            "expanded folders inside the trashed folder are dropped: {:?}",
+            snapshot.ui_state.expanded_paths
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// D-02, D-06: a selection that would leave with the item, and an item
+    /// that is already gone, are both refused with the item untouched and
+    /// the reason on the slot.
+    #[test]
+    fn explorer_trash_refuses_a_selection_inside_the_item_and_a_missing_item() {
+        let (mut runtime, root) = explorer_runtime();
+        let src = root.join("src");
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_trash",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": src.to_string_lossy(),
+                "select_after": src.join("lib.rs").to_string_lossy(),
+            })
+        )));
+        let snapshot = runtime.snapshot();
+        let operation = snapshot
+            .explorer_operation
+            .as_ref()
+            .expect("a refused slot");
+        assert_eq!(operation.phase, "failed");
+        assert!(
+            operation
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("cannot move into the item"),
+            "{:?}",
+            operation.message
+        );
+        assert!(src.join("lib.rs").is_file(), "nothing moved");
+
+        let gone = src.join("gone.rs");
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_trash",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": gone.to_string_lossy(),
+                "select_after": src.to_string_lossy(),
+            })
+        )));
+        let snapshot = runtime.snapshot();
+        let operation = snapshot.explorer_operation.as_ref().expect("a failed slot");
+        assert_eq!(operation.phase, "failed");
+        assert_eq!(
+            operation.message.as_deref(),
+            Some("gone.rs no longer exists")
+        );
+        assert_eq!(operation.path, gone.to_string_lossy());
+        assert_eq!(
+            snapshot.ui_state.selected_path, None,
+            "a failure moves nothing"
         );
         std::fs::remove_dir_all(&root).ok();
     }

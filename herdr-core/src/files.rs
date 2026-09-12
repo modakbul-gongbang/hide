@@ -136,6 +136,9 @@ pub enum ExplorerOperationKind {
     DirCreate,
     PathRename,
     PathMove,
+    /// The item goes to the platform Trash. There is no permanent delete;
+    /// a filesystem with no Trash refuses the move and the item stays.
+    PathTrash,
 }
 
 impl ExplorerOperationKind {
@@ -145,6 +148,7 @@ impl ExplorerOperationKind {
             Self::DirCreate => "dir_create",
             Self::PathRename => "path_rename",
             Self::PathMove => "path_move",
+            Self::PathTrash => "path_trash",
         }
     }
 }
@@ -163,8 +167,12 @@ pub struct ExplorerOperation {
     /// current path of the item being renamed or moved.
     pub source: PathBuf,
     /// Where the item is once the change has landed. Equal to `source` for
-    /// a creation.
+    /// a creation, and for a trash, whose item has no path here afterwards.
     pub destination: PathBuf,
+    /// The row the tree selects once the change has landed: the item itself
+    /// for a creation, rename or move, and the tree's chosen neighbour for
+    /// a trash, whose item is no longer there to select.
+    pub selection: PathBuf,
 }
 
 impl ExplorerOperation {
@@ -186,7 +194,8 @@ impl ExplorerOperation {
         Ok(Self {
             kind,
             source: path.clone(),
-            destination: path,
+            destination: path.clone(),
+            selection: path,
         })
     }
 
@@ -203,7 +212,8 @@ impl ExplorerOperation {
         Ok(Self {
             kind: ExplorerOperationKind::PathRename,
             source,
-            destination,
+            destination: destination.clone(),
+            selection: destination,
         })
     }
 
@@ -223,7 +233,29 @@ impl ExplorerOperation {
         Ok(Self {
             kind: ExplorerOperationKind::PathMove,
             source,
-            destination,
+            destination: destination.clone(),
+            selection: destination,
+        })
+    }
+
+    /// The item leaves the tree for the Trash and `select_after` takes its
+    /// place as the selection. Refused from the strings alone like every
+    /// other change: the root itself and anything outside it never reach
+    /// the call, and a selection that would leave with the item is refused
+    /// rather than pointed at nothing.
+    pub fn trash(root: &Path, path: &Path, select_after: &Path) -> Result<Self, String> {
+        let source = path_inside_root(root, path, false)?;
+        let selection = path_inside_root(root, select_after, true)?;
+        if selection == source || selection.starts_with(&source) {
+            return Err(
+                "The selection cannot move into the item being moved to the Trash".to_owned(),
+            );
+        }
+        Ok(Self {
+            kind: ExplorerOperationKind::PathTrash,
+            source: source.clone(),
+            destination: source,
+            selection,
         })
     }
 
@@ -259,23 +291,61 @@ pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), Str
             fs::create_dir(&operation.destination).map_err(describe)
         }
         ExplorerOperationKind::PathRename | ExplorerOperationKind::PathMove => {
-            if let Err(error) = fs::symlink_metadata(&operation.source) {
-                return Err(if error.kind() == io::ErrorKind::NotFound {
-                    format!(
-                        "{} no longer exists",
-                        operation
-                            .source
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                    )
-                } else {
-                    describe(error)
-                });
-            }
+            require_source(operation, describe)?;
             rename_exclusive(&operation.source, &operation.destination).map_err(describe)
         }
+        ExplorerOperationKind::PathTrash => {
+            require_source(operation, describe)?;
+            move_to_trash(&operation.source).map_err(|error| {
+                format!(
+                    "{} could not be moved to the Trash: {error}",
+                    operation.item_name()
+                )
+            })
+        }
     }
+}
+
+/// A rename, move or trash of an item that is already gone is named as
+/// such rather than reported as a failed write.
+fn require_source(
+    operation: &ExplorerOperation,
+    describe: impl FnOnce(io::Error) -> String,
+) -> Result<(), String> {
+    match fs::symlink_metadata(&operation.source) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(format!(
+            "{} no longer exists",
+            operation
+                .source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        )),
+        Err(error) => Err(describe(error)),
+    }
+}
+
+/// Moves the item to the Trash through `NSFileManager` rather than through
+/// Finder, which is the crate's default. The Finder route runs `osascript`
+/// and asks macOS for Automation permission on first use; a refusal there
+/// would fail every delete after it with a permission prompt the tree
+/// cannot explain. The file-manager route needs no permission and no
+/// subprocess. What it gives up is Finder's "Put Back" on some systems; the
+/// item is still in the Trash and restores by dragging it out.
+fn move_to_trash(path: &Path) -> Result<(), String> {
+    let mut context = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        context.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    context.delete(path).map_err(|error| match error {
+        trash::Error::CouldNotAccess { .. } => "it is not accessible".to_owned(),
+        trash::Error::TargetedRoot => "it is a volume root".to_owned(),
+        trash::Error::Unknown { description } | trash::Error::Os { description, .. } => description,
+        other => other.to_string(),
+    })
 }
 
 fn describe_explorer_error(operation: &ExplorerOperation, error: io::Error) -> String {
@@ -539,6 +609,81 @@ mod tests {
         assert!(error.contains("already exists"), "{error}");
         assert!(root.join("src/lib.rs").is_file());
         assert!(root.join("src/nested").is_dir());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The moved item lands in the account's Trash, which this test does not
+    /// read back: where the Trash is depends on the volume, and emptying it
+    /// is not this test's to do. What it asserts is what the tree observes,
+    /// that the item is gone and nothing beside it moved.
+    #[test]
+    fn explorer_moves_a_file_and_a_folder_to_the_trash() {
+        let root = explorer_fixture();
+        let file =
+            ExplorerOperation::trash(&root, &root.join("src/lib.rs"), &root.join("src/nested"))
+                .unwrap();
+        assert_eq!(file.kind, ExplorerOperationKind::PathTrash);
+        assert_eq!(file.destination, root.join("src/lib.rs"));
+        assert_eq!(file.selection, root.join("src/nested"));
+        apply_explorer_operation(&file).unwrap();
+        assert!(!root.join("src/lib.rs").exists());
+        assert!(root.join("src/nested").is_dir());
+        assert_eq!(
+            fs::read_to_string(root.join("README.md")).unwrap(),
+            "readme"
+        );
+
+        let folder = ExplorerOperation::trash(&root, &root.join("src"), &root).unwrap();
+        assert_eq!(folder.selection, root);
+        apply_explorer_operation(&folder).unwrap();
+        assert!(!root.join("src").exists());
+        assert!(root.join("README.md").is_file());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn explorer_refuses_to_trash_outside_the_root_or_the_root_itself() {
+        let root = Path::new("/repo");
+        let outside = ExplorerOperation::trash(root, Path::new("/repo-other/a"), root);
+        assert!(outside.unwrap_err().contains("outside the workspace"));
+        let escaping = ExplorerOperation::trash(root, Path::new("/repo/../etc/passwd"), root);
+        assert!(escaping.unwrap_err().contains("not a normal path"));
+        let root_itself = ExplorerOperation::trash(root, root, root);
+        assert!(root_itself.unwrap_err().contains("root itself"));
+        let relative = ExplorerOperation::trash(root, Path::new("src/a"), root);
+        assert!(relative.unwrap_err().contains("not an absolute path"));
+
+        let selection_outside =
+            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo-other"));
+        assert!(
+            selection_outside
+                .unwrap_err()
+                .contains("outside the workspace")
+        );
+        let selection_inside =
+            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo/src/a.rs"));
+        assert!(
+            selection_inside
+                .unwrap_err()
+                .contains("cannot move into the item")
+        );
+        let selection_itself =
+            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo/src"));
+        assert!(
+            selection_itself
+                .unwrap_err()
+                .contains("cannot move into the item")
+        );
+    }
+
+    #[test]
+    fn explorer_reports_a_missing_item_instead_of_trashing_it() {
+        let root = explorer_fixture();
+        let missing =
+            ExplorerOperation::trash(&root, &root.join("src/gone.rs"), &root.join("src")).unwrap();
+        let error = apply_explorer_operation(&missing).unwrap_err();
+        assert_eq!(error, "gone.rs no longer exists");
+        assert!(root.join("src/lib.rs").is_file());
         fs::remove_dir_all(&root).unwrap();
     }
 
