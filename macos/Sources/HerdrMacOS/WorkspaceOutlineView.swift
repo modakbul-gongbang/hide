@@ -39,7 +39,16 @@ enum WorkspaceDirectoryLoader {
             guard !skippedNames.contains(child.lastPathComponent) else { return nil }
             let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
             guard values.isDirectory == true || values.isRegularFile == true else { return nil }
-            return WorkspaceDirectoryEntry(url: child, isDirectory: values.isDirectory == true)
+            let isDirectory = values.isDirectory == true
+            // The child keeps the parent's spelling of the path. The listing
+            // can come back through a resolved symlink (`/private/var` for
+            // `/var`), and a node whose path does not start with its
+            // parent's cannot be found again by path, relative to the root,
+            // or judged inside the root by the core.
+            return WorkspaceDirectoryEntry(
+                url: url.appendingPathComponent(child.lastPathComponent, isDirectory: isDirectory),
+                isDirectory: isDirectory
+            )
         }
         .sorted { lhs, rhs in
             if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
@@ -56,28 +65,76 @@ private final class WorkspaceOutlineNode: NSObject {
         case failed(String)
     }
 
+    /// What a row stands for. Only an entry is on disk; the others are rows
+    /// the tree puts among a folder's children to say something in place:
+    /// a load in progress or failed, the name field for an item that does
+    /// not exist yet, and the one-line reason a change was refused, drawn
+    /// under the row it was asked of.
+    enum Role: Equatable {
+        case entry
+        case placeholder(String)
+        case draft(WorkspaceOutlineDraftKind)
+        case failure(String)
+    }
+
     let url: URL
     let isDirectory: Bool
-    let placeholderMessage: String?
+    let role: Role
     var children: [WorkspaceOutlineNode] = []
     var state: State
 
     init(entry: WorkspaceDirectoryEntry) {
         url = entry.url
         isDirectory = entry.isDirectory
-        placeholderMessage = nil
+        role = .entry
         state = entry.isDirectory ? .unloaded : .loaded
     }
 
     init(placeholderMessage: String, parentURL: URL) {
         url = parentURL.appendingPathComponent(".hide-placeholder")
         isDirectory = false
-        self.placeholderMessage = placeholderMessage
+        role = .placeholder(placeholderMessage)
         state = .loaded
     }
 
-    var isPlaceholder: Bool { placeholderMessage != nil }
-    var name: String { placeholderMessage ?? url.lastPathComponent }
+    init(draft kind: WorkspaceOutlineDraftKind, parentURL: URL) {
+        url = parentURL.appendingPathComponent(".hide-draft")
+        isDirectory = kind == .folder
+        role = .draft(kind)
+        state = .loaded
+    }
+
+    init(failure message: String, under target: URL) {
+        url = target.appendingPathComponent(".hide-failure")
+        isDirectory = false
+        role = .failure(message)
+        state = .loaded
+    }
+
+    var isEntry: Bool { role == .entry }
+    var isPlaceholder: Bool { !isEntry }
+    var name: String {
+        switch role {
+        case .entry: url.lastPathComponent
+        case .placeholder(let message), .failure(let message): message
+        case .draft: ""
+        }
+    }
+}
+
+enum WorkspaceOutlineDraftKind: Equatable {
+    case file
+    case folder
+}
+
+/// The four changes the tree can ask the core for. They are closures rather
+/// than a `ShellModel` reference so the outline stays testable without one
+/// and so the view cannot reach any other event.
+struct WorkspaceFileOperations {
+    var createFile: (_ parent: URL, _ name: String) -> Void
+    var createDirectory: (_ parent: URL, _ name: String) -> Void
+    var rename: (_ path: URL, _ name: String) -> Void
+    var move: (_ path: URL, _ destination: URL) -> Void
 }
 
 /// A row draws hover, but it does not decide it.
@@ -159,8 +216,18 @@ private final class WorkspaceOutlineRowView: NSTableRowView {
 
 final class WorkspaceNSOutlineView: NSOutlineView {
     var onActivate: (() -> Void)?
+    /// Asked with the row under the pointer, or -1 for the empty area.
+    var contextMenu: ((Int) -> NSMenu?)?
 
     private var hoveredRow = -1
+
+    /// `super` records `clickedRow` and draws the row's contextual ring; the
+    /// menu itself is the coordinator's, because it depends on the item.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        _ = super.menu(for: event)
+        let point = convert(event.locationInWindow, from: nil)
+        return contextMenu?(row(at: point))
+    }
 
     /// `.inVisibleRect` has AppKit rebuild tracking areas as the view scrolls,
     /// and that rebuild is the one signal a wheel scroll reliably produces, so
@@ -244,18 +311,32 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
 }
 
 struct WorkspaceOutlineView: NSViewRepresentable {
+    static let dragType = NSPasteboard.PasteboardType("dev.hide.explorer-path")
+
     let rootURL: URL
     let expandedPaths: Set<String>
     let selectedPath: String?
     let fontScale: CGFloat
+    let operation: CoreExplorerOperation?
     let openFile: (URL) -> Void
     let updateExpandedPaths: ([String]) -> Void
+    let fileOperations: WorkspaceFileOperations
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(openFile: openFile, updateExpandedPaths: updateExpandedPaths)
+        Coordinator(
+            openFile: openFile,
+            updateExpandedPaths: updateExpandedPaths,
+            fileOperations: fileOperations
+        )
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        Self.makeScrollView(coordinator: context.coordinator)
+    }
+
+    /// The outline and its scroll view, built the one way the app builds
+    /// them, so a test can host the same view and drive it.
+    static func makeScrollView(coordinator: Coordinator) -> NSScrollView {
         let outline = WorkspaceNSOutlineView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("workspace-name"))
         column.minWidth = 120
@@ -270,13 +351,22 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         outline.indentationPerLevel = 8
         outline.intercellSpacing = .zero
         outline.floatsGroupRows = false
-        outline.delegate = context.coordinator
-        outline.dataSource = context.coordinator
-        outline.target = context.coordinator
+        outline.delegate = coordinator
+        outline.dataSource = coordinator
+        outline.target = coordinator
         outline.action = #selector(Coordinator.activateClickedRow)
-        outline.onActivate = { [weak coordinator = context.coordinator] in
+        outline.onActivate = { [weak coordinator] in
             coordinator?.activateSelection()
         }
+        outline.contextMenu = { [weak coordinator] row in
+            coordinator?.contextMenu(forRow: row)
+        }
+        // A drag moves within this tree only. The private type keeps Finder
+        // and other apps from reading it as a file drop, and the empty mask
+        // for non-local targets keeps the item from being copied out.
+        outline.registerForDraggedTypes([Self.dragType])
+        outline.setDraggingSourceOperationMask(.move, forLocal: true)
+        outline.setDraggingSourceOperationMask([], forLocal: false)
         outline.setAccessibilityIdentifier("explorer-file-tree")
 
         let scroll = WorkspaceOutlineScrollView()
@@ -286,26 +376,58 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
         scroll.backgroundColor = NSColor(HideTheme.panel)
-        context.coordinator.attach(outline: outline)
+        coordinator.attach(outline: outline)
         return scroll
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.openFile = openFile
         context.coordinator.updateExpandedPaths = updateExpandedPaths
+        context.coordinator.fileOperations = fileOperations
         context.coordinator.apply(
             rootURL: rootURL,
             expandedPaths: expandedPaths,
             selectedPath: selectedPath,
-            fontScale: fontScale
+            fontScale: fontScale,
+            operation: operation
         )
     }
 
+    /// The name field open on one row, and what closing it does.
+    private struct InlineEdit {
+        enum Mode {
+            case create(kind: WorkspaceOutlineDraftKind, parent: WorkspaceOutlineNode)
+            case rename
+        }
+
+        let mode: Mode
+        /// The row carrying the field: the draft row for a creation, the
+        /// item's own row for a rename.
+        let node: WorkspaceOutlineNode
+        /// What the field shows when its row is (re)configured: the current
+        /// name for a rename, nothing for a draft.
+        let text: String
+        /// True from Enter until the core answers, so a second Enter and a
+        /// focus change during the round trip change nothing.
+        var pending = false
+    }
+
     @MainActor
-    final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate {
         var openFile: (URL) -> Void
         var updateExpandedPaths: ([String]) -> Void
+        var fileOperations: WorkspaceFileOperations
         private weak var outline: WorkspaceNSOutlineView?
+        private var inlineEdit: InlineEdit?
+        /// A creation asked of a folder whose children are still loading;
+        /// the draft row is inserted when the load lands.
+        private var pendingDraft: (kind: WorkspaceOutlineDraftKind, parent: WorkspaceOutlineNode)?
+        /// The failure row on screen, so exactly one can be up at a time.
+        private var failureNode: WorkspaceOutlineNode?
+        /// The last core operation this view acted on. Seeded from the first
+        /// snapshot so a slot settled before the view existed is not replayed
+        /// as a failure under a row.
+        private var handledOperationID: UInt64??
         private var rootNode: WorkspaceOutlineNode?
         private var rootPath: String?
         private var rootGeneration: UInt64 = 0
@@ -319,24 +441,62 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private var fontScale: CGFloat = 1
         private var suppressExpansionPersistence = false
 
-        init(openFile: @escaping (URL) -> Void, updateExpandedPaths: @escaping ([String]) -> Void) {
+        init(
+            openFile: @escaping (URL) -> Void,
+            updateExpandedPaths: @escaping ([String]) -> Void,
+            fileOperations: WorkspaceFileOperations
+        ) {
             self.openFile = openFile
             self.updateExpandedPaths = updateExpandedPaths
+            self.fileOperations = fileOperations
         }
 
         fileprivate func attach(outline: WorkspaceNSOutlineView) {
             self.outline = outline
         }
 
-        func apply(rootURL: URL, expandedPaths: Set<String>, selectedPath: String?, fontScale: CGFloat) {
+        /// What each visible row shows, top to bottom, for tests that drive
+        /// the hosted view: an entry's name, or the text a special row draws.
+        var visibleRowNames: [String] {
+            guard let outline else { return [] }
+            return (0..<outline.numberOfRows).compactMap { row in
+                (outline.item(atRow: row) as? WorkspaceOutlineNode).map { node in
+                    switch node.role {
+                    case .entry: node.name
+                    case .placeholder(let message): "placeholder:\(message)"
+                    case .draft: "draft"
+                    case .failure(let message): "failure:\(message)"
+                    }
+                }
+            }
+        }
+
+        var isEditingInline: Bool { inlineEdit != nil }
+
+        /// The name field currently open, if any.
+        var inlineEditor: NSTextField? { editorField() }
+
+        func apply(
+            rootURL: URL,
+            expandedPaths: Set<String>,
+            selectedPath: String?,
+            fontScale: CGFloat,
+            operation: CoreExplorerOperation?
+        ) {
             desiredExpandedPaths = expandedPaths
             self.selectedPath = selectedPath
             self.fontScale = fontScale
+            if handledOperationID == nil {
+                handledOperationID = .some(operation?.id)
+            }
             if rootPath != rootURL.path {
                 rootGeneration &+= 1
                 rootPath = rootURL.path
                 rootNode = WorkspaceOutlineNode(entry: .init(url: rootURL, isDirectory: true))
                 appliedSelectedPath = nil
+                inlineEdit = nil
+                pendingDraft = nil
+                failureNode = nil
                 outline?.reloadData()
                 if let rootNode {
                     suppressExpansionPersistence = true
@@ -347,6 +507,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             } else {
                 restoreVisibleState()
             }
+            observe(operation)
         }
 
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
@@ -376,7 +537,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         }
 
         func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-            (item as? WorkspaceOutlineNode)?.isDirectory == true
+            guard let node = item as? WorkspaceOutlineNode else { return false }
+            return node.isDirectory && node.isEntry
         }
 
         func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
@@ -492,16 +654,34 @@ struct WorkspaceOutlineView: NSViewRepresentable {
 
         private func configure(cell: NSTableCellView, node: WorkspaceOutlineNode) {
             let label = cell.textField
-            label?.stringValue = node.name
+            let editing = inlineEdit?.node === node
+            label?.stringValue = editing ? (inlineEdit?.text ?? "") : node.name
             label?.font = HideTheme.nativeFont(size: HideTheme.Typography.body * fontScale)
-            label?.textColor = node.isPlaceholder ? NSColor(HideTheme.muted) : NSColor(HideTheme.primary)
-            cell.setAccessibilityIdentifier("workspace-item-\(node.url.path)")
+            switch node.role {
+            case .entry: label?.textColor = HideTheme.Native.primary
+            case .draft: label?.textColor = HideTheme.Native.primary
+            case .placeholder: label?.textColor = HideTheme.Native.muted
+            case .failure: label?.textColor = HideTheme.Native.danger
+            }
+            // The cell is recycled, so the field is put back to a label on
+            // every row that is not the one being edited.
+            label?.isEditable = editing
+            label?.isSelectable = editing
+            label?.delegate = editing ? self : nil
+            label?.drawsBackground = editing
+            label?.backgroundColor = editing ? HideTheme.Native.elevated : .clear
+            label?.placeholderString = editing ? "Name" : nil
+            cell.setAccessibilityIdentifier(
+                editing ? "workspace-item-editor" : "workspace-item-\(node.url.path)"
+            )
             cell.setAccessibilityLabel(node.name)
 
             guard let iconView = cell.subviews.first(where: { $0.identifier?.rawValue == "icon" }) as? NSTextField else {
                 return
             }
-            if node.isPlaceholder {
+            if case .failure = node.role {
+                iconView.stringValue = ""
+            } else if case .placeholder = node.role {
                 iconView.stringValue = ""
             } else if node.isDirectory {
                 let configuration = NSImage.SymbolConfiguration(
@@ -574,7 +754,466 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 }
                 outline?.reloadItem(node, reloadChildren: true)
                 restoreVisibleState()
+                if let pendingDraft, pendingDraft.parent === node {
+                    self.pendingDraft = nil
+                    if case .loaded = node.state {
+                        insertDraft(kind: pendingDraft.kind, in: node)
+                    }
+                }
             }
+        }
+
+        /// Re-reads a loaded folder and keeps every child that is still
+        /// there, so the folders inside it stay expanded and loaded rather
+        /// than being rebuilt from the persisted set one level at a time.
+        private func refreshChildren(
+            of node: WorkspaceOutlineNode,
+            then completion: (@MainActor () -> Void)? = nil
+        ) {
+            guard node.isDirectory, let loadRoot = rootNode else { return }
+            guard case .loaded = node.state else {
+                if case .unloaded = node.state { loadChildren(of: node) }
+                return
+            }
+            let loadGeneration = rootGeneration
+            let url = node.url
+            Task {
+                let result = await Task.detached(priority: .userInitiated) {
+                    Result { try WorkspaceDirectoryLoader.loadDirectory(at: url) }
+                }.value
+                guard loadGeneration == rootGeneration, loadRoot === rootNode else { return }
+                switch result {
+                case .success(let entries):
+                    var existing: [String: WorkspaceOutlineNode] = [:]
+                    for child in node.children where child.isEntry {
+                        existing[child.url.path] = child
+                    }
+                    node.children = entries.map { entry in
+                        if let kept = existing[entry.url.path], kept.isDirectory == entry.isDirectory {
+                            return kept
+                        }
+                        return WorkspaceOutlineNode(entry: entry)
+                    }
+                case .failure(let error):
+                    node.children = []
+                    node.state = .failed("Could not read \(url.lastPathComponent): \(error.localizedDescription)")
+                    Self.reportFailure(path: url.path, message: error.localizedDescription)
+                }
+                outline?.reloadItem(node, reloadChildren: true)
+                restoreVisibleState()
+                completion?()
+            }
+        }
+
+        /// The loaded node at `path`, or nil when any ancestor is not loaded.
+        /// Nothing is loaded on the way: a folder the operator has not opened
+        /// has no rows to refresh.
+        private func loadedNode(at path: String) -> WorkspaceOutlineNode? {
+            guard let rootNode else { return nil }
+            var node = rootNode
+            while node.url.path != path {
+                guard node.isDirectory, case .loaded = node.state,
+                      let child = node.children.first(where: {
+                          $0.isEntry && (path == $0.url.path || path.hasPrefix($0.url.path + "/"))
+                      })
+                else { return nil }
+                node = child
+            }
+            return node
+        }
+
+        // MARK: Context menu
+
+        func contextMenu(forRow row: Int) -> NSMenu? {
+            guard let outline, let rootNode else { return nil }
+            let node = row >= 0 ? outline.item(atRow: row) as? WorkspaceOutlineNode : nil
+            // The root row stands for the tree as the empty area does: it can
+            // take a new item but is not itself renamed or moved.
+            let target: WorkspaceOutlineMenuTarget
+            switch node?.role {
+            case .none:
+                target = .emptyArea
+            case .entry where node === rootNode:
+                target = .emptyArea
+            case .entry:
+                target = .item(isDirectory: node?.isDirectory == true)
+            case .placeholder, .draft, .failure:
+                return nil
+            }
+            let subject = node ?? rootNode
+            let menu = NSMenu()
+            for item in WorkspaceOutlineMenuPresentation.items(for: target, isRemote: false) {
+                switch item {
+                case .separator:
+                    menu.addItem(.separator())
+                default:
+                    let entry = NSMenuItem(title: item.title, action: selector(for: item), keyEquivalent: "")
+                    entry.target = self
+                    entry.representedObject = subject
+                    menu.addItem(entry)
+                }
+            }
+            return menu
+        }
+
+        private func selector(for item: WorkspaceOutlineMenuItem) -> Selector? {
+            switch item {
+            case .newFile: #selector(menuNewFile(_:))
+            case .newFolder: #selector(menuNewFolder(_:))
+            case .revealInFinder: #selector(menuReveal(_:))
+            case .copyPath: #selector(menuCopyPath(_:))
+            case .copyRelativePath: #selector(menuCopyRelativePath(_:))
+            case .rename: #selector(menuRename(_:))
+            case .separator: nil
+            }
+        }
+
+        private func subject(of sender: Any?) -> WorkspaceOutlineNode? {
+            (sender as? NSMenuItem)?.representedObject as? WorkspaceOutlineNode
+        }
+
+        /// The folder a creation goes into: the clicked folder, or the parent
+        /// of the clicked file.
+        private func creationParent(for node: WorkspaceOutlineNode) -> WorkspaceOutlineNode? {
+            if node.isDirectory { return node }
+            return loadedNode(at: WorkspaceOutlinePathPresentation.parentPath(node.url.path))
+        }
+
+        @objc private func menuNewFile(_ sender: Any?) {
+            guard let node = subject(of: sender), let parent = creationParent(for: node) else { return }
+            beginCreate(kind: .file, in: parent)
+        }
+
+        @objc private func menuNewFolder(_ sender: Any?) {
+            guard let node = subject(of: sender), let parent = creationParent(for: node) else { return }
+            beginCreate(kind: .folder, in: parent)
+        }
+
+        @objc private func menuReveal(_ sender: Any?) {
+            guard let node = subject(of: sender) else { return }
+            ExternalFileOpener.reveal(node.url)
+        }
+
+        @objc private func menuCopyPath(_ sender: Any?) {
+            guard let node = subject(of: sender) else { return }
+            copyToPasteboard(node.url.path)
+        }
+
+        @objc private func menuCopyRelativePath(_ sender: Any?) {
+            guard let node = subject(of: sender), let rootPath else { return }
+            copyToPasteboard(WorkspaceOutlinePathPresentation.relativePath(node.url.path, root: rootPath))
+        }
+
+        @objc private func menuRename(_ sender: Any?) {
+            guard let node = subject(of: sender), node !== rootNode else { return }
+            beginRename(node)
+        }
+
+        private func copyToPasteboard(_ string: String) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(string, forType: .string)
+        }
+
+        // MARK: Inline editing
+
+        private func beginCreate(kind: WorkspaceOutlineDraftKind, in parent: WorkspaceOutlineNode) {
+            guard let outline else { return }
+            cancelInlineEdit()
+            clearFailure()
+            if !outline.isItemExpanded(parent) {
+                outline.expandItem(parent)
+            }
+            switch parent.state {
+            case .loaded:
+                insertDraft(kind: kind, in: parent)
+            case .unloaded, .loading:
+                pendingDraft = (kind, parent)
+                loadChildren(of: parent)
+            case .failed:
+                return
+            }
+        }
+
+        /// Rows the tree adds among a folder's children - the draft and the
+        /// failure line - go in and out with `insertItems`/`removeItems`
+        /// rather than a reload of the folder, because a reload reconfigures
+        /// every sibling row and ends the field editor on the row being
+        /// typed in.
+        private func insert(_ node: WorkspaceOutlineNode, at index: Int, in parent: WorkspaceOutlineNode) {
+            parent.children.insert(node, at: index)
+            outline?.insertItems(at: IndexSet(integer: index), inParent: parent, withAnimation: [])
+        }
+
+        private func remove(_ node: WorkspaceOutlineNode, from parent: WorkspaceOutlineNode) {
+            guard let index = parent.children.firstIndex(where: { $0 === node }) else { return }
+            parent.children.remove(at: index)
+            outline?.removeItems(at: IndexSet(integer: index), inParent: parent, withAnimation: [])
+        }
+
+        private func insertDraft(kind: WorkspaceOutlineDraftKind, in parent: WorkspaceOutlineNode) {
+            let draft = WorkspaceOutlineNode(draft: kind, parentURL: parent.url)
+            inlineEdit = InlineEdit(mode: .create(kind: kind, parent: parent), node: draft, text: "")
+            insert(draft, at: 0, in: parent)
+            focusEditor(on: draft, selectStemOnly: false)
+        }
+
+        private func beginRename(_ node: WorkspaceOutlineNode) {
+            cancelInlineEdit()
+            clearFailure()
+            inlineEdit = InlineEdit(mode: .rename, node: node, text: node.name)
+            outline?.reloadItem(node, reloadChildren: false)
+            focusEditor(on: node, selectStemOnly: !node.isDirectory)
+        }
+
+        private func focusEditor(on node: WorkspaceOutlineNode, selectStemOnly: Bool) {
+            guard let outline else { return }
+            let row = outline.row(forItem: node)
+            guard row >= 0 else { return }
+            outline.scrollRowToVisible(row)
+            guard let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView,
+                  let field = cell.textField, let window = outline.window
+            else { return }
+            window.makeFirstResponder(field)
+            if selectStemOnly, let editor = field.currentEditor() {
+                let stem = (node.name as NSString).deletingPathExtension
+                editor.selectedRange = NSRange(location: 0, length: (stem as NSString).length)
+            }
+        }
+
+        /// Ends the field without changing anything: the draft row leaves,
+        /// a renamed row shows its name again.
+        func cancelInlineEdit() {
+            guard let edit = inlineEdit else { return }
+            inlineEdit = nil
+            pendingDraft = nil
+            clearFailure()
+            switch edit.mode {
+            case .create(_, let parent):
+                remove(edit.node, from: parent)
+            case .rename:
+                outline?.reloadItem(edit.node, reloadChildren: false)
+            }
+            if let outline, outline.window?.firstResponder !== outline {
+                outline.window?.makeFirstResponder(outline)
+            }
+        }
+
+        private func commitInlineEdit(name: String) {
+            guard var edit = inlineEdit, !edit.pending else { return }
+            let parent: WorkspaceOutlineNode?
+            let current: String?
+            switch edit.mode {
+            case .create(_, let creationParent):
+                parent = creationParent
+                current = nil
+            case .rename:
+                parent = loadedNode(at: WorkspaceOutlinePathPresentation.parentPath(edit.node.url.path))
+                current = edit.node.name
+            }
+            let siblings = Set((parent?.children ?? []).filter(\.isEntry).map(\.name))
+            switch WorkspaceOutlineNamePolicy.verdict(name: name, siblings: siblings, current: current) {
+            case .unchanged:
+                cancelInlineEdit()
+                return
+            case .rejected(let reason):
+                showFailure(reason, under: edit.node)
+                return
+            case .accepted:
+                break
+            }
+            clearFailure()
+            edit.pending = true
+            inlineEdit = edit
+            switch edit.mode {
+            case .create(let kind, let creationParent):
+                switch kind {
+                case .file: fileOperations.createFile(creationParent.url, name)
+                case .folder: fileOperations.createDirectory(creationParent.url, name)
+                }
+            case .rename:
+                fileOperations.rename(edit.node.url, name)
+            }
+        }
+
+        private func editorField() -> NSTextField? {
+            guard let outline, let edit = inlineEdit else { return nil }
+            let row = outline.row(forItem: edit.node)
+            guard row >= 0 else { return nil }
+            return (outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView)?.textField
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)):
+                commitInlineEdit(name: textView.string)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                cancelInlineEdit()
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// Leaving the field any other way - a click elsewhere, a tab switch -
+        /// is a cancel. A commit already in flight keeps its row until the
+        /// core answers.
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let edit = inlineEdit, !edit.pending else { return }
+            cancelInlineEdit()
+        }
+
+        // MARK: Failure line
+
+        private func showFailure(_ message: String, under node: WorkspaceOutlineNode) {
+            clearFailure()
+            let parentPath = WorkspaceOutlinePathPresentation.parentPath(node.url.path)
+            guard let parent = loadedNode(at: parentPath) ?? (node === inlineEdit?.node ? draftParent() : nil),
+                  let index = parent.children.firstIndex(where: { $0 === node })
+            else { return }
+            let failure = WorkspaceOutlineNode(failure: message, under: node.url)
+            failureNode = failure
+            insert(failure, at: index + 1, in: parent)
+            if node === inlineEdit?.node, let field = editorField(), let window = outline?.window,
+               window.firstResponder !== field.currentEditor() {
+                window.makeFirstResponder(field)
+            }
+        }
+
+        private func draftParent() -> WorkspaceOutlineNode? {
+            guard let edit = inlineEdit, case .create(_, let parent) = edit.mode else { return nil }
+            return parent
+        }
+
+        private func clearFailure() {
+            guard let failureNode else { return }
+            self.failureNode = nil
+            let parentPath = WorkspaceOutlinePathPresentation.parentPath(
+                WorkspaceOutlinePathPresentation.parentPath(failureNode.url.path)
+            )
+            guard let parent = loadedNode(at: parentPath) ?? draftParent() else { return }
+            remove(failureNode, from: parent)
+        }
+
+        // MARK: Core results
+
+        /// Acts once on each settled core operation: a finished change
+        /// reloads the folders it touched and closes the field; a failed one
+        /// keeps the field and says why under it, or under the moved row.
+        private func observe(_ operation: CoreExplorerOperation?) {
+            guard let operation, operation.isSettled,
+                  handledOperationID != .some(operation.id)
+            else { return }
+            handledOperationID = .some(operation.id)
+            switch operation.phase {
+            case "finished":
+                if let edit = inlineEdit, edit.pending {
+                    inlineEdit = nil
+                    clearFailure()
+                    if case .create(_, let parent) = edit.mode {
+                        remove(edit.node, from: parent)
+                    }
+                    if let outline, outline.window?.firstResponder !== outline {
+                        outline.window?.makeFirstResponder(outline)
+                    }
+                }
+                var parents = [WorkspaceOutlinePathPresentation.parentPath(operation.path)]
+                let destinationParent = WorkspaceOutlinePathPresentation.parentPath(operation.destination)
+                if destinationParent != parents[0] { parents.append(destinationParent) }
+                // D-12: a created file that could not open an editor tab still
+                // exists, so the reason rides the finished slot and shows as
+                // the same one-line failure under the created row (B10). The
+                // row appears only after the destination folder reloads, so
+                // the reason waits for that reload to land.
+                let openFailure = operation.message
+                let destination = operation.destination
+                for path in parents {
+                    guard let node = loadedNode(at: path) else { continue }
+                    if path == destinationParent, let message = openFailure {
+                        refreshChildren(of: node) { [weak self] in
+                            guard let self, let created = self.loadedNode(at: destination) else { return }
+                            self.showFailure(message, under: created)
+                        }
+                    } else {
+                        refreshChildren(of: node)
+                    }
+                }
+            case "failed":
+                let message = operation.message ?? "The change was not applied"
+                if var edit = inlineEdit, edit.pending {
+                    edit.pending = false
+                    inlineEdit = edit
+                    showFailure(message, under: edit.node)
+                } else if let node = loadedNode(at: operation.path) {
+                    showFailure(message, under: node)
+                }
+            default:
+                break
+            }
+        }
+
+        // MARK: Drag and drop
+
+        func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+            guard let node = item as? WorkspaceOutlineNode, node.isEntry, node !== rootNode,
+                  inlineEdit == nil
+            else { return nil }
+            let writer = NSPasteboardItem()
+            writer.setString(node.url.path, forType: WorkspaceOutlineView.dragType)
+            return writer
+        }
+
+        private func draggedPath(_ info: NSDraggingInfo) -> String? {
+            guard info.draggingSource as? NSOutlineView === outline else { return nil }
+            return info.draggingPasteboard.string(forType: WorkspaceOutlineView.dragType)
+        }
+
+        /// Where the drop would deliver the item, retargeted onto the folder
+        /// row that receives it so the highlight says what will happen.
+        private func dropDestination(
+            _ info: NSDraggingInfo,
+            proposedItem item: Any?
+        ) -> (path: String, node: WorkspaceOutlineNode?)? {
+            guard let source = draggedPath(info), let rootPath else { return nil }
+            let target: WorkspaceOutlineDropPolicy.Target?
+            if let node = item as? WorkspaceOutlineNode {
+                guard node.isEntry else { return nil }
+                target = .init(path: node.url.path, isDirectory: node.isDirectory)
+            } else {
+                target = nil
+            }
+            guard let destination = WorkspaceOutlineDropPolicy.destinationDirectory(
+                source: source, over: target, root: rootPath
+            ) else { return nil }
+            return (destination, loadedNode(at: destination))
+        }
+
+        func outlineView(
+            _ outlineView: NSOutlineView,
+            validateDrop info: NSDraggingInfo,
+            proposedItem item: Any?,
+            proposedChildIndex index: Int
+        ) -> NSDragOperation {
+            guard let destination = dropDestination(info, proposedItem: item) else { return [] }
+            outlineView.setDropItem(destination.node, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            return .move
+        }
+
+        func outlineView(
+            _ outlineView: NSOutlineView,
+            acceptDrop info: NSDraggingInfo,
+            item: Any?,
+            childIndex index: Int
+        ) -> Bool {
+            guard let source = draggedPath(info),
+                  let destination = dropDestination(info, proposedItem: item)
+            else { return false }
+            clearFailure()
+            fileOperations.move(
+                URL(fileURLWithPath: source),
+                URL(fileURLWithPath: destination.path, isDirectory: true)
+            )
+            return true
         }
 
         private func restoreVisibleState() {
@@ -621,7 +1260,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 return nil
             }
             guard let child = node.children.first(where: {
-                $0.url.path == path || path.hasPrefix($0.url.path + "/")
+                $0.isEntry && ($0.url.path == path || path.hasPrefix($0.url.path + "/"))
             }) else { return nil }
             if child.isDirectory, !outline.isItemExpanded(child) {
                 outline.expandItem(child)
@@ -634,7 +1273,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 outline.expandItem(node)
                 loadChildren(of: node)
             }
-            for child in node.children where child.isDirectory {
+            for child in node.children where child.isDirectory && child.isEntry {
                 expandRecordedDescendants(of: child, in: outline)
             }
         }
@@ -651,7 +1290,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             outline: NSOutlineView,
             paths: inout [String]
         ) {
-            guard node.isDirectory else { return }
+            guard node.isDirectory, node.isEntry else { return }
             if outline.isItemExpanded(node) {
                 paths.append(node.url.path)
                 for child in node.children {

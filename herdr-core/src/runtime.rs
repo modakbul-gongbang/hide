@@ -18,12 +18,12 @@ use crate::model::CheckoutSnapshot;
 use crate::model::SidebarAgentSnapshot;
 use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
-    EditorTabKind, EditorTabSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
-    PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
-    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
-    RightPanelSection, SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface,
-    TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot,
-    clamp_pane_text_scale,
+    EditorTabKind, EditorTabSnapshot, ExplorerOperationSnapshot, LastErrorSnapshot,
+    PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot,
+    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
+    RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection, SCHEMA_VERSION, Snapshot,
+    StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
+    UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
@@ -162,6 +162,17 @@ fn herdr_insert_index(
 /// The checkout root is left out because the outline always expands its own
 /// root row; recording it would put a path in the persisted set that the view
 /// never reads.
+/// `path` with the `source` prefix replaced by `destination`, or `None`
+/// when `path` is neither `source` nor inside it. Component-wise, so
+/// `/repo/src2` is not inside `/repo/src`.
+fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> {
+    if path == source {
+        return Some(destination.to_owned());
+    }
+    let rest = path.strip_prefix(source)?.strip_prefix('/')?;
+    Some(format!("{destination}/{rest}"))
+}
+
 fn reveal_expansion_paths(checkout_path: &str, path: &str, is_directory: bool) -> Vec<String> {
     let root = Path::new(checkout_path);
     let Ok(relative) = Path::new(path).strip_prefix(root) else {
@@ -872,6 +883,31 @@ struct FileSavePayload {
     expected_modified_at_unix_ms: Option<u64>,
 }
 
+/// A new file or folder: the folder it goes in and the name it takes. The
+/// root is the tree the shell drew it in, which the core checks against the
+/// focused checkout before it trusts the parent to be inside it.
+#[derive(Debug, Deserialize)]
+struct ExplorerCreatePayload {
+    root: String,
+    parent: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PathRenamePayload {
+    root: String,
+    path: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PathMovePayload {
+    root: String,
+    path: String,
+    /// The folder the item lands in; the item keeps its name.
+    destination: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct FileViewPayload {
     tab_id: String,
@@ -1161,6 +1197,10 @@ enum ValidatedEvent {
     FileView(FileViewPayload),
     FileSave(FileSavePayload),
     FileConflict(FileConflictPayload),
+    FileCreate(ExplorerCreatePayload),
+    DirCreate(ExplorerCreatePayload),
+    PathRename(PathRenamePayload),
+    PathMove(PathMovePayload),
     UiStateUpdate(UiStateUpdatePayload),
     RetryConnect(RetryConnectPayload),
     InstallAgentHooks(InstallAgentHooksPayload),
@@ -1455,6 +1495,7 @@ pub struct Runtime {
     /// A repeated callback for an older request cannot authorize a newer one.
     next_worktree_removal_id: u64,
     next_task_operation_id: u64,
+    next_explorer_operation_id: u64,
     delta: DeltaState,
 }
 
@@ -1624,6 +1665,7 @@ impl Runtime {
             worktree_generation: 0,
             next_worktree_removal_id: 0,
             next_task_operation_id: 0,
+            next_explorer_operation_id: 0,
             delta: DeltaState::default(),
         };
         runtime.resync_navigator_focus();
@@ -7393,6 +7435,191 @@ impl Runtime {
         true
     }
 
+    /// Decides an explorer change under the lock and runs it off the lock.
+    ///
+    /// The decision reads nothing from disk: `plan` refuses a path outside
+    /// the focused checkout and a name that is not one component from the
+    /// strings alone, and the refusal lands in the slot as a failed
+    /// operation so the tree can say why under the row. The filesystem call
+    /// then runs on a worker with the mutex released and reports back
+    /// through `ingest_explorer_operation_result`; a runtime without a
+    /// worker context has no shared mutex and runs it in place.
+    fn start_explorer_operation(
+        &mut self,
+        plan: impl FnOnce(&Path) -> Result<files::ExplorerOperation, String>,
+        root: &str,
+        started_from: &str,
+    ) -> bool {
+        if self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working")
+        {
+            self.set_error(
+                "explorer.busy",
+                "Another file operation is still running",
+                true,
+            );
+            return true;
+        }
+        self.next_explorer_operation_id = self.next_explorer_operation_id.wrapping_add(1).max(1);
+        let id = self.next_explorer_operation_id;
+        let planned = match self.snapshot.navigator.root_path.as_deref() {
+            Some(focused_root) if focused_root == root => plan(Path::new(root)),
+            Some(focused_root) => Err(format!("{root} is not the focused checkout {focused_root}")),
+            None => Err("No local checkout is focused".to_owned()),
+        };
+        let operation = match planned {
+            Ok(operation) => operation,
+            Err(message) => {
+                self.snapshot.explorer_operation = Some(ExplorerOperationSnapshot {
+                    id,
+                    kind: "refused".to_owned(),
+                    phase: "failed".to_owned(),
+                    path: started_from.to_owned(),
+                    destination: started_from.to_owned(),
+                    message: Some(message.clone()),
+                });
+                self.push_diagnostic("explorer.refused", format!("{started_from}: {message}"));
+                return true;
+            }
+        };
+        self.snapshot.explorer_operation = Some(ExplorerOperationSnapshot {
+            id,
+            kind: operation.kind.as_str().to_owned(),
+            phase: "working".to_owned(),
+            path: operation.source.to_string_lossy().into_owned(),
+            destination: operation.destination.to_string_lossy().into_owned(),
+            message: None,
+        });
+        let Some(context) = self.worker_context.clone() else {
+            let result = files::apply_explorer_operation(&operation);
+            return self.ingest_explorer_operation_result(id, &operation, result);
+        };
+        let worker_operation = operation.clone();
+        match thread::Builder::new()
+            .name(format!("herdr-core-explorer-{}", operation.kind.as_str()))
+            .spawn(move || {
+                let operation = worker_operation;
+                let result = files::apply_explorer_operation(&operation);
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.ingest_explorer_operation_result(id, &operation, result),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            }) {
+            Ok(_) => true,
+            Err(error) => {
+                let message = format!("The file operation worker could not start: {error}");
+                self.ingest_explorer_operation_result(id, &operation, Err(message))
+            }
+        }
+    }
+
+    /// Settles the slot with what the filesystem said. Success moves the
+    /// selection to the item and carries the paths the core owns - the
+    /// tree's expanded folders and any open file tab - from the old path to
+    /// the new one, so a renamed folder stays open and a renamed file's tab
+    /// still saves to the file it shows. Failure changes no core state
+    /// beyond the message.
+    pub(crate) fn ingest_explorer_operation_result(
+        &mut self,
+        id: u64,
+        operation: &files::ExplorerOperation,
+        result: Result<(), String>,
+    ) -> bool {
+        let Some(slot) = self.snapshot.explorer_operation.as_mut() else {
+            return false;
+        };
+        if slot.id != id || slot.phase != "working" {
+            return false;
+        }
+        let source = operation.source.to_string_lossy().into_owned();
+        let destination = operation.destination.to_string_lossy().into_owned();
+        match result {
+            Ok(()) => {
+                slot.phase = "finished".to_owned();
+                if source != destination {
+                    for expanded in &mut self.snapshot.ui_state.expanded_paths {
+                        if let Some(moved) = retarget_path(expanded, &source, &destination) {
+                            *expanded = moved;
+                        }
+                    }
+                    let mut retargeted = Vec::new();
+                    for tab in &mut self.snapshot.editor.tabs {
+                        if tab.kind != EditorTabKind::File {
+                            continue;
+                        }
+                        if let Some(moved) = retarget_path(&tab.path, &source, &destination) {
+                            tab.label = Path::new(&moved)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .filter(|name| !name.is_empty())
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| moved.clone());
+                            tab.path = moved.clone();
+                            retargeted.push((tab.id.clone(), moved));
+                        }
+                    }
+                    for (tab_id, moved) in retargeted {
+                        if let Some(document) = self.editor_documents.get_mut(&tab_id) {
+                            document.path = moved;
+                        }
+                    }
+                    self.sync_active_editor_document();
+                }
+                self.snapshot.ui_state.selected_path = Some(destination.clone());
+                self.push_diagnostic(
+                    format!("explorer.{}", operation.kind.as_str()),
+                    format!("{source} -> {destination}"),
+                );
+                // A created file opens as an editor tab in this same result,
+                // so the tree selection and the tab land in one frame with no
+                // second dispatch from the shell. New Folder, Rename and move
+                // open nothing. If the file cannot be read into a tab it still
+                // exists on disk, so the reason rides the finished slot's
+                // message and the tree keeps the created file (B10 pattern).
+                if operation.kind == files::ExplorerOperationKind::FileCreate
+                    && let Some((workspace_id, checkout_id)) = self
+                        .focused_local_checkout()
+                        .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
+                {
+                    match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
+                        Ok(prepared) => {
+                            self.show_file_tab(prepared, &workspace_id, &checkout_id, &destination)
+                        }
+                        Err(message) => {
+                            if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
+                                slot.message = Some(message.clone());
+                            }
+                            self.push_diagnostic(
+                                "explorer.file_create.open_failed",
+                                format!("{destination}: {message}"),
+                            );
+                        }
+                    }
+                }
+                self.persist_current_ui_state();
+            }
+            Err(message) => {
+                slot.phase = "failed".to_owned();
+                slot.message = Some(message.clone());
+                self.push_diagnostic(
+                    format!("explorer.{}_failed", operation.kind.as_str()),
+                    format!("{source}: {message}"),
+                );
+            }
+        }
+        true
+    }
+
     fn acknowledge_task_operation(&mut self, id: u64) -> bool {
         if self
             .snapshot
@@ -9898,6 +10125,48 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::FileCreate(payload) => self.start_explorer_operation(
+                |root| {
+                    files::ExplorerOperation::create(
+                        files::ExplorerOperationKind::FileCreate,
+                        root,
+                        Path::new(&payload.parent),
+                        &payload.name,
+                    )
+                },
+                &payload.root,
+                &payload.parent,
+            ),
+            ValidatedEvent::DirCreate(payload) => self.start_explorer_operation(
+                |root| {
+                    files::ExplorerOperation::create(
+                        files::ExplorerOperationKind::DirCreate,
+                        root,
+                        Path::new(&payload.parent),
+                        &payload.name,
+                    )
+                },
+                &payload.root,
+                &payload.parent,
+            ),
+            ValidatedEvent::PathRename(payload) => self.start_explorer_operation(
+                |root| {
+                    files::ExplorerOperation::rename(root, Path::new(&payload.path), &payload.name)
+                },
+                &payload.root,
+                &payload.path,
+            ),
+            ValidatedEvent::PathMove(payload) => self.start_explorer_operation(
+                |root| {
+                    files::ExplorerOperation::move_into(
+                        root,
+                        Path::new(&payload.path),
+                        Path::new(&payload.destination),
+                    )
+                },
+                &payload.root,
+                &payload.path,
+            ),
             ValidatedEvent::TerminalClick(payload) => {
                 // D8 explicitly chooses Herdr's detected agent as the policy
                 // boundary until its frame protocol carries mouse mode.
@@ -11220,6 +11489,10 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_view" => decode!(FileViewPayload, FileView),
         "file_save" => decode!(FileSavePayload, FileSave),
         "file_conflict" => decode!(FileConflictPayload, FileConflict),
+        "file_create" => decode!(ExplorerCreatePayload, FileCreate),
+        "dir_create" => decode!(ExplorerCreatePayload, DirCreate),
+        "path_rename" => decode!(PathRenamePayload, PathRename),
+        "path_move" => decode!(PathMovePayload, PathMove),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
@@ -20162,6 +20435,361 @@ mod tests {
             vec![EditorTabKind::Diff, EditorTabKind::File],
             "opening the source does not reuse its diff tab"
         );
+    }
+
+    fn explorer_runtime() -> (Runtime, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "hide-explorer-runtime-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src/nested")).expect("fixture tree");
+        std::fs::write(root.join("src/lib.rs"), "lib\n").expect("fixture file");
+        let root = root.canonicalize().expect("a real root");
+        let mut runtime = runtime();
+        runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
+        (runtime, root)
+    }
+
+    fn explorer_event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": kind,
+            "payload": payload
+        }))
+        .expect("explorer event")
+    }
+
+    /// B3, D-04: a create lands on disk, settles the slot, and moves the
+    /// selection to the new item without touching the expanded set.
+    #[test]
+    fn explorer_create_writes_the_item_and_selects_it() {
+        let (mut runtime, root) = explorer_runtime();
+        let src = root.join("src").to_string_lossy().into_owned();
+        runtime.snapshot.ui_state.expanded_paths = vec![src.clone()];
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "file_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": src, "name": "new.rs"})
+        )));
+
+        let expected = root.join("src/new.rs");
+        assert!(expected.is_file());
+        let snapshot = runtime.snapshot();
+        let operation = snapshot
+            .explorer_operation
+            .as_ref()
+            .expect("a settled slot");
+        assert_eq!(operation.phase, "finished");
+        assert_eq!(operation.kind, "file_create");
+        assert_eq!(operation.destination, expected.to_string_lossy());
+        assert_eq!(
+            snapshot.ui_state.selected_path.as_deref(),
+            Some(expected.to_string_lossy().as_ref())
+        );
+        assert_eq!(snapshot.ui_state.expanded_paths, vec![src]);
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "dir_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": root.to_string_lossy(), "name": "docs"})
+        )));
+        assert!(root.join("docs").is_dir());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// B6, B11: renaming an expanded folder keeps it expanded under its new
+    /// name, leaves every other expanded folder alone, and an open tab on
+    /// a file inside it now saves to where the file is.
+    #[test]
+    fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
+        let (mut runtime, root) = explorer_runtime();
+        let src = root.join("src").to_string_lossy().into_owned();
+        let nested = root.join("src/nested").to_string_lossy().into_owned();
+        runtime.snapshot.ui_state.expanded_paths = vec![src.clone(), nested.clone()];
+        let lib = root.join("src/lib.rs").to_string_lossy().into_owned();
+        runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
+            id: "file:w:c:lib".to_owned(),
+            workspace_id: "w".to_owned(),
+            checkout_id: "c".to_owned(),
+            path: lib.clone(),
+            label: "lib.rs".to_owned(),
+            kind: EditorTabKind::File,
+            diff_committed: None,
+            markdown_preview: false,
+            wrap: false,
+            dirty: false,
+        });
+        runtime.editor_documents.insert(
+            "file:w:c:lib".to_owned(),
+            files::open(Path::new(&lib)).expect("fixture document"),
+        );
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_rename",
+            serde_json::json!({"root": root.to_string_lossy(), "path": src, "name": "lib"})
+        )));
+
+        let renamed = root.join("lib");
+        assert!(renamed.join("lib.rs").is_file());
+        assert!(!root.join("src").exists());
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot
+                .explorer_operation
+                .as_ref()
+                .map(|o| o.phase.as_str()),
+            Some("finished")
+        );
+        assert_eq!(
+            snapshot.ui_state.expanded_paths,
+            vec![
+                renamed.to_string_lossy().into_owned(),
+                renamed.join("nested").to_string_lossy().into_owned()
+            ]
+        );
+        assert_eq!(
+            snapshot.ui_state.selected_path.as_deref(),
+            Some(renamed.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            snapshot.editor.tabs[0].path,
+            renamed.join("lib.rs").to_string_lossy()
+        );
+        assert_eq!(
+            runtime.editor_documents["file:w:c:lib"].path,
+            renamed.join("lib.rs").to_string_lossy()
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// B8, B9: a move lands under the destination folder and a move onto an
+    /// existing name is refused with the tree unchanged.
+    #[test]
+    fn explorer_move_relocates_the_item_and_refuses_a_name_clash() {
+        let (mut runtime, root) = explorer_runtime();
+        let lib = root.join("src/lib.rs");
+        let nested = root.join("src/nested");
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_move",
+            serde_json::json!({"root": root.to_string_lossy(), "path": lib.to_string_lossy(), "destination": nested.to_string_lossy()})
+        )));
+        assert!(nested.join("lib.rs").is_file());
+        assert!(!lib.exists());
+        assert_eq!(
+            runtime.snapshot().ui_state.selected_path.as_deref(),
+            Some(nested.join("lib.rs").to_string_lossy().as_ref())
+        );
+
+        std::fs::write(&lib, "again\n").expect("fixture file");
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_move",
+            serde_json::json!({"root": root.to_string_lossy(), "path": lib.to_string_lossy(), "destination": nested.to_string_lossy()})
+        )));
+        let snapshot = runtime.snapshot();
+        let operation = snapshot
+            .explorer_operation
+            .as_ref()
+            .expect("a settled slot");
+        assert_eq!(operation.phase, "failed");
+        assert!(
+            operation
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("already exists"),
+            "{:?}",
+            operation.message
+        );
+        assert_eq!(operation.path, lib.to_string_lossy());
+        assert_eq!(std::fs::read_to_string(&lib).unwrap(), "again\n");
+        assert_eq!(
+            std::fs::read_to_string(nested.join("lib.rs")).unwrap(),
+            "lib\n"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// D-04: a path outside the focused checkout, or a root that is not the
+    /// focused checkout, is refused before any filesystem call and the
+    /// refusal is readable under the row the request named.
+    #[test]
+    fn explorer_refuses_paths_outside_the_focused_checkout_without_touching_disk() {
+        let (mut runtime, root) = explorer_runtime();
+        let outside = std::env::temp_dir().join(format!(
+            "hide-explorer-outside-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&outside).expect("outside dir");
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "file_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": outside.to_string_lossy(), "name": "leak"})
+        )));
+        let snapshot = runtime.snapshot();
+        let operation = snapshot
+            .explorer_operation
+            .as_ref()
+            .expect("a refused slot");
+        assert_eq!(operation.phase, "failed");
+        assert!(
+            operation
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("outside the workspace"),
+            "{:?}",
+            operation.message
+        );
+        assert_eq!(operation.path, outside.to_string_lossy());
+        assert!(!outside.join("leak").exists());
+        assert_eq!(snapshot.ui_state.selected_path, None);
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "dir_create",
+            serde_json::json!({"root": outside.to_string_lossy(), "parent": outside.to_string_lossy(), "name": "leak"})
+        )));
+        let snapshot = runtime.snapshot();
+        let operation = snapshot
+            .explorer_operation
+            .as_ref()
+            .expect("a refused slot");
+        assert_eq!(operation.phase, "failed");
+        assert!(
+            operation
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("not the focused checkout"),
+            "{:?}",
+            operation.message
+        );
+        assert!(!outside.join("leak").exists());
+        std::fs::remove_dir_all(&outside).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// D-12, B13: New File opens the created file as an editor tab in the
+    /// same result - one frame, no second dispatch - and it is the active
+    /// tab. New Folder opens nothing, and Rename opens no new tab.
+    #[test]
+    fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
+        let root = std::env::temp_dir().join(format!(
+            "hide-explorer-open-{}-{}",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("fixture tree");
+        let root = root.canonicalize().expect("a real root");
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&root)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+        let mut runtime = runtime();
+        runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+            id: "workspace:0".to_owned(),
+            label: "workspace 0".to_owned(),
+            path: root.to_string_lossy().into_owned(),
+            device_id: "local".to_owned(),
+        }];
+        runtime.rebuild_catalog();
+        let checkout_id = workspace::checkout_id_for_path("workspace:0", &root);
+        runtime.snapshot.navigator.focused_workspace_id = Some("workspace:0".to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
+        runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
+
+        let src = root.join("src").to_string_lossy().into_owned();
+        assert!(runtime.dispatch_json(&explorer_event(
+            "file_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": src, "name": "new.rs"})
+        )));
+
+        let created = root.join("src/new.rs");
+        assert!(created.is_file());
+        let snapshot = runtime.snapshot();
+        let file_tabs: Vec<_> = snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.kind == EditorTabKind::File)
+            .collect();
+        assert_eq!(file_tabs.len(), 1, "the created file takes exactly one tab");
+        assert_eq!(file_tabs[0].path, created.to_string_lossy());
+        assert_eq!(
+            snapshot.editor.active_tab_id.as_deref(),
+            Some(file_tabs[0].id.as_str()),
+            "the created file's tab is active"
+        );
+        assert_eq!(
+            snapshot
+                .explorer_operation
+                .as_ref()
+                .and_then(|operation| operation.message.as_deref()),
+            None,
+            "a readable created file opens without a failure reason"
+        );
+
+        // A folder created next opens no tab.
+        assert!(runtime.dispatch_json(&explorer_event(
+            "dir_create",
+            serde_json::json!({"root": root.to_string_lossy(), "parent": src, "name": "docs"})
+        )));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .editor
+                .tabs
+                .iter()
+                .filter(|tab| tab.kind == EditorTabKind::File)
+                .count(),
+            1,
+            "New Folder opens no editor tab"
+        );
+
+        // Renaming the created file opens no new tab; its one tab is
+        // retargeted to the new path.
+        assert!(runtime.dispatch_json(&explorer_event(
+            "path_rename",
+            serde_json::json!({
+                "root": root.to_string_lossy(),
+                "path": created.to_string_lossy(),
+                "name": "renamed.rs"
+            })
+        )));
+        let snapshot = runtime.snapshot();
+        let file_tabs: Vec<_> = snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.kind == EditorTabKind::File)
+            .collect();
+        assert_eq!(file_tabs.len(), 1, "Rename opens no new tab");
+        assert_eq!(
+            file_tabs[0].path,
+            root.join("src/renamed.rs").to_string_lossy()
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn retarget_path_is_component_wise() {
+        assert_eq!(
+            retarget_path("/repo/src", "/repo/src", "/repo/lib").as_deref(),
+            Some("/repo/lib")
+        );
+        assert_eq!(
+            retarget_path("/repo/src/a/b", "/repo/src", "/repo/lib").as_deref(),
+            Some("/repo/lib/a/b")
+        );
+        assert_eq!(retarget_path("/repo/src2", "/repo/src", "/repo/lib"), None);
+        assert_eq!(retarget_path("/repo", "/repo/src", "/repo/lib"), None);
     }
     include!("runtime_lineage_tests.rs");
 }

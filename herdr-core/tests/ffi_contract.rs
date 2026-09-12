@@ -256,6 +256,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "card",
             "connection",
             "editor",
+            "explorer_operation",
             "find",
             "focused",
             "git_worktrees",

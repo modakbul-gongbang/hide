@@ -47,6 +47,7 @@ pub struct Snapshot {
     pub git_worktrees_remote: bool,
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub task_operation: Option<TaskOperationSnapshot>,
+    pub explorer_operation: Option<ExplorerOperationSnapshot>,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -1503,6 +1504,27 @@ pub struct TaskOperationSnapshot {
     pub message: Option<String>,
 }
 
+/// The explorer's most recent filesystem change and how far it got.
+///
+/// One slot, like `TaskOperationSnapshot`: the shell reads the finished
+/// phase to reload the parents of `path` and `destination`, and the failed
+/// phase to draw `message` under the row the change started from. A new
+/// request replaces a settled slot; a request while one is working is
+/// refused, so a double-click cannot run the same rename twice.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ExplorerOperationSnapshot {
+    pub id: u64,
+    pub kind: String,
+    pub phase: String,
+    /// The path the change started from: the item being renamed or moved,
+    /// or the path a new item takes.
+    pub path: String,
+    /// The item's path once the change has landed; equal to `path` for a
+    /// creation.
+    pub destination: String,
+    pub message: Option<String>,
+}
+
 /// One repository's worktrees.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectWorktreesSnapshot {
@@ -1917,6 +1939,7 @@ impl Snapshot {
             git_worktrees_remote: false,
             worktree_removal: None,
             task_operation: None,
+            explorer_operation: None,
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -1998,6 +2021,7 @@ pub struct RestSections {
     pub git_worktrees_remote: bool,
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub task_operation: Option<TaskOperationSnapshot>,
+    pub explorer_operation: Option<ExplorerOperationSnapshot>,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -2024,6 +2048,7 @@ impl RestSections {
             git_worktrees_remote: snapshot.git_worktrees_remote,
             worktree_removal: snapshot.worktree_removal.clone(),
             task_operation: snapshot.task_operation.clone(),
+            explorer_operation: snapshot.explorer_operation.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -2051,6 +2076,7 @@ impl RestSections {
             && self.git_worktrees_remote == snapshot.git_worktrees_remote
             && self.worktree_removal == snapshot.worktree_removal
             && self.task_operation == snapshot.task_operation
+            && self.explorer_operation == snapshot.explorer_operation
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -2142,6 +2168,7 @@ pub struct RestWire<'a> {
     pub git_worktrees_remote: bool,
     pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
     pub task_operation: &'a Option<TaskOperationSnapshot>,
+    pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -2165,6 +2192,7 @@ impl<'a> RestWire<'a> {
             git_worktrees_remote: rest.git_worktrees_remote,
             worktree_removal: &rest.worktree_removal,
             task_operation: &rest.task_operation,
+            explorer_operation: &rest.explorer_operation,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,
