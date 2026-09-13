@@ -15,8 +15,10 @@ Commit history, raw pane identifiers, allocation details, and instrumentation ex
 All example messages, names, counts, PR numbers, and timestamps in the proposal are labelled design samples, not a live status report or content to ship as constants.
 Existing `HideTheme` variables are reused; no application token or product code is added.
 The latest user direction prioritizes a natural node-and-edge parent/child visualization and consistent visual UI across navigation surfaces.
-Following the request for a less fragmented view, start with `01 All work full screen` and `02 Project full screen`.
-Then inspect `Workbench visual`, `Delegation graph visual`, the component/state sheets and the earlier structural alternatives.
+Start with `UX 00 Start here`, then follow UX 01 through UX 06 and the optional UX 07 example.
+This is the latest navigation proposal: it retains Projects / Agents and makes the center/right transitions explicit in complete application windows.
+The earlier `01 All work full screen`, `02 Project full screen` and `Workbench visual` boards are information-layout explorations, not the current navigation contract for this proposal.
+Their canvas annotations point to the newer journey; retain their useful information hierarchy without copying their conflicting sidebar or right-panel behavior.
 English navigation terms remain aligned with the product while Korean task names and message content exercise mixed-script layouts.
 Korean labels in the proposal are copy candidates, not a decision to localize the entire application.
 
@@ -31,7 +33,7 @@ Korean labels in the proposal are copy candidates, not a decision to localize th
 | User references 6 and 7 and current `HideUI.swift` | Search uses a generic kind icon and internal identifier subtitle; Recent Panels uses provider artwork but omits canonical status | Source and supplied-image agreement |
 | Fresh native capture | One installed Hide app was identified and its window captured; Git has a large blank upper area and lower rows split branch/path text into narrow multiline columns | Installed screenshot, not proof that this checkout built the installed binary |
 | Current `model.rs`, `sidebar.rs`, `HideUI.swift` search | Session identity exists; no persistent conversation-history reader or Sessions surface was found in the inspected source | This is a bounded search, not proof that no external provider can supply history |
-| Current Pen inventory | Existing sheets cover panel/section headers, line/card rows, primitives and older as-built review rows; new workflows lacked dedicated component contracts | Six proposed masters added below |
+| Current Pen inventory | Existing sheets cover panel/section headers, line/card rows, primitives and older as-built review rows; new workflows lacked dedicated component contracts | Seven proposed masters including the shared walkthrough navigation |
 
 Native observation used the installed bundle, an exact window capture, and verified Screen Recording/Accessibility permissions.
 Attempts to navigate the installed window were refused by the automation tool because its inventory could not resolve the target for interaction; no click or keystroke was dispatched to Hide.
@@ -66,10 +68,64 @@ Node IDs identify editable boards in the one shared document.
 | Proposal / Delegation graph visual | `nE4ek` | Parent/child/grandchild node-and-edge graph, selected-node inspector, Graph/List and viewport controls |
 | Proposal / 01 All work full screen | `WZvs5` | Complete 1600pt application window: global attention, project team lanes, compact Git context and selected-parent message/history inspector |
 | Proposal / 02 Project full screen | `psy2M` | Complete 1600pt project view: primary comparison table, delegation graph, selected-workspace files/history and agent/PR inspector |
+| Proposal / UX 00 Start here | `Ra5bK` | Start here: three-region responsibilities and user-action sequence |
+| Proposal / UX 01 현재는 이렇게 작업한다 | `Z5Zjp` | Simplified current-structure reconstruction, not a pixel-exact live screenshot |
+| Proposal / UX 02 변경 후에도 작업 화면은 그대로다 | `tU8kV` | Same parent and reference-document split; Workspace tools remain on the right |
+| Proposal / UX 03 전체 현황을 잠깐 펼쳐 본다 | `IX8oz` | Global overview in the center; explicit return to retained master work |
+| Proposal / UX 04 자식 노드는 살펴보기만 한다 | `tPlqM` | Inspect a review child without leaving the retained master execution context |
+| Proposal / UX 05 에이전트를 열 때 작업 장소가 바뀐다 | `MQCiA` | Explicit Open agent changes the execution Workspace to review and its tools |
+| Proposal / UX 06 부모로 돌아오면 원래 배치로 이어간다 | `gMGOa` | Return to the parent's preserved split and Explorer selection |
+| Proposal / UX 07 오른쪽 도구 탭만 바꾸는 경우 | `vWgav` | Sessions tab changes only the right list; the center terminal remains visible |
+| Proposal / UX Navigation continuity component | `L4UyI` | One shared Projects/Agents navigation master across the complete-window journey |
 
-There are 20 new review boards; existing current-screen boards and the previous review are retained.
+There are 29 new review boards; existing current-screen boards and the previous review are retained.
 
-## Whole-screen reading order
+## Latest user journey: stable left, explicit center, contextual right
+
+The user could not map the earlier full-screen mockups back to the existing application because the sidebar and right-panel roles had changed without a transition story.
+The journey resolves that problem by retaining the existing Projects / Agents switch and showing both sidebars in every 1440pt application window.
+The addition is an All work button above the switch and an explicit project-level overview button, not a third list mode or a replacement global navigation taxonomy.
+Project disclosure remains disclosure; opening its overview has a separately labelled action.
+Switching Projects / Agents changes the left navigation representation, not the central work or inspection mode.
+
+| User action | Left navigation | Center | Right | Execution context |
+| --- | --- | --- | --- | --- |
+| Open All work | Preserve mode, expansion and last execution highlight | Global overview | Selected subject detail, or an explicit no-selection state | Retain master and its panel layout |
+| Open creator overview | Preserve navigation | Creator overview and relationships | Selected subject detail | Still retain master |
+| Select the review child node | Do not move execution highlight to the child | Keep project graph; highlight the inspected child | Review child detail, clearly labelled as inspection | No Workspace switch or read acknowledgement |
+| Open selected agent | Highlight the actual opened child | Review's existing execution layout | Review's Workspace tools | This is the deliberate switch to review |
+| Return to work from overview | Restore last execution highlight | Restore the retained layout | Restore that Workspace's last tool tab and visibility | No new agent or terminal is started |
+| Return to parent from child work | Highlight the parent | Restore master's parent terminal and reference document | Restore master's last tool tab | Child execution continues |
+| Select Explorer, Changes or Sessions tab | No change | No change | Change only the Workspace tool list | No navigation to another Workspace |
+| Open a file, diff or session record | Retain the same Workspace | Open the requested content using the document/panel interaction contract | Keep the relevant tool list | Do not close or restart existing terminals |
+
+The right panel has two clearly named roles, not two simultaneous tab families: Selected subject details during overview, and Workspace tools during execution work.
+Overview and Git no longer remain as duplicate right-panel tabs in the recommended journey; their information is accessible through the central project overview and its scoped Git details.
+While inspecting review from master, the right header says review, while the center explicitly identifies the retained master work.
+Only Open agent changes the execution context; the inspected subject and active execution Workspace are deliberately distinct until that action.
+The overview's return control identifies the retained work rather than acting as an ambiguous browser Back action.
+The parent-return control follows known direct parent identity, not a title/cwd guess and not the previously visited unrelated agent.
+
+Retaining a work surface means preserving its panel identities, split geometry, selected document, focus target and applicable viewport state, subject to the existing attachment/runtime contracts.
+The design does not require keeping hidden terminals attached indefinitely or making a second runtime owner; implementation must respect the current ownership and attachment limits.
+No overview transition closes a pane, restarts an agent, discards an unsaved document, or rearranges the saved workspace layout.
+If the retained pane has ended or the Workspace was removed, show that specific condition and offer an existing destination; never silently create a replacement execution.
+If the user changes data elsewhere while the overview is visible, restore current valid state rather than promising a frozen snapshot of outdated file content.
+
+When no subject is selected, the detail panel shows a concise selection prompt or stays collapsed rather than retaining misleading details from another scope.
+If the right panel was closed, do not force it open merely on entering overview; an explicit selection can reveal inspection according to the adopted interaction policy.
+Remember Workspace tool tabs separately from overview inspection so returning to master restores Explorer even after inspecting another project's PR.
+Session tab selection itself never opens a document or starts a process; the explicit record-opening action is a separate step.
+Session-reader support and unavailable/loading/partial states remain prerequisite contracts, not a capability established by UX 07's sample messages.
+
+UX 01 is a labelled reconstruction of the current information structure from the supplied references and prior inspection, not a fresh native acceptance capture.
+UX 02 through UX 07 are the proposed future behavior, rendered as static designs and checked for clipping and mixed-script legibility.
+Principles 2 and 5 are applied by walking through the user's existing work without replacing the familiar navigation model, and principle 7 by labelling all three regions and showing the inspection/open boundary visually.
+This is design clarification, not approval to implement the navigation changes.
+
+## Earlier whole-screen information layout
+
+The following describes the earlier information-layout exploration only; the newer journey above takes precedence for navigation, right-panel modes, and execution-context changes.
 
 The original workbench demonstrates an active terminal, but is not the overview entry point for this proposal.
 The two newer screens use the central application area for an integrated read view instead of squeezing the overview into a narrow side panel.
@@ -250,6 +306,7 @@ Do not promise permanent file retention in a temporary directory or silently cle
 | Workspace work item | `wa3TP` | Overview and state sheet; normal, no PR, stale query, no live agent |
 | Session item | `ey7uz` | Sessions and state sheet; live, ended, no visible messages, partial record |
 | Agent node | `uCQGy` | Graph nodes and state sheet; shared Agent item, selected boundary, ownership and direct-child count |
+| Walkthrough navigation | `LLvYW` | Complete-window journey; persistent Projects/Agents switch, project overview action, parent/child execution selection |
 
 Masters are placed inside proposal sheets and referenced by the illustrated consumers and state examples.
 Existing button, search, tab, tooltip, icon and badge owners remain the implementation starting point.
