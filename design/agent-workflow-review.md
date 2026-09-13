@@ -15,7 +15,8 @@ Commit history, raw pane identifiers, allocation details, and instrumentation ex
 All example messages, names, counts, PR numbers, and timestamps in the proposal are labelled design samples, not a live status report or content to ship as constants.
 Existing `HideTheme` variables are reused; no application token or product code is added.
 The latest user direction prioritizes a natural node-and-edge parent/child visualization and consistent visual UI across navigation surfaces.
-Start visual review with `Workbench visual` and `Delegation graph visual`, then inspect the component/state sheets and the earlier structural alternatives.
+Following the request for a less fragmented view, start with `01 All work full screen` and `02 Project full screen`.
+Then inspect `Workbench visual`, `Delegation graph visual`, the component/state sheets and the earlier structural alternatives.
 English navigation terms remain aligned with the product while Korean task names and message content exercise mixed-script layouts.
 Korean labels in the proposal are copy candidates, not a decision to localize the entire application.
 
@@ -63,8 +64,40 @@ Node IDs identify editable boards in the one shared document.
 | Proposal / Workbench visual | `QLNQG` | Full 1440pt workbench with shared agent identity, delegated group, parent summary and action-focused Overview |
 | Proposal / Agent node component | `R0tOWH` | Reusable graph node with shared identity, ownership, direct-child count and selected/question/seen states |
 | Proposal / Delegation graph visual | `nE4ek` | Parent/child/grandchild node-and-edge graph, selected-node inspector, Graph/List and viewport controls |
+| Proposal / 01 All work full screen | `WZvs5` | Complete 1600pt application window: global attention, project team lanes, compact Git context and selected-parent message/history inspector |
+| Proposal / 02 Project full screen | `psy2M` | Complete 1600pt project view: primary comparison table, delegation graph, selected-workspace files/history and agent/PR inspector |
 
-There are 18 new review boards; existing current-screen boards and the previous review are retained.
+There are 20 new review boards; existing current-screen boards and the previous review are retained.
+
+## Whole-screen reading order
+
+The original workbench demonstrates an active terminal, but is not the overview entry point for this proposal.
+The two newer screens use the central application area for an integrated read view instead of squeezing the overview into a narrow side panel.
+They are complementary navigation levels, not two competing layouts for the same scope.
+
+`01 All work full screen` answers, in order: which parent needs my response, what each project is doing, which children the parent delegated to, and what the selected parent's last visible message says.
+The global sidebar's project numbers count unique agents, not workspaces; accessible labels must state that unit.
+The shared fixture has three projects, five workspaces and seven agents: two operator-demand parents, four Working agents and one Seen agent.
+The same parent appears in the attention list, its relationship lane and the inspector, but contributes only once to identity-based totals.
+Creator has one Question parent, two Working children and one Idle child; hide has one Working parent; presentation has one Approval parent and one Working child.
+The global Git summary is explicitly project-scoped while the selected-parent file count is Workspace-scoped; creator's five changed files comprise two in master and three in review.
+
+`02 Project full screen` answers which branch is primary, what each Workspace is doing relative to it, how the project's agents are related, and what files/messages belong to the selected work.
+Selecting the review Workspace or its agent highlights the same subject and changes the lower files/history panels and right inspector to review; it does not filter the project-wide graph into a misleading partial tree.
+The parent remains visible in master, even though the selected child is in review.
+Comparison rows are Git comparisons, and graph edges are agent delegation; the interface never uses one connector to imply both.
+For a Workspace with several agents, show a truthful agent count and explicit selection rather than pretending the representative task is the only agent.
+
+All work is a proposed global navigation destination; project selection opens the project-level central view, and explicit agent-opening actions return to the active execution surface.
+New Agent retains the relevant creation scope: global navigation offers the location chooser, while the project action starts with that project's Workspace choice.
+The full-screen labels and navigation are proposals, not evidence these destinations already exist.
+The complete-window designs reuse the Agent item, Agent node and Explorer entry masters and the existing token set.
+
+Known empty, loading, partial, failed, disconnected and history-unavailable treatments inherit the state sheets in this review.
+Unknown counts must remain unknown, unavailable message readers must show an unsupported/unavailable state, and no missing Git result may be rendered as clean or passing.
+At more projects or children than fit, scroll the main content, keep attention reachable, and use explicit collapsed groups with truthful counts rather than shrinking all task titles to fit the viewport.
+At smaller window widths, collapse the optional right inspector and open it on selection before reducing graph-node text sizes; the exact native width threshold remains an implementation decision.
+The new screenshots verify the populated 1600pt layouts only; smaller-window behavior and live navigation are not verified by these static boards.
 
 ## Visual system and interaction details
 
