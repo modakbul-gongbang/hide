@@ -2,8 +2,8 @@
 //
 // HideTheme.swift is the one source of truth for a token, and design/hide.pen is a
 // consumer of it, the same way a Swift view is. This module reads the Swift and
-// answers what each mapped variable should be; gen-pen-tokens.mjs writes those into
-// the canvas and check-pen-tokens.mjs fails when the canvas disagrees.
+// answers what each mapped variable should be; gen-pen.mjs writes those into the
+// canvas and check-pen.mjs fails when the canvas disagrees.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -211,7 +211,7 @@ export function unclaimed(map, table) {
     !claimed.has(name) && !excused.some(prefix => name === prefix || name.startsWith(prefix + '.')));
 }
 
-// The generated document, as text. Both scripts go through this one function so
+// The generated document, as text. Both entrypoints go through this one function so
 // the check compares against exactly what the generator would have written.
 // Existing variables keep their position, because the rest of the file is the
 // designer's and a reordered diff hides the change that matters.

@@ -2,8 +2,8 @@
 
 hide is a macOS shell over the [Herdr](https://herdr.dev) runtime.
 The Rust core in `herdr-core/` owns every piece of state; the SwiftUI shell in `macos/` renders a snapshot of it and dispatches typed events back.
-`AGENTS.md` describes that architecture, the Herdr API contract, and the performance rules that came out of real incidents.
-Read it before changing anything under `herdr-core/` or `macos/`; `DESIGN.md` before changing anything a user looks at.
+`AGENTS.md` keeps the rules; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) owns the architecture and the Herdr wire boundary with their reasons, [docs/BUILD.md](docs/BUILD.md) the build output and worktree rules, and [docs/PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md) the performance rules that came out of real incidents.
+Read `AGENTS.md` and the architecture guide before changing anything under `herdr-core/` or `macos/`; `DESIGN.md` before changing anything a user looks at.
 Use [docs/README.md](docs/README.md) to find current guides and distinguish historical/reference-only material.
 
 ## Before you open a pull request
@@ -69,7 +69,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a fixture in [verification-fixtures.md](docs/verification-fixtures.md).
 The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs` and `node --test scripts/tests/design-controls.test.mjs`.
-The shared entrypoint runs the token, component ownership and counted control-policy checks, and the design canvas check that regenerates `design/hide.pen`'s tokens from `HideTheme.swift`; it performs static checks, not desktop interaction.
+The shared entrypoint runs the token, component ownership and counted control-policy checks, and the design canvas check, which regenerates `design/hide.pen` - tokens from `HideTheme.swift`, boards placed by their name's band prefix, band labels and the Foundations sheet - and refuses a file that differs; it performs static checks, not desktop interaction.
 The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
 
 ### Local design hook

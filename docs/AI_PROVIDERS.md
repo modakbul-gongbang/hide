@@ -157,5 +157,5 @@ Still give a development build its own home so it never writes next to the insta
   It is the one model list in the codebase a provider is not asked for, and it stays inside the provider boundary; neither the core nor the shell holds one.
   The Settings model control always offers the configured model even when it is not on the provider's list, so reaching the screen never silently changes the operator's choice.
 - A Claude usage limit has not been observed against the live account.
-  The mapping was measured end to end instead, by answering the CLI's own API request with each status and reading the frame it printed; see `agents/runs/hide-ai-claude-backend/claude-print-mode-measurements.md`.
+  The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
 - Usage display in the sidebar reads what the CLIs cache locally (`herdr-core/src/usage.rs`); the router's daily rollup is a log line, not a sidebar value.

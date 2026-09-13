@@ -8,7 +8,9 @@ A document's location or an old PRD citation does not make it current authority.
 
 | Question | Read | Executable authority or enforcement |
 | --- | --- | --- |
-| Architecture, ownership, integration boundaries, working rules | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `macos/`, relevant local rules |
+| Working rules, routing, and the invariants that hold everywhere | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `macos/`, relevant local rules |
+| Architecture, Herdr versus core ownership, the wire boundary and its schema gaps, the bundled runtime | [ARCHITECTURE.md](ARCHITECTURE.md) | `herdr-core/src/runtime.rs`, `session_sync.rs`, `wire.rs`, `HerdrRuntimeResolver`, contract and boundary tests |
+| Build output, worktree caches, scratch builds, toolchain reuse, the harness verify entrypoint | [BUILD.md](BUILD.md) | `scripts/build-scratch.sh`, `toolchain-env.sh`, `verify-cargo.sh`, `scripts/tests/test_toolchain_reuse.py` |
 | Rust implementation conventions | [herdr-core/AGENTS.md](../herdr-core/AGENTS.md) | `herdr-core/src/`, `herdr-core/tests/` |
 | Swift implementation conventions | [macos/AGENTS.md](../macos/AGENTS.md) | `macos/Sources/HerdrMacOS/`, `macos/Tests/HerdrMacOSTests/` |
 | Project activity ordering, Overview, disk and merged-worktree cleanup, registration removal | [DESIGN.md: Projects and checkout context](../DESIGN.md#projects-and-checkout-context), [bounded projection cost](PERFORMANCE_TESTING.md#projects-and-overview-cost-contract) | `project_context.rs`, `worktrees.rs`, `disk.rs`, `worktree_cleanup.rs`, `runtime.rs`, `CheckoutOverview.swift`, native sidebar |

@@ -15,13 +15,5 @@
       "Bash(python3 -m unittest:*)",
       "Bash(node --test scripts/tests/:*)"
     ],
-    "ask": [
-      "Bash(herdr server stop:*)",
-      "Bash(herdr server restart:*)",
-      "Bash(herdr pane close:*)",
-      "Bash(herdr tab close:*)",
-      "Bash(herdr workspace close:*)",
-      "Bash(git push:*)"
-    ]
   }
 }

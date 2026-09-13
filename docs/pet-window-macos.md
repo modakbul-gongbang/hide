@@ -17,7 +17,7 @@ Do not add a second invisible hit window or a webview polling loop.
 ## Placement and dragging
 
 `PetPlacement.clampedOrigin` resolves a restored or dragged origin into a connected display's visible frame.
-The saved off-screen incident coordinate is covered by `PetIntegrationTests`; do not bypass the clamp when applying persisted state.
+The saved off-screen incident coordinate is covered by the `Pet placement and gestures` suite in `PetIntegrationTests.swift`; do not bypass the clamp when applying persisted state.
 See [dev-runtime.md](dev-runtime.md) for state-file identity and fixture isolation.
 
 `PetInteractionView` accepts the first mouse event without activating the panel.

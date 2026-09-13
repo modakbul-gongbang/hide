@@ -30,7 +30,7 @@
 # three reading a path nothing wrote, which is what the worktree `target`
 # symlink in `check-typed-live-remote.sh` used to paper over.
 #
-# See AGENTS.md, "Build Output Belongs To Its Worktree".
+# See docs/BUILD.md.
 
 hide_scratch_checkout="$(basename "$(git rev-parse --show-toplevel)")"
 # TMPDIR carries a trailing slash on macOS; a doubled separator survives into

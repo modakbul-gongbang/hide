@@ -5,13 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {layout, serialize} from '../pen-bands.mjs';
+import {requiredVariables} from '../pen-foundations.mjs';
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t, git = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-design-test-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   fs.mkdirSync(path.join(root, 'scripts'));
-  for (const file of ['check-design-contract.mjs', 'check-design-controls.mjs', 'check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-pen-tokens.mjs', 'swift-source-tokens.mjs', 'pen-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', file), path.join(root, 'scripts', file));
+  for (const file of ['check-design-contract.mjs', 'check-design-controls.mjs', 'check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-pen.mjs', 'swift-source-tokens.mjs', 'pen-tokens.mjs', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs']) fs.copyFileSync(path.join(repository, 'scripts', file), path.join(root, 'scripts', file));
   // Minimal source fixtures exercise checker CLI behavior without depending on
   // whichever product UI happens to be present or being edited in the repo.
   for (const owner of ['HideTheme', 'HideKeycap', 'HideBalloon', 'HideIconButton', 'HideBadge', 'HideFormPicker', 'HideTextButtonStyle', 'HideChoiceGroup', 'HideSearchField', 'HideInputSurface', 'HideCheckboxStyle', 'HideDisclosureStyle', 'HideInteractiveButtonStyle', 'HideEmptyState', 'HideMenuChipLabel']) {
@@ -48,16 +50,23 @@ function canvas(root, {theme, map, variables} = {}) {
     mapped: {'--color-accent': 'accent', '--spacing-md': 'spacingMD'},
     unmapped: {},
   }, null, 2));
-  fs.mkdirSync(path.join(root, 'design'), {recursive: true});
-  fs.writeFileSync(path.join(root, 'design/hide.pen'), JSON.stringify({
+  // The Foundations sheet reads a fixed set of variables, so the fixture carries
+  // each as a design-authored stub; the layout pass draws the labels and the
+  // sheet, which is what the check compares the file against.
+  const stubs = Object.fromEntries(requiredVariables().map(name => [name,
+    name.startsWith('--color-') ? {type: 'color', value: '#000000'} : name.startsWith('--font-') ? {type: 'string', value: 'Stub'} : {type: 'number', value: 1}]));
+  const mapped = (map ?? {mapped: {'--color-accent': 'accent', '--spacing-md': 'spacingMD'}}).mapped;
+  const {document} = layout({
     version: '2.17',
     children: [],
-    variables: variables ?? {
+    variables: {...stubs, ...(variables ?? {
       '--color-accent': {type: 'color', value: '#D3D3D4'},
       '--spacing-md': {type: 'number', value: 12},
       '--asbuilt-row': {type: 'number', value: 44},
-    },
-  }, null, 2));
+    })},
+  }, mapped);
+  fs.mkdirSync(path.join(root, 'design'), {recursive: true});
+  fs.writeFileSync(path.join(root, 'design/hide.pen'), serialize(document));
 }
 function command(root, args) { return execFileSync('git', args, {cwd: root, encoding: 'utf8'}); }
 function run(root, name, args = []) {
@@ -165,18 +174,18 @@ test('staged hook rejects staged violations despite a clean working copy, and ig
 
 test('the design canvas check catches a drifted value and a token the design never received', t => {
   const root = fixture(t);
-  assert.equal(run(root, 'check-pen-tokens.mjs').status, 0);
+  assert.equal(run(root, 'check-pen.mjs').status, 0);
 
   // A value restated in the canvas and then changed in Swift: the ordinary drift.
   canvas(root, {variables: {'--color-accent': {type: 'color', value: '#FF0000'}, '--spacing-md': {type: 'number', value: 12}}});
-  const drifted = run(root, 'check-pen-tokens.mjs');
+  const drifted = run(root, 'check-pen.mjs');
   assert.notEqual(drifted.status, 0);
   assert.match(drifted.stderr, /--color-accent = color #FF0000; HideTheme.accent is color #D3D3D4/);
 
   // A token that reached the shell and never reached the design. Nothing else
   // would say so, which is the failure this contract exists for.
   canvas(root, {theme: 'enum HideTheme {\n    static let accent = color(for: "#D3D3D4")\n    static let spacingMD: CGFloat = 12\n    static let radiusMedium: CGFloat = 10\n}'});
-  const orphan = run(root, 'check-pen-tokens.mjs');
+  const orphan = run(root, 'check-pen.mjs');
   assert.notEqual(orphan.status, 0);
   assert.match(orphan.stderr, /claimed by neither list/);
   assert.match(orphan.stderr, /radiusMedium/);
@@ -186,5 +195,5 @@ test('the design canvas check catches a drifted value and a token the design nev
     theme: 'enum HideTheme {\n    static let accent = color(for: "#D3D3D4")\n    static let spacingMD: CGFloat = 12\n    static let radiusMedium: CGFloat = 10\n}',
     map: {mapped: {'--color-accent': 'accent', '--spacing-md': 'spacingMD'}, unmapped: {radiusMedium: 'Fixture reason'}},
   });
-  assert.equal(run(root, 'check-pen-tokens.mjs').status, 0);
+  assert.equal(run(root, 'check-pen.mjs').status, 0);
 });

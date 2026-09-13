@@ -28,7 +28,7 @@ It brings local and remote workspaces, checkouts, terminal panes, files, and cod
 - **Terminals stay where the work is.** Attached Herdr panes render in place with their real layout, focus, zoom, scrollback, and terminal state.
 - **Agents start in the right checkout.** Launch Claude Code or Codex from the selected workspace without rebuilding its context by hand.
 - **Local and remote stay distinct.** Work on this Mac or an SSH-connected Mac while keeping remote file writes inside the attached terminal.
-- **Files remain understandable.** Browse and edit existing local files in the Workbench, with remote trees exposed as read-only context.
+- **Files remain understandable.** Browse and edit existing local files in the Explorer, with remote trees exposed as read-only context.
 - **Browser QA stays beside the agent.** Open a Chromium pane from an existing chromux profile, then control the same target through CDP.
 - **Attention is visible.** Agent state, blocked work, failures, and the optional desktop pet make the next action easy to spot.
 
@@ -47,7 +47,7 @@ hide (SwiftUI + SwiftTerm)
         │
         ├─ workspace and checkout navigator
         ├─ live pane layout and terminal surfaces
-        ├─ local Workbench and remote read-only tree
+        ├─ local Explorer and remote read-only tree
         └─ agent launcher, settings, and desktop pet
 ```
 
@@ -80,7 +80,7 @@ See [Browser panes](docs/BROWSER_PANES.md) for the agent-facing open command, ex
   A server that is already running is used as it is when it speaks the protocol hide was built against, and hide says what to do when it does not.
 - hide does not collect or store SSH credentials, Herdr credentials, or agent CLI credentials.
 - Claude Code and Codex remain separate tools and must already be installed and signed in if you want to launch them from hide.
-- Remote Workbench trees are read-only.
+- Remote Explorer trees are read-only.
   Remote edits stay in the terminal attached to that remote Herdr session.
 
 <!-- herdr-provenance:start -->
