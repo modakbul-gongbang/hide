@@ -814,6 +814,10 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 
 ## Native Git and lineage tokens
 
+The [agent workflow review](design/agent-workflow-review.md) and the `Review / 2026-09-13 Agent workflow /` boards in `design/hide.pen` explore parent-centric delegation, primary-based Overview, shared Agent items, Explorer decorations, Sessions, and New Agent terminology.
+They are unapproved design proposals and do not replace the current native contracts below.
+Implementation requires selecting the structural candidates and resolving the recorded data/lifetime decisions first.
+
 `HideTheme.lineageIndent` is one column per descendant level, uniform at every depth.
 It is a measurement rather than a chosen spacing: the distance from a row's status mark to its agent badge, so a child's mark sits centered under its parent's badge and the tree reads as columns.
 It replaced a step that shrank after two levels, which kept deep trees narrow at the cost of the marks lining up with nothing.
