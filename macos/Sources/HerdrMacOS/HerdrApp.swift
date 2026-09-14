@@ -43,7 +43,7 @@ enum ReopenWindowMenuPolicy {
         action: Selector
     ) -> NSMenuItem {
         if let existing = menu.item(withTag: itemTag) {
-            menu.removeItem(existing)
+            return existing
         }
         let command = ShellMenuCommand.reopenClosedTab
         let item = NSMenuItem(
@@ -259,7 +259,18 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuIte
         }
         petVisibilityObservation = model.core.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.petMenuBarController?.refresh() }
+                MainActor.assumeIsolated {
+                    self?.petMenuBarController?.refresh()
+                }
+                // ShellCommands observes the same core and may rebuild the
+                // SwiftUI-owned main menu on this run-loop turn. Restore the
+                // AppKit-owned Window item one turn later if that rebuild
+                // removed it. The policy is a no-op while the item exists.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.installReopenWindowMenuItem()
+                    }
+                }
             }
         }
 

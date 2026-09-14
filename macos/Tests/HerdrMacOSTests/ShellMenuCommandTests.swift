@@ -31,6 +31,14 @@ struct ShellMenuCommandTests {
         #expect(item.keyEquivalent == "z")
         #expect(item.keyEquivalentModifierMask == [.command, .shift])
         #expect(item.target === target)
+
+        let sameItem = ReopenWindowMenuPolicy.install(
+            in: menu,
+            target: target,
+            action: #selector(Target.reopen(_:))
+        )
+        #expect(sameItem === item)
+        #expect(menu.items.filter { $0.identifier == ReopenWindowMenuPolicy.itemIdentifier }.count == 1)
     }
 
     @Test func theRightPanelTogglesOnCommandShiftB() {
