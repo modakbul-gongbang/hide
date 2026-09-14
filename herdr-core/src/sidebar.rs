@@ -649,11 +649,11 @@ fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
     agent
         .chat_title
         .clone()
-        .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
         .or_else(|| {
             (agent.summary != MISSING_SUMMARY && !agent.summary.trim().is_empty())
                 .then(|| agent.summary.clone())
         })
+        .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
         .unwrap_or_else(|| agent.workspace_label.clone())
 }
 

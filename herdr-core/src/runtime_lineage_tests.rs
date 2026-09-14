@@ -326,7 +326,7 @@ fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
 }
 
 #[test]
-fn lineage_identity_prefers_the_parent_chat_title_over_a_transport_pane_id() {
+fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
     let mut rows = project_agents(
         serde_json::from_value(serde_json::json!({"agents": [
             {
@@ -341,7 +341,8 @@ fn lineage_identity_prefers_the_parent_chat_title_over_a_transport_pane_id() {
                 "pane_id":"w1:p2",
                 "spawned_from_pane_id":"w1:p1",
                 "agent_status":"working",
-                "state_change_seq":2
+                "state_change_seq":2,
+                "tokens":{"summary":"Hide design QA"}
             }
         ]}))
         .unwrap(),
@@ -354,7 +355,8 @@ fn lineage_identity_prefers_the_parent_chat_title_over_a_transport_pane_id() {
     assert_eq!(child.spawn_origin_pane_id.as_deref(), Some("w1:p1"));
     let path = crate::sidebar::project_lineage_path(&rows, "w1:p2");
     assert_eq!(path[0].label, "Project coordinator");
-    assert_eq!(path[1].label, "qa-lineage-child");
+    assert_eq!(path[1].label, "Hide design QA");
+    assert_eq!(crate::sidebar::agent_chip(child).label, path[1].label);
 }
 
 // PRD D-18: the path is a function of the current list, so a child exiting
