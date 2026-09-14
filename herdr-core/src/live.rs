@@ -1136,6 +1136,8 @@ fn start_or_degrade_agent(
     notices: &mut Vec<String>,
 ) {
     let name = format!("reopen-{key}-{index}");
+    let interrupted_reused_agent = interrupt_reused_agent(connector, key, index, pane_id);
+    let pane_was_clear = matches!(&interrupted_reused_agent, Ok(false));
     let resume = resume_arguments(agent);
     if let Some(args) = resume {
         let result = start_agent(
@@ -1146,12 +1148,17 @@ fn start_or_degrade_agent(
             &agent.kind,
             args,
         );
-        if result.is_ok() || agent_is_running(connector, pane_id, &agent.kind) {
+        if result.is_ok() || (pane_was_clear && agent_is_running(connector, pane_id, &agent.kind)) {
             return;
         }
+        let preparation = interrupted_reused_agent
+            .as_ref()
+            .err()
+            .map(|message| format!("; restored pane preparation failed: {message}"))
+            .unwrap_or_default();
         notices.push(format!(
-            "Session {} could not be resumed; started a new conversation",
-            agent.session_id.as_deref().unwrap_or("unknown")
+            "Session {} could not be resumed{preparation}; started a new conversation",
+            agent.session_id.as_deref().unwrap_or("unknown"),
         ));
     } else {
         notices
@@ -1164,12 +1171,45 @@ fn start_or_degrade_agent(
         &name,
         &agent.kind,
         Vec::new(),
-    ) && !agent_is_running(connector, pane_id, &agent.kind)
+    ) && !(pane_was_clear && agent_is_running(connector, pane_id, &agent.kind))
     {
         notices.push(format!(
             "Agent could not be started; the shell was kept: {message}"
         ));
     }
+}
+
+/// Herdr can reuse the just-closed pane id while its old PTY is still alive.
+/// A layout-only restore then surfaces that old process in the new tab before
+/// `agent.start` can apply the explicit resume arguments. Closing the process
+/// here returns the restored pane to its shell prompt; `agent.start` waits for
+/// that prompt and remains the single owner of session resumption.
+fn interrupt_reused_agent(
+    connector: &dyn ApiConnector,
+    key: &str,
+    index: usize,
+    pane_id: &str,
+) -> Result<bool, String> {
+    let snapshot = fetch_session_with_connector(connector).map_err(|error| {
+        format!(
+            "session.snapshot before agent resume failed: {}",
+            error.message()
+        )
+    })?;
+    if !snapshot
+        .agents
+        .iter()
+        .any(|candidate| candidate.pane_id.as_deref() == Some(pane_id))
+    {
+        return Ok(false);
+    }
+    reopen_request(
+        connector,
+        &format!("herdr-core:{key}:agent:{index}:interrupt-reused"),
+        "pane.send_text",
+        wire::pane_send_text_params(pane_id, "\u{3}")?,
+    )?;
+    Ok(true)
 }
 
 fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> bool {
@@ -2822,6 +2862,85 @@ mod tests {
             row: Some(12),
             modifiers: 2,
         })
+    }
+
+    #[test]
+    fn reused_agent_process_is_interrupted_before_resume() {
+        let root = std::path::PathBuf::from("/tmp").join(format!(
+            "herdr-core-reopen-interrupt-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            for expected_method in ["session.snapshot", "pane.send_text"] {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], expected_method);
+                let result = if expected_method == "session.snapshot" {
+                    json!({
+                        "type": "session_snapshot",
+                        "snapshot": {
+                            "version": "fixture",
+                            "protocol": HERDR_PROTOCOL_REVISION,
+                            "host": {"host_id": "fixture", "session_id": "s1"},
+                            "event_sequence": 1,
+                            "workspaces": [],
+                            "tabs": [],
+                            "panes": [],
+                            "layouts": [],
+                            "agents": [{
+                                "terminal_id": "term-1",
+                                "name": "old-agent",
+                                "agent": "claude",
+                                "agent_status": "idle",
+                                "workspace_id": "w1",
+                                "tab_id": "w1:t1",
+                                "pane_id": "w1:p1",
+                                "focused": false,
+                                "interactive_ready": true,
+                                "state_change_seq": 1,
+                                "cwd": "/tmp",
+                                "foreground_cwd": "/tmp",
+                                "revision": 0
+                            }],
+                            "lineage": []
+                        }
+                    })
+                } else {
+                    assert_eq!(
+                        request["params"],
+                        json!({"pane_id": "w1:p1", "text": "\u{3}"})
+                    );
+                    json!({"type": "ok"})
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
+            }
+        });
+
+        assert!(
+            interrupt_reused_agent(
+                &UnixSocketConnector::new(&socket_path),
+                "fixture",
+                0,
+                "w1:p1"
+            )
+            .expect("reused agent is interrupted")
+        );
+
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]

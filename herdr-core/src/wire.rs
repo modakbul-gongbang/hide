@@ -631,6 +631,12 @@ pub(crate) fn tab_target_params(id: &str) -> Result<Value, String> {
 pub(crate) fn pane_target_params(id: &str) -> Result<Value, String> {
     params(req::PaneTarget { pane_id: id.into() })
 }
+pub(crate) fn pane_send_text_params(pane_id: &str, text: &str) -> Result<Value, String> {
+    params(req::PaneSendTextParams {
+        pane_id: pane_id.into(),
+        text: text.into(),
+    })
+}
 /// Moves a pane into a tab of its own inside the workspace it is already in.
 ///
 /// The workspace matters: a delegated child runs in the same working
@@ -1330,6 +1336,14 @@ pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
 mod tests {
     use super::*;
     use crate::herdr_contract::HERDR_API_SCHEMA_JSON;
+
+    #[test]
+    fn pane_interrupt_uses_the_generated_literal_text_contract() {
+        assert_eq!(
+            pane_send_text_params("w1:p1", "\u{3}").unwrap(),
+            json!({"pane_id": "w1:p1", "text": "\u{3}"})
+        );
+    }
 
     #[test]
     fn captured_agent_new_decodes_only_the_observed_created_variant() {
