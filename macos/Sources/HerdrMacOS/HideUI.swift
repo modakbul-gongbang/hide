@@ -1687,7 +1687,9 @@ private struct AgentNavigatorRow: View {
                 HideBadge(label: badge, color: HideTheme.secondary)
             }
             if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
-                let parentLabel = hint.replacingOccurrences(of: "↳ from ", with: "")
+                let fallbackParentLabel = hint.replacingOccurrences(of: "↳ from ", with: "")
+                let parentLabel = agent.spawnOriginPaneID.flatMap(model.paneIdentity(for:))
+                    ?? fallbackParentLabel
                 // Keep the relationship in the same leading metadata slot as
                 // the agent identity instead of drawing a debug-looking line
                 // at the sidebar edge. When the origin remains live this is
@@ -2097,6 +2099,7 @@ private struct HideTabCanvas: View {
                 case .terminal:
                     PaneTerminalCell(
                         pane: pane,
+                        lineagePath: model.resolvedLineagePath(for: pane),
                         agent: model.agents.first { $0.paneID == pane.id },
                         status: model.paneStatus(for: pane.id),
                         statusMessage: model.paneTransportMessage(for: pane.id),

@@ -779,6 +779,28 @@ final class ShellModel: ObservableObject {
             ?? scratchPane(paneID)
     }
 
+    /// The canonical pane name already used by the focused header. Lineage
+    /// payloads can carry a stale agent spawn name, while this snapshot carries
+    /// the live user-facing pane label. Relationship surfaces resolve through
+    /// this one ladder so Return always names the pane it will actually select.
+    func paneIdentity(for paneID: String) -> String? {
+        guard let pane = paneMetadata(for: paneID) else { return nil }
+        let agent = agents.first { $0.paneID == paneID }
+        return PaneHeaderPresentation.title(
+            herdrLabel: pane.herdrLabel,
+            agentSummary: agent?.summary ?? pane.summary,
+            terminalTitle: pane.terminalTitle,
+            workspaceLabel: pane.workspaceLabel,
+            paneID: pane.id
+        )
+    }
+
+    func resolvedLineagePath(for pane: CorePaneSnapshot) -> [CoreLineageStep] {
+        PaneLineagePresentation.resolvingLivePaneLabels(in: pane.lineagePath) {
+            paneIdentity(for: $0)
+        }
+    }
+
     /// The Scratch pane with this id, if Scratch is the one that owns it.
     func scratchPane(_ paneID: String) -> CorePaneSnapshot? {
         scratch.tabs.lazy.flatMap(\.panes).first(where: { $0.id == paneID })

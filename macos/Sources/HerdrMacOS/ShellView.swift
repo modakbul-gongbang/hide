@@ -507,6 +507,7 @@ private struct PaneResizeCursorArea: NSViewRepresentable {
 
 struct PaneTerminalCell<Content: View>: View {
     let pane: CorePaneSnapshot
+    let lineagePath: [CoreLineageStep]
     let agent: SidebarAgent?
     let status: String
     let statusMessage: String?
@@ -530,6 +531,7 @@ struct PaneTerminalCell<Content: View>: View {
 
     init(
         pane: CorePaneSnapshot,
+        lineagePath: [CoreLineageStep]? = nil,
         agent: SidebarAgent? = nil,
         status: String,
         statusMessage: String? = nil,
@@ -550,6 +552,7 @@ struct PaneTerminalCell<Content: View>: View {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
+        self.lineagePath = lineagePath ?? pane.lineagePath
         self.agent = agent
         self.status = status
         self.statusMessage = statusMessage
@@ -591,7 +594,7 @@ struct PaneTerminalCell<Content: View>: View {
             activity: activity,
             notice: notice,
             ports: pane.ports,
-            lineagePath: pane.lineagePath,
+            lineagePath: lineagePath,
             children: pane.children,
             connected: connected,
             onFocus: onFocus,

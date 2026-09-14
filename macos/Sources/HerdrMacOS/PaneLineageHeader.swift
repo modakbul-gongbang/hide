@@ -6,6 +6,22 @@ import SwiftUI
 /// breadcrumb step and the Overview line cannot disagree about what a child
 /// is called or how many were left out.
 enum PaneLineagePresentation {
+    /// Replaces transport-level breadcrumb labels with the identity Hide is
+    /// already drawing for each live pane. Herdr lineage remains the authority
+    /// for the relationship and pane id; the live pane supplies only the name
+    /// the operator recognizes on screen (PRD B8, B15, B23).
+    static func resolvingLivePaneLabels(
+        in steps: [CoreLineageStep],
+        labelForPane: (String) -> String?
+    ) -> [CoreLineageStep] {
+        steps.map { step in
+            guard let label = labelForPane(step.paneID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !label.isEmpty
+            else { return step }
+            return CoreLineageStep(paneID: step.paneID, label: label, siblings: step.siblings)
+        }
+    }
+
     /// The closest live ancestor, excluding the pane currently being shown.
     /// Production breadcrumbs include the current pane as their final layer
     /// so that layer can offer its siblings. It must never become the return

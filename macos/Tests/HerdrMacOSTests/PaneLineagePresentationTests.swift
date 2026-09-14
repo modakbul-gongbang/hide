@@ -21,6 +21,23 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
     )
 }
 
+@Test func livePaneIdentityReplacesAStaleLineageLabelWithoutChangingTheRelationship() {
+    let root = CoreLineageStep(
+        paneID: "w1:p1",
+        label: "qa-lineage-child",
+        siblings: [chip("w1:p1", "Fixture root")]
+    )
+    let child = CoreLineageStep(paneID: "w1:p2", label: "Hide design QA")
+
+    let resolved = PaneLineagePresentation.resolvingLivePaneLabels(in: [root, child]) { paneID in
+        paneID == "w1:p1" ? "프로젝트 전체 작업 조율" : nil
+    }
+
+    #expect(resolved.map(\.paneID) == ["w1:p1", "w1:p2"])
+    #expect(resolved.map(\.label) == ["프로젝트 전체 작업 조율", "Hide design QA"])
+    #expect(resolved[0].siblings == root.siblings)
+}
+
 /// PRD B6, D-20: overflow folds into the same `+N` the Workspace summary
 /// chip uses, and the number it shows is honest.
 @Test func chipsBeyondTheRowFoldIntoAnHonestOverflowCount() {
