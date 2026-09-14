@@ -1638,6 +1638,12 @@ private struct AgentNavigatorRow: View {
         model.shortcutHintState.reveals(.agent(1), bindings: model.paneShortcuts)
     }
 
+    private var relationshipLeadingInset: CGFloat {
+        guard showsWorkspace else { return HideTheme.spacingNone }
+        return density.leadingPadding + HideTheme.agentMarkWidth + density.badgeSize
+            + density.iconSpacing * 2
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
             HStack(spacing: HideTheme.spacingNone) {
@@ -1681,27 +1687,38 @@ private struct AgentNavigatorRow: View {
                 HideBadge(label: badge, color: HideTheme.secondary)
             }
             if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
-                // The line says where this row came from, and when that
-                // origin is still a live agent it goes there. A row whose
-                // parent is not drawn above it is the only place this shows,
-                // so the jump is the only way to reach it from here
-                // (design principle 3).
+                let parentLabel = hint.replacingOccurrences(of: "↳ from ", with: "")
+                // Keep the relationship in the same leading metadata slot as
+                // the agent identity instead of drawing a debug-looking line
+                // at the sidebar edge. When the origin remains live this is
+                // also the direct return action (PRD B7, B9, B23).
                 if let origin = agent.spawnOriginPaneID {
                     Button {
                         model.selectAgent(paneID: origin)
                     } label: {
-                        Text(hint)
-                            .hideFont(size: HideTheme.Typography.caption)
-                            .foregroundStyle(HideTheme.secondary)
-                            .underline()
+                        HStack(spacing: HideTheme.spacingXXS) {
+                            Image(systemName: "arrow.turn.up.left")
+                            Text(parentLabel)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .hideFont(size: HideTheme.Typography.micro, weight: .medium)
+                        .foregroundStyle(HideTheme.secondary)
                     }
                     .buttonStyle(HideInteractiveButtonStyle())
-                    .accessibilityLabel("Go to \(hint.replacingOccurrences(of: "↳ from ", with: ""))")
-                    .hideTooltip("Go to the agent that started this one")
+                    .padding(.leading, relationshipLeadingInset)
+                    .accessibilityLabel("Return to parent \(parentLabel)")
+                    .hideTooltip("Return to parent \(parentLabel)")
                 } else {
-                    Text(hint)
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(HideTheme.muted)
+                    HStack(spacing: HideTheme.spacingXXS) {
+                        Image(systemName: "arrow.turn.up.left")
+                        Text(parentLabel)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .hideFont(size: HideTheme.Typography.micro)
+                    .foregroundStyle(HideTheme.muted)
+                    .padding(.leading, relationshipLeadingInset)
                 }
             }
         }

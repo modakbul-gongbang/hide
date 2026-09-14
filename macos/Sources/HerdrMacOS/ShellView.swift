@@ -744,7 +744,11 @@ struct HideTerminalPaneCard<Content: View>: View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingXS) {
                 if !lineagePath.isEmpty {
-                    PaneParentReturn(steps: lineagePath, onSelect: onSelectPane)
+                    PaneParentReturn(
+                        steps: lineagePath,
+                        currentPaneID: paneID,
+                        onSelect: onSelectPane
+                    )
                 }
 
                 if let agent {

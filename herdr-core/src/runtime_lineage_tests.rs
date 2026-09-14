@@ -325,6 +325,38 @@ fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
     );
 }
 
+#[test]
+fn lineage_identity_prefers_the_parent_chat_title_over_a_transport_pane_id() {
+    let mut rows = project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [
+            {
+                "pane_id":"w1:p1",
+                "agent_status":"working",
+                "state_change_seq":1,
+                "workspace_label":"Workspace",
+                "tokens":{"hide_chat_title":"Project coordinator"}
+            },
+            {
+                "id":"qa-lineage-child",
+                "pane_id":"w1:p2",
+                "spawned_from_pane_id":"w1:p1",
+                "agent_status":"working",
+                "state_change_seq":2
+            }
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    let child = rows.iter().find(|row| row.pane_id == "w1:p2").unwrap();
+
+    assert_eq!(child.raised_hint.as_deref(), Some("↳ from Project coordinator"));
+    assert_eq!(child.spawn_origin_pane_id.as_deref(), Some("w1:p1"));
+    let path = crate::sidebar::project_lineage_path(&rows, "w1:p2");
+    assert_eq!(path[0].label, "Project coordinator");
+    assert_eq!(path[1].label, "qa-lineage-child");
+}
+
 // PRD D-18: the path is a function of the current list, so a child exiting
 // leaves every surviving row's breadcrumb correct with no stored state to fix.
 #[test]

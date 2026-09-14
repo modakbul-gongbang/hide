@@ -6,6 +6,14 @@ import SwiftUI
 /// breadcrumb step and the Overview line cannot disagree about what a child
 /// is called or how many were left out.
 enum PaneLineagePresentation {
+    /// The closest live ancestor, excluding the pane currently being shown.
+    /// Production breadcrumbs include the current pane as their final layer
+    /// so that layer can offer its siblings. It must never become the return
+    /// destination or label (PRD B15, B23).
+    static func directParent(in steps: [CoreLineageStep], currentPaneID: String) -> CoreLineageStep? {
+        steps.last { $0.paneID != currentPaneID }
+    }
+
     /// The chips that fit, and how many did not.
     ///
     /// Overflow folds into the same `+N` the Workspace summary chip uses
@@ -231,10 +239,11 @@ struct PaneChildRow: View {
 
 struct PaneParentReturn: View {
     let steps: [CoreLineageStep]
+    let currentPaneID: String
     let onSelect: (String) -> Void
 
     var body: some View {
-        if let parent = steps.last {
+        if let parent = PaneLineagePresentation.directParent(in: steps, currentPaneID: currentPaneID) {
             ViewThatFits(in: .horizontal) {
                 parentButton(parent, showsName: true)
                 parentButton(parent, showsName: false)

@@ -7,6 +7,20 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
     CoreAgentChip(paneID: paneID, label: label, detail: "running tests")
 }
 
+@Test func directParentExcludesTheCurrentBreadcrumbLayer() {
+    let root = CoreLineageStep(paneID: "w1:p1", label: "Project coordinator")
+    let child = CoreLineageStep(paneID: "w1:p2", label: "QA child")
+
+    #expect(
+        PaneLineagePresentation.directParent(in: [root, child], currentPaneID: "w1:p2") == root
+    )
+    #expect(PaneLineagePresentation.directParent(in: [child], currentPaneID: "w1:p2") == nil)
+    #expect(
+        PaneLineagePresentation.directParent(in: [root], currentPaneID: "w1:p2") == root,
+        "an ancestor-only legacy payload still names its parent"
+    )
+}
+
 /// PRD B6, D-20: overflow folds into the same `+N` the Workspace summary
 /// chip uses, and the number it shows is honest.
 @Test func chipsBeyondTheRowFoldIntoAnHonestOverflowCount() {
