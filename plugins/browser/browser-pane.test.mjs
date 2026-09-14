@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
-import { parseOpen, bindingTokens } from './browser-pane.mjs';
+import { parseOpen, bindingTokens, lastJsonDocument } from './browser-pane.mjs';
 import { readEnvironment, environmentRegistry } from './environment.mjs';
 
 const environment = { HERDR_ENV: '1', HERDR_PANE_ID: 'w1:p2' };
@@ -80,4 +80,14 @@ test('environment example and raw reads cannot drift outside the registry', asyn
     if (!name.endsWith('.mjs') || name === 'environment.mjs' || name.endsWith('.test.mjs')) continue;
     assert.doesNotMatch(await readFile(new URL(name, import.meta.url), 'utf8'), /process\s*\.\s*env/);
   }
+});
+
+test('a chromux answer is the last JSON document, so a cold-profile auto-launch receipt does not fail the open', () => {
+  const launch = '{\n  "profile": "default",\n  "port": 9302,\n  "launchMode": "headed"\n}\n';
+  const session = '{\n  "session": "hide-1",\n  "url": "https://example.com/",\n  "elements": "@1 link \\"Learn more\\" -> https://iana.org/domains/example"\n}\n';
+  assert.deepEqual(lastJsonDocument(launch + session), JSON.parse(session));
+  assert.deepEqual(lastJsonDocument(session), JSON.parse(session));
+  assert.deepEqual(lastJsonDocument('{"ok":true}'), { ok: true });
+  assert.throws(() => lastJsonDocument('Auto-launching profile...\n'), SyntaxError);
+  assert.throws(() => lastJsonDocument(''), SyntaxError);
 });
