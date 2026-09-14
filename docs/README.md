@@ -50,6 +50,7 @@ When code, tests, and a current contract disagree, investigate and update the re
 
 | Material | Why retained | How to use it |
 | --- | --- | --- |
+| [Agent workflow review history and backlog](../design/agent-workflow-review.md) | Records the accepted direction of Project-first screens 01-04, earlier explorations, and unresolved sidebar choices | Design planning only; not an approved implementation contract or a replacement for DESIGN.md and status-model.md |
 | [Orca visual references](design-reference/README.md) and its three images | Layout and interaction inspiration | Read on demand; `DESIGN.md` wins on current UI requirements |
 | `assets/hide-icon-candidates/` | Artwork candidates, including the icon script's default source | Source/reference art, not screenshots proving the app rendered |
 | `fixtures/` | Small deterministic terminal input files | Inputs for owned fixtures, not test results or an alternate architecture contract |

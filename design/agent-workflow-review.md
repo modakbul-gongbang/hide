@@ -1,9 +1,89 @@
 # Agent workflow design review
 
-Status: design proposal, not an approved implementation contract.
+Status: the user accepted the overall direction of complete screens 01-04 on 2026-09-14; this is not an approved implementation contract.
 The product code and installed app are unchanged by this review.
 The editable source is [hide.pen](hide.pen), with the latest complete-screen proposal under `Review / 2026-09-14 Project-first IA /`.
 The existing `Screen /` boards continue to describe the existing design; this proposal does not silently supersede them or the current contracts in `DESIGN.md`.
+
+## Decision history and next tasks: 2026-09-14
+
+### 합의된 범위
+
+사용자는 01-04 화면의 큰 흐름을 괜찮다고 평가하고, 이력 보존과 IDE 변경 태스크 정리를 요청했다.
+Projects / Agents 두 가지 왼쪽 View는 유지한다.
+핵심 개선 대상은 Project Overview 캔버스이며, Workspace별 작업 진행과 PR 상태를 인지부하가 낮게 보여준다.
+Workspace는 별도 현황판을 추가하지 않고 기존 탭과 Pane 배치를 여는 방향을 유지한다.
+관계 모달과 자식 전용 탭 진입은 03-04의 흐름을 따른다.
+이 수용은 왼쪽 자식 행의 상세 구조, 모든 샘플 문구, Sessions 데이터 계약, Git 탭 제거, 임시 Workspace 수명까지 승인한 것은 아니다.
+이번 요청에서는 문서만 갱신하며 Pen 보드, 제품 코드, 설치 앱은 변경하지 않는다.
+
+### 탐색 이력
+
+| 단계 | 검토한 방향 | 현재 판단 |
+| --- | --- | --- |
+| 최초 문제 제기 | 깨진 관계선, 커밋 중심 Overview, 자식 ID 칩, Git/Explorer, Sessions, 검색/MRU 불일치, Chat/Scratch 용어 | 변경 태스크의 출발점으로 보존 |
+| 초기 Review | 개별 컴포넌트와 전체 작업 현황, 여러 캔버스 형태 | 구조 탐색이며 그대로 구현하지 않음 |
+| UX walkthrough | 왼쪽·가운데·오른쪽과 진입점을 함께 설명 | 전역 현황과 Workspace 현황이 혼재해 개념이 복잡했음 |
+| Project-first 01-04 | 프로젝트 현황 → 기존 작업 배치 → 관계 모달 → 자식 탭 | 사용자가 큰 방향을 수용한 최신 기준 |
+| 이번 후속 논의 | Projects / Agents 유지, 왼쪽 item과 자식 표현 재검토 | 아래 추천안을 검토한 뒤 상세 디자인 결정 |
+
+과거 보드는 탐색 기록으로만 남기며, 구현자는 최신 01-04와 이 절부터 읽는다.
+현재 제품 동작의 근거는 여전히 DESIGN.md와 docs/status-model.md이며, 이 문서가 이를 소급 변경하지 않는다.
+
+### 왼쪽 패널 추천안: 아직 미확정
+
+원칙 2인 작업 흐름 중심 구성과 원칙 7인 구조의 시각적 표현을 적용해, 위치 탐색과 위임 관계 탐색을 분리한다.
+Projects는 Project > Workspace > 그곳의 에이전트를 찾는 위치 탐색으로 유지한다.
+Agents는 기존 Needs You / Done / Working / Seen 그룹과 상태 우선순위를 유지한다.
+왼쪽 전체를 노드 그래프로 만들거나 별도 View를 추가하지 않는다.
+
+| Item | 기본 표시 | 선택 또는 별도 동작 |
+| --- | --- | --- |
+| Project | 이름, 펼침 상태 | 이름으로 Project Overview 진입, 펼침은 독립 동작으로 구분하는 안 검토 |
+| Workspace | 브랜치/폴더명, primary 등 체크아웃 속성, 기존 상태 요약, PR | 작업 공간 열기와 펼침을 명확히 분리하는 안 검토 |
+| 부모 Agent | 상태 기호, 제공자, 작업 제목, 필요한 보조 정보 | 행 선택은 Pane 포커스, 자식 요약은 별도 관계 보기 진입점 |
+| 부모의 자식 요약 | 예: 자식 3 · 작업 중 2, 확인 가능한 실제 데이터만 | 접기/펼치기와 관계 모달 열기를 구별 |
+| 펼쳐진 자식 | 동일 Agent item, 한 단계 들여쓰기, 부모가 처리하는 작업임을 약한 강조로 표현 | 해당 자식의 실제 Workspace/탭/Pane으로 이동 |
+| 타 Workspace의 자식 | 소속 Workspace에서는 로컬 행, 부모 쪽에서는 위치가 붙은 관계 링크 | 복제 실행이나 소속 이동 없이 같은 Agent로 이동 |
+
+같은 Workspace 안에서는 부모 밑으로 자식을 접어 보여주는 기존 방식부터 정돈하는 것을 추천한다.
+연결선은 일정한 들여쓰기와 하나의 짧은 세로선으로 제한하고, 펼침 기호·상태 아이콘·관계선의 자리를 겹치지 않게 한다.
+깊은 손자 계층은 계속 들여쓰지 않고 관계 모달에서 탐색하는 안을 검토한다.
+기본 접힘 정책은 아직 미정이며 기존 사용자 펼침 상태를 보존하는 것을 우선한다.
+완료한 자식을 숨겨도 접근 경로는 남기고, 자식의 상태를 독립적인 사용자 Done 알림으로 승격하지 않는다.
+Agents View에서는 부모 요약을 붙이되 기존 상태 그룹을 위임 트리로 대체하지 않는 것을 추천한다.
+그룹을 가로지르는 자식은 별도 소유 행과 관계 링크를 구분하고, 보조 링크를 카운트·바로가기에서 중복 계산하지 않는다.
+연결 불명·미계측·서버 단절은 자식 0으로 바꾸지 않으며, 알려진 자식과 불완전한 계측 정보를 함께 표현한다.
+현재 계약상 populated Workspace의 행 전체 클릭은 펼침이며, 최신 시안의 Workspace 진입 의도와 다르다.
+따라서 이름 클릭/chevron 분리 또는 명시적 열기 제어 중 어느 방식을 쓸지 결정한 뒤 해당 계약과 접근성을 함께 바꿔야 한다.
+01-04 수용만으로 이 클릭 동작 변경까지 승인됐다고 보지 않는다.
+
+### IDE 변경 백로그
+
+아래는 실행하거나 외부 시스템에 등록한 Task가 아니라, 다음 작업을 나누기 위한 문서상 백로그다.
+담당 영역은 현행 문서가 가리키는 시작점이며 이번 턴에 구현 코드를 재검사하거나 네이티브 검증하지 않았다.
+
+| ID | 순서 | 변경 단위 | 완료 시 확인할 결과 | 시작점 / 선행 결정 |
+| --- | --- | --- | --- | --- |
+| IA-01 | 먼저 | 왼쪽 행 동작과 자식 표현 확정 | Project/Workspace/Agent 선택, 펼침, 관계 보기가 서로 혼동되지 않는 상태별 시안 | 본 절 추천안, AgentRow / SidebarPresentation / status-model; 사용자 선택 필요 |
+| IA-02 | 핵심 | Project Overview 중앙 진입 | Projects / Agents는 유지, 프로젝트에서 01 진입, Workspace로 이동 후 배치와 포커스 복원 | ShellModel / runtime / CheckoutOverview; IA-01 |
+| IA-03 | 핵심 | Workspace 작업 요약 | 핵심 작업, 응답 필요, primary 대비 상태, 관련 PR 표시; 독립 작업 여러 개를 한 제목으로 합치지 않음 | project_context / sidebar / CheckoutOverview; IA-02 |
+| IA-04 | 핵심 | PR 상세 축소·정돈 | 전체 PR 이력 대신 관련 PR 상태·CI·상세 링크, 조회 실패/오래된 값/PR 없음 구분 | github / CheckoutCardPresentation / Overview; IA-03 |
+| IA-05 | 기반 | 공통 Agent item | Projects, Agents, 검색, Recent Panels, Sessions에서 제목·상태·제공자 의미 일치; 내부 ID는 기본 보조문구에서 제거 | AgentRow / HideUI / AgentMRU; 현행 상태 계약 유지 |
+| IA-06 | 핵심 | 왼쪽 부모·자식 렌더링 정돈 | 선과 아이콘 충돌 없음, 펼침 상태 유지, 타 Workspace 소속과 집계 정확, 키보드 탐색 일치 | sidebar / SidebarPresentation; IA-01, IA-05 |
+| IA-07 | 핵심 | Pane 부모 요약과 관계 모달 | 잘린 fork ID 나열 대신 자식 진행 요약, 03 노드 선택은 읽기만, 명시적 열기로 04 진입 | Pane header / lineage projection; IA-05, IA-06 |
+| IA-08 | 핵심 | 자식 탭 이동·복귀 | 자식은 전용 탭, 부모 분할에 자동 삽입하지 않음, 부모 복귀 시 저장된 배치 유지 | 기존 navigation / pane focus; IA-02, IA-07 |
+| IA-09 | 후속 | 오른쪽 도구 범위 일관화 | Workspace 범위와 Explorer/Changes/기록 선택 보존, Pane 포커스 변경에 도구가 튀지 않음 | shell panel state; IA-02 |
+| IA-10 | 독립 | Explorer Git decoration | 수정/추가/삭제/충돌과 폴더 집계, 선택 색상·긴 경로·단절에서도 판독 가능 | WorkspaceOutlineView / WorkspaceOutlinePresentation / files |
+| IA-11 | 조사 후 | Sessions 목록과 기록 읽기 | 해당 Workspace의 세션과 대화 발췌, 기본 목록에서 tool 결과 숨김, 기록 열기가 실행을 재시작하지 않음 | provider별 기록 가능 범위·보존·프라이버시 결정 후 구현 |
+| IA-12 | 보류 조건부 | Git 탭 기능 재배치 | 기능 목록을 먼저 작성하고 Changes/Overview/상세로 모두 이관한 경우에만 탭 제거 | 현행 Git 기능 inventory; IA-04, IA-09 |
+| IA-13 | 후속 | Chat/Scratch 용어 정리 | New Agent와 프로젝트 독립 Workspace 시작 경로, 기존 데이터와 세션 보존 | Quick workspace 이름·경로·수명·정리 정책 결정 필요; /tmp 자동 이동 금지 |
+| IA-14 | 각 단위 | 상태·네이티브 검증 | 빈 목록/하나/대량/긴 한글/중첩/타 Workspace/계측 불완전/단절/PR 실패/키보드·읽음 회귀 검증 | 현행 상태·성능·디자인 검사; 실제 앱 단일 인스턴스의 격리 환경 |
+
+우선 묶음은 IA-01 결정 후 IA-02~04로 Project Overview를 개선하는 것이다.
+공통 행과 부모·자식은 IA-05~08로 이어가며, Sessions와 Git 탭 제거는 이 핵심 흐름을 막지 않는 별도 작업으로 둔다.
+IA-14는 마지막 일괄 검사가 아니라 각 변경 단위의 완료 조건이다.
+Task Kanban, 실행 스케줄링, Task와 Workspace의 매핑 구현은 이번 백로그 범위 밖이다.
 
 ## Latest complete-screen proposal: 2026-09-14
 
