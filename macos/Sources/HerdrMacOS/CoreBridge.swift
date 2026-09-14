@@ -463,6 +463,9 @@ struct CoreProviderUsageSnapshot: Decodable, Identifiable {
     let resetsAtUnixSeconds: UInt64?
     let message: String?
     let lastCheckedAtUnixMilliseconds: UInt64?
+    let lastSuccessAtUnixMilliseconds: UInt64?
+    let lastErrorKind: String?
+    let buckets: [CoreProviderUsageBucketSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -473,6 +476,41 @@ struct CoreProviderUsageSnapshot: Decodable, Identifiable {
         case resetsAtUnixSeconds = "resets_at_unix_seconds"
         case message
         case lastCheckedAtUnixMilliseconds = "last_checked_at_unix_ms"
+        case lastSuccessAtUnixMilliseconds = "last_success_at_unix_ms"
+        case lastErrorKind = "last_error_kind"
+        case buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(String.self, forKey: .provider)
+        label = try container.decode(String.self, forKey: .label)
+        windowMinutes = try container.decode(UInt64.self, forKey: .windowMinutes)
+        state = try container.decode(String.self, forKey: .state)
+        usedPercent = try container.decodeIfPresent(Double.self, forKey: .usedPercent)
+        resetsAtUnixSeconds = try container.decodeIfPresent(UInt64.self, forKey: .resetsAtUnixSeconds)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        lastCheckedAtUnixMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .lastCheckedAtUnixMilliseconds)
+        lastSuccessAtUnixMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .lastSuccessAtUnixMilliseconds)
+        lastErrorKind = try container.decodeIfPresent(String.self, forKey: .lastErrorKind)
+        buckets = try container.decodeIfPresent([CoreProviderUsageBucketSnapshot].self, forKey: .buckets) ?? []
+    }
+}
+
+struct CoreProviderUsageBucketSnapshot: Decodable, Identifiable {
+    var id: String { "\(label)-\(resetsAtUnixSeconds ?? 0)" }
+    let label: String
+    let state: String
+    let usedPercent: Double?
+    let resetsAtUnixSeconds: UInt64?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case state
+        case usedPercent = "used_percent"
+        case resetsAtUnixSeconds = "resets_at_unix_seconds"
+        case message
     }
 }
 
@@ -2379,6 +2417,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var commandDevice = CommandDevice.local
     private var routingError: String?
     private let remoteTargets: [[String: String]]
+    var runtimeReadyHandler: (() -> Void)?
 
     private struct CommandDevice {
         let id: String
@@ -2595,6 +2634,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
         startupDiagnostic = nil
         refreshSnapshot()
+        runtimeReadyHandler?()
         return true
     }
 
@@ -3283,7 +3323,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         fontSize: Double? = nil,
         lastAgentKind: String? = nil,
         lastAgentBypass: Bool? = nil,
-        scratchExpanded: Bool? = nil
+        scratchExpanded: Bool? = nil,
+        usageWindowVisible: Bool? = nil,
+        usagePopoverOpen: Bool? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -3325,6 +3367,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         if let scratchExpanded {
             payload["scratch_expanded"] = scratchExpanded
         }
+        if let usageWindowVisible {
+            payload["usage_window_visible"] = usageWindowVisible
+        }
+        if let usagePopoverOpen {
+            payload["usage_popover_open"] = usagePopoverOpen
+        }
         if selectedPaneID != nil || focusedCheckoutID != nil {
             HideLaunchTrace.mark(
                 "core.dispatch.anchor",
@@ -3332,6 +3380,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             )
         }
         dispatch(kind: "ui_state_update", payload: payload)
+    }
+
+    func setUsageWindowVisible(_ visible: Bool) {
+        persistUIState(usageWindowVisible: visible)
+    }
+
+    func setUsagePopoverOpen(_ open: Bool) {
+        persistUIState(usagePopoverOpen: open)
     }
 
     /// Selects the changed file whose diff the changes view shows, or clears

@@ -982,6 +982,12 @@ struct UiStateUpdatePayload {
     last_agent_bypass: Option<bool>,
     #[serde(default)]
     scratch_expanded: Option<bool>,
+    /// Ephemeral observation hints for the core-owned provider usage timer.
+    /// They ride the existing UI-state event but are never persisted.
+    #[serde(default)]
+    usage_window_visible: Option<bool>,
+    #[serde(default)]
+    usage_popover_open: Option<bool>,
 }
 
 /// Which changed file the changes view is showing the diff for. `None`
@@ -1372,6 +1378,9 @@ pub struct Runtime {
     /// What the providers last answered. Held beside the snapshot so a
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
+    usage_window_visible: bool,
+    usage_popover_open: bool,
+    usage_popover_open_generation: u64,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1642,6 +1651,9 @@ impl Runtime {
             pending_ai_settings_save: None,
             ai_observing: false,
             background_ai_providers: Vec::new(),
+            usage_window_visible: false,
+            usage_popover_open: false,
+            usage_popover_open_generation: 0,
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             #[cfg(test)]
@@ -5437,6 +5449,13 @@ impl Runtime {
         }
         self.snapshot.navigator.provider_usage = provider_usage;
         true
+    }
+
+    pub(crate) fn usage_activity(&self) -> crate::usage::UsageActivity {
+        crate::usage::UsageActivity {
+            window_visible: self.usage_window_visible,
+            popover_open_generation: self.usage_popover_open_generation,
+        }
     }
 
     /// Recomputes the pet's pose, badge row, and attention queue from the
@@ -10646,9 +10665,20 @@ impl Runtime {
                 true
             }
             ValidatedEvent::UiStateUpdate(payload) => {
+                if let Some(visible) = payload.usage_window_visible {
+                    self.usage_window_visible = visible;
+                }
+                if let Some(open) = payload.usage_popover_open {
+                    if open && !self.usage_popover_open {
+                        self.usage_popover_open_generation =
+                            self.usage_popover_open_generation.saturating_add(1);
+                    }
+                    self.usage_popover_open = open;
+                }
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
+                let previous_ui_state = current.clone();
                 let git_was_visible = current.right_panel_visible
                     && matches!(
                         current.right_panel_section,
@@ -10709,6 +10739,15 @@ impl Runtime {
                         .unwrap_or(current.last_agent_bypass),
                     scratch_expanded: payload.scratch_expanded.unwrap_or(current.scratch_expanded),
                 };
+                // Visibility and popover activity wake the provider reader,
+                // but they are not durable preferences. The shell sends the
+                // current durable values with the shared UI-state event; if
+                // those values did not change, do not rewrite state.json or
+                // run unrelated catalog reconciliation.
+                if self.snapshot.ui_state == previous_ui_state {
+                    return payload.usage_window_visible.is_some()
+                        || payload.usage_popover_open.is_some();
+                }
                 self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
@@ -14116,6 +14155,8 @@ mod tests {
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
                 home_path: None,
+                claude_config_dir: None,
+                codex_home: None,
             },
         )
     }

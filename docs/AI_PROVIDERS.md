@@ -15,8 +15,8 @@ No feature type lives in the crate, and no provider detail leaks out of it.
 
 ## Providers
 
-The user's installed and logged-in CLIs are the only credentials.
-Hide reads no token file and adds no environment variable.
+The user's installed and logged-in CLIs are the only credentials for background AI requests.
+The background AI boundary reads no token file and adds no environment variable.
 
 - `codex`: `codex app-server --listen stdio://`, the official JSON-RPC surface of the Codex CLI, driven with an ephemeral read-only thread, the feature's system prompt as the base instructions, every optional feature disabled, and the feature's output schema attached to the turn.
   The default model is `gpt-5.6-luna`.
@@ -24,7 +24,7 @@ Hide reads no token file and adds no environment variable.
   `codex exec` is not used.
 - `claude`: `claude -p --output-format json`, print mode, one child process per request.
   Print mode is Claude Code's only official structured-output surface; there is no `app-server` equivalent in `claude --help`.
-  It was excluded by decision until 2026-09-10, when that exclusion was withdrawn; terminal scraping and token reuse remain excluded, and no credential file is read.
+  It was excluded by decision until 2026-09-10, when that exclusion was withdrawn; terminal scraping and token reuse remain excluded, and the background AI boundary reads no credential file.
   The default model is `haiku`.
   Availability is read from `claude auth status --json`: `loggedIn` decides `Ready` against `NeedsLogin`, a binary that is not on `PATH` is `NotInstalled`, and a probe that answers nothing readable is `Unavailable` rather than either guess.
   The answer is the result frame's `structured_output`, the field the CLI validated against the feature's `--json-schema`; the `result` string is never parsed, because without a schema print mode returns the object inside a fenced code block and reading that back would accept an unvalidated shape.
@@ -79,7 +79,25 @@ Both come from asking the provider, so no model list is written into the core or
 Asking costs child processes, so the probe is a capability reader like the project panel's: the session-sync coordinator drives it, the work runs on a worker thread, the runtime mutex is never held across it, and it asks nothing at all while the group is off screen.
 `scripts/check-capability-readers-off-lock.sh` asserts that structurally, by name.
 
-There is no usage cap and no budget surface; that is a decision, not a gap.
+There is no usage cap and no budget surface for background AI requests; that is a decision, not a gap.
+
+## Weekly usage display
+
+The toolbar's Weekly Usage popover is a separate read-only capability owned by `herdr-core/src/usage.rs`.
+It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a request through `hide-ai`.
+
+For Claude Code, the core tries the configuration-specific macOS Keychain service, the legacy service, and then `.credentials.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`.
+For Codex, it reads `auth.json` under `CODEX_HOME` or `~/.codex`.
+The access token exists only long enough to build the HTTPS authorization header.
+Hide never refreshes, replaces, persists, logs, or includes it in a snapshot, and it never exposes the account identifier outside the request header.
+A keychain read is limited to three seconds; a prompt denial, missing credential, or 401 is shown as a sign-in-required state rather than retried or hidden.
+
+The core calls the providers' read-only usage endpoints outside `Mutex<Runtime>` after a one-second launch delay.
+It refreshes every five minutes only while the main window is visible, and refreshes when an older popover is reopened.
+A 429 honors `Retry-After`, or falls back to bounded 5, 10, and 15 minute delays.
+An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.
+The previous Claude `.usage-cache.json` input is no longer read.
+Failures produce one structured event containing only provider, HTTP status, and error kind.
 
 ## Selection and fallback
 
@@ -158,4 +176,4 @@ Still give a development build its own home so it never writes next to the insta
   The Settings model control always offers the configured model even when it is not on the provider's list, so reaching the screen never silently changes the operator's choice.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
-- Usage display in the sidebar reads what the CLIs cache locally (`herdr-core/src/usage.rs`); the router's daily rollup is a log line, not a sidebar value.
+- Weekly usage in the toolbar reads the providers' usage endpoints, with Codex session JSONL as an offline fallback only; the router's daily rollup is a log line, not a popover value.

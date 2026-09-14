@@ -208,6 +208,11 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         }
         let environment = environment::read_and_validate();
         let home_path = environment.home_path.clone();
+        let usage_paths = crate::usage::UsagePaths {
+            home: home_path.clone(),
+            claude_config_dir: environment.claude_config_dir.clone(),
+            codex_home: environment.codex_home.clone(),
+        };
         let remote_enabled = environment.remote_enabled;
         if options.herdr_socket_path.is_some()
             && let Some(path) = environment.herdr_socket_path_override.as_ref()
@@ -232,7 +237,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 notifier.clone(),
                 socket_path,
                 options.herdr_bin_path.as_deref(),
-                home_path.clone(),
+                usage_paths,
             )
         } else {
             None
