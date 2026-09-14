@@ -32,6 +32,7 @@ struct CoreSnapshot {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+    let recentClosed: CoreRecentClosedSnapshot
     var gitWorktrees: CoreProjectWorktrees? = nil
     var gitWorktreesLoading: Bool = false
     var gitWorktreesRemote: Bool = false
@@ -60,6 +61,7 @@ struct CoreSnapshot {
             uiState: uiState,
             status: status,
             pet: pet,
+            recentClosed: recentClosed,
             gitWorktrees: gitWorktrees, gitWorktreesLoading: gitWorktreesLoading,
             gitWorktreesRemote: gitWorktreesRemote, worktreeRemoval: worktreeRemoval,
             taskOperation: taskOperation, explorerOperation: explorerOperation
@@ -126,6 +128,7 @@ struct CoreRestSnapshot: Decodable {
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
+    let recentClosed: CoreRecentClosedSnapshot
     var gitWorktrees: CoreProjectWorktrees? = nil
     var gitWorktreesLoading: Bool = false
     var gitWorktreesRemote: Bool = false
@@ -142,6 +145,7 @@ struct CoreRestSnapshot: Decodable {
         case uiState = "ui_state"
         case status
         case pet
+        case recentClosed = "recent_closed"
         case gitWorktrees = "git_worktrees"
         case gitWorktreesLoading = "git_worktrees_loading"
         case gitWorktreesRemote = "git_worktrees_remote"
@@ -160,12 +164,44 @@ struct CoreRestSnapshot: Decodable {
         uiState = try container.decode(CoreUIStateSnapshot.self, forKey: .uiState)
         status = try container.decode(CoreStatusSnapshot.self, forKey: .status)
         pet = try container.decode(CorePetSnapshot.self, forKey: .pet)
+        recentClosed = try container.decodeIfPresent(CoreRecentClosedSnapshot.self, forKey: .recentClosed) ?? .empty
         gitWorktrees = try container.decodeIfPresent(CoreProjectWorktrees.self, forKey: .gitWorktrees)
         gitWorktreesLoading = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesLoading) ?? false
         gitWorktreesRemote = try container.decodeIfPresent(Bool.self, forKey: .gitWorktreesRemote) ?? false
         worktreeRemoval = try container.decodeIfPresent(CoreWorktreeRemoval.self, forKey: .worktreeRemoval)
         taskOperation = try container.decodeIfPresent(CoreTaskOperation.self, forKey: .taskOperation)
         explorerOperation = try container.decodeIfPresent(CoreExplorerOperation.self, forKey: .explorerOperation)
+    }
+}
+
+struct CoreRecentClosedSnapshot: Decodable, Equatable {
+    let count: Int
+    let topLabel: String?
+    let restoring: Bool
+    let notices: [CoreRecentClosedNotice]
+
+    static let empty = CoreRecentClosedSnapshot(
+        count: 0,
+        topLabel: nil,
+        restoring: false,
+        notices: []
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case count
+        case topLabel = "top_label"
+        case restoring
+        case notices
+    }
+}
+
+struct CoreRecentClosedNotice: Decodable, Equatable {
+    let paneID: String?
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case message
     }
 }
 
@@ -2863,6 +2899,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
+    func reopenClosed() {
+        dispatch(kind: "reopen_closed", payload: [:])
+    }
+
     /// Starts one chat and reports what happened.
     ///
     /// The four Herdr calls run on a detached task, never on the main actor
@@ -3486,6 +3526,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     uiState: rest.uiState,
                     status: rest.status,
                     pet: rest.pet,
+                    recentClosed: rest.recentClosed,
                     gitWorktrees: rest.gitWorktrees, gitWorktreesLoading: rest.gitWorktreesLoading,
                     gitWorktreesRemote: rest.gitWorktreesRemote, worktreeRemoval: rest.worktreeRemoval,
                     taskOperation: rest.taskOperation,

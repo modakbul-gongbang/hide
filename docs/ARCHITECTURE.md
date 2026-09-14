@@ -64,6 +64,20 @@ A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
 A close Hide asked for, or a pane Herdr has already stopped listing, projects `closing` with no notice chunk and keeps the pane's last frame until it is removed. Every other reason still reports `ended` with its message.
 
+### Reopening locally closed work
+
+The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.
+Scratch panes, Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
+Before sending a Herdr close, a background worker exports the tab layout and only commits the captured item after the close succeeds, so a rejected close cannot leave a ghost entry.
+The snapshot exposes only the count, top label, in-flight state, and inline notices; the Swift shell routes the menu and shortcut and renders those values without keeping a second stack.
+
+Recreation also runs outside `Mutex<Runtime>`.
+Pane restore uses the captured neighbor, split direction, ratio, and cwd, falling back to the tab's current pane and then the checkout root when the original facts no longer exist.
+Tab restore prunes Browser leaves, applies the remaining exported layout, restores its workspace position, and starts each captured agent in the new pane with the captured session id when the agent kind supports resume.
+A failure before a pane or tab exists retains the same closed item for retry; once a tab exists, failed agent starts degrade to a shell or fresh session and publish a pane-local notice rather than offering a partial pane retry.
+File reads use the filesystem worker, and missing, unreadable, already-open, and successfully reopened files each have an explicit result.
+No reopen notice uses the shell's modal interaction alert.
+
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
@@ -72,6 +86,7 @@ The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Reso
 Do not write new wire deserialization structs in `session_sync.rs` or import generated types into domain, runtime or sidebar code.
 The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
 Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
+The envelope `id` is request correlation, never retry identity; mutation convergence must use an operation context on a method whose pinned schema actually carries one, or reconcile the resulting topology before retrying a method that does not.
 `live.rs` and `remote.rs` also use this boundary for response decoding and generated request parameters.
 The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses and CLI-created agent envelope.
 Terminal input, scroll, resize and release messages and the parameterless snapshot request remain boundary-owned schema gaps, with tests that require migration when their parameter types appear.
@@ -84,4 +99,3 @@ There is no installed-CLI candidate list and no version floor; the pin is exact.
 The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
 Move the pin with `scripts/bump-herdr.sh <release-tag>` (a stable `v0.8.3` or a `preview-...` tag), which verifies the asset, writes the contract that binary reports, and rewrites the tag, version and digest tokens in the README, install guide and third-party notice.
 `.github/workflows/herdr-update.yml` polls for a new stable release weekly and opens a PR with that bump after running both test suites; it never merges, because the core's Herdr behavior assumptions are only asserted against fixtures this repository wrote.
-

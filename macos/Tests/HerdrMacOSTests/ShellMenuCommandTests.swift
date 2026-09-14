@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import HerdrMacOS
 
@@ -10,6 +11,27 @@ struct ShellMenuCommandTests {
     @Test func theRightPanelTogglesOnCommandShiftB() {
         #expect(ShellMenuCommand.toggleRightPanel.shortcut.canonical == "command+shift+b")
         #expect(ShellMenuCommand.toggleRightPanel.displayShortcut == "⇧⌘B")
+    }
+
+    @MainActor
+    @Test func reopenUsesCommandShiftZButYieldsToTextRedo() {
+        #expect(ShellMenuCommand.reopenClosedTab.shortcut.canonical == "command+shift+z")
+        #expect(ShellMenuCommand.reopenClosedTab.title == "Reopen Closed Tab")
+        let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command, .shift],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "Z",
+            charactersIgnoringModifiers: "z",
+            isARepeat: false,
+            keyCode: 6
+        )!
+        #expect(ReopenShortcutPolicy.shouldReopen(event, firstResponder: nil))
+        #expect(!ReopenShortcutPolicy.shouldReopen(event, firstResponder: NSTextView()))
+        #expect(!ReopenShortcutPolicy.shouldReopen(event, firstResponder: NSSearchField()))
     }
 
     @Test func theRetiredOptionChordIsClaimedByNothing() {

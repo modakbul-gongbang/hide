@@ -1008,6 +1008,10 @@ Holding Control while pressing Tab again walks older visits rather than tab-stri
 Option+Tab and Option+Shift+Tab cycle projects globally and restore each project's last used surface.
 Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
 Menu actions commit immediately.
+Window > Reopen Closed Tab uses Shift+Command+Z and is disabled when the session-local recent-close stack is empty or a restore is already running.
+The keyboard chord yields to the native Redo action while a file editor, search field, or composer text input owns focus; choosing the Window menu item always restores regardless of text focus.
+Restoration is one action with no confirmation: an in-flight pane uses the existing pane-header progress suffix, while a restore without a target pane uses the tab strip's compact warning line.
+Missing cwd, unavailable prior conversation, pruned Browser pane, missing file, and retryable failure states use the same warning color and inline notice vocabulary as existing pane operations, without adding a banner, card, or modal alert.
 Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
 Agent number hints follow the command registry: reveal only during an exact Option hold, ignoring Caps Lock, and clear on release or a suppressing sheet.
 Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.

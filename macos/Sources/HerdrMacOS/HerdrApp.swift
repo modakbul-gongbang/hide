@@ -3,6 +3,26 @@ import Combine
 import SwiftUI
 
 @MainActor
+enum ReopenShortcutPolicy {
+    static func isTextEditing(_ responder: NSResponder?) -> Bool {
+        var responder = responder
+        while let current = responder {
+            if current is NSTextView || current is NSTextField || current is NSSearchField {
+                return true
+            }
+            responder = current.nextResponder
+        }
+        return false
+    }
+
+    static func shouldReopen(_ event: NSEvent, firstResponder: NSResponder?) -> Bool {
+        event.type == .keyDown
+            && ShellMenuCommand.reopenClosedTab.shortcut.matches(event)
+            && !isTextEditing(firstResponder)
+    }
+}
+
+@MainActor
 enum MainWindowPresentation {
     static func present(_ window: NSWindow, application: NSApplication = .shared) {
         application.setActivationPolicy(.regular)
@@ -176,6 +196,15 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
             if UnifiedTabShortcutPolicy.isClose(event) {
                 MainActor.assumeIsolated {
                     self.model.performCloseShortcut()
+                }
+                return nil
+            }
+            if ReopenShortcutPolicy.shouldReopen(
+                event,
+                firstResponder: event.window?.firstResponder ?? self.mainWindow?.firstResponder
+            ) {
+                MainActor.assumeIsolated {
+                    self.model.reopenClosed()
                 }
                 return nil
             }
@@ -487,6 +516,10 @@ struct ShellCommands: Commands {
             paneButton(.toggleZoom)
             Divider()
             paneButton(.closePane)
+        }
+        CommandGroup(after: .windowArrangement) {
+            menuButton(.reopenClosedTab) { model.reopenClosed() }
+                .disabled(!model.canReopenClosed)
         }
     }
 

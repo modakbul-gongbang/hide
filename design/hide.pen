@@ -5369,7 +5369,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 2404,
+      "width": 3244,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -6160,8 +6160,200 @@
     },
     {
       "type": "frame",
-      "id": "Vmhg4",
+      "id": "screen-reopen-closed",
+      "name": "Screen / Shell / Reopen Closed",
+      "width": 760,
+      "height": 900,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "screen-reopen-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Reopen Closed Tab",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "screen-reopen-spec",
+          "name": "Spec",
+          "fill": "$--color-muted",
+          "content": "Window menu and Shift+Command+Z share one LIFO action; the chord yields to text Redo.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "screen-reopen-empty",
+          "name": "State / Empty",
+          "width": "fill_container",
+          "height": 92,
+          "fill": "$--color-panel",
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "padding": "$--spacing-md",
+          "cornerRadius": "$--radius-md",
+          "children": [
+            {
+              "type": "text",
+              "id": "screen-reopen-empty-label",
+              "name": "State",
+              "fill": "$--color-muted",
+              "content": "Empty - menu disabled",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "screen-reopen-empty-menu",
+              "name": "Menu item",
+              "fill": "$--color-muted",
+              "opacity": "$--opacity-disabled",
+              "content": "Reopen Closed Tab    Shift+Command+Z",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-body",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "screen-reopen-ready",
+          "name": "State / Ready",
+          "width": "fill_container",
+          "height": 92,
+          "fill": "$--color-panel",
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "padding": "$--spacing-md",
+          "cornerRadius": "$--radius-md",
+          "children": [
+            {
+              "type": "text",
+              "id": "screen-reopen-ready-label",
+              "name": "State",
+              "fill": "$--color-secondary",
+              "content": "Ready - one pane is on the stack",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "screen-reopen-ready-menu",
+              "name": "Menu item",
+              "fill": "$--color-primary",
+              "content": "Reopen Closed Tab    Shift+Command+Z",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-body",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "screen-reopen-working",
+          "name": "State / Reopening",
+          "width": "fill_container",
+          "height": 114,
+          "fill": "$--color-panel",
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "padding": "$--spacing-md",
+          "cornerRadius": "$--radius-md",
+          "children": [
+            {
+              "type": "text",
+              "id": "screen-reopen-working-label",
+              "name": "State",
+              "fill": "$--color-secondary",
+              "content": "Reopening - menu disabled",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "screen-reopen-working-header",
+              "name": "Pane header",
+              "fill": "$--color-primary",
+              "content": "claude  · reopening...",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-body",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "screen-reopen-working-notice",
+              "name": "Tab notice",
+              "fill": "$--color-warning",
+              "content": "Reopening Terminal...",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "screen-reopen-degraded",
+          "name": "State / Degraded or failed",
+          "width": "fill_container",
+          "height": 126,
+          "fill": "$--color-panel",
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "padding": "$--spacing-md",
+          "cornerRadius": "$--radius-md",
+          "children": [
+            {
+              "type": "text",
+              "id": "screen-reopen-degraded-label",
+              "name": "State",
+              "fill": "$--color-secondary",
+              "content": "Degraded or failed - inline, never modal",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "screen-reopen-degraded-pane",
+              "name": "Pane notice",
+              "fill": "$--color-warning",
+              "content": "Previous conversation could not be resumed; started a new conversation",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "screen-reopen-failed-tab",
+              "name": "Tab notice",
+              "fill": "$--color-warning",
+              "content": "Reopen failed; retry is available",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "600"
+            }
+          ]
+        }
+      ],
       "x": 372,
+      "y": 0
+    },
+    {
+      "type": "frame",
+      "id": "Vmhg4",
+      "x": 1212,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -6814,7 +7006,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 744,
+      "x": 1584,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -8165,7 +8357,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 1179,
+      "x": 2019,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -9273,7 +9465,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 1614,
+      "x": 2454,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -9845,7 +10037,7 @@
     {
       "type": "frame",
       "id": "uZe5J",
-      "x": 2049,
+      "x": 2889,
       "y": 0,
       "name": "Screen / Panel / Git",
       "clip": true,
