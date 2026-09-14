@@ -322,8 +322,9 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
         // coordinates so the column follows the effective viewport, not the
         // stale representable proposal.
         let viewportWidth = max(column.minWidth, effectivelyVisibleWidth())
-        guard abs(column.width - viewportWidth) > 0.5 else { return }
-        column.width = viewportWidth
+        if abs(column.width - viewportWidth) > 0.5 {
+            column.width = viewportWidth
+        }
     }
 
     private func effectivelyVisibleWidth() -> CGFloat {
@@ -369,10 +370,14 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         let outline = WorkspaceNSOutlineView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("workspace-name"))
         column.minWidth = 120
-        column.resizingMask = .autoresizingMask
+        // This view owns the one column's width from the actual clipped
+        // viewport. AppKit's automatic column resizing otherwise restores the
+        // stale, wider document width after `WorkspaceOutlineScrollView`
+        // corrects it and puts every trailing Git mark behind the clip edge.
+        column.resizingMask = []
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
-        outline.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.headerView = nil
         outline.backgroundColor = NSColor(HideTheme.panel)
         outline.selectionHighlightStyle = .none

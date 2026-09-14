@@ -158,8 +158,11 @@ import Testing
         container.layoutSubtreeIfNeeded()
         scroll.layoutSubtreeIfNeeded()
 
-        let column = try #require((scroll.documentView as? NSOutlineView)?.tableColumns.first)
+        let outline = try #require(scroll.documentView as? NSOutlineView)
+        let column = try #require(outline.tableColumns.first)
         #expect(column.width == 260)
+        #expect(column.resizingMask.isEmpty)
+        #expect(outline.columnAutoresizingStyle == .noColumnAutoresizing)
     }
 
     @Test func rowMenuFollowsTheTargetAndTheEmptyAreaOffersOnlyCreation() async throws {
