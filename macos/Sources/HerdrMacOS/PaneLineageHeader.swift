@@ -45,14 +45,21 @@ enum PaneLineagePresentation {
 
     /// Whether this pane's header shows a second row at all.
     ///
-    /// A pane with no agent has no children snapshot and therefore no row; a
-    /// pane whose instrumented session has spawned nothing has a snapshot and
-    /// nothing to say, which is a confirmed answer and also no row (PRD B22,
-    /// B23, D-30).
+    /// Only known child work earns the child row. Instrumentation uncertainty
+    /// belongs to the identity row's help icon, so an agent with no known
+    /// child remains a single 28pt row (PRD B19, D-07).
     static func showsChildRow(_ children: CorePaneChildren?) -> Bool {
         guard let children else { return false }
-        if !children.instrumented { return true }
         return !children.chips.isEmpty || subagentBadge(children.subagents) != nil
+    }
+
+    /// Whether the identity row needs the instrumentation help icon.
+    ///
+    /// This is deliberately independent of child-row visibility: partial
+    /// data can show known children while still stating that the total is not
+    /// authoritative (PRD B19).
+    static func showsInstrumentationHelp(_ children: CorePaneChildren?) -> Bool {
+        children?.instrumented == false
     }
 }
 
@@ -102,30 +109,19 @@ struct PaneChildChip: View {
     }
 }
 
-/// The mark shown where the chips would be when Hide cannot see into a pane.
+/// The first-line help mark shown when Hide cannot measure child work.
 ///
-/// It is a mark plus an accessible name, never a color on its own, and the
-/// whole explanation is on the tooltip (PRD B21, B37).
-struct PaneUninstrumentedMark: View {
+/// It does not consume a child row or spell out a second title. The full
+/// explanation remains available on hover and to assistive technology (PRD
+/// B19, D-07).
+struct PaneInstrumentationHelp: View {
     let reason: String
     let accessibilityName: String
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXXS) {
-            Image(systemName: "questionmark.circle")
-                .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-            Text("Children unknown")
-                .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
+        Image(systemName: "questionmark.circle")
+            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
         .foregroundStyle(HideTheme.secondary)
-        .padding(.horizontal, HideTheme.spacingXS)
-        .frame(height: HideTheme.Layout.panelCollapseControlSize)
-        .background(
-            RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
-                .fill(HideTheme.elevated)
-        )
         .hideTooltip("\(reason) Open Settings to see the hook diagnosis.")
         .accessibilityLabel(accessibilityName)
         .accessibilityHint(reason)
@@ -173,15 +169,6 @@ struct PaneChildRow: View {
             // One child slot plus the honest +N overflow slot.
             let row = PaneLineagePresentation.chipRow(children.chips, limit: 2)
             HStack(spacing: HideTheme.spacingXS) {
-                if !children.instrumented,
-                    let reason = children.uninstrumentedReason
-                {
-                    PaneUninstrumentedMark(
-                        reason: reason,
-                        accessibilityName: children.uninstrumentedLabel ?? reason
-                    )
-                }
-
                 ForEach(row.visible) { chip in
                     PaneChildChip(chip: chip, connected: connected) { onSelect(chip.paneID) }
                 }
@@ -378,7 +365,7 @@ struct WorktreeAgentLine: View {
                 let row = PaneLineagePresentation.chipRow(line.agents, limit: limit)
                 HStack(spacing: HideTheme.spacingXS) {
                     if let reason = line.uninstrumentedReason {
-                        PaneUninstrumentedMark(
+                        PaneInstrumentationHelp(
                             reason: reason,
                             accessibilityName: line.uninstrumentedLabel ?? reason
                         )

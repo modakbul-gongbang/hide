@@ -223,7 +223,7 @@ The reason is resolved once, by `hide_agent_hooks::diagnosis::instrumentation`, 
 The first match wins and nothing falls through to an empty value or an invented cause.
 Every projection carries the reason's stable code alongside its sentence, so no surface has to recognise its own operator-facing text.
 
-The mark appears in three places, and only on panes where an agent was detected: the pane header, the sidebar row, and the Overview worktree row's agent line.
+The mark appears in three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar row, and the Overview worktree row's agent line.
 That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
 A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
 

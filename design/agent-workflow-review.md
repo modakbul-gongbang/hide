@@ -78,7 +78,7 @@ Missing parent lineage never becomes evidence that a pane was independently star
 ## Pane header and focus
 
 The first row is 28pt and carries identity plus pane actions.
-The second row is 24pt and exists only when the pane has known children or an instrumentation fact worth showing.
+The second row is 24pt and exists only when the pane has known child or subagent work; instrumentation uncertainty stays in the first row as a help icon.
 A child pane keeps a compact authoritative parent return control in the first row.
 The child row shows the first known direct child and folds the rest into `+N` and the relationship sheet.
 Selecting a relationship row changes the sheet's inspection only, while Open sends the existing pane-selection intent.

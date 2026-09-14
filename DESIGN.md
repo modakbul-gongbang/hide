@@ -860,8 +860,8 @@ New worktree uses stacked Branch name, Create from, and Start with fields, follo
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
 `HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
 Inside a settings row the same picker drops its stacked label and takes the `settingsControlWidth` (200pt) right-hand column, because the row already carries the label on the left; its accessibility label stays the picker's own.
-Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
-The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
+Terminal tabs use the stable Herdr tab name, with `tabTitleMaxWidth` (200pt) bounding long names; the pane header alone carries the focused pane title and its agent status/provider marks.
+The tooltip retains the stable tab name and full focused-pane title; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
@@ -887,7 +887,7 @@ The operator's own rows are bright; delegated rows are subdued, using the existi
 Nothing new is introduced for it: a delegated row is simply never emphasized, because it can only be Working or Seen.
 When a stall hands a child back to the operator, its dimming lifts through the same token rather than through a state of its own.
 
-The uninstrumented mark is drawn in exactly three places, and only on panes where an agent was detected: the pane header, the sidebar agent row, and the Overview worktree row's agent line.
+The uninstrumented mark is drawn in exactly three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar agent row, and the Overview worktree row's agent line.
 It is a mark plus an accessible name, never a color alone, and its tooltip carries the whole sentence.
 The subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 

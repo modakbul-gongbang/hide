@@ -205,7 +205,7 @@ enum ShellTabStrip {
                 else { return nil }
                 let pane = tab.panes.first { $0.id == focusedPaneIDsByTab[entry.sourceID] }
                 let agent = pane.flatMap { agentsByPane[$0.id] }
-                let title = pane.map {
+                let paneTitle = pane.map {
                     PaneHeaderPresentation.title(
                         herdrLabel: $0.herdrLabel, agentSummary: agent?.summary ?? $0.summary,
                         terminalTitle: $0.terminalTitle, workspaceLabel: $0.workspaceLabel, paneID: $0.id
@@ -213,12 +213,15 @@ enum ShellTabStrip {
                 } ?? entry.label
                 return ShellTabItem(
                     id: entry.id,
-                    label: title,
+                    // The strip names the stable layout. The pane header names
+                    // the currently focused work, so split layouts do not
+                    // repeat one pane's changing title in both places (B14).
+                    label: entry.label,
                     dirty: false,
                     active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
                     kind: .herdr(tab),
                     focusedAgent: agent,
-                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(title)" }
+                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" }
                 )
             case .file:
                 guard let tab = editorByID[entry.sourceID]

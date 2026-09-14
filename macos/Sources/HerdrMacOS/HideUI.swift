@@ -2065,6 +2065,7 @@ private struct HideTabCanvas: View {
                 case .terminal:
                     PaneTerminalCell(
                         pane: pane,
+                        agent: model.agents.first { $0.paneID == pane.id },
                         status: model.paneStatus(for: pane.id),
                         statusMessage: model.paneTransportMessage(for: pane.id),
                         isFocused: item.isFocused,

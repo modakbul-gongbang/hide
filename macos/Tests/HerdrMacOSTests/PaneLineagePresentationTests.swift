@@ -83,7 +83,7 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
         "in-process subagents are worth a row even with no pane children"
     )
     #expect(
-        PaneLineagePresentation.showsChildRow(
+        !PaneLineagePresentation.showsChildRow(
             CorePaneChildren(
                 instrumented: false,
                 uninstrumentedReason: "This runtime's Hide hook is not installed.",
@@ -91,8 +91,19 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
                 uninstrumentedCode: "hooks_not_installed"
             )
         ),
-        "not knowing is a thing to say, and it says it here"
+        "instrumentation uncertainty stays on the 28pt identity row"
     )
+    #expect(
+        PaneLineagePresentation.showsInstrumentationHelp(
+            CorePaneChildren(
+                instrumented: false,
+                uninstrumentedReason: "This runtime's Hide hook is not installed.",
+                uninstrumentedLabel: "Children unknown: the hook is not installed",
+                uninstrumentedCode: "hooks_not_installed"
+            )
+        )
+    )
+    #expect(!PaneLineagePresentation.showsInstrumentationHelp(CorePaneChildren(instrumented: true)))
 }
 
 private func row(

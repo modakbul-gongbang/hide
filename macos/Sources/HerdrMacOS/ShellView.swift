@@ -507,6 +507,7 @@ private struct PaneResizeCursorArea: NSViewRepresentable {
 
 struct PaneTerminalCell<Content: View>: View {
     let pane: CorePaneSnapshot
+    let agent: SidebarAgent?
     let status: String
     let statusMessage: String?
     let isFocused: Bool
@@ -529,6 +530,7 @@ struct PaneTerminalCell<Content: View>: View {
 
     init(
         pane: CorePaneSnapshot,
+        agent: SidebarAgent? = nil,
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
@@ -548,6 +550,7 @@ struct PaneTerminalCell<Content: View>: View {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
+        self.agent = agent
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
@@ -577,6 +580,7 @@ struct PaneTerminalCell<Content: View>: View {
                 workspaceLabel: pane.workspaceLabel,
                 paneID: pane.id
             ),
+            agent: agent,
             status: status,
             statusMessage: statusMessage,
             isFocused: isFocused,
@@ -638,6 +642,10 @@ struct HideTerminalPaneCard<Content: View>: View {
     let kind: String
     let closeHelp: String
     let title: String
+    /// The detected agent whose provider and canonical state identify this
+    /// terminal. Non-agent panes leave it absent and do not inherit agent-only
+    /// chrome (PRD B14, B17, B19).
+    let agent: SidebarAgent?
     let status: String
     let statusMessage: String?
     let isFocused: Bool
@@ -681,6 +689,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         kind: String = "terminal",
         closeHelp: String = "Close this pane",
         title: String,
+        agent: SidebarAgent? = nil,
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
@@ -707,6 +716,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.kind = kind
         self.closeHelp = closeHelp
         self.title = title
+        self.agent = agent
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
@@ -737,6 +747,21 @@ struct HideTerminalPaneCard<Content: View>: View {
                     PaneParentReturn(steps: lineagePath, onSelect: onSelectPane)
                 }
 
+                if let agent {
+                    let agentStatus = AgentStatusPresentation(agent: agent, connected: connected)
+                    Text(agentStatus.symbol)
+                        .hideFont(size: HideTheme.Typography.micro, weight: .bold, design: .monospaced)
+                        .foregroundStyle(agentStatus.color)
+                        .frame(width: HideTheme.agentMarkWidth)
+                        .hideTooltip(agentStatus.label)
+                        .accessibilityLabel(agentStatus.label)
+                    AgentBadge(
+                        agentKind: agent.agentKind,
+                        stateColor: agentStatus.color,
+                        size: HideTheme.compactAgentBadgeSize
+                    )
+                }
+
                 Button(action: onFocus) {
                     Text(title + activity)
                         .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
@@ -747,7 +772,20 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(HideInteractiveButtonStyle())
-                .accessibilityLabel("Focus \(kind) pane \(title) (\(paneID))")
+                .accessibilityLabel(
+                    ["Focus \(kind) pane \(title) (\(paneID))", agent.map { "\($0.agentKind), \($0.statusLabel)" }]
+                        .compactMap { $0 }
+                        .joined(separator: ", ")
+                )
+
+                if PaneLineagePresentation.showsInstrumentationHelp(children),
+                    let reason = children?.uninstrumentedReason
+                {
+                    PaneInstrumentationHelp(
+                        reason: reason,
+                        accessibilityName: children?.uninstrumentedLabel ?? reason
+                    )
+                }
 
                 if let forkedFrom {
                     // The mark is the state; the parent's id is on the tooltip
