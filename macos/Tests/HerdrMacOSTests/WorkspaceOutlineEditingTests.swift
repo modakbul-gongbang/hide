@@ -135,7 +135,9 @@ import Testing
             )
         )
         let scroll = WorkspaceOutlineView.makeScrollView(coordinator: coordinator)
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 200))
+        scroll.scrollerStyle = .legacy
+        scroll.autohidesScrollers = false
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
         scroll.frame = NSRect(x: 0, y: 0, width: 320, height: 200)
         container.addSubview(scroll)
         let window = NSWindow(
@@ -160,7 +162,9 @@ import Testing
 
         let outline = try #require(scroll.documentView as? NSOutlineView)
         let column = try #require(outline.tableColumns.first)
-        #expect(column.width == 260)
+        let clipWidth = scroll.contentView.bounds.width
+        #expect(clipWidth < scroll.bounds.width, "the legacy vertical scroller must consume viewport width")
+        #expect(column.width == clipWidth)
         #expect(column.resizingMask.isEmpty)
         #expect(outline.columnAutoresizingStyle == .noColumnAutoresizing)
     }

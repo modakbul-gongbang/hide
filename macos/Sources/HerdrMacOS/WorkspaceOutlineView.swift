@@ -316,11 +316,11 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
 
         // An NSViewRepresentable hosted in an HSplitView can temporarily keep
         // the width proposed before the split settles while an ancestor clips
-        // it to the actual right-panel width. `contentSize` then describes the
-        // wider off-screen document and places the trailing Git badge outside
-        // the pixels the operator can see. Intersect every ancestor in window
-        // coordinates so the column follows the effective viewport, not the
-        // stale representable proposal.
+        // it to the actual right-panel width. The scroll view itself also
+        // includes the vertical scroller, while only its clip view contains
+        // document pixels. Start from that clip view and intersect every
+        // ancestor in window coordinates so the column follows the effective
+        // document viewport, not either wider proposal.
         let viewportWidth = max(column.minWidth, effectivelyVisibleWidth())
         if abs(column.width - viewportWidth) > 0.5 {
             column.width = viewportWidth
@@ -328,8 +328,8 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
     }
 
     private func effectivelyVisibleWidth() -> CGFloat {
-        var visible = convert(bounds, to: nil)
-        var ancestor = superview
+        var visible = contentView.convert(contentView.bounds, to: nil)
+        var ancestor = contentView.superview
         while let view = ancestor {
             visible = visible.intersection(view.convert(view.bounds, to: nil))
             guard !visible.isNull else { return 0 }
