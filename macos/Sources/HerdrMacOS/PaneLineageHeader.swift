@@ -182,8 +182,10 @@ struct PaneSubagentBadge: View {
 /// It exists only when there is something to draw, which is what keeps a pane
 /// with no children at the header's own 28pt (DESIGN.md, user decision).
 struct PaneChildRow: View {
+    let paneID: String
     let children: CorePaneChildren
     let connected: Bool
+    let operation: PaneSelectionOperation?
     let onSelect: (String) -> Void
     @State private var showsRelationship = false
     @State private var inspectedPaneID: String?
@@ -241,13 +243,12 @@ struct PaneChildRow: View {
         )
         .sheet(isPresented: $showsRelationship) {
             PaneRelationshipSheet(
+                sourcePaneID: paneID,
                 children: children.chips,
                 connected: connected,
                 inspectedPaneID: $inspectedPaneID,
-                onOpen: {
-                    showsRelationship = false
-                    onSelect($0)
-                }
+                operation: operation,
+                onOpen: onSelect
             )
         }
     }
@@ -256,7 +257,9 @@ struct PaneChildRow: View {
 struct PaneParentReturn: View {
     let steps: [CoreLineageStep]
     let currentPaneID: String
+    let operation: PaneSelectionOperation?
     let onSelect: (String) -> Void
+    @State private var showsFailure = false
 
     var body: some View {
         if let parent = PaneLineagePresentation.directParent(in: steps, currentPaneID: currentPaneID) {
@@ -268,10 +271,29 @@ struct PaneParentReturn: View {
     }
 
     private func parentButton(_ parent: CoreLineageStep, showsName: Bool) -> some View {
-        Button { onSelect(parent.paneID) } label: {
+        let matchingOperation = operation.flatMap {
+            $0.isFor(sourcePaneID: currentPaneID, targetPaneID: parent.paneID) ? $0 : nil
+        }
+        let pending = matchingOperation?.isPending == true
+        let failure = matchingOperation.flatMap { operation -> String? in
+            guard case .failed(let reason, _) = operation.phase else { return nil }
+            return reason
+        }
+        let canRetry = matchingOperation.map { operation in
+            guard case .failed(_, let retryable) = operation.phase else { return false }
+            return retryable
+        } ?? false
+        return Button {
+            if failure != nil { showsFailure = true }
+            else { onSelect(parent.paneID) }
+        } label: {
             HStack(spacing: HideTheme.spacingXXS) {
-                Image(systemName: "arrow.turn.up.left")
-                    .hideFont(size: HideTheme.Typography.micro)
+                if pending {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: failure == nil ? "arrow.turn.up.left" : "exclamationmark.triangle")
+                        .hideFont(size: HideTheme.Typography.micro)
+                }
                 if showsName {
                     Text(parent.label)
                         .lineLimit(1)
@@ -279,21 +301,54 @@ struct PaneParentReturn: View {
                 }
             }
             .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-            .foregroundStyle(HideTheme.secondary)
+            .foregroundStyle(failure == nil ? HideTheme.secondary : HideTheme.warning)
             .contentShape(Rectangle())
         }
         .buttonStyle(HideInteractiveButtonStyle())
-        .hideTooltip("Return to parent \(parent.label)")
-        .accessibilityLabel("Return to parent \(parent.label)")
+        .disabled(pending)
+        .hideTooltip(failure ?? (pending ? "Opening parent \(parent.label)" : "Return to parent \(parent.label)"))
+        .accessibilityLabel(failure ?? (pending ? "Opening parent \(parent.label)" : "Return to parent \(parent.label)"))
+        .accessibilityIdentifier("pane-parent-return-\(parent.paneID)")
+        .onAppear { if failure != nil { showsFailure = true } }
+        .onChange(of: failure) { _, reason in showsFailure = reason != nil }
+        .popover(isPresented: $showsFailure) {
+            if let failure {
+                VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+                    Text("Could not return to \(parent.label)")
+                        .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                    Text(failure)
+                        .hideFont(size: HideTheme.Typography.body)
+                        .foregroundStyle(HideTheme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if canRetry {
+                        HStack {
+                            Spacer()
+                            Button("Retry") {
+                                showsFailure = false
+                                onSelect(parent.paneID)
+                            }
+                        }
+                    }
+                }
+                .padding(HideTheme.spacingMD)
+                .frame(width: HideTheme.Layout.pullRequestPopoverWidth)
+                .foregroundStyle(HideTheme.primary)
+                .background(HideTheme.panel)
+                .preferredColorScheme(.dark)
+            }
+        }
     }
 }
 
 private struct PaneRelationshipSheet: View {
+    let sourcePaneID: String
     let children: [CoreAgentChip]
     let connected: Bool
     @Binding var inspectedPaneID: String?
+    let operation: PaneSelectionOperation?
     let onOpen: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var requestedPaneID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
@@ -347,12 +402,33 @@ private struct PaneRelationshipSheet: View {
                 }
                 .buttonStyle(HideInteractiveButtonStyle())
             }
+            if let failureReason {
+                HStack(alignment: .top, spacing: HideTheme.spacingSM) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(failureReason)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: HideTheme.spacingSM)
+                    if failureRetryable {
+                        Button("Retry") {
+                            guard let inspectedPaneID else { return }
+                            requestedPaneID = inspectedPaneID
+                            onOpen(inspectedPaneID)
+                        }
+                    }
+                }
+                .hideFont(size: HideTheme.Typography.micro)
+                .foregroundStyle(HideTheme.warning)
+                .accessibilityIdentifier("pane-relationship-failure")
+            }
             HStack {
                 Spacer()
-                Button("Open") {
-                    if let inspectedPaneID { onOpen(inspectedPaneID) }
+                Button(isPending ? "Opening…" : "Open") {
+                    if let inspectedPaneID {
+                        requestedPaneID = inspectedPaneID
+                        onOpen(inspectedPaneID)
+                    }
                 }
-                .disabled(inspectedPaneID == nil)
+                .disabled(inspectedPaneID == nil || isPending)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -361,6 +437,37 @@ private struct PaneRelationshipSheet: View {
         .foregroundStyle(HideTheme.primary)
         .background(HideTheme.panel)
         .preferredColorScheme(.dark)
+        .onChange(of: operation) { oldValue, newValue in
+            guard oldValue?.isPending == true,
+                  newValue == nil,
+                  requestedPaneID != nil
+            else { return }
+            dismiss()
+        }
+    }
+
+    private var matchingOperation: PaneSelectionOperation? {
+        guard let operation,
+              operation.sourcePaneID == sourcePaneID,
+              requestedPaneID == operation.targetPaneID
+        else { return nil }
+        return operation
+    }
+
+    private var isPending: Bool { matchingOperation?.isPending == true }
+
+    private var failureReason: String? {
+        guard let matchingOperation,
+              case .failed(let reason, _) = matchingOperation.phase
+        else { return nil }
+        return reason
+    }
+
+    private var failureRetryable: Bool {
+        guard let matchingOperation,
+              case .failed(_, let retryable) = matchingOperation.phase
+        else { return false }
+        return retryable
     }
 }
 

@@ -1,10 +1,154 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 
 @testable import HerdrMacOS
 
 private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
     CoreAgentChip(paneID: paneID, label: label, detail: "running tests")
+}
+
+private func focusOutcome(
+    requestID: String,
+    targetPaneID: String = "w1:p2",
+    phase: String,
+    message: String? = nil,
+    retryable: Bool = false
+) -> CorePaneFocusRequest {
+    CorePaneFocusRequest(
+        requestID: requestID,
+        targetPaneID: targetPaneID,
+        phase: phase,
+        message: message,
+        retryable: retryable
+    )
+}
+
+/// PRD B24: one relationship intent stays pending until the core publishes
+/// that exact request's outcome, and duplicate Open does not dispatch again.
+@Test func relationshipOpenBlocksDuplicatesUntilHerdrConfirmsTheTarget() {
+    let first = PaneSelectionPolicy.start(
+        current: nil,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1", "w1:p2"]
+    )
+    guard case .dispatch(let pending) = first else {
+        Issue.record("the first Open must dispatch")
+        return
+    }
+    #expect(pending.isPending)
+    #expect(PaneSelectionPolicy.start(
+        current: pending,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1", "w1:p2"]
+    ) == .unchanged(pending))
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(requestID: "unrelated-request", phase: "failed", message: "other pane failed")
+    ) == .pending, "an unrelated pane error cannot resolve this request")
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: nil
+    ) == .pending, "an older focused layout is not a request outcome")
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(requestID: pending.requestID, phase: "pending")
+    ) == .pending)
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(requestID: pending.requestID, phase: "succeeded")
+    ) == .succeeded)
+}
+
+/// PRD B24: unavailable targets never dispatch, and a typed focus refusal
+/// keeps a scoped reason with a retryable operation without a second focus.
+@Test func relationshipOpenKeepsUnavailableAndFailedOutcomesAtTheControl() {
+    let unavailable = PaneSelectionPolicy.start(
+        current: nil,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1"]
+    )
+    guard case .failed(let unavailableOperation) = unavailable else {
+        Issue.record("an unavailable target must not dispatch")
+        return
+    }
+    #expect(unavailableOperation.phase == .failed(
+        reason: "Child task is no longer available.",
+        retryable: true
+    ))
+
+    let retry = PaneSelectionPolicy.start(
+        current: unavailableOperation,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1", "w1:p2"]
+    )
+    guard case .dispatch(let pending) = retry else {
+        Issue.record("Retry must dispatch after the target returns")
+        return
+    }
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(
+            requestID: pending.requestID,
+            phase: "failed",
+            message: "pane refused focus",
+            retryable: true
+        )
+    ) == .failed(reason: "pane refused focus", retryable: true))
+}
+
+/// PRD B24. The operation notice is hosted above the retained canvas rather
+/// than inside the source pane, so both the pending state and its failure
+/// remain renderable after relationship navigation removes that pane from the
+/// visible tab. This is presentation evidence only; core outcome semantics
+/// are covered by the request-correlation tests above and in Rust.
+@Test @MainActor func relationshipOutcomeRemainsRenderableWithoutItsSourcePane() throws {
+    var retries = 0
+    let pending = PaneSelectionOperation(
+        requestID: "relationship-hosted-pending",
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Hide design QA",
+        phase: .pending
+    )
+    let pendingHost = NSHostingView(rootView: PaneSelectionOutcomeNotice(
+        operation: pending,
+        onRetry: { retries += 1 }
+    ))
+    pendingHost.frame = NSRect(x: 0, y: 0, width: 420, height: 96)
+    pendingHost.layoutSubtreeIfNeeded()
+    #expect(pendingHost.fittingSize.width > 0)
+    #expect(pendingHost.fittingSize.height > 0)
+
+    let failed = PaneSelectionOperation(
+        requestID: "relationship-hosted-failed",
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Hide design QA",
+        phase: .failed(reason: "The target pane is unavailable.", retryable: true)
+    )
+    let failedHost = NSHostingView(rootView: PaneSelectionOutcomeNotice(
+        operation: failed,
+        onRetry: { retries += 1 }
+    ))
+    failedHost.frame = NSRect(x: 0, y: 0, width: 420, height: 120)
+    failedHost.layoutSubtreeIfNeeded()
+    #expect(failedHost.fittingSize.width > 0)
+    #expect(failedHost.fittingSize.height > 0)
+    let bitmap = try #require(failedHost.bitmapImageRepForCachingDisplay(in: failedHost.bounds))
+    failedHost.cacheDisplay(in: failedHost.bounds, to: bitmap)
+    #expect(bitmap.pixelsWide > 0)
+    #expect(bitmap.pixelsHigh > 0)
+    #expect(retries == 0, "rendering outcome state never retries by itself")
 }
 
 @Test func directParentExcludesTheCurrentBreadcrumbLayer() {

@@ -335,6 +335,109 @@ enum HerdrStatusPresentation {
     }
 }
 
+/// The one relationship navigation intent currently awaiting Herdr.
+///
+/// It belongs to the shell model rather than an individual sheet so a sheet,
+/// a parent Return control, and the retained source canvas cannot disagree
+/// after the visible tab starts moving (PRD B24).
+struct PaneSelectionOperation: Equatable {
+    enum Phase: Equatable {
+        case pending
+        case failed(reason: String, retryable: Bool)
+    }
+
+    let requestID: String
+    let sourcePaneID: String
+    let targetPaneID: String
+    let targetLabel: String
+    let phase: Phase
+
+    var isPending: Bool { phase == .pending }
+
+    func isFor(sourcePaneID: String, targetPaneID: String) -> Bool {
+        self.sourcePaneID == sourcePaneID && self.targetPaneID == targetPaneID
+    }
+}
+
+enum PaneSelectionStart: Equatable {
+    case unchanged(PaneSelectionOperation)
+    case dispatch(PaneSelectionOperation)
+    case failed(PaneSelectionOperation)
+}
+
+enum PaneSelectionResolution: Equatable {
+    case pending
+    case succeeded
+    case failed(reason: String, retryable: Bool)
+}
+
+/// Pure decisions for the B24 pending, unavailable, failure, and retry states.
+/// The shell performs the returned effect; the policy never dispatches one.
+enum PaneSelectionPolicy {
+    static func start(
+        current: PaneSelectionOperation?,
+        sourcePaneID: String,
+        targetPaneID: String,
+        targetLabel: String,
+        availablePaneIDs: Set<String>
+    ) -> PaneSelectionStart {
+        if let current, current.isPending {
+            return .unchanged(current)
+        }
+        guard availablePaneIDs.contains(targetPaneID) else {
+            return .failed(PaneSelectionOperation(
+                requestID: UUID().uuidString,
+                sourcePaneID: sourcePaneID,
+                targetPaneID: targetPaneID,
+                targetLabel: targetLabel,
+                phase: .failed(
+                    reason: "\(targetLabel) is no longer available.",
+                    retryable: true
+                )
+            ))
+        }
+        return .dispatch(PaneSelectionOperation(
+            requestID: UUID().uuidString,
+            sourcePaneID: sourcePaneID,
+            targetPaneID: targetPaneID,
+            targetLabel: targetLabel,
+            phase: .pending
+        ))
+    }
+
+    static func resolve(
+        _ operation: PaneSelectionOperation,
+        outcome: CorePaneFocusRequest?
+    ) -> PaneSelectionResolution {
+        guard operation.isPending else { return .pending }
+        guard let outcome, outcome.requestID == operation.requestID else {
+            return .pending
+        }
+        guard outcome.targetPaneID == operation.targetPaneID else {
+            return .failed(
+                reason: "Hide received a pane-focus result for a different target.",
+                retryable: false
+            )
+        }
+        switch outcome.phase {
+        case "pending":
+            return .pending
+        case "succeeded":
+            return .succeeded
+        case "failed":
+            return .failed(
+                reason: outcome.message ?? "Could not open \(operation.targetLabel).",
+                retryable: outcome.retryable
+            )
+        default:
+            return .failed(
+                reason: "Hide received an unknown pane-focus outcome: \(outcome.phase).",
+                retryable: false
+            )
+        }
+    }
+}
+
 @MainActor
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
@@ -377,6 +480,11 @@ final class ShellModel: ObservableObject {
     /// Panes with a fork in flight, which is what puts "forking…" in the
     /// header and what a failure is attributed to.
     @Published private(set) var panesForking: Set<String> = []
+
+    /// Relationship Open and parent Return share this target-scoped outcome.
+    /// Generic bridge errors remain available to the status bar, but are not
+    /// used as the control's pending/failure contract (PRD B24).
+    @Published private(set) var paneSelectionOperation: PaneSelectionOperation?
 
     /// A failure that belongs to one pane, keyed by that pane.
     @Published private(set) var paneNotices: [String: String] = [:]
@@ -437,6 +545,7 @@ final class ShellModel: ObservableObject {
             self.observeWorktreeRemoval(in: snapshot)
             self.observeTaskOperation(in: snapshot)
             self.observeForkFailure(in: snapshot)
+            self.settlePaneSelection(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
             self.observeNavigation(in: snapshot)
             self.settleCheckoutStart()
@@ -875,6 +984,114 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("pane.selection", detail: "local_\(paneID)")
         }
         focus(.terminal)
+    }
+
+    /// Opens one pane from an explicit relationship action.
+    ///
+    /// Row selection remains inspection-only. This method is called only by
+    /// child Open/Return intents, owns their pending state, and waits for the
+    /// Herdr layout to confirm focus instead of treating the core's immediate
+    /// projection as success (PRD B23, B24).
+    func requestPaneSelection(from sourcePaneID: String, to targetPaneID: String) {
+        let availablePaneIDs = Set(allPaneMetadata().map(\.id))
+        let targetLabel = paneIdentity(for: targetPaneID) ?? targetPaneID
+        let decision = PaneSelectionPolicy.start(
+            current: paneSelectionOperation,
+            sourcePaneID: sourcePaneID,
+            targetPaneID: targetPaneID,
+            targetLabel: targetLabel,
+            availablePaneIDs: availablePaneIDs
+        )
+        switch decision {
+        case .unchanged:
+            return
+        case .failed(let operation):
+            paneSelectionOperation = operation
+            return
+        case .dispatch(let operation):
+            paneSelectionOperation = operation
+        }
+        guard let operation = paneSelectionOperation else { return }
+
+        if isRemoteContext {
+            guard let workspace = focusedWorkspace,
+                  let checkout = focusedCheckout,
+                  let targetID = remote.navigation?.deviceID
+            else {
+                failPaneSelection(
+                    "The remote pane cannot be opened because its workspace selection is unavailable."
+                )
+                return
+            }
+            remote.focus(
+                workspaceID: workspace.id,
+                checkoutID: checkout.id,
+                paneID: targetPaneID
+            )
+            switch core.focusRemotePane(
+                targetID: targetID,
+                paneID: targetPaneID,
+                requestID: operation.requestID
+            ) {
+            case .accepted:
+                focus(.terminal)
+            case .rejected(let reason):
+                failPaneSelection("Could not open \(targetLabel): \(reason)")
+            }
+            return
+        }
+
+        switch core.focusPane(
+            targetPaneID,
+            origin: .operatorChoice,
+            requestID: operation.requestID
+        ) {
+        case .accepted:
+            focus(.terminal)
+        case .rejected(let reason):
+            failPaneSelection("Could not open \(targetLabel): \(reason)")
+        }
+    }
+
+    private func settlePaneSelection(in snapshot: CoreSnapshot?) {
+        guard let operation = paneSelectionOperation, operation.isPending else { return }
+        switch PaneSelectionPolicy.resolve(
+            operation,
+            outcome: snapshot?.status.paneFocusRequest
+        ) {
+        case .pending:
+            return
+        case .succeeded:
+            paneSelectionOperation = nil
+        case .failed(let reason, let retryable):
+            failPaneSelection(reason, retryable: retryable)
+        }
+    }
+
+    private func failPaneSelection(_ reason: String, retryable: Bool = true) {
+        guard let current = paneSelectionOperation else { return }
+        paneSelectionOperation = PaneSelectionOperation(
+            requestID: current.requestID,
+            sourcePaneID: current.sourcePaneID,
+            targetPaneID: current.targetPaneID,
+            targetLabel: current.targetLabel,
+            phase: .failed(reason: reason, retryable: retryable)
+        )
+    }
+
+    func retryPaneSelection() {
+        guard let operation = paneSelectionOperation,
+              case .failed(_, let retryable) = operation.phase,
+              retryable
+        else { return }
+        requestPaneSelection(
+            from: operation.sourcePaneID,
+            to: operation.targetPaneID
+        )
+    }
+
+    private func allPaneMetadata() -> [CorePaneSnapshot] {
+        workspaces.lazy.flatMap(\.checkouts).flatMap(\.tabs).flatMap(\.panes) + scratch.tabs.flatMap(\.panes)
     }
 
     func openTerminalLink(_ rawValue: String, paneID: String) {

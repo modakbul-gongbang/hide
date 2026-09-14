@@ -1647,6 +1647,21 @@ pub struct StatusSnapshot {
     pub background_ai: BackgroundAiSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+    /// The core-owned outcome of the latest explicitly correlated pane-focus
+    /// request. Ordinary focus events have no request id and do not replace
+    /// this receipt, so a relationship control never mistakes another pane's
+    /// error or an older focused layout for its own answer.
+    pub pane_focus_request: Option<PaneFocusRequestSnapshot>,
+}
+
+/// One explicitly correlated pane-focus request and its core-owned outcome.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PaneFocusRequestSnapshot {
+    pub request_id: String,
+    pub target_pane_id: String,
+    pub phase: String,
+    pub message: Option<String>,
+    pub retryable: bool,
 }
 
 /// Which agent and model the background AI features use, and what each
@@ -1995,6 +2010,7 @@ impl Snapshot {
                 background_ai: BackgroundAiSnapshot::unread(),
                 diagnostics: Vec::new(),
                 last_error: None,
+                pane_focus_request: None,
             },
             pet: PetSnapshot::initial(),
         }

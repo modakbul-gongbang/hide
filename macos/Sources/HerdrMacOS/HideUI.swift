@@ -2054,7 +2054,64 @@ private struct HideTerminalSurface: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
+        .overlay(alignment: .top) {
+            if let operation = model.paneSelectionOperation {
+                PaneSelectionOutcomeNotice(
+                    operation: operation,
+                    onRetry: model.retryPaneSelection
+                )
+                .padding(HideTheme.spacingSM)
+            }
+        }
         .accessibilityIdentifier("hide-terminal-surface")
+    }
+}
+
+/// Keeps a relationship Open/Return outcome visible after the core moves the
+/// selected pane and the source header is no longer on the visible canvas.
+/// It overlays the canvas, so pending and failure feedback do not resize the
+/// terminal or mutate Herdr-owned geometry (PRD B23, B24).
+struct PaneSelectionOutcomeNotice: View {
+    let operation: PaneSelectionOperation
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: HideTheme.spacingSM) {
+            switch operation.phase {
+            case .pending:
+                ProgressView().controlSize(.small)
+                Text("Opening \(operation.targetLabel)…")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+            case .failed(let reason, let retryable):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(HideTheme.warning)
+                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                    Text("Could not open \(operation.targetLabel)")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                    Text(reason)
+                        .hideFont(size: HideTheme.Typography.micro)
+                        .foregroundStyle(HideTheme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if retryable {
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(HideInteractiveButtonStyle())
+                }
+            }
+        }
+        .padding(.horizontal, HideTheme.spacingMD)
+        .padding(.vertical, HideTheme.spacingSM)
+        .foregroundStyle(HideTheme.primary)
+        .background(
+            HideTheme.elevated,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pane-selection-outcome")
     }
 }
 
@@ -2110,6 +2167,7 @@ private struct HideTabCanvas: View {
                         activity: model.paneActivity(for: pane.id),
                         notice: model.paneNotice(for: pane.id),
                         connected: model.agentsConnected,
+                        paneSelectionOperation: model.paneSelectionOperation,
                         onFocus: { model.focusPane(pane.id) },
                         onReconnect: { model.reconnectPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) },
@@ -2121,7 +2179,7 @@ private struct HideTabCanvas: View {
                         // The core moves the visible tab to whichever tab
                         // holds it, so the screen is replaced rather than
                         // split (PRD B7, D-16).
-                        onSelectPane: { model.focusPane($0) }
+                        onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
                     ) {
                         TerminalHost(
                             bridge: model.core,

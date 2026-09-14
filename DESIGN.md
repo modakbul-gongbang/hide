@@ -876,6 +876,12 @@ This is a user decision between four candidates, not a default: compressing the 
 An authoritative parent becomes one compact Return control in the first row, with icon-only fallback before current identity or actions are truncated.
 The second row names the first direct child and folds the rest into an honest `+N` relationship control.
 The relationship sheet inspects on row selection and navigates only through its explicit Open action.
+A relationship Open or parent Return publishes one request-scoped pending state from the existing control and the retained canvas.
+The same target cannot dispatch again while that request is pending.
+Target retirement before dispatch and core-owned refusal, timeout, or remote-control failure keep the current pane geometry and tab topology, show the scoped reason, and offer Retry when the outcome is retryable.
+Retry creates a new request ID only after the prior request has settled.
+The shell never derives success from an old focused layout or optimistic remote selection, never attributes an unrelated global error to the control, and never sends a second focus event as rollback.
+A canvas notice preserves pending and failed feedback after successful navigation removes the source header or sheet from view.
 A root with no parent carries no Return control, following the existing rule that a control with nothing to do is not drawn.
 
 The header wash marks the pane Hide is showing, while the outer primary hairline marks the terminal that owns the native keyboard responder.
@@ -1226,6 +1232,10 @@ A token name alone is not approval to add a new visual treatment.
 
 Every interactive component's contract specifies its label and accessible name, supported sizes/roles, default, hovered, pressed, keyboard-focused, selected and disabled states where applicable.
 Pending actions must show pending feedback and preserve the existing retry/duplicate-action contract.
+Relationship navigation uses the core's request-specific pane-focus outcome as that contract's authority.
+The pending Pen draft for `Component / Relationship action` and its referenced Ready, Pending, Target unavailable, and Open failed states uses existing semantic and surface tokens without opacity overrides, so the disabled Open label, warning icon, long Korean or English reason, and Retry action remain legible.
+That draft is preserved in the current Pen live document and run exports but is not yet adopted into `design/hide.pen`, because the available non-foreground app connection can save only to the source document URI and worktree Save As requires separate foreground coordination.
+Until that save occurs, the run evidence names the draft IDs and this document describes the implemented behavior, but the existing committed canvas remains authoritative only for its already-persisted boards.
 Status indicators retain text or a symbol alongside color; actual product state supplies their values.
 Keyboard activation, selection, IME handling and focus semantics remain part of the control contract when its appearance changes.
 Focus and hover are local presentation state and must not publish core snapshots or trigger Git/disk work.

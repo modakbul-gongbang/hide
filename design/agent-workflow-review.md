@@ -43,6 +43,7 @@ The current Herdr/Sasu dispatch contract may omit parent lineage, so Hide filter
 | Component / Spec / Relationship node | `d8bYuE` |
 | Component / Spec / Search and Recent Sessions identity | `dexoX` |
 | Component / Spec / Explorer Git states | `BMEZi` |
+| Component / Spec / Relationship action states | `ZEwQt` (live draft, not yet persisted) |
 
 The deleted `Review / UI Handoff / 00 Start here` and `90 Shared dependencies` boards were navigation aids, not product masters.
 Their adopted reusable content now lives in the Component band and all changed product compositions live in the Screen band.
@@ -59,6 +60,7 @@ Their adopted reusable content now lives in the Component band and all changed p
 | Workbench `OwIFR` | `HideMainView`, `HideTabStrip`, `ShellModel.swift` | A delegated child occupies its own tab and returning chooses the authoritative parent placement. |
 | Browser chrome `KUcQU`, address toolbar `eMlZD`, document toolbar `hxdu7` | `BrowserPaneView.swift`, `EditorViewerOverlay.swift` | Browser, file, and diff surfaces keep their own controls and never inherit agent-only actions. |
 | Graph node `FKLct` | `PaneRelationshipSheet`, `CorePaneChildren`, `CoreLineageStep` | Node selection inspects, Open navigates, and unavailable lineage stays explicit. |
+| Relationship action `p7Vim` (live draft, not yet persisted) | `ShellModel.swift`, `PaneLineageHeader.swift`, `HideUI.swift`, `CoreBridge.swift`, `runtime.rs` | One request ID carries Ready, Pending, Target unavailable, and Open failed outcomes across the sheet, Return control, direct child chip, and retained canvas. |
 | Project task overview `G4Sj9`, task item `AdQ5R` | `CheckoutOverview.swift`, `OverviewPresentation.swift` | The current Project's authoritative live forest crosses Workspaces without guessing missing parent links. |
 | Explorer Git row `mSu8p`, panel `Wo6qx` | `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs` | A fixed status slot renders M, A, U, R, conflict, folder-changed, and clean states without changing file-tree interaction. |
 
@@ -82,6 +84,17 @@ The second row is 24pt and exists only when the pane has known child or subagent
 A child pane keeps a compact authoritative parent return control in the first row.
 The child row shows the first known direct child and folds the rest into `+N` and the relationship sheet.
 Selecting a relationship row changes the sheet's inspection only, while Open sends the existing pane-selection intent.
+Open and parent Return remain pending until the core publishes the outcome for that exact request ID and target.
+The same pending intent blocks duplicate execution.
+An unavailable target is refused before dispatch, while a core refusal, timeout, retirement, or remote-control failure ends only the matching request.
+Both paths keep pane geometry and tab topology intact, display a scoped reason, and expose Retry only when the core outcome permits it.
+Retry starts a new request after the failed one has settled.
+The result remains visible in the retained canvas when navigation removes the source sheet or header, including direct child-chip navigation.
+The shell does not treat `lastError`, an inactive historical layout, or optimistic remote navigation as success or failure, and it emits no rollback focus event or UI-owned timeout.
+
+The B24 Pen sheet `ZEwQt`, master `p7Vim`, modal states `dFThD`, child Open states `V4miTY`, and parent Return states `u9CJj` remain in the live `hide.pen - Edited` document and the run exports.
+They are not yet present in the worktree file because the non-foreground app connection cannot Save As to the worktree path.
+Do not treat the IDs as adopted canvas references until a separately coordinated Pen Save As persists them and the generator/checkers pass on that saved file.
 
 The header wash marks the pane currently shown by Hide.
 The outer primary hairline marks the actual terminal responder.

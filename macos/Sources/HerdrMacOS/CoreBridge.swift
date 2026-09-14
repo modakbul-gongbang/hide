@@ -1973,6 +1973,7 @@ struct CoreStatusSnapshot: Decodable {
     let backgroundAI: CoreBackgroundAI
     let diagnostics: [CoreDiagnostic]
     let lastError: CoreLastError?
+    let paneFocusRequest: CorePaneFocusRequest?
 
     enum CodingKeys: String, CodingKey {
         case herdr
@@ -1983,6 +1984,7 @@ struct CoreStatusSnapshot: Decodable {
         case backgroundAI = "background_ai"
         case diagnostics
         case lastError = "last_error"
+        case paneFocusRequest = "pane_focus_request"
     }
 
     init(from decoder: Decoder) throws {
@@ -1997,6 +1999,23 @@ struct CoreStatusSnapshot: Decodable {
             ?? CoreBackgroundAI()
         diagnostics = try container.decodeIfPresent([CoreDiagnostic].self, forKey: .diagnostics) ?? []
         lastError = try container.decodeIfPresent(CoreLastError.self, forKey: .lastError)
+        paneFocusRequest = try container.decodeIfPresent(CorePaneFocusRequest.self, forKey: .paneFocusRequest)
+    }
+}
+
+struct CorePaneFocusRequest: Decodable, Equatable {
+    let requestID: String
+    let targetPaneID: String
+    let phase: String
+    let message: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case targetPaneID = "target_pane_id"
+        case phase
+        case message
+        case retryable
     }
 }
 
@@ -2357,6 +2376,17 @@ struct CoreDispatchRoutingPolicy {
     }
 }
 
+/// Whether a typed core event entered the runtime.
+///
+/// Most callers only need fire-and-forget dispatch. Pane relationship Open is
+/// different: B24 keeps its pending control on screen when the event could not
+/// even enter the core, so that caller needs the synchronous admission answer
+/// without scraping the app-wide `bridgeError` string.
+enum CoreDispatchOutcome: Equatable {
+    case accepted
+    case rejected(String)
+}
+
 @MainActor
 final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
@@ -2700,11 +2730,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         case restore
     }
 
-    func focusPane(_ paneID: String, origin: PaneFocusOrigin) {
-        dispatch(
-            kind: "focus_pane",
-            payload: ["pane_id": paneID, "origin": origin.rawValue]
-        )
+    @discardableResult
+    func focusPane(
+        _ paneID: String,
+        origin: PaneFocusOrigin,
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
+        var payload: [String: Any] = ["pane_id": paneID, "origin": origin.rawValue]
+        if let requestID {
+            payload["request_id"] = requestID
+        }
+        return dispatch(kind: "focus_pane", payload: payload)
     }
 
     /// The core owns the ladder and its bounds, so the shell sends a direction
@@ -3061,11 +3097,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "fork_pane", payload: ["pane_id": paneID])
     }
 
-    func focusRemotePane(targetID: String, paneID: String) {
+    @discardableResult
+    func focusRemotePane(
+        targetID: String,
+        paneID: String,
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
         dispatchRemoteControl(
             targetID: targetID,
             action: "focus_pane",
-            extra: ["pane_id": paneID]
+            extra: ["pane_id": paneID],
+            requestID: requestID
         )
     }
 
@@ -3143,20 +3185,26 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
     }
 
+    @discardableResult
     private func dispatchRemoteControl(
         targetID: String,
         action: String,
-        extra: [String: Any] = [:]
-    ) {
+        extra: [String: Any] = [:],
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
+        let reportsPaneFocusOutcome = requestID != nil
         var payload: [String: Any] = [
             "target_id": targetID,
-            "request_id": UUID().uuidString,
+            "request_id": requestID ?? UUID().uuidString,
             "action": action,
         ]
+        if reportsPaneFocusOutcome {
+            payload["report_pane_focus_outcome"] = true
+        }
         for (key, value) in extra {
             payload[key] = value
         }
-        dispatch(kind: "remote_control", payload: payload)
+        return dispatch(kind: "remote_control", payload: payload)
     }
 
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
@@ -3381,7 +3429,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "card_measure_disk", payload: [:])
     }
 
-    func dispatch(kind: String, payload: [String: Any]) {
+    @discardableResult
+    func dispatch(kind: String, payload: [String: Any]) -> CoreDispatchOutcome {
         if CoreDispatchRoutingPolicy.blocks(
             kind: kind,
             whenDeviceIsRemote: commandDevice.isRemote
@@ -3393,11 +3442,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 "core.dispatch.blocked",
                 detail: "kind=\(kind) device_id=\(commandDevice.id)"
             )
-            return
+            return .rejected(message)
         }
         guard let core else {
-            bridgeError = "Hide is still starting. Try again when the Herdr status is available."
-            return
+            let message = "Hide is still starting. Try again when the Herdr status is available."
+            bridgeError = message
+            return .rejected(message)
         }
         if let detail = dispatchTraceDetail(kind: kind, payload: payload) {
             HideLaunchTrace.mark("core.dispatch", detail: detail)
@@ -3408,12 +3458,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "payload": payload,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: envelope) else {
-            bridgeError = "Could not encode \(kind) event"
-            return
+            let message = "Could not encode \(kind) event"
+            bridgeError = message
+            return .rejected(message)
         }
         data.withUnsafeBytes { buffer in
             herdr_core_dispatch(core, buffer.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
+        return .accepted
     }
 
     private func dispatchTraceDetail(kind: String, payload: [String: Any]) -> String? {

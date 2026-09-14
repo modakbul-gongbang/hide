@@ -526,6 +526,7 @@ struct PaneTerminalCell<Content: View>: View {
     /// Whether the session is answering. A disconnected mark says so rather
     /// than repeating the last state it saw.
     let connected: Bool
+    let paneSelectionOperation: PaneSelectionOperation?
     let onSelectPane: (String) -> Void
     private let content: () -> Content
 
@@ -542,6 +543,7 @@ struct PaneTerminalCell<Content: View>: View {
         activity: String = "",
         notice: String? = nil,
         connected: Bool = true,
+        paneSelectionOperation: PaneSelectionOperation? = nil,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
@@ -569,6 +571,7 @@ struct PaneTerminalCell<Content: View>: View {
         self.onFork = onFork
         self.onOpenPort = onOpenPort
         self.connected = connected
+        self.paneSelectionOperation = paneSelectionOperation
         self.onSelectPane = onSelectPane
         self.content = content
     }
@@ -597,6 +600,7 @@ struct PaneTerminalCell<Content: View>: View {
             lineagePath: lineagePath,
             children: pane.children,
             connected: connected,
+            paneSelectionOperation: paneSelectionOperation,
             onFocus: onFocus,
             onReconnect: onReconnect,
             onClose: onClose,
@@ -675,6 +679,7 @@ struct HideTerminalPaneCard<Content: View>: View {
     /// Absent means no agent here, which is why nothing is drawn (PRD B22).
     let children: CorePaneChildren?
     let connected: Bool
+    let paneSelectionOperation: PaneSelectionOperation?
     let onFocus: () -> Void
     let onReconnect: () -> Void
     let onClose: () -> Void
@@ -706,6 +711,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         lineagePath: [CoreLineageStep] = [],
         children: CorePaneChildren? = nil,
         connected: Bool = true,
+        paneSelectionOperation: PaneSelectionOperation? = nil,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
@@ -733,6 +739,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.lineagePath = lineagePath
         self.children = children
         self.connected = connected
+        self.paneSelectionOperation = paneSelectionOperation
         self.onFocus = onFocus
         self.onReconnect = onReconnect
         self.onClose = onClose
@@ -750,6 +757,7 @@ struct HideTerminalPaneCard<Content: View>: View {
                     PaneParentReturn(
                         steps: lineagePath,
                         currentPaneID: paneID,
+                        operation: paneSelectionOperation,
                         onSelect: onSelectPane
                     )
                 }
@@ -867,7 +875,13 @@ struct HideTerminalPaneCard<Content: View>: View {
                 .frame(height: HideTheme.Layout.hairlineWidth)
 
             if let children, PaneLineagePresentation.showsChildRow(children) {
-                PaneChildRow(children: children, connected: connected, onSelect: onSelectPane)
+                PaneChildRow(
+                    paneID: paneID,
+                    children: children,
+                    connected: connected,
+                    operation: paneSelectionOperation,
+                    onSelect: onSelectPane
+                )
                     .background(HideTheme.elevated)
                     .accessibilityIdentifier("pane-children-\(paneID)")
 
