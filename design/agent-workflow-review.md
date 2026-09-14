@@ -2,10 +2,38 @@
 
 Status: design proposal, not an approved implementation contract.
 The product code and installed app are unchanged by this review.
-The editable source is [hide.pen](hide.pen), under `Review / 2026-09-13 Agent workflow /`.
+The editable source is [hide.pen](hide.pen), with the latest complete-screen proposal under `Review / 2026-09-14 Project-first IA /`.
 The existing `Screen /` boards continue to describe the existing design; this proposal does not silently supersede them or the current contracts in `DESIGN.md`.
 
-## Direction
+## Latest complete-screen proposal: 2026-09-14
+
+Start with these four boards, all of which include the left navigation, central canvas, and contextual right pane.
+This supersedes the earlier navigation explorations below, not the implemented product contract.
+
+| Board | Entry | Center | Right pane |
+| --- | --- | --- | --- |
+| 01 Project dashboard (`xSu9F`) | Select a Project | Workspace-level work, attention, and PR summaries | Selected Workspace details and explicit open action |
+| 02 Workspace multi-pane (`qz4SC`) | Open a Workspace | Its saved tabs and four-Pane layout | Workspace tools, showing Explorer with Git decorations |
+| 03 Agent relationships (`xvRDO`) | Select relationship control in parent Pane | Graph overlay above the unchanged working layout | Existing Workspace tools remain visible |
+| 04 Delegated agent tab (`fN6Go`) | Explicitly open a child from graph or navigation | Child's dedicated tab | Workspace tools, showing Sessions as a manually selected example |
+
+The left side retains Projects / Agents, without adding a third global dashboard mode.
+Project selection opens the Project dashboard; Workspace selection opens its existing working layout, not another dashboard.
+Selecting a Pane focuses it without automatic zoom or destruction of sibling Panes.
+A delegated child lives in a separate tab, following the current architecture contract; opening that tab preserves the parent's four-Pane layout for return.
+Workspace membership and delegation are independent: the graph illustrates an ancestor in master and its descendants in review.
+Graph selection only inspects; opening the selected child is a separate explicit action.
+Closing the graph restores the previous focus and layout without navigation or implicit read acknowledgements.
+The right pane follows the selected Workspace, not the type of the focused Pane, and retains its selected tool across tab switches.
+Sessions in board 04 is a user-selected tool example, not an automatic consequence of opening a child.
+Project dashboard rows summarize meaningful work instead of listing every Pane; multiple independent work roots must remain distinguishable.
+Future Tasks are not assumed to map one-to-one to Workspaces.
+Git history and maintenance remain secondary inspection actions; removing the Git tab still requires preserving its capabilities.
+Quick workspace remains a naming proposal, with persistence and retention unresolved.
+These boards use sample data and existing tokens; terminal and browser contents are illustrative, not native verification or a functional prototype.
+All prior 2026-09-13 boards remain available as earlier explorations, but their global All work or Workspace dashboard concepts are not part of this latest proposal.
+
+## Earlier direction and explorations
 
 The operator talks to one parent agent and can understand the work it delegates without visiting every child pane.
 Three different relationships must stay distinct: Project to Workspace membership, parent to delegated agent ownership, and a Workspace's Git comparison against the primary branch.
@@ -16,7 +44,7 @@ All example messages, names, counts, PR numbers, and timestamps in the proposal 
 Existing `HideTheme` variables are reused; no application token or product code is added.
 The latest user direction prioritizes a natural node-and-edge parent/child visualization and consistent visual UI across navigation surfaces.
 Start with `UX 00 Start here`, then follow UX 01 through UX 06 and the optional UX 07 example.
-This is the latest navigation proposal: it retains Projects / Agents and makes the center/right transitions explicit in complete application windows.
+That earlier navigation proposal retains Projects / Agents and explores center/right transitions in complete application windows; use the 2026-09-14 section above for the latest scope and entry points.
 The earlier `01 All work full screen`, `02 Project full screen` and `Workbench visual` boards are information-layout explorations, not the current navigation contract for this proposal.
 Their canvas annotations point to the newer journey; retain their useful information hierarchy without copying their conflicting sidebar or right-panel behavior.
 English navigation terms remain aligned with the product while Korean task names and message content exercise mixed-script layouts.
