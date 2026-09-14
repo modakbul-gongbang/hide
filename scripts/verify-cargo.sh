@@ -12,33 +12,23 @@
 #     "test":  "bash scripts/verify-cargo.sh test"
 #     "build": "bash scripts/verify-cargo.sh build"
 #
-# Two decisions are made here and nowhere else.
-#
-# The toolchain comes from the machine, through `toolchain-env.sh`. A verify run
-# gets its own HOME, and rustup answers an empty `$HOME/.rustup` by installing a
-# private toolchain into it: 1.4 GB per run, 9.1 GB across eleven runs,
-# duplicating one that was already installed.
-#
-# The target directory is shared across runs on purpose, which is the opposite
-# of the per-worktree rule in AGENTS.md and for a reason that rule names. Cargo
-# keys a workspace member's artifacts by its path relative to the workspace
-# root, so sharing is unsafe between two checkouts. Every verify run builds the
-# same checkout, so there is one path here and sharing is what makes the second
-# run incremental. Removing this directory is always safe and costs one full
-# build.
+# Tests use the checkout's scratch cache; release output stays at the fixed
+# archive path SwiftPM links. Cargo still checks freshness on every invocation.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 . scripts/toolchain-env.sh
 
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/hide-verify/cargo}"
+. scripts/build-scratch.sh
 
 case "${1:-}" in
     test)
+        export CARGO_TARGET_DIR="$HIDE_CARGO_SCRATCH"
         exec cargo test --locked --workspace
         ;;
     build)
+        export CARGO_TARGET_DIR="$PWD/target"
         exec cargo build --release --locked -p herdr-core
         ;;
     *)

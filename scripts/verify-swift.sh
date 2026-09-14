@@ -20,8 +20,7 @@ cd "$(dirname "$0")/.."
 
 . scripts/toolchain-env.sh
 
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/hide-verify/cargo}"
-scratch="${HIDE_VERIFY_SWIFT_SCRATCH:-${TMPDIR:-/tmp}/hide-verify/swift}"
+. scripts/build-scratch.sh
 
 case "${1:-}" in
     build|test) ;;
@@ -32,8 +31,15 @@ case "${1:-}" in
 esac
 
 # The archive the package links is read from the worktree at a fixed path, so
-# this build alone keeps its in-tree target directory.
-CARGO_TARGET_DIR="$PWD/target" cargo build --release --locked -p herdr-core
+# every verification release build uses the same in-tree target directory.
+bash scripts/verify-cargo.sh build
 
-exec swift "$1" --package-path macos --scratch-path "$scratch" \
-    --disable-keychain --disable-sandbox
+# SwiftPM's -L/-l flags do not declare the external archive as a build input.
+# As in build_dev_app.sh, a content digest makes a changed core invalidate the
+# Swift build plan, while an identical archive keeps the no-change cache hot.
+archive_digest="$(LC_ALL=C shasum -a 256 target/release/libherdr_core.a)"
+archive_digest="${archive_digest%% *}"
+
+exec swift "$1" --package-path macos --scratch-path "$HIDE_SWIFT_SCRATCH" \
+    --disable-keychain --disable-sandbox \
+    -Xswiftc -D -Xswiftc "HERDR_CORE_${archive_digest}"

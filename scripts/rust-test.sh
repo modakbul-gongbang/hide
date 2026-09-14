@@ -15,17 +15,9 @@ cd "$(dirname "$0")/.."
 # private copy under a runner HOME.
 . scripts/toolchain-env.sh
 
-# Build output is not source (AGENTS.md, "Evidence Belongs Outside The
-# Repository"), and a verification runner that judges the working tree must not
-# have `cargo test` writing into it. An explicit CARGO_TARGET_DIR still wins,
-# so a caller that wants the in-tree `target/` says so.
-#
-# The default is keyed by the checkout, because cargo names a workspace
-# member's artifacts by its path relative to the workspace root: two worktrees
-# of this repository sharing one target dir read each other's build as fresh
-# and run the other checkout's test binary.
-checkout="$(basename "$(git rev-parse --show-toplevel)")"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/hide-cargo-test-$checkout}"
+# Use the same checkout-isolated test cache as the verification entrypoint.
+. scripts/build-scratch.sh
+export CARGO_TARGET_DIR="$HIDE_CARGO_SCRATCH"
 
 if ! cargo --version >/dev/null 2>&1; then
     printf 'cargo could not choose a toolchain under HOME=%s; set RUSTUP_HOME and CARGO_HOME\n' \
