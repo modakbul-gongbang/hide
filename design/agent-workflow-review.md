@@ -1,5 +1,210 @@
 # Agent workflow design review
 
+## R2 Compact: 2026-09-14 재검토 기준
+
+최신 검토 대상은 `Review / 2026-09-14 R2 Compact /`이며 시작 보드는 `MxsEs`다.
+기존 Final을 정답으로 삼지 않고 Screen 보드, 사용자 제공 이미지 두 장, 현재 checkout `95a7e3c`의 UI owner를 직접 대조했다.
+아래 이전 Final과 Project-first 절은 결정 이력으로 보존하며, 이번 범위의 상세 배치 판단은 이 R2 절이 대체한다.
+제품 구현 승인이나 현재 앱 동작을 뜻하지 않는다.
+Project Overview, 제품 코드, 설치 앱, 실행 환경은 이번 작업 범위에서 제외했다.
+
+### 관찰과 차용
+
+| 근거 | 보존할 장점 | 문제와 R2 처리 |
+| --- | --- | --- |
+| `Screen / Sidebar / Projects` (`qZcwf`), Agents (`Vmhg4`) | Projects/Agents 구분, 고정 상태/provider 열, compact 행, 네 상태 그룹 | 기존 Final의 별도 자식 요약 블록을 제거하고 부모 identity의 둘째 줄에 통합 |
+| System `Nyvom`, `eHAjc`, `Ec2W1`; Component `cfYc8`, `jJJqB` | 24pt toolbar target, 토큰 기반 크기, 제목/상태/위치 역할 | 기존 3줄 행을 모든 surface에 강제하지 않고 compact/expanded 슬롯 변형 사용 |
+| 실제 Hide 전체 화면 사용자 이미지 | 여러 Pane, 탭과 우측 섹션, provider artwork, 작고 일관된 행 | 이 이미지의 빌드를 현재 코드와 동일하다고 단정하지 않음 |
+| 나쁜 Final 사용자 이미지 및 `hjWwg` | 부모/자식을 함께 보려는 의도 | 큰 행간, 독립된 요약 행, 부유한 세로선 대신 펼침 위치부터 첫 줄 elbow까지 연속 연결 |
+| `AgentNavigatorRow`, `LineageGuideView`, `SidebarGrouping` | 18pt 일정 깊이, continuing/last-child 계산, 상태와 첫 줄에 고정된 elbow | 이미 구현된 연결 알고리즘을 차용하며 그룹별 임의 선을 만들지 않음 |
+| `HideTerminalPaneCard`, `PaneLineageHeader` | 28pt 헤더, 조건부 24pt named children, 부모/형제 이동 | 보조 정보를 한 줄에 무제한 추가하지 않음; 미계측만 있는 경우 첫 줄 안내로 압축 |
+| `BrowserPaneView`, `EditorViewerOverlay` | Browser 주소/reload/CDP, 중앙 file/diff tab, 파일 고유 편집 상태 | agent fork/위임 제어를 다른 종류에 복제하지 않음 |
+
+디자인 원칙 5는 기존 열·도구·탭 구조를 차용하는 것으로, 7과 8은 관계선과 선택 경계에만 시각적 구획을 쓰는 것으로 적용했다.
+원칙 9와 12에 따라 0/1/다수, 계측/연결 오류, 읽음/위임, 긴 한글·영문, 240/320/344/400pt를 별도 상태로 그렸다.
+현재 named-child 두 번째 줄은 이전 사용자 결정이므로 유지했다.
+이 R2가 제안하는 새 헤더 overflow와 미계측 위치는 이후 승인된 구현에서 `DESIGN.md`를 함께 변경해야 한다.
+
+### 보드와 대체 관계
+
+| R2 보드 | ID | 기존 Final 중 대체하는 범위 |
+| --- | --- | --- |
+| 00 Start here | `MxsEs` | `NxA4l`의 이번 범위 진입 안내 |
+| C01 Identity and interaction | `ZjPJ6` | C01 `hjWwg`의 Agent item 구조 |
+| C02 Hierarchy at 240 320 344 400 | `INj5G` | C07 `O6gzR`의 폭별 계층 검토 |
+| C03 Workspace and disclosure | `g7trZv` | C02 `Y8ipD`의 Workspace 동작 |
+| C04 Pane header family | `U27a1` | C03 `T3J4uA`와 F01/F04의 헤더 |
+| C05 Narrow and action priority | `niBQD` | 기존 Final에 부족했던 좁은 헤더/overflow 계약 |
+| C06 Browser file and diff controls | `p0Do2` | F05/F06의 종류별 toolbar 구분 |
+| C07 Workbench composition | `VPo5F` | 전체 화면 공통 구성 master |
+| C08 Graph node and identity reuse | `d8bYuE` | C08 `zVCTn`의 node identity |
+| C09 Shared identity across discovery | `dexoX` | C05 및 F08/F09의 identity 일치 |
+| C10 Tree edge and interaction states | `m0gZNn` | C01/C07의 접힘, 선택, focus, read, escalation |
+| F01 Parent with many children | `oKFIl` | F01 `h2s8i`의 전체 작업 화면 |
+| F02 Child dedicated tab | `F5RIK` | F04 `dagQX`의 자식 이동/복귀 |
+| F03 Detected uninstrumented narrow panes | `JsaSv` | 미계측 agent 240pt Pane과 일반 terminal의 비교 |
+| F04 Zoomed parent restore layout | `jSmGt` | 실제 전체 작업 화면의 zoom 상태 |
+| F05 One child named directly | `AhAPX` | 1명일 때 남는 이름과 불필요한 count 제거 |
+| F06 Normal agent zero children | `R56To6` | 계측된 0명일 때 헤더 두 번째 줄 제거 |
+| F07 Agents status groups | `Snwg0` | F02 `S9KrxV`의 그룹과 compact identity |
+| F08 Relationships inspect before opening | `eXxKb` | F03 `y4omg`의 모달과 타 Workspace 열기 |
+| F09 Search overlay | `Sspw1` | F08 `uytmT`의 공통 identity |
+| F10 Recent Panels overlay | `YDiBn` | F09 `aS0mm`의 MRU와 종류 구분 |
+| F11 Browser and terminal workbench | `xgAvR` | Browser + 일반 terminal 화면과 주소 toolbar |
+| F12 Sessions availability alongside child tab | `Q3eqA` | F04의 Sessions identity/가용성만 대체 |
+| F13 File document central tab | `XZkUc` | 중앙 파일 toolbar와 기존 작업 탭 보존 |
+| F14 Read-only diff central tab | `slAPh` | 중앙 읽기 전용 diff, agent header 없음 |
+
+이전 보드는 삭제하거나 수정하지 않았다.
+Final의 New Agent, Quick workspace, Explorer Git decoration, Project Overview 관련 판단은 이번 revision이 새로 승인하거나 변경하지 않는다.
+기존 `System /`, `Component /`, `Screen /` master도 수정하지 않고 R2가 ref로 소비한다.
+
+### 구현 인계: 변경 컴포넌트와 수용 조건
+
+아래 owner는 읽은 현재 파일의 기존 역할 또는 명시된 확장 시작점이다.
+관계 모달과 Sessions에는 아직 제품 UI owner가 없으며, 존재하는 컴포넌트처럼 기술하지 않는다.
+
+| 변경 컴포넌트 / master | Code owner | 사용 화면 | 상태 | 클릭 / 키보드 | 수용 조건 |
+| --- | --- | --- | --- | --- | --- |
+| Agent identity `HXWFK` | `AgentRow.swift`, `AgentRowPresentation`, `AgentNavigatorRow` in `HideUI.swift` | Sidebar, Search, Recent, graph, live Session | demand/activity/read/ownership, unknown, disconnected | 행 선택은 실제 Pane focus; 별도 관계 target은 inspection | 동일 pane ID의 제목/provider/상태가 모든 surface에서 일치; 표시 문자열로 ID 추론 금지 |
+| Tree row `n1zn1O` | `AgentNavigatorRow`, `SidebarGrouping.swift`, `LineageGuideView.swift` | Projects, C02/C10 | root/child/grandchild, first/middle/last, collapsed | disclosure lane과 본문 선택을 분리 | 부모 첫 줄부터 자식 첫 줄까지 연속; 여러 줄 높이가 elbow 위치를 이동시키지 않음 |
+| Workspace row `pPtY6` | Workspace row in `HideUI.swift`, `CheckoutCardPresentation.swift` | Projects | empty/one/many, expanded/collapsed, missing, disconnected | populated 36pt 본문은 펼침, 별도 24pt ↗는 Workspace 열기 | 펼침 시 Pane/tab/read 변화 없음; empty는 행 전체로 열기; PR 버튼 의미 보존 |
+| Pane header `KvhcD` | `HideTerminalPaneCard`, `PaneHeaderPresentation` in `ShellView.swift` | terminal/agent, F01-F06 | root/child/parent, narrow, zoom, unavailable | 제목은 focus, 각 버튼은 자기 대상만 처리 | 28pt 유지; 의미 없는 unknown 보조 행 없음; overflow에도 기능 접근 가능 |
+| Named child chip `j0Sji` | `PaneChildChip`, `PaneChildRow`, `PaneLineagePresentation` | C04 및 F01/F02/F04/F05의 header ref | 1/many, partial, disconnected | child 이름은 해당 전용 탭 열기; +N/관계는 inspection | 보이는 이름과 나머지 수 합계가 알려진 direct children 수와 일치 |
+| Browser chrome `KUcQU` | `BrowserPaneView.swift`, `HideTerminalPaneCard` | F11 | connecting/ready/disconnected, URL editing | reload/address submit/CDP copy; native address focus 유지 | agent status, fork, instrumentation, lineage 영역 없음 |
+| Document toolbar `hxdu7` | `EditorViewerOverlay.swift`, `HideChoiceGroup`, `HideIconButton` | C06/F13; diff F14는 별도 toolbar 없음 | Markdown/text/image, dirty/loading/conflict | Find/wrap/mode/reveal; 편집기 키보드 보존 | 파일은 중앙 editor tab이며 terminal의 split pane으로 오인하지 않음 |
+| Workbench `e2GkWs` | `HideTabStrip`, `HideMainView`, `ShellModel.swift`, `ShellView.swift` | 모든 F 화면 | split/zoom/child/file/diff | tab 선택, close, MRU는 현행 registry | 부모 분할 배치는 보존; child를 operator Pane에 자동 split하지 않음 |
+| Graph node `FKLct` + identity | 신규 관계 view; 입력 확장 시작점 `CorePaneChildren`, `CoreLineageStep` | F08/C08 | selected/unlinked/retired/disconnected | 노드는 inspection; Open만 이동; Esc는 invocation focus 복귀 | 모달을 열거나 노드를 훑어도 읽음 처리 없음; 알려진 parent ID만 edge 생성 |
+| Session entry `n557o` + identity | 신규 history view; live identity는 기존 projection 재사용 | C09/F12 | live/ended/partial/unsupported/loading/empty/failure | 원본 기록 읽기와 Open live agent 분리 | Ended를 agent Done으로 바꾸지 않음; 지원되지 않는 기록을 샘플로 채우지 않음 |
+| Primitive buttons `Nyvom`, tabs `ywjtY` | `HideIconButton`, `HideChoiceGroup`, `HideTooltip`, `HideKeycap` | 모든 R2 화면 | default/hover/pressed/focus/disabled/pending | registry chord 및 동일 accessibility help | token/command owner 재사용; terminal 입력을 가로채는 전역 새 key handler 금지 |
+
+`N6BTh4`는 C02 네 폭에 있는 44개 연결선 segment가 참조하는 master다.
+전체 화면의 rail은 동일 측정 규칙으로 그린 벡터이며 연결선의 runtime owner는 계속 `LineageGuideView`다.
+`j0Sji`는 header master의 `TlMMF` ref로 연결되어 자식 줄을 표시하는 화면에 함께 반영된다.
+Browser 주소 toolbar `eMlZD`도 재사용 master이며 F11은 공통 Pane header와 이 toolbar를 조합한다.
+핵심 identity, tree row, Workspace, Pane header, Browser/file chrome, graph node, Session entry 및 전체 화면은 실제 ref 인스턴스로 구성했다.
+
+### Item 열과 관계선 계약
+
+Compact title은 12pt, 상태·보조 위치는 11pt, provider artwork는 기존 번들의 16pt 이미지를 사용한다.
+상태는 12pt 고정 열, provider와 title 사이 gap은 4pt다.
+Project tree의 disclosure 열은 16pt, depth step은 18pt이며 기존 inset 계산을 재사용한다.
+240pt에서도 폰트를 줄이지 않고 제목에 최대 두 줄을 배정한다.
+두 줄을 넘으면 마지막 줄 tail ellipsis로 끝내고 전체 제목은 tooltip/accessibility help에 제공한다.
+긴 비분리 영문은 두 줄까지 문자 단위 wrap할 수 있지만 provider와 상태 열의 위치는 바뀌지 않는다.
+Pen은 실제 native ellipsis 엔진을 실행하지 않으므로 좁은 헤더 예시는 명시적으로 말줄임 표시를 넣은 표본이다.
+
+첫 줄 상태 중심에 고정된 `lineageElbowY`를 사용하며 행의 가운데 높이를 elbow로 사용하지 않는다.
+펼친 부모의 trunk는 disclosure 아래에서 행 끝까지 내려온다.
+중간 자식은 trunk를 자신의 전체 행 높이로 통과시키고 첫 줄에서 분기한다.
+마지막 자식은 첫 줄 elbow에서 세로선을 끝낸다.
+손자 행을 지나가는 조상 열은 `continuing`에 따라 유지하며, 해당 부모의 마지막 자식이 나오기 전까지 끊지 않는다.
+접힌 부모 아래에는 departure/descendant rail을 만들지 않는다.
+깊이 2까지 Sidebar에서 직접 읽고, 더 깊은 경로는 관계 List 진입으로 이어간다는 R2 제안이다.
+원본 계층을 잘라 소속을 바꾸거나 존재하는 자식을 숨긴 것으로 집계하지 않는다.
+
+Project > Workspace는 위치 탐색이고 선으로 그리는 parent > child는 실행 위임이다.
+같은 Workspace에서는 위치를 매 행 반복하지 않는다.
+다른 Workspace의 child는 위치를 `↗ docs`처럼 보조 줄에 명시하며 physical Workspace에서도 동일 pane identity로 접근한다.
+물리 소속 집계와 raised/link 표시의 중복은 제거한다.
+populated Workspace가 펼쳐지면 대표 chip을 숨기고 접혔을 때만 표시한다.
+대표 1명에는 `+0`을 붙이지 않고 0명에는 agent chip을 만들지 않는다.
+
+부모의 둘째 줄은 자신의 canonical status 다음에 `자식 3 · 작업 2` 관계 target을 둔다.
+이 수는 **알려진 direct child panes**의 total/working이고 전체 후손이나 in-process subagent 수가 아니다.
+0명일 때는 관계 요약을 없애고 미계측을 0명으로 대체하지 않는다.
+부분 계측에서는 `알려진 자식`으로 한정하고 tooltip에 reason을 함께 보여준다.
+Disconnected일 때 retained 수를 현재 진행으로 표시하지 않고 연결 상태를 우선한다.
+공간이 부족하면 `자식 3`까지 줄이고 breakdown을 동일 help로 옮긴다.
+자기 상태와 자식의 진행 상태를 합쳐 새 상태 이름을 만들지 않는다.
+
+### Pane header 기능 inventory와 우선순위
+
+| 기능 | 현재 owner에서 확인한 동작 | R2 노출 / 우선순위 |
+| --- | --- | --- |
+| 제목 | Herdr label > agent summary > terminal title > Workspace label > pane ID | 항상 첫 줄; 한 줄 tail truncation; 전체 값과 fallback 근거는 help |
+| provider/status | Sidebar/탭은 공통 presentation; 현 terminal card는 title/activity 중심 | detected agent 헤더에 공통 mark/provider 도입; 일반 terminal에는 lifecycle 없음 |
+| tab strip | focused pane 제목을 따르는 현재 precedence, close/drag/MRU/new tab | R2는 stable tab label로 작업 배치를 식별하고 Pane에 세부 제목을 둠; 변경 승인 시 fallback/migration 계약 갱신 필요 |
+| ancestor/sibling | root-first breadcrumb와 step sibling menu | child는 return 버튼 항상; 공간이 있으면 direct parent label; 전체 조상/형제는 overflow에서 동일 intent |
+| child 이름 | named chips, 수용량 밖은 +N, subagent working/done 별도 badge | 실제 child가 있으면 24pt 줄 유지; +N과 network가 같은 관계 detail을 엶 |
+| unknown instrumentation | detected pane의 children snapshot, 별도 reason | known child가 없으면 첫 줄 ⓘ만; agent 미감지면 없음; partial이면 알려진 child 줄은 유지 |
+| zoom | 현재 card의 Zoomed 상태 pill; 실행은 기존 pane command | zoom 전환은 menu, zoom 중 restore 버튼 항상; 좁으면 label은 help로 |
+| split | 헤더에는 없음, 기존 pane command | overflow에서 기존 split right/below intent를 노출하는 제안 |
+| fork | capability와 local 조건을 만족할 때만 버튼; fork provenance 별도 mark | 넓으면 직접, 좁으면 overflow; fork는 sibling 복제이며 delegated child 생성과 다름 |
+| close | 항상; busy 판단/확인은 core `requiresCloseConfirmation` | 24pt 항상; hover-only로 숨기지 않음; 확인 계약 보존 |
+| ports | reported ports 각각 localhost URL 열기 | 여유 있으면 첫 port, 나머지 menu; 무한 chip 나열 금지; remote 도달성 없는 로컬 URL 조작 금지 |
+| notice/reconnect | pane content 위 caller-visible 오류/재연결 | runtime failure를 header 문자열로 숨기지 않고 기존 notice surface 유지 |
+| Browser | 자체 제목/profile + 24pt reload/address/CDP toolbar | agent controls 없음; zoom/close는 실제 capability, URL editing은 자체 focus |
+| file | breadcrumb, Markdown Preview/Edit, Unsaved, Find, wrap, reveal | 중앙 editor tab의 32pt toolbar; 좁으면 reveal을 menu로, mode/Unsaved/Find 우선 |
+| diff | `diffViewer`가 읽기 전용 중앙 content; 별도 document toolbar 없음 | file tab에서 구분, old/new 번호 유지; 가짜 agent header나 편집 action 없음 |
+
+헤더 고정 순서는 return(해당 시), identity, instrumentation(해당 시), 여유가 있는 port/fork, zoomed restore, overflow, close다.
+240pt의 ordinary agent는 양쪽 inset 8pt, identity mark/provider 36pt, overflow/close 48pt 및 gap을 먼저 예약하고 남은 폭을 title에 준다.
+child return과 zoomed restore가 동시에 필요하면 부가 breadcrumb/port/fork부터 menu로 이동한다.
+숫자로 정한 breakpoint보다 측정한 남은 title 폭을 우선하며, 240/320/344/400pt 예시는 그 결과 표본이다.
+title 최소 72pt를 유지할 수 없으면 title만 더 잘리고 controls는 겹치지 않게 하되 실제 pane 최소 폭/resize 정책은 현 core geometry를 따르며 임의로 축소하지 않는다.
+header는 resize 중 줄바꿈으로 높이가 바뀌지 않는다.
+높이는 ordinary/unknown-only 28pt + hairline 1pt, known child 있음 28 + 1 + 24pt다.
+child overflow는 보이는 이름 수를 제외한 나머지로 계산하며 header에 별도 total을 다시 붙이지 않는다.
+in-process badge가 필요하면 별도 `내부 작업/완료` scope와 unknown `-`를 보존하고 pane-child total에 합산하지 않는다.
+hover-only action은 없다.
+hover는 같은 footprint의 wash, keyboard focus는 중립 outline, selected는 selection wash이며 status hue는 변하지 않는다.
+resize/hover/focus는 추가 runtime state, I/O, timer를 요구하지 않는다.
+
+### 상태와 interaction 수용 표
+
+| 입력/상태 | 표시 / 동작 | 검수 조건 |
+| --- | --- | --- |
+| root, child, grandchild, 형제, 마지막 자식 | C02 동일 master와 고정 rail | 240pt 긴 두 줄에서도 첫 줄 elbow와 마지막 종료가 맞음 |
+| collapsed/selected/hover/focus/pressed | C10 별도 ref 상태 | 펼침·선택·focus outline을 상태 색과 혼동하지 않음 |
+| read/unread demand | 같은 `?`, `!`, `×`와 hue, 강조만 변화 | 읽음은 resolved가 아님; blocked approval은 Needs You 유지 |
+| delegated stopped/unread | canonical 완료 mark/label은 유지 가능, 그룹은 Seen | C10의 Done label 표본이 독립 사용자 Done 그룹에 들어가지 않음 |
+| hard stall | 기존 root Needs You와 child escalation projection | 새로운 timeout/그룹/색을 만들지 않음 |
+| unknown activity | `~ Unknown` | Idle이나 미계측으로 바꾸지 않음 |
+| 미계측 detected agent | ⓘ와 reason help, known children은 부분 표시 | 미감지 terminal에 같은 안내를 만들지 않음 |
+| disconnected | `⊘ Disconnected`, stale 진행 억제 | read/ownership을 덮어쓰지 않고 재연결 후 canonical 값 복귀 |
+| 펼침 | Workspace 본문 또는 agent disclosure | Pane focus/read/tab/layout 불변 |
+| 행 선택 | 해당 pane의 기존 실제 탭을 선택 | 자동 zoom이나 부모 tab 재배치 없음 |
+| 관계 summary / +N / network | 모달 inspection 열기 | background input 차단, read 불변, Esc는 invocation에 복귀 |
+| 모달 Open agent | child의 physical Workspace + 전용 tab | 부모 split 복귀 경로 유지; 다른 Workspace라는 결과를 action 옆에 설명 |
+| parent return | 기존 parent tab/pane에 복귀 | 현재 authoritative 배치를 그대로 표시; 오래된 geometry를 재생하지 않음 |
+| parent retired/unavailable | reason, disabled Open/Return, surviving Workspace 경로 | stale ID로 실행하지 않음; graph edge를 살아 있는 것처럼 만들지 않음 |
+| Search | query focus, ↑/↓ highlight, Return execute, Esc close | IME 그대로; highlighted 결과만 실행, 사라진 결과 재검증 |
+| Recent Panels | 기존 Control hold preview/release commit/Esc cancel | MRU 순서 유지; highlight만으로 읽음 처리하지 않음 |
+| Sessions | 실제 original message, live identity link 또는 Ended | supported reader 없이 기록/카운트/재개 가능성 생성 금지 |
+
+Sidebar에 키보드 focus가 있을 때만 ↑/↓는 보이는 행으로, ←는 접기/부모로, →는 펼치기/첫 child로 이동하는 tree 규칙을 적용한다.
+Enter는 focused target을 활성화하며 Space는 disclosure/button에만 적용한다.
+Workspace open과 관계 action은 별도 accessibility child control이며 Tab/Shift-Tab으로 접근한다.
+terminal responder에 focus가 있으면 이 키들은 terminal로 그대로 간다.
+전역 단축키는 기존 Option+숫자(agent), Command+숫자(tab), Control+Tab(Recent), Option+Tab(Project)를 보존하고 임의 chord를 추가하지 않는다.
+중복된 agent의 번호는 첫 visible occurrence에 한 번만 표시하고 exact modifier hold 때만 드러낸다.
+tooltip과 accessibility help는 기존 formatter의 동일 label/chord를 사용하며, 400ms hover와 150ms held hint 및 dismissal 동작을 보존한다.
+
+### 미결정과 검증 경계
+
+R2의 레이아웃·우선순위는 이번 디자인 요청을 완성하기 위한 제안이며 사용자에게 제품 구현을 승인받았다는 뜻이 아니다.
+Sessions의 provider 범위, durable identity, retention/privacy, remote reader는 여전히 데이터 계약 결정이 필요하다.
+Sessions가 추가되는 320pt panel은 active section을 보존하고 나머지 섹션을 overflow에서 접근하는 표본이며 Git/Changes 기능 삭제가 아니다.
+240pt Sidebar에서 두 단계보다 깊은 계층을 관계 List로 전환하는 기준, stable tab label 전환, inline instrumentation, pane overflow는 다음 PRD가 명시적으로 채택할 디자인 결정이다.
+
+제공 이미지 두 장과 Pen의 원본 크기 export를 직접 확인했다.
+240/320/344/400pt 계층 및 좁은 헤더, 전체 화면, graph, Search/MRU, 종류별 toolbar를 렌더했다.
+Pen 활성 노드의 bounds 검사에서는 R2의 visible partially/fully clipped 항목이 없었다.
+disabled 슬롯/instance replacement의 비활성 원본에 대해서는 Pen이 `fill_container` 경고를 출력하므로 이 경고를 실제 가시 영역의 clipping과 구분했다.
+읽음/disabled opacity는 기존 `0.45` 등이 Pen에서 백분율로 다르게 해석되는 문제 때문에 도안에서 secondary/muted 대비를 사용했다.
+제품에서는 기존 HideTheme opacity를 유지해야 하며 캔버스에 맞추어 토큰을 100배로 바꾸면 안 된다.
+Pen은 Inter 및 한국어 fallback, mono는 허용된 JetBrains Mono 대체를 사용하므로 native ss03/SF Mono glyph 일치를 증명하지 않는다.
+실제 native focus, 키보드, resize, hover timing, read 변화, accessibility, child 이동/복귀는 이번 디자인 작업에서 실행 검증하지 않았다.
+앱을 실행·설치·재시작하거나 운영자 Pane을 조작하지 않았다.
+run export는 `agents/runs/workflow-r2-compact/` 아래에만 저장했다.
+`gen-pen.mjs`와 `check-design-contract.mjs`의 결과는 토큰/band/source contract 검사이며 미적 승인이나 제품 E2E 성공으로 해석하지 않는다.
+최종 저장 후 두 명령과 `git diff --check`가 통과했다.
+디자인 검사는 theme literal 위반 0건, 11개 회귀 fixture, component/control ownership, 133개 생성 토큰과 band 일치를 확인했다.
+R2는 총 25개 보드이며 전체 보드 PNG와 주요 화면의 원본 크기 PNG를 run 디렉터리에 내보냈다.
+
+## 이전 검토 기록
+
 Status: the user accepted the overall direction of complete screens 01-04 on 2026-09-14; this is not an approved implementation contract.
 The product code and installed app are unchanged by this review.
 The editable source is [hide.pen](hide.pen), with the latest complete-screen proposal under `Review / 2026-09-14 Project-first IA /`.
