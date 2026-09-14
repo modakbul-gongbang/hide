@@ -339,6 +339,33 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
     }
 }
 
+/// AppKit indents the outline column's cell after sizing the table column.
+/// A cell can therefore extend beyond the final clip even when the column is
+/// the viewport width. Keep the fixed Git slot inside the cell's post-layout
+/// visible rect so disclosure depth and ancestor clipping cannot hide it.
+private final class WorkspaceOutlineCellView: NSTableCellView {
+    private var statusTrailingConstraint: NSLayoutConstraint?
+
+    func attachTrailingStatus(_ status: NSView) {
+        let constraint = status.trailingAnchor.constraint(
+            equalTo: trailingAnchor,
+            constant: -HideTheme.spacingXS
+        )
+        constraint.isActive = true
+        statusTrailingConstraint = constraint
+    }
+
+    override func layout() {
+        super.layout()
+        guard let statusTrailingConstraint, visibleRect.width > 0 else { return }
+        let hiddenTrailing = max(0, bounds.maxX - visibleRect.maxX)
+        let nextConstant = -(HideTheme.spacingXS + hiddenTrailing)
+        guard abs(statusTrailingConstraint.constant - nextConstant) > 0.5 else { return }
+        statusTrailingConstraint.constant = nextConstant
+        super.layout()
+    }
+}
+
 struct WorkspaceOutlineView: NSViewRepresentable {
     static let dragType = NSPasteboard.PasteboardType("dev.hide.explorer-path")
 
@@ -673,7 +700,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         }
 
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-            let cell = NSTableCellView()
+            let cell = WorkspaceOutlineCellView()
             cell.identifier = identifier
             let icon = NSTextField(labelWithString: "")
             icon.identifier = NSUserInterfaceItemIdentifier("icon")
@@ -698,10 +725,10 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
                 label.trailingAnchor.constraint(equalTo: git.leadingAnchor, constant: -4),
                 label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                git.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
                 git.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 git.widthAnchor.constraint(equalToConstant: HideTheme.agentMarkWidth),
             ])
+            cell.attachTrailingStatus(git)
             return cell
         }
 

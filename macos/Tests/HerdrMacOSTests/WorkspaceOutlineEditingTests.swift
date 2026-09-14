@@ -28,13 +28,19 @@ import Testing
             (window.contentView as! NSScrollView).documentView as! WorkspaceNSOutlineView
         }
 
-        func apply(operation: CoreExplorerOperation? = nil, expanded: Set<String> = [], selected: String? = nil) {
+        func apply(
+            operation: CoreExplorerOperation? = nil,
+            expanded: Set<String> = [],
+            selected: String? = nil,
+            gitDecorations: WorkspaceGitDecorations? = nil
+        ) {
             coordinator.apply(
                 rootURL: root,
                 expandedPaths: expanded,
                 selectedPath: selected,
                 fontScale: 1,
-                operation: operation
+                operation: operation,
+                gitDecorations: gitDecorations
             )
         }
 
@@ -122,50 +128,62 @@ import Testing
         return host
     }
 
-    @Test @MainActor func outlineColumnUsesTheActuallyVisibleClippedWidth() throws {
-        let coordinator = WorkspaceOutlineView.Coordinator(
-            openFile: { _ in },
-            updateExpandedPaths: { _ in },
-            fileOperations: WorkspaceFileOperations(
-                createFile: { _, _ in },
-                createDirectory: { _, _ in },
-                rename: { _, _ in },
-                move: { _, _ in },
-                requestTrash: { _ in }
-            )
+    @Test @MainActor func nestedGitBadgeStaysInsideTheFinalClippedCellGeometry() async throws {
+        let host = try await Self.makeHost()
+        let scroll = try #require(host.window.contentView as? NSScrollView)
+        let outline = host.outline
+        let source = host.root.appendingPathComponent("src")
+        let file = source.appendingPathComponent("lib.rs")
+        let decorations = WorkspaceGitDecorations(
+            rootPath: host.root.path,
+            entries: [
+                CoreChangedFile(
+                    path: file.path,
+                    relativePath: "src/lib.rs",
+                    status: .modified
+                ),
+            ]
         )
-        let scroll = WorkspaceOutlineView.makeScrollView(coordinator: coordinator)
-        scroll.scrollerStyle = .legacy
-        scroll.autohidesScrollers = false
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        host.apply(expanded: [source.path], gitDecorations: decorations)
+        try await host.settle { host.coordinator.visibleRowNames.contains("lib.rs") }
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 200))
+        host.window.contentView = nil
         scroll.frame = NSRect(x: 0, y: 0, width: 320, height: 200)
         container.addSubview(scroll)
-        let window = NSWindow(
-            contentRect: container.bounds,
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
-        window.contentView = container
+        host.window.contentView = container
         defer {
-            if let outline = scroll.documentView as? NSOutlineView {
-                outline.delegate = nil
-                outline.dataSource = nil
-            }
-            window.contentView = nil
-            window.close()
+            scroll.removeFromSuperview()
+            host.window.contentView = scroll
+            host.tearDown()
         }
 
         container.layoutSubtreeIfNeeded()
         scroll.layoutSubtreeIfNeeded()
+        outline.layoutSubtreeIfNeeded()
+        let row = try #require(host.coordinator.visibleRowNames.firstIndex(of: "lib.rs"))
+        let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)
+        cell.layoutSubtreeIfNeeded()
+        let status = try #require(
+            cell.subviews.first { $0.identifier?.rawValue == "git-status" } as? NSTextField
+        )
+        let statusInWindow = status.convert(status.bounds, to: nil)
+        var effectiveClip = scroll.contentView.convert(scroll.contentView.bounds, to: nil)
+        var ancestor = scroll.contentView.superview
+        while let view = ancestor {
+            effectiveClip = effectiveClip.intersection(view.convert(view.bounds, to: nil))
+            ancestor = view.superview
+        }
 
-        let outline = try #require(scroll.documentView as? NSOutlineView)
-        let column = try #require(outline.tableColumns.first)
-        let clipWidth = scroll.contentView.bounds.width
-        #expect(clipWidth < scroll.bounds.width, "the legacy vertical scroller must consume viewport width")
-        #expect(column.width == clipWidth)
-        #expect(column.resizingMask.isEmpty)
+        let visibleCellBounds = cell.visibleRect.intersection(cell.bounds)
+        #expect(
+            visibleCellBounds.width < cell.bounds.width,
+            "the fixture must reproduce a trailing-clipped outline cell: \(cell.visibleRect) in \(cell.bounds)"
+        )
+        #expect(status.stringValue == "M")
+        #expect(effectiveClip.contains(statusInWindow), "badge \(statusInWindow) must remain inside \(effectiveClip)")
+        #expect(status.visibleRect.contains(status.bounds))
+        #expect(outline.tableColumns.first?.resizingMask.isEmpty == true)
         #expect(outline.columnAutoresizingStyle == .noColumnAutoresizing)
     }
 
