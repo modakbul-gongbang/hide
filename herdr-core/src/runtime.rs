@@ -25,6 +25,7 @@ use crate::model::{
     StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
     UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
+use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
 use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
@@ -1201,6 +1202,7 @@ enum ValidatedEvent {
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
+    ReopenClosed,
     ForkPane(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
@@ -1379,6 +1381,11 @@ pub struct Runtime {
     /// that as a failure is what put "terminal attach ended" on screen for one
     /// frame every time the operator closed a pane.
     panes_closing: HashSet<String>,
+    /// User-initiated local closes, newest last. Memory only by contract.
+    recent_closed: VecDeque<ClosedItem>,
+    close_captures_in_flight: HashSet<String>,
+    recent_closed_sequence: u64,
+    reopen_in_flight: Option<String>,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
     /// with no size would otherwise fill the bounded diagnostics list with the
@@ -1644,6 +1651,10 @@ impl Runtime {
             background_ai_providers: Vec::new(),
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
+            recent_closed: VecDeque::new(),
+            close_captures_in_flight: HashSet::new(),
+            recent_closed_sequence: 0,
+            reopen_in_flight: None,
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -8591,6 +8602,54 @@ impl Runtime {
         self.snapshot.ui_state.selected_path = Some(path.to_owned());
     }
 
+    /// Restores an editor tab and the project context that owns it as one
+    /// caller-visible transition. Reopen uses the same path as a tab click so
+    /// an already-open file cannot appear over the wrong checkout.
+    fn focus_editor_tab_context(&mut self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .cloned()
+            .ok_or_else(|| format!("File tab {tab_id} is not open"))?;
+        let checkout = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == tab.workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == tab.checkout_id)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                "The editor tab's project or checkout is no longer available".to_owned()
+            })?;
+        self.activate_editor_tab(tab_id)?;
+        let pane_id = checkout.active_tab_id.as_deref().and_then(|id| {
+            let first = checkout
+                .tabs
+                .iter()
+                .find(|tab| tab.id.as_deref() == Some(id))
+                .and_then(|tab| tab.panes.first())
+                .map(|pane| pane.id.clone());
+            self.tab_focus_pane_id(id, first)
+        });
+        self.snapshot.navigator.focused_workspace_id = Some(tab.workspace_id);
+        self.snapshot.navigator.focused_checkout_id = Some(tab.checkout_id);
+        self.snapshot.navigator.root_path = Some(checkout.path);
+        self.select_terminal_pane(pane_id);
+        self.operator_focused_pane_id = None;
+        self.refresh_pane_read_state();
+        self.persist_current_ui_state();
+        Ok(())
+    }
+
     fn open_file_tab(&mut self, workspace_id: &str, checkout_id: &str, path: &str) {
         match self.prepare_file_tab(workspace_id, checkout_id, path) {
             Ok(prepared) => self.show_file_tab(prepared, workspace_id, checkout_id, path),
@@ -8643,6 +8702,382 @@ impl Runtime {
         if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("diff.focus_failed", message, false);
         }
+    }
+
+    fn next_recent_closed_key(&mut self) -> String {
+        self.recent_closed_sequence += 1;
+        format!(
+            "reopen-{}-{}",
+            unix_milliseconds(),
+            self.recent_closed_sequence
+        )
+    }
+
+    fn sync_recent_closed_snapshot(&mut self) {
+        self.snapshot.recent_closed.count = self.recent_closed.len();
+        self.snapshot.recent_closed.top_label = self
+            .recent_closed
+            .back()
+            .map(|item| item.label().to_owned());
+        self.snapshot.recent_closed.restoring = self.reopen_in_flight.is_some();
+    }
+
+    fn push_recent_closed(&mut self, item: ClosedItem) {
+        push_bounded(&mut self.recent_closed, item);
+        self.sync_recent_closed_snapshot();
+    }
+
+    fn set_reopen_notices(&mut self, notices: Vec<live::ReopenNotice>) {
+        self.snapshot.recent_closed.notices = notices
+            .into_iter()
+            .map(|notice| crate::model::RecentClosedNoticeSnapshot {
+                pane_id: notice.pane_id,
+                message: notice.message,
+            })
+            .collect();
+    }
+
+    fn close_context(&self, tab: &TabSnapshot) -> Option<ClosedContext> {
+        let tab_id = tab.id.as_ref()?;
+        let workspace_id = tab.workspace_id.as_ref()?;
+        let checkout_id = tab.checkout_id.as_ref()?;
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == *checkout_id)
+                    .map(|checkout| ClosedContext {
+                        workspace_id: workspace_id.clone(),
+                        workspace_label: workspace.label.clone(),
+                        checkout_id: checkout_id.clone(),
+                        checkout_path: checkout.path.clone(),
+                        tab_id: tab_id.clone(),
+                        tab_label: tab.label.clone().unwrap_or_else(|| "Tab".into()),
+                        tab_index: self
+                            .herdr_workspace_tab_order
+                            .get(workspace_id)
+                            .and_then(|ids| ids.iter().position(|id| id == tab_id))
+                            .unwrap_or(0),
+                    })
+            })
+    }
+
+    fn closed_panes(&self, tab: &TabSnapshot) -> Vec<ClosedPane> {
+        tab.panes
+            .iter()
+            .map(|pane| {
+                let agent = self
+                    .snapshot
+                    .navigator
+                    .agents
+                    .iter()
+                    .find(|agent| agent.pane_id == pane.id)
+                    .map(|agent| ClosedAgent {
+                        kind: agent.agent_kind.clone(),
+                        session_id: agent.session_id.clone(),
+                    });
+                ClosedPane {
+                    pane_id: pane.id.clone(),
+                    label: pane
+                        .herdr_label
+                        .clone()
+                        .or_else(|| pane.terminal_title.clone()),
+                    cwd: pane.cwd.clone(),
+                    agent,
+                    browser: matches!(
+                        pane.content,
+                        crate::pane_content::PaneContent::Browser { .. }
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    fn start_close_capture(&mut self, target: live::CloseCaptureTarget, tab: TabSnapshot) -> bool {
+        let target_id = match &target {
+            live::CloseCaptureTarget::Pane { pane_id } => pane_id,
+            live::CloseCaptureTarget::Tab { tab_id } => tab_id,
+        }
+        .clone();
+        if !self.close_captures_in_flight.insert(target_id.clone()) {
+            return false;
+        }
+        let Some(context) = self.close_context(&tab) else {
+            self.close_captures_in_flight.remove(&target_id);
+            self.panes_closing.remove(&target_id);
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: None,
+                message:
+                    "The closed item could not be recorded because its local context is incomplete"
+                        .into(),
+            }]);
+            return true;
+        };
+        let Some(live_context) = self.live.as_ref().cloned() else {
+            self.close_captures_in_flight.remove(&target_id);
+            self.panes_closing.remove(&target_id);
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: None,
+                message: "Closing this item requires the local Herdr connection".into(),
+            }]);
+            return true;
+        };
+        let request = live::CloseCaptureRequest {
+            key: self.next_recent_closed_key(),
+            context,
+            panes: self.closed_panes(&tab),
+            target,
+        };
+        if let Err(message) = live::spawn_close_capture(live_context, request) {
+            self.close_captures_in_flight.remove(&target_id);
+            self.panes_closing.remove(&target_id);
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: None,
+                message: format!("The close worker could not start: {message}"),
+            }]);
+        }
+        true
+    }
+
+    pub fn ingest_close_capture_result(
+        &mut self,
+        request: &live::CloseCaptureRequest,
+        result: Result<live::CloseCaptureOutcome, String>,
+    ) -> bool {
+        let target_id = match &request.target {
+            live::CloseCaptureTarget::Pane { pane_id } => pane_id,
+            live::CloseCaptureTarget::Tab { tab_id } => tab_id,
+        };
+        self.close_captures_in_flight.remove(target_id);
+        match result {
+            Ok(outcome) => {
+                if let Some(item) = outcome.item {
+                    self.push_recent_closed(item);
+                }
+                self.snapshot.recent_closed.notices.clear();
+                self.push_diagnostic(
+                    "recent_closed.captured",
+                    format!("Captured user close {}", request.key),
+                );
+            }
+            Err(message) => {
+                if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
+                    self.panes_closing.remove(pane_id);
+                }
+                self.set_reopen_notices(vec![live::ReopenNotice {
+                    pane_id: match &request.target {
+                        live::CloseCaptureTarget::Pane { pane_id } => Some(pane_id.clone()),
+                        live::CloseCaptureTarget::Tab { .. } => None,
+                    },
+                    message: format!("The item was not closed: {message}"),
+                }]);
+                self.push_diagnostic(
+                    "recent_closed.capture_failed",
+                    format!("{}: {message}", request.key),
+                );
+            }
+        }
+        self.sync_recent_closed_snapshot();
+        true
+    }
+
+    fn reopen_closed(&mut self) -> bool {
+        if self.reopen_in_flight.is_some() {
+            return false;
+        }
+        let Some(item) = self.recent_closed.back().cloned() else {
+            return false;
+        };
+        if let ClosedItem::File {
+            workspace_id,
+            checkout_id,
+            path,
+            ..
+        } = &item
+            && let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
+                (tab.kind == EditorTabKind::File
+                    && tab.workspace_id == *workspace_id
+                    && tab.checkout_id == *checkout_id
+                    && tab.path == *path)
+                    .then(|| tab.id.clone())
+            })
+        {
+            self.recent_closed.pop_back();
+            match self.focus_editor_tab_context(&tab_id) {
+                Ok(()) => self.snapshot.recent_closed.notices.clear(),
+                Err(message) => self.set_reopen_notices(vec![live::ReopenNotice {
+                    pane_id: None,
+                    message: format!(
+                        "The file reopened, but its project context was unavailable: {message}"
+                    ),
+                }]),
+            }
+            self.sync_recent_closed_snapshot();
+            return true;
+        }
+        let (workspace_exists, tab_exists, fallback_pane_id) = match &item {
+            ClosedItem::Pane {
+                context, placement, ..
+            } => {
+                let tab = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .find(|tab| tab.id.as_deref() == Some(context.tab_id.as_str()));
+                let fallback = tab.and_then(|tab| {
+                    placement
+                        .neighbor_pane_id
+                        .as_ref()
+                        .filter(|neighbor| tab.panes.iter().any(|pane| pane.id == **neighbor))
+                        .cloned()
+                        .or_else(|| tab.panes.first().map(|pane| pane.id.clone()))
+                });
+                (
+                    self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                        workspace
+                            .session_workspace_ids
+                            .contains(&context.workspace_id)
+                    }),
+                    tab.is_some(),
+                    fallback,
+                )
+            }
+            ClosedItem::Tab { context, .. } => (
+                self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                    workspace
+                        .session_workspace_ids
+                        .contains(&context.workspace_id)
+                }),
+                false,
+                None,
+            ),
+            ClosedItem::File { .. } => (true, true, None),
+        };
+        let key = item.key().to_owned();
+        self.reopen_in_flight = Some(key.clone());
+        self.set_reopen_notices(vec![live::ReopenNotice {
+            pane_id: fallback_pane_id.clone(),
+            message: format!("Reopening {}…", item.label()),
+        }]);
+        self.sync_recent_closed_snapshot();
+        let request = live::ReopenRequest {
+            item,
+            workspace_exists,
+            tab_exists,
+            fallback_pane_id,
+        };
+        let spawned = if matches!(&request.item, ClosedItem::File { .. }) {
+            self.worker_context
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "the file worker is unavailable".to_owned())
+                .and_then(|worker| {
+                    live::spawn_file_reopen(worker.runtime, worker.notifier, request)
+                })
+        } else {
+            self.live
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| {
+                    "the local Herdr connection is unavailable; retry when it returns".to_owned()
+                })
+                .and_then(|context| live::spawn_reopen(context, request))
+        };
+        if let Err(message) = spawned {
+            self.reopen_in_flight = None;
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: None,
+                message: format!("Reopen could not start; retry is available: {message}"),
+            }]);
+            self.sync_recent_closed_snapshot();
+        }
+        true
+    }
+
+    pub fn ingest_reopen_result(
+        &mut self,
+        request: &live::ReopenRequest,
+        result: Result<live::FileReopenResultOrHerdr, String>,
+    ) -> bool {
+        let key = request.item.key();
+        if self.reopen_in_flight.as_deref() != Some(key) {
+            return false;
+        }
+        self.reopen_in_flight = None;
+        match result {
+            Err(message) => {
+                self.set_reopen_notices(vec![live::ReopenNotice {
+                    pane_id: request.fallback_pane_id.clone(),
+                    message: format!("Reopen failed; retry is available: {message}"),
+                }]);
+            }
+            Ok(live::FileReopenResultOrHerdr::File(file)) => {
+                match file {
+                    live::FileReopenResult::Opened(document) => {
+                        if let ClosedItem::File {
+                            workspace_id,
+                            checkout_id,
+                            path,
+                            ..
+                        } = &request.item
+                        {
+                            let tab_id = Self::file_tab_id(workspace_id, checkout_id, path);
+                            let prepared = PreparedFileTab::Read {
+                                tab_id: tab_id.clone(),
+                                document,
+                            };
+                            self.show_file_tab(prepared, workspace_id, checkout_id, path);
+                            if let Err(message) = self.focus_editor_tab_context(&tab_id) {
+                                self.set_reopen_notices(vec![live::ReopenNotice {
+                                pane_id: None,
+                                message: format!("The file reopened, but its project context was unavailable: {message}"),
+                            }]);
+                            } else {
+                                self.snapshot.recent_closed.notices.clear();
+                            }
+                            self.recent_closed.pop_back();
+                        }
+                    }
+                    live::FileReopenResult::Missing => {
+                        self.recent_closed.pop_back();
+                        self.set_reopen_notices(vec![live::ReopenNotice {
+                        pane_id: None,
+                        message: "The file was deleted. Restore it from Finder Trash to open it again.".into(),
+                    }]);
+                    }
+                    live::FileReopenResult::Failed(message) => {
+                        self.set_reopen_notices(vec![live::ReopenNotice {
+                            pane_id: None,
+                            message: format!(
+                                "The file could not be reopened; retry is available: {message}"
+                            ),
+                        }]);
+                    }
+                }
+            }
+            Ok(live::FileReopenResultOrHerdr::Herdr(outcome)) => {
+                if outcome.consumed {
+                    self.recent_closed.pop_back();
+                }
+                if let Some(pane_id) = outcome.focused_pane_id {
+                    self.snapshot.terminal.pane_id = Some(pane_id.clone());
+                    self.snapshot.focused.surface = Surface::Terminal;
+                    self.snapshot.focused.pane_id = Some(pane_id.clone());
+                    self.snapshot.ui_state.selected_pane_id = Some(pane_id);
+                    self.deactivate_editor_tab();
+                }
+                self.set_reopen_notices(outcome.notices);
+            }
+        }
+        self.sync_recent_closed_snapshot();
+        true
     }
 
     /// Everything one clicked path changes on screen, decided in one event.
@@ -9711,7 +10146,8 @@ impl Runtime {
                     .iter()
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .flat_map(|checkout| checkout.tabs.iter())
-                    .find(|tab| tab.id.as_deref() == Some(payload.tab_id.as_str()));
+                    .find(|tab| tab.id.as_deref() == Some(payload.tab_id.as_str()))
+                    .cloned();
                 let Some(tab) = tab else {
                     self.set_error(
                         "tab.unknown",
@@ -9739,22 +10175,9 @@ impl Runtime {
                     );
                     return true;
                 }
-                let Some(context) = self.live.as_ref().cloned() else {
-                    self.set_error(
-                        "tab.control_unavailable",
-                        "Tab close requires a live Herdr connection",
-                        true,
-                    );
-                    return true;
-                };
                 let tab_id = payload.tab_id;
                 self.push_diagnostic("tab.close.requested", format!("Closing tab {tab_id}"));
-                if let Err(message) =
-                    live::spawn_local_control(context, RemoteControlAction::CloseTab { tab_id })
-                {
-                    self.set_error("tab.close_worker_failed", message, true);
-                }
-                true
+                self.start_close_capture(live::CloseCaptureTarget::Tab { tab_id }, tab)
             }
             ValidatedEvent::ClosePane(payload) => {
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
@@ -9771,25 +10194,67 @@ impl Runtime {
                     );
                     return true;
                 }
-                let Some(context) = self.live.as_ref().cloned() else {
+                let pane_id = payload.pane_id;
+                if self
+                    .snapshot
+                    .navigator
+                    .scratch
+                    .tabs
+                    .iter()
+                    .flat_map(|tab| tab.panes.iter())
+                    .any(|pane| pane.id == pane_id)
+                {
+                    let Some(context) = self.live.as_ref().cloned() else {
+                        self.set_error(
+                            "pane.control_unavailable",
+                            "Pane close requires a live Herdr connection",
+                            true,
+                        );
+                        return true;
+                    };
+                    self.panes_closing.insert(pane_id.clone());
+                    if let Err(message) = live::spawn_pane_control(
+                        context,
+                        PaneControlAction::Close {
+                            pane_id: pane_id.clone(),
+                        },
+                    ) {
+                        self.panes_closing.remove(&pane_id);
+                        self.set_error("pane.close_worker_failed", message, true);
+                    }
+                    return true;
+                }
+                if self.live.is_none() {
                     self.set_error(
                         "pane.control_unavailable",
                         "Pane close requires a live Herdr connection",
                         true,
                     );
                     return true;
+                }
+                let tab = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                    .cloned();
+                let Some(tab) = tab else {
+                    self.set_error(
+                        "pane.unknown",
+                        format!("Pane {pane_id} is not available"),
+                        false,
+                    );
+                    return true;
                 };
-                let pane_id = payload.pane_id;
                 self.retain_project_before_last_pane_closes(&pane_id);
                 self.panes_closing.insert(pane_id.clone());
                 self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
-                if let Err(message) =
-                    live::spawn_pane_control(context, PaneControlAction::Close { pane_id })
-                {
-                    self.set_error("pane.close_worker_failed", message, true);
-                }
-                true
+                self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
             }
+            ValidatedEvent::ReopenClosed => self.reopen_closed(),
             ValidatedEvent::ForkPane(payload) => {
                 let pane_id = payload.pane_id;
                 let Some(agent) = self
@@ -9982,6 +10447,26 @@ impl Runtime {
                 let was_active =
                     self.snapshot.editor.active_tab_id.as_deref() == Some(payload.tab_id.as_str());
                 let closed_tab = self.snapshot.editor.tabs.remove(index);
+                if closed_tab.kind == EditorTabKind::File {
+                    let key = self.next_recent_closed_key();
+                    let checkout_path = self
+                        .snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .find(|checkout| checkout.id == closed_tab.checkout_id)
+                        .map(|checkout| checkout.path.clone())
+                        .unwrap_or_default();
+                    self.push_recent_closed(ClosedItem::File {
+                        key,
+                        workspace_id: closed_tab.workspace_id.clone(),
+                        checkout_id: closed_tab.checkout_id.clone(),
+                        checkout_path,
+                        path: closed_tab.path.clone(),
+                        label: closed_tab.label.clone(),
+                    });
+                }
                 self.rebuild_tab_strips();
                 self.editor_documents.remove(&payload.tab_id);
                 self.editor_tab_history
@@ -11543,6 +12028,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
+        "reopen_closed" => Ok(ValidatedEvent::ReopenClosed),
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
@@ -21074,6 +21560,101 @@ mod tests {
         );
         assert_eq!(retarget_path("/repo/src2", "/repo/src", "/repo/lib"), None);
         assert_eq!(retarget_path("/repo", "/repo/src", "/repo/lib"), None);
+    }
+
+    fn closed_file(key: &str, path: &str) -> ClosedItem {
+        ClosedItem::File {
+            key: key.to_owned(),
+            workspace_id: "workspace:0".to_owned(),
+            checkout_id: "checkout:0".to_owned(),
+            checkout_path: "/repo".to_owned(),
+            path: path.to_owned(),
+            label: Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path)
+                .to_owned(),
+        }
+    }
+
+    /// B6, D-07, D-19: only user-closeable file tabs enter the unified stack;
+    /// diff tabs stay outside it and the shell receives the current count and
+    /// top label in the same snapshot.
+    #[test]
+    fn recent_closed_tracks_file_tabs_but_not_diff_tabs() {
+        let mut runtime = runtime();
+        for (id, kind) in [
+            ("diff:one", EditorTabKind::Diff),
+            ("file:one", EditorTabKind::File),
+        ] {
+            runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
+                id: id.to_owned(),
+                workspace_id: "workspace:0".to_owned(),
+                checkout_id: "checkout:0".to_owned(),
+                path: format!("/repo/{id}.rs"),
+                label: format!("{id}.rs"),
+                kind,
+                diff_committed: (kind == EditorTabKind::Diff).then_some(false),
+                markdown_preview: false,
+                wrap: false,
+                dirty: false,
+            });
+        }
+        assert!(runtime.dispatch_json(&explorer_event(
+            "file_close",
+            serde_json::json!({"tab_id": "diff:one"}),
+        )));
+        assert_eq!(runtime.snapshot().recent_closed.count, 0);
+
+        assert!(runtime.dispatch_json(&explorer_event(
+            "file_close",
+            serde_json::json!({"tab_id": "file:one"}),
+        )));
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.recent_closed.count, 1);
+        assert_eq!(
+            snapshot.recent_closed.top_label.as_deref(),
+            Some("file:one.rs")
+        );
+        assert!(!snapshot.recent_closed.restoring);
+    }
+
+    /// B15, B16, B23: an external-effect failure retains the same top item for
+    /// retry, while a definitively missing file consumes it and leaves an
+    /// explicit Trash recovery instruction.
+    #[test]
+    fn recent_closed_failure_retains_and_missing_file_consumes() {
+        let mut runtime = runtime();
+        let item = closed_file("reopen-fixture", "/repo/gone.rs");
+        runtime.push_recent_closed(item.clone());
+        let request = live::ReopenRequest {
+            item,
+            workspace_exists: true,
+            tab_exists: true,
+            fallback_pane_id: None,
+        };
+
+        runtime.reopen_in_flight = Some("reopen-fixture".to_owned());
+        assert!(runtime.ingest_reopen_result(&request, Err("layout.apply timed out".to_owned()),));
+        let retained = runtime.snapshot();
+        assert_eq!(retained.recent_closed.count, 1);
+        assert!(!retained.recent_closed.restoring);
+        assert!(retained.recent_closed.notices[0].message.contains("retry"));
+
+        runtime.reopen_in_flight = Some("reopen-fixture".to_owned());
+        assert!(runtime.ingest_reopen_result(
+            &request,
+            Ok(live::FileReopenResultOrHerdr::File(
+                live::FileReopenResult::Missing,
+            )),
+        ));
+        let consumed = runtime.snapshot();
+        assert_eq!(consumed.recent_closed.count, 0);
+        assert!(
+            consumed.recent_closed.notices[0]
+                .message
+                .contains("Finder Trash")
+        );
     }
     include!("runtime_lineage_tests.rs");
 }

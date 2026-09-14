@@ -11,6 +11,7 @@ use crate::herdr_contract::wire::{
 };
 use crate::live::SessionFetchError;
 use crate::model::PaneLayoutDirection;
+use crate::recent_closed::{ClosedLayout, ClosedLayoutNode, ClosedSplitDirection};
 use crate::session_sync::{
     PaneMove, ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
     ProjectionState, ReplicaEnvelope, ReplicaEvent, SubscriptionLine,
@@ -752,6 +753,185 @@ pub(crate) fn pane_split_params(
         right_click: req::PaneRightClickTarget::Herdr,
         workspace_id: None,
     })
+}
+
+pub(crate) fn pane_split_with_ratio_params(
+    pane: &str,
+    direction: ClosedSplitDirection,
+    cwd: &str,
+    ratio: f32,
+) -> Result<Value, String> {
+    params(req::PaneSplitParams {
+        target_pane_id: Some(pane.into()),
+        direction: match direction {
+            ClosedSplitDirection::Right => req::SplitDirection::Right,
+            ClosedSplitDirection::Down => req::SplitDirection::Down,
+        },
+        cwd: Some(cwd.into()),
+        focus: true,
+        env: Default::default(),
+        ratio: Some(ratio),
+        right_click: req::PaneRightClickTarget::Herdr,
+        workspace_id: None,
+    })
+}
+
+pub(crate) fn layout_export_params(tab_id: &str) -> Result<Value, String> {
+    params(req::LayoutExportParams {
+        pane_id: None,
+        tab_id: Some(tab_id.into()),
+    })
+}
+
+pub(crate) fn layout_apply_params(
+    workspace_id: &str,
+    tab_id: Option<&str>,
+    tab_label: &str,
+    root: &ClosedLayoutNode,
+) -> Result<Value, String> {
+    params(req::LayoutApplyParams {
+        focus: true,
+        root: request_layout_node(root),
+        tab_id: tab_id.map(str::to_owned),
+        tab_label: Some(tab_label.into()),
+        workspace_id: Some(workspace_id.into()),
+    })
+}
+
+pub(crate) fn agent_start_params(
+    pane_id: &str,
+    name: &str,
+    kind: &str,
+    args: Vec<String>,
+) -> Result<Value, String> {
+    params(req::AgentStartParams {
+        args,
+        kind: kind.into(),
+        name: name.into(),
+        pane_id: pane_id.into(),
+        timeout_ms: Some(120_000),
+    })
+}
+
+fn request_layout_node(node: &ClosedLayoutNode) -> req::LayoutNode {
+    match node {
+        ClosedLayoutNode::Pane {
+            pane_id,
+            label,
+            cwd,
+            command,
+            env,
+        } => req::LayoutNode::Pane {
+            pane_id: pane_id.clone(),
+            label: label.clone(),
+            cwd: cwd.clone(),
+            command: command.clone(),
+            env: env.clone().into_iter().collect(),
+        },
+        ClosedLayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => req::LayoutNode::Split {
+            direction: match direction {
+                ClosedSplitDirection::Right => req::SplitDirection::Right,
+                ClosedSplitDirection::Down => req::SplitDirection::Down,
+            },
+            ratio: *ratio,
+            first: Box::new(request_layout_node(first)),
+            second: Box::new(request_layout_node(second)),
+        },
+    }
+}
+
+fn response_layout_node(node: res::LayoutNode) -> ClosedLayoutNode {
+    match node {
+        res::LayoutNode::Pane {
+            pane_id,
+            label,
+            cwd,
+            command,
+            env,
+        } => ClosedLayoutNode::Pane {
+            pane_id,
+            label,
+            cwd,
+            command,
+            env: env.into_iter().collect(),
+        },
+        res::LayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => ClosedLayoutNode::Split {
+            direction: match direction {
+                res::SplitDirection::Right => ClosedSplitDirection::Right,
+                res::SplitDirection::Down => ClosedSplitDirection::Down,
+            },
+            ratio,
+            first: Box::new(response_layout_node(*first)),
+            second: Box::new(response_layout_node(*second)),
+        },
+    }
+}
+
+pub(crate) fn exported_layout(value: Value) -> Result<ClosedLayout, String> {
+    let missing = "layout.export response is missing layout";
+    match response(value, missing)? {
+        res::ResponseResult::LayoutExport { layout } => Ok(ClosedLayout {
+            workspace_id: layout.workspace_id,
+            tab_id: layout.tab_id,
+            zoomed: layout.zoomed,
+            focused_pane_id: layout.focused_pane_id,
+            root: response_layout_node(layout.root),
+        }),
+        _ => Err(missing.into()),
+    }
+}
+
+pub(crate) fn applied_layout(value: Value) -> Result<ClosedLayout, String> {
+    let missing = "layout.apply response is missing layout";
+    match response(value, missing)? {
+        res::ResponseResult::LayoutApply { layout } => Ok(ClosedLayout {
+            workspace_id: layout.workspace_id,
+            tab_id: layout.tab_id,
+            zoomed: layout.zoomed,
+            focused_pane_id: layout.focused_pane_id,
+            root: response_layout_node(layout.root),
+        }),
+        _ => Err(missing.into()),
+    }
+}
+
+pub(crate) fn created_workspace(value: Value) -> Result<(String, String, String), String> {
+    let missing = "workspace.create response is missing workspace or root pane";
+    match response(value, missing)? {
+        res::ResponseResult::WorkspaceCreated {
+            workspace,
+            root_pane,
+            tab,
+        } => Ok((workspace.workspace_id, tab.tab_id, root_pane.pane_id)),
+        _ => Err(missing.into()),
+    }
+}
+
+pub(crate) fn pane_swap_params(first: &str, second: &str) -> Result<Value, String> {
+    params(req::PaneSwapParams {
+        direction: None,
+        pane_id: None,
+        source_pane_id: Some(first.into()),
+        target_pane_id: Some(second.into()),
+    })
+}
+
+pub(crate) fn started_agent(value: Value) -> Result<String, String> {
+    let missing = "agent.start response is missing agent pane";
+    match response(value, missing)? {
+        res::ResponseResult::AgentStarted { agent, .. } => nonempty_id(agent.pane_id, missing),
+        _ => Err(missing.into()),
+    }
 }
 pub(crate) fn pane_resize_params(
     pane: &str,

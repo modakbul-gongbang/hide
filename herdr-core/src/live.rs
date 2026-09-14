@@ -20,12 +20,18 @@ use serde_json::{Value, json};
 use crate::ffi::ChangeNotifier;
 use crate::find::PaneFindOptions;
 use crate::fork::{ForkRequest, fork_arguments};
-use crate::herdr_api::{ApiConnector, UnixSocketConnector, request_with_connector};
+use crate::herdr_api::{
+    ApiConnector, UnixSocketConnector, request_with_connector, request_with_correlation_id,
+};
 #[cfg(test)]
 use crate::herdr_api::{HERDR_PROTOCOL_REVISION, request};
 use crate::model::{
-    PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot, WorkspaceRegistration,
-    WorkspaceSnapshot,
+    EditorDocumentSnapshot, PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
+    WorkspaceRegistration, WorkspaceSnapshot,
+};
+use crate::recent_closed::{
+    ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutNode, ClosedPane, PanePlacement,
+    resume_arguments,
 };
 use crate::remote::RusshRemoteClient;
 use crate::runtime::Runtime;
@@ -600,6 +606,510 @@ fn control_request(
 ) -> Result<Value, String> {
     request_with_connector(connector, method, params, Duration::from_secs(5))
         .map_err(|error| format!("{method} failed: {error}"))
+}
+
+fn reopen_request(
+    connector: &dyn ApiConnector,
+    request_id: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    request_with_correlation_id(
+        connector,
+        request_id,
+        method,
+        params,
+        Duration::from_secs(5),
+    )
+    .map_err(|error| format!("{method} failed: {error}"))
+}
+
+#[derive(Clone, Debug)]
+pub enum CloseCaptureTarget {
+    Pane { pane_id: String },
+    Tab { tab_id: String },
+}
+
+#[derive(Clone, Debug)]
+pub struct CloseCaptureRequest {
+    pub key: String,
+    pub context: ClosedContext,
+    pub panes: Vec<ClosedPane>,
+    pub target: CloseCaptureTarget,
+}
+
+#[derive(Debug)]
+pub struct CloseCaptureOutcome {
+    pub item: Option<ClosedItem>,
+}
+
+pub fn spawn_close_capture(
+    context: LiveContext,
+    request: CloseCaptureRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-close-capture".to_owned())
+        .spawn(move || {
+            let result = run_close_capture(context.api_connector.as_ref(), &request);
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_close_capture_result(&request, result),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("close capture worker could not be started: {error}"))
+}
+
+fn run_close_capture(
+    connector: &dyn ApiConnector,
+    request: &CloseCaptureRequest,
+) -> Result<CloseCaptureOutcome, String> {
+    let layout_value = reopen_request(
+        connector,
+        &format!("herdr-core:{}:export", request.key),
+        "layout.export",
+        wire::layout_export_params(&request.context.tab_id)?,
+    )?;
+    let layout = wire::exported_layout(layout_value)?;
+    let item = match &request.target {
+        CloseCaptureTarget::Pane { pane_id } => {
+            let pane = request
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == *pane_id)
+                .cloned()
+                .ok_or_else(|| format!("pane {pane_id} disappeared before close capture"))?;
+            if pane.browser {
+                None
+            } else {
+                let placement = layout.root.placement_for(pane_id).unwrap_or(PanePlacement {
+                    neighbor_pane_id: None,
+                    direction: crate::recent_closed::ClosedSplitDirection::Right,
+                    ratio: 0.5,
+                    target_was_first: false,
+                });
+                Some(ClosedItem::Pane {
+                    key: request.key.clone(),
+                    context: request.context.clone(),
+                    pane,
+                    placement,
+                })
+            }
+        }
+        CloseCaptureTarget::Tab { .. } => {
+            let browser_count = request.panes.iter().filter(|pane| pane.browser).count();
+            (browser_count < request.panes.len()).then(|| ClosedItem::Tab {
+                key: request.key.clone(),
+                context: request.context.clone(),
+                layout,
+                panes: request.panes.clone(),
+                browser_count,
+            })
+        }
+    };
+    let (method, params) = match &request.target {
+        CloseCaptureTarget::Pane { pane_id } => ("pane.close", wire::pane_target_params(pane_id)?),
+        CloseCaptureTarget::Tab { tab_id } => ("tab.close", wire::tab_target_params(tab_id)?),
+    };
+    reopen_request(
+        connector,
+        &format!("herdr-core:{}:close", request.key),
+        method,
+        params,
+    )?;
+    Ok(CloseCaptureOutcome { item })
+}
+
+#[derive(Clone, Debug)]
+pub struct ReopenRequest {
+    pub item: ClosedItem,
+    pub workspace_exists: bool,
+    pub tab_exists: bool,
+    pub fallback_pane_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReopenNotice {
+    pub pane_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReopenOutcome {
+    pub consumed: bool,
+    pub focused_pane_id: Option<String>,
+    pub notices: Vec<ReopenNotice>,
+}
+
+#[derive(Debug)]
+pub enum FileReopenResult {
+    Opened(EditorDocumentSnapshot),
+    Missing,
+    Failed(String),
+}
+
+pub fn spawn_reopen(context: LiveContext, request: ReopenRequest) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-reopen-closed".to_owned())
+        .spawn(move || {
+            let result = match &request.item {
+                ClosedItem::File { path, .. } => Ok(run_file_reopen(path)),
+                _ => run_herdr_reopen(context.api_connector.as_ref(), &request)
+                    .map(FileReopenResultOrHerdr::Herdr),
+            };
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_reopen_result(&request, result),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("reopen worker could not be started: {error}"))
+}
+
+pub fn spawn_file_reopen(
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+    request: ReopenRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-file-reopen".to_owned())
+        .spawn(move || {
+            let ClosedItem::File { path, .. } = &request.item else {
+                return;
+            };
+            let result = Ok(run_file_reopen(path));
+            let Some(runtime) = runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_reopen_result(&request, result),
+                Err(_) => return,
+            };
+            drop(runtime);
+            if changed {
+                notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("file reopen worker could not be started: {error}"))
+}
+
+#[derive(Debug)]
+pub enum FileReopenResultOrHerdr {
+    File(FileReopenResult),
+    Herdr(ReopenOutcome),
+}
+
+fn run_file_reopen(path: &str) -> FileReopenResultOrHerdr {
+    let path = Path::new(path);
+    if !path.exists() {
+        return FileReopenResultOrHerdr::File(FileReopenResult::Missing);
+    }
+    FileReopenResultOrHerdr::File(match crate::files::open(path) {
+        Ok(document) => FileReopenResult::Opened(document),
+        Err(message) => FileReopenResult::Failed(message),
+    })
+}
+
+fn run_herdr_reopen(
+    connector: &dyn ApiConnector,
+    request: &ReopenRequest,
+) -> Result<ReopenOutcome, String> {
+    match &request.item {
+        ClosedItem::Pane {
+            key,
+            context,
+            pane,
+            placement,
+        } => reopen_pane(connector, key, context, pane, placement, request),
+        ClosedItem::Tab {
+            key,
+            context,
+            layout,
+            panes,
+            browser_count,
+        } => reopen_tab(
+            connector,
+            key,
+            context,
+            &layout.root,
+            panes,
+            *browser_count,
+            request.workspace_exists,
+        ),
+        ClosedItem::File { .. } => unreachable!("file reopen uses the filesystem worker"),
+    }
+}
+
+fn ensure_workspace_and_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    workspace_exists: bool,
+    tab_exists: bool,
+    root: &ClosedLayoutNode,
+    notices: &mut Vec<String>,
+) -> Result<crate::recent_closed::ClosedLayout, String> {
+    if tab_exists {
+        return Err("the requested tab already exists".into());
+    }
+    let (workspace_id, tab_id) = if workspace_exists {
+        (context.workspace_id.clone(), None)
+    } else {
+        let created = reopen_request(
+            connector,
+            &format!("herdr-core:{key}:workspace"),
+            "workspace.create",
+            wire::workspace_create_params(&context.checkout_path, &context.workspace_label)?,
+        )?;
+        let (workspace_id, tab_id, _) = wire::created_workspace(created)?;
+        (workspace_id, Some(tab_id))
+    };
+    let applied = reopen_request(
+        connector,
+        &format!("herdr-core:{key}:layout"),
+        "layout.apply",
+        wire::layout_apply_params(&workspace_id, tab_id.as_deref(), &context.tab_label, root)?,
+    )?;
+    let layout = wire::applied_layout(applied)?;
+    let move_result = reopen_request(
+        connector,
+        &format!("herdr-core:{key}:tab-position"),
+        "tab.move",
+        wire::tab_move_params(&layout.tab_id, context.tab_index)?,
+    )
+    .and_then(wire::moved_tabs);
+    if let Err(message) = move_result {
+        notices.push(format!(
+            "The tab reopened but its original position could not be restored: {message}"
+        ));
+    }
+    Ok(layout)
+}
+
+fn reopen_pane(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    pane: &ClosedPane,
+    placement: &PanePlacement,
+    request: &ReopenRequest,
+) -> Result<ReopenOutcome, String> {
+    let mut notices = Vec::new();
+    let cwd = restored_cwd(&pane.cwd, &context.checkout_path, &mut notices);
+    let restored_pane_id = if request.tab_exists {
+        let target = placement
+            .neighbor_pane_id
+            .as_ref()
+            .filter(|id| request.fallback_pane_id.as_deref() == Some(id.as_str()))
+            .or(request.fallback_pane_id.as_ref())
+            .ok_or_else(|| "the original tab has no pane to split".to_owned())?;
+        let value = reopen_request(
+            connector,
+            &format!("herdr-core:{key}:pane"),
+            "pane.split",
+            wire::pane_split_with_ratio_params(target, placement.direction, &cwd, placement.ratio)?,
+        )?;
+        let new_pane_id = wire::split_pane(value)?;
+        if placement.target_was_first {
+            reopen_request(
+                connector,
+                &format!("herdr-core:{key}:swap"),
+                "pane.swap",
+                wire::pane_swap_params(&new_pane_id, target)?,
+            )?;
+        }
+        new_pane_id
+    } else {
+        let root = ClosedLayoutNode::Pane {
+            pane_id: None,
+            label: pane.label.clone(),
+            cwd: Some(cwd.clone()),
+            command: None,
+            env: Default::default(),
+        };
+        let layout = ensure_workspace_and_tab(
+            connector,
+            key,
+            context,
+            request.workspace_exists,
+            false,
+            &root,
+            &mut notices,
+        )?;
+        layout.focused_pane_id
+    };
+    if let Some(agent) = &pane.agent {
+        start_or_degrade_agent(connector, key, 0, &restored_pane_id, agent, &mut notices);
+    }
+    Ok(ReopenOutcome {
+        consumed: true,
+        focused_pane_id: Some(restored_pane_id.clone()),
+        notices: notices
+            .into_iter()
+            .map(|message| ReopenNotice {
+                pane_id: Some(restored_pane_id.clone()),
+                message,
+            })
+            .collect(),
+    })
+}
+
+fn reopen_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    root: &ClosedLayoutNode,
+    panes: &[ClosedPane],
+    browser_count: usize,
+    workspace_exists: bool,
+) -> Result<ReopenOutcome, String> {
+    let pane_map = panes
+        .iter()
+        .map(|pane| (pane.pane_id.clone(), pane.clone()))
+        .collect();
+    let mut terminal_ids = Vec::new();
+    root.terminal_pane_ids(&pane_map, &mut terminal_ids);
+    let mut common_notices = Vec::new();
+    let Some(root) =
+        root.prune_browser_panes(&pane_map, &context.checkout_path, &mut common_notices)
+    else {
+        return Err("the closed tab contained only Browser panes".into());
+    };
+    let layout = ensure_workspace_and_tab(
+        connector,
+        key,
+        context,
+        workspace_exists,
+        false,
+        &root,
+        &mut common_notices,
+    )?;
+    let mut new_ids = Vec::new();
+    layout.root.pane_ids(&mut new_ids);
+    let terminal_panes = terminal_ids
+        .iter()
+        .filter_map(|id| pane_map.get(id))
+        .collect::<Vec<_>>();
+    let mut notices = Vec::new();
+    for (index, (pane, new_id)) in terminal_panes.iter().zip(new_ids.iter()).enumerate() {
+        let mut pane_notices = Vec::new();
+        if !Path::new(&pane.cwd).is_dir() {
+            pane_notices.push(format!(
+                "{} no longer exists; reopened in the checkout root",
+                pane.cwd
+            ));
+        }
+        if let Some(agent) = &pane.agent {
+            start_or_degrade_agent(connector, key, index, new_id, agent, &mut pane_notices);
+        }
+        notices.extend(pane_notices.into_iter().map(|message| ReopenNotice {
+            pane_id: Some(new_id.clone()),
+            message,
+        }));
+    }
+    if browser_count > 0 {
+        common_notices.push(format!(
+            "{browser_count} Browser pane{} could not be reopened",
+            if browser_count == 1 { "" } else { "s" }
+        ));
+    }
+    let first = new_ids.first().cloned();
+    notices.extend(common_notices.into_iter().map(|message| ReopenNotice {
+        pane_id: first.clone(),
+        message,
+    }));
+    Ok(ReopenOutcome {
+        consumed: true,
+        focused_pane_id: first,
+        notices,
+    })
+}
+
+fn restored_cwd(cwd: &str, checkout_root: &str, notices: &mut Vec<String>) -> String {
+    if Path::new(cwd).is_dir() {
+        cwd.to_owned()
+    } else {
+        notices.push(format!(
+            "{cwd} no longer exists; reopened in the checkout root"
+        ));
+        checkout_root.to_owned()
+    }
+}
+
+fn start_or_degrade_agent(
+    connector: &dyn ApiConnector,
+    key: &str,
+    index: usize,
+    pane_id: &str,
+    agent: &ClosedAgent,
+    notices: &mut Vec<String>,
+) {
+    let name = format!("reopen-{key}-{index}");
+    let resume = resume_arguments(agent);
+    if let Some(args) = resume {
+        let result = start_agent(
+            connector,
+            &format!("herdr-core:{key}:agent:{index}:resume"),
+            pane_id,
+            &name,
+            &agent.kind,
+            args,
+        );
+        if result.is_ok() {
+            return;
+        }
+        notices.push(format!(
+            "Session {} could not be resumed; started a new conversation",
+            agent.session_id.as_deref().unwrap_or("unknown")
+        ));
+    } else {
+        notices
+            .push("Previous conversation could not be resumed; started a new conversation".into());
+    }
+    if let Err(message) = start_agent(
+        connector,
+        &format!("herdr-core:{key}:agent:{index}:fresh"),
+        pane_id,
+        &name,
+        &agent.kind,
+        Vec::new(),
+    ) {
+        notices.push(format!(
+            "Agent could not be started; the shell was kept: {message}"
+        ));
+    }
+}
+
+fn start_agent(
+    connector: &dyn ApiConnector,
+    request_id: &str,
+    pane_id: &str,
+    name: &str,
+    kind: &str,
+    args: Vec<String>,
+) -> Result<String, String> {
+    reopen_request(
+        connector,
+        request_id,
+        "agent.start",
+        wire::agent_start_params(pane_id, name, kind, args)?,
+    )
+    .and_then(wire::started_agent)
 }
 
 fn fetch_pane_layout(
