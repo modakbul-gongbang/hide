@@ -1216,6 +1216,8 @@ pub enum ChangedFileStatus {
     Added,
     Deleted,
     Untracked,
+    Renamed,
+    Conflict,
 }
 
 impl ChangedFileStatus {
@@ -1227,8 +1229,14 @@ impl ChangedFileStatus {
         let mut characters = code.chars();
         let index = characters.next().unwrap_or(' ');
         let worktree = characters.next().unwrap_or(' ');
-        if index == '?' || worktree == '?' {
+        if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
+            return Self::Conflict;
+        }
+        if index == '?' && worktree == '?' {
             return Self::Untracked;
+        }
+        if index == 'R' || worktree == 'R' {
+            return Self::Renamed;
         }
         if index == 'D' || worktree == 'D' {
             return Self::Deleted;
@@ -1245,6 +1253,8 @@ impl ChangedFileStatus {
             Self::Added => "added",
             Self::Deleted => "deleted",
             Self::Untracked => "untracked",
+            Self::Renamed => "renamed",
+            Self::Conflict => "conflict",
         }
     }
 }
@@ -1255,6 +1265,10 @@ pub struct ChangedFileSnapshot {
     pub path: String,
     /// Relative to the checkout root, which is what the row shows.
     pub relative_path: String,
+    /// The source side of a rename, relative to the checkout root. Absent for
+    /// every other status. The destination remains `relative_path`, so
+    /// opening a row always addresses the file that exists now.
+    pub previous_relative_path: Option<String>,
     pub status: ChangedFileStatus,
     /// Lines added and removed in this file. Absent for a file git cannot
     /// count - an untracked file has no index side and a binary file has no

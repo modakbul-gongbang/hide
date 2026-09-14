@@ -108,6 +108,46 @@ private func presentationAgent(
     #expect(presentation.isPrimary)
 }
 
+@Test func agentsScopeUsesTheCoresFinalDelegatedAnswer() {
+    let own = presentationAgent(id: "own", paneID: "pane-own", group: "working")
+    var delegated = presentationAgent(id: "delegated", paneID: "pane-child", group: "working")
+    delegated.delegated = true
+    let all = [own, delegated]
+
+    #expect(SidebarGrouping.visibleAgents(all, scope: .mine).map(\.id) == ["own"])
+    #expect(SidebarGrouping.visibleAgents(all, scope: .all).map(\.id) == ["own", "delegated"])
+    #expect(SidebarGrouping.sections(SidebarGrouping.visibleAgents(all, scope: .mine)).flatMap(\.agents).map(\.id) == ["own"])
+}
+
+@Test func projectTaskForestCrossesCheckoutsAndSearchKeepsAncestors() {
+    var parent = presentationAgent(id: "parent", paneID: "pane-parent", group: "working")
+    var child = presentationAgent(id: "child", paneID: "pane-child", group: "working")
+    var grandchild = presentationAgent(id: "grandchild", paneID: "pane-grandchild", group: "working")
+    parent.lineageChildPaneIDs = ["pane-child"]
+    child.lineageDepth = 1
+    child.lineageChildPaneIDs = ["pane-grandchild"]
+    grandchild.lineageDepth = 2
+    let checkouts = [
+        presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-parent"]),
+        presentationCheckout(id: "feature", path: "/tmp/hide.feature", paneIDs: ["pane-child", "pane-grandchild"]),
+    ]
+
+    let rows = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts
+    )
+    #expect(rows.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+    #expect(rows.map(\.depth) == [0, 1, 2])
+    #expect(rows.map(\.checkoutLabel) == ["main", "feature", "feature"])
+
+    let search = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts,
+        query: "grandchild"
+    )
+    #expect(search.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+}
+
 @Test func checkoutSummaryFallsBackToPanesAndKeepsMissingExplicit() {
     let checkout = presentationCheckout(
         id: "missing",

@@ -1865,6 +1865,7 @@ struct CoreChangesSnapshot: Decodable {
 struct CoreChangedFile: Decodable, Identifiable, Equatable {
     let path: String
     let relativePath: String
+    let previousRelativePath: String?
     let status: CoreChangedFileStatus
     /// Absent for a file git cannot count - an untracked one has no index side
     /// and a binary one has no lines - so the row shows no numbers rather than
@@ -1893,6 +1894,7 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case path
         case relativePath = "relative_path"
+        case previousRelativePath = "previous_relative_path"
         case status
         case addedLines = "added_lines"
         case removedLines = "removed_lines"
@@ -1901,12 +1903,14 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     init(
         path: String,
         relativePath: String,
+        previousRelativePath: String? = nil,
         status: CoreChangedFileStatus,
         addedLines: Int? = nil,
         removedLines: Int? = nil
     ) {
         self.path = path
         self.relativePath = relativePath
+        self.previousRelativePath = previousRelativePath
         self.status = status
         self.addedLines = addedLines
         self.removedLines = removedLines
@@ -1918,6 +1922,8 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
     case added
     case deleted
     case untracked
+    case renamed
+    case conflict
 
     /// The single letter the row shows, which is how Git itself names these.
     var badge: String {
@@ -1926,6 +1932,19 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
         case .added: "A"
         case .deleted: "D"
         case .untracked: "U"
+        case .renamed: "R"
+        case .conflict: "!"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .modified: "Modified"
+        case .added: "Added"
+        case .deleted: "Deleted"
+        case .untracked: "Untracked"
+        case .renamed: "Renamed"
+        case .conflict: "Conflict"
         }
     }
 }
@@ -3015,6 +3034,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             bridgeError = "pane.no_current_pane: Select a terminal pane before toggling zoom"
             return
         }
+        togglePaneZoom(paneID)
+    }
+
+    func togglePaneZoom(_ paneID: String) {
         dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
     }
 

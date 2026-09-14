@@ -4426,6 +4426,8 @@ impl Runtime {
     pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
         let changes_list_visible = self.snapshot.ui_state.right_panel_visible
             && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
+        let explorer_visible = self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Explorer;
         let active_diff = self
             .snapshot
             .editor
@@ -4438,7 +4440,7 @@ impl Runtime {
                     .iter()
                     .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
             });
-        if !changes_list_visible && active_diff.is_none() {
+        if !changes_list_visible && !explorer_visible && active_diff.is_none() {
             return None;
         }
         let root_path = self.snapshot.navigator.root_path.as_ref()?;
@@ -20420,6 +20422,7 @@ mod tests {
         runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
             path: path.to_string_lossy().into_owned(),
             relative_path: "tracked.json".to_owned(),
+            previous_relative_path: None,
             status: crate::model::ChangedFileStatus::Modified,
             added_lines: Some(2),
             removed_lines: Some(1),
@@ -20472,6 +20475,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![EditorTabKind::Diff, EditorTabKind::File],
             "opening the source does not reuse its diff tab"
+        );
+    }
+
+    #[test]
+    fn explorer_visibility_keeps_one_checkout_scoped_changes_reader_alive() {
+        let (mut runtime, root, _checkout_id, _second, _second_id) = reveal_runtime();
+        runtime.snapshot.ui_state.right_panel_visible = true;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
+
+        let request = runtime
+            .changes_request()
+            .expect("a visible Explorer requests Git decorations");
+        assert_eq!(request.root_path, root);
+        assert!(request.selected_path.is_none());
+
+        runtime.snapshot.ui_state.right_panel_visible = false;
+        assert!(
+            runtime.changes_request().is_none(),
+            "a hidden Explorer adds no background Git work"
         );
     }
 

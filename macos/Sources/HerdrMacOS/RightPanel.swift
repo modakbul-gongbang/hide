@@ -8,6 +8,17 @@ struct RightPanel: View {
     private var fontScale: CGFloat {
         CGFloat((model.core.snapshot?.uiState.fontSize ?? 13) / 13)
     }
+    private var explorerChanges: CoreChangesSnapshot? {
+        guard let activeRoot, model.changes.rootPath == activeRoot.path else { return nil }
+        return model.changes
+    }
+    private var explorerGitDecorations: WorkspaceGitDecorations? {
+        guard let activeRoot, let explorerChanges, explorerChanges.unavailableReason == nil else { return nil }
+        return WorkspaceGitDecorations(
+            rootPath: activeRoot.path,
+            entries: explorerChanges.entries
+        )
+    }
 
     var body: some View {
         VStack(spacing: HideTheme.spacingNone) {
@@ -54,24 +65,38 @@ struct RightPanel: View {
         if model.isRemoteContext {
             remoteFileTree
         } else if let activeRoot {
-            WorkspaceOutlineView(
-                rootURL: activeRoot,
-                expandedPaths: Set(model.core.snapshot?.uiState.expandedPaths ?? []),
-                selectedPath: model.core.snapshot?.uiState.selectedPath,
-                fontScale: fontScale,
-                operation: model.core.snapshot?.explorerOperation,
-                openFile: model.openFile,
-                updateExpandedPaths: { paths in
-                    model.core.persistUIState(expandedPaths: paths)
-                },
-                fileOperations: WorkspaceFileOperations(
-                    createFile: { parent, name in model.core.createFile(root: activeRoot, parent: parent, name: name) },
-                    createDirectory: { parent, name in model.core.createDirectory(root: activeRoot, parent: parent, name: name) },
-                    rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
-                    move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) },
-                    requestTrash: model.requestExplorerTrash
+            VStack(spacing: HideTheme.spacingNone) {
+                if explorerChanges == nil {
+                    ExplorerGitNotice(
+                        systemImage: "clock",
+                        text: "Loading Git status"
+                    )
+                } else if let reason = explorerChanges?.unavailableReason {
+                    ExplorerGitNotice(
+                        systemImage: "exclamationmark.triangle",
+                        text: "Git status unavailable: \(reason)"
+                    )
+                }
+                WorkspaceOutlineView(
+                    rootURL: activeRoot,
+                    expandedPaths: Set(model.core.snapshot?.uiState.expandedPaths ?? []),
+                    selectedPath: model.core.snapshot?.uiState.selectedPath,
+                    fontScale: fontScale,
+                    operation: model.core.snapshot?.explorerOperation,
+                    gitDecorations: explorerGitDecorations,
+                    openFile: model.openFile,
+                    updateExpandedPaths: { paths in
+                        model.core.persistUIState(expandedPaths: paths)
+                    },
+                    fileOperations: WorkspaceFileOperations(
+                        createFile: { parent, name in model.core.createFile(root: activeRoot, parent: parent, name: name) },
+                        createDirectory: { parent, name in model.core.createDirectory(root: activeRoot, parent: parent, name: name) },
+                        rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
+                        move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) },
+                        requestTrash: model.requestExplorerTrash
+                    )
                 )
-            )
+            }
         } else {
             HideEmptyState {
                 Label("No workspace", systemImage: "folder")
@@ -169,6 +194,23 @@ struct RightPanel: View {
                     .padding(HideTheme.spacingSM)
             }
         }
+    }
+}
+
+private struct ExplorerGitNotice: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .hideFont(size: HideTheme.Typography.micro)
+            .foregroundStyle(HideTheme.warning)
+            .lineLimit(2)
+            .padding(.horizontal, HideTheme.spacingSM)
+            .padding(.vertical, HideTheme.spacingXS)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HideTheme.elevated)
+            .accessibilityIdentifier("explorer-git-notice")
     }
 }
 
@@ -360,7 +402,8 @@ private struct ChangedFileRow: View {
             )
         }
         .buttonStyle(HideInteractiveButtonStyle())
-        .hideTooltip(entry.relativePath)
+        .hideTooltip(entry.previousRelativePath.map { "\($0) → \(entry.relativePath) · \(entry.status.title)" }
+            ?? "\(entry.relativePath) · \(entry.status.title)")
         .accessibilityIdentifier(committed ? "committed-file-\(entry.relativePath)" : "changed-file-\(entry.relativePath)")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -371,13 +414,19 @@ private struct ChangedFileRow: View {
         case .added, .untracked: HideTheme.diffAdded
         case .deleted: HideTheme.diffRemoved
         case .modified: HideTheme.warning
+        case .renamed: HideTheme.accent
+        case .conflict: HideTheme.diffRemoved
         }
     }
 
     /// The letter and the two numbers said in words, because the row shows
     /// them as a letter and two numbers.
     private var accessibilityLabel: String {
-        var parts = [entry.relativePath, entry.status.rawValue]
+        var parts = [
+            entry.previousRelativePath.map { "\($0) renamed to \(entry.relativePath)" }
+                ?? entry.relativePath,
+            entry.status.title,
+        ]
         if let added = entry.addedLines, let removed = entry.removedLines {
             parts.append("\(added) lines added, \(removed) removed")
         }

@@ -165,11 +165,13 @@ struct PaneChildRow: View {
     let children: CorePaneChildren
     let connected: Bool
     let onSelect: (String) -> Void
+    @State private var showsRelationship = false
+    @State private var inspectedPaneID: String?
 
     var body: some View {
         GeometryReader { proxy in
-            let limit = PaneLineagePresentation.chipLimit(width: proxy.size.width)
-            let row = PaneLineagePresentation.chipRow(children.chips, limit: limit)
+            // One child slot plus the honest +N overflow slot.
+            let row = PaneLineagePresentation.chipRow(children.chips, limit: 2)
             HStack(spacing: HideTheme.spacingXS) {
                 if !children.instrumented,
                     let reason = children.uninstrumentedReason
@@ -198,6 +200,19 @@ struct PaneChildRow: View {
                         .accessibilityLabel("\(row.overflow) more children")
                 }
 
+                if !children.chips.isEmpty {
+                    Button {
+                        inspectedPaneID = inspectedPaneID ?? children.chips.first?.paneID
+                        showsRelationship = true
+                    } label: {
+                        Image(systemName: "arrow.triangle.branch")
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+                    }
+                    .buttonStyle(HideInteractiveButtonStyle())
+                    .hideTooltip("Inspect this pane's direct children")
+                    .accessibilityLabel("Inspect child relationships")
+                }
+
                 Spacer(minLength: HideTheme.spacingNone)
 
                 if let badge = PaneLineagePresentation.subagentBadge(children.subagents) {
@@ -213,58 +228,127 @@ struct PaneChildRow: View {
             maxHeight: HideTheme.Layout.paneChildRowHeight,
             alignment: .leading
         )
+        .sheet(isPresented: $showsRelationship) {
+            PaneRelationshipSheet(
+                children: children.chips,
+                connected: connected,
+                inspectedPaneID: $inspectedPaneID,
+                onOpen: {
+                    showsRelationship = false
+                    onSelect($0)
+                }
+            )
+        }
     }
 }
 
-/// The pane's ancestors, root first, each step carrying that layer's siblings.
-///
-/// The path is derived from the lineage every time rather than stored, so it
-/// cannot drift after a restart, a tab switch or a child exiting (PRD B9,
-/// D-18). A step with no siblings draws no chevron, following the existing
-/// rule that a control with nothing to disclose is not drawn (PRD B10, D-12).
-struct PaneBreadcrumb: View {
+struct PaneParentReturn: View {
     let steps: [CoreLineageStep]
     let onSelect: (String) -> Void
 
     var body: some View {
-        HStack(spacing: HideTheme.spacingXXS) {
-            ForEach(steps) { step in
-                Button { onSelect(step.paneID) } label: {
-                    Text(step.label)
-                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                        .foregroundStyle(HideTheme.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(HideInteractiveButtonStyle())
-                .hideTooltip("Go back to \(step.label)")
-                .accessibilityLabel("Go back to \(step.label)")
-
-                if !step.siblings.isEmpty {
-                    Menu {
-                        ForEach(step.siblings) { sibling in
-                            Button(sibling.label) { onSelect(sibling.paneID) }
-                        }
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                            .foregroundStyle(HideTheme.muted)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .hideTooltip("Switch to another agent at this step")
-                    .accessibilityLabel("Siblings of \(step.label)")
-                }
-
-                Text("/")
-                    .hideFont(size: HideTheme.Typography.micro)
-                    .foregroundStyle(HideTheme.muted)
-                    .accessibilityHidden(true)
+        if let parent = steps.last {
+            ViewThatFits(in: .horizontal) {
+                parentButton(parent, showsName: true)
+                parentButton(parent, showsName: false)
             }
         }
-        .frame(maxWidth: HideTheme.Layout.paneChildChipMaxWidth * 2, alignment: .leading)
+    }
+
+    private func parentButton(_ parent: CoreLineageStep, showsName: Bool) -> some View {
+        Button { onSelect(parent.paneID) } label: {
+            HStack(spacing: HideTheme.spacingXXS) {
+                Image(systemName: "arrow.turn.up.left")
+                    .hideFont(size: HideTheme.Typography.micro)
+                if showsName {
+                    Text(parent.label)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+            .foregroundStyle(HideTheme.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(HideInteractiveButtonStyle())
+        .hideTooltip("Return to parent \(parent.label)")
+        .accessibilityLabel("Return to parent \(parent.label)")
+    }
+}
+
+private struct PaneRelationshipSheet: View {
+    let children: [CoreAgentChip]
+    let connected: Bool
+    @Binding var inspectedPaneID: String?
+    let onOpen: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
+            HStack {
+                Text("Direct children")
+                    .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
+                Spacer()
+                HideIconButton(
+                    systemImage: "xmark",
+                    help: "Close relationships",
+                    accessibilityLabel: "Close relationships",
+                    variant: .toolbar
+                ) { dismiss() }
+            }
+            ForEach(children) { child in
+                let status = AgentStatusPresentation(
+                    demand: child.demand,
+                    activity: child.activity,
+                    emphasized: child.emphasized,
+                    symbol: child.symbol,
+                    label: child.statusLabel,
+                    connected: connected
+                )
+                Button {
+                    inspectedPaneID = child.paneID
+                } label: {
+                    HStack(spacing: HideTheme.spacingSM) {
+                        AgentStatusMark(symbol: status.symbol, color: status.color)
+                        AgentBadge(
+                            agentKind: child.agentKind,
+                            stateColor: status.color,
+                            size: HideTheme.compactAgentBadgeSize
+                        )
+                        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                            Text(child.label).lineLimit(1)
+                            Text(child.detail)
+                                .foregroundStyle(HideTheme.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if inspectedPaneID == child.paneID {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                    .padding(HideTheme.spacingSM)
+                    .background(
+                        inspectedPaneID == child.paneID ? HideTheme.elevated : Color.clear,
+                        in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(HideInteractiveButtonStyle())
+            }
+            HStack {
+                Spacer()
+                Button("Open") {
+                    if let inspectedPaneID { onOpen(inspectedPaneID) }
+                }
+                .disabled(inspectedPaneID == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(HideTheme.spacingLG)
+        .frame(width: HideTheme.Layout.pullRequestPopoverWidth)
+        .foregroundStyle(HideTheme.primary)
+        .background(HideTheme.panel)
+        .preferredColorScheme(.dark)
     }
 }
 

@@ -44,6 +44,17 @@ enum SidebarContent: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
+/// The Agents list is intentionally narrower than global search and project
+/// overview. It is session-local: every launch starts with the work the
+/// operator currently owns, while All remains one reversible click away.
+enum AgentListScope: String, CaseIterable, Hashable, Identifiable {
+    case mine
+    case all
+
+    var id: String { rawValue }
+    var title: String { self == .mine ? "My Work" : "All" }
+}
+
 enum PaneSplitDirection: String, Decodable, Equatable, Sendable {
     case right
     case down
@@ -325,6 +336,7 @@ enum HerdrStatusPresentation {
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
     @Published private(set) var sidebarContent: SidebarContent = .projects
+    @Published var agentListScope: AgentListScope = .mine
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
     @Published var showComposer = false { didSet { refreshHintSheetState() } }
@@ -543,6 +555,10 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.agents ?? []
     }
 
+    var visibleAgentList: [SidebarAgent] {
+        SidebarGrouping.visibleAgents(agents, scope: agentListScope)
+    }
+
     /// The Needs You and Done sections the Projects view draws above the tree.
     var raisedAgentSections: [AgentGroupSection] {
         SidebarGrouping.raised(agents)
@@ -550,7 +566,7 @@ final class ShellModel: ObservableObject {
 
     /// Every non-empty group in group order, for the Agents view.
     var agentSections: [AgentGroupSection] {
-        SidebarGrouping.sections(agents)
+        SidebarGrouping.sections(visibleAgentList)
     }
 
     /// The rows the Projects view has already drawn at the top, so the tree
@@ -1090,7 +1106,7 @@ final class ShellModel: ObservableObject {
     var shortcutAgents: [SidebarAgent] {
         AgentShortcutNumbering.candidates(
             for: sidebarContent,
-            agents: agents,
+            agents: sidebarContent == .agents ? visibleAgentList : agents,
             visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id),
             collapsedCheckoutIDs: Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? []),
             ownedPaneIDsByCheckout: Dictionary(uniqueKeysWithValues:
@@ -2320,6 +2336,11 @@ final class ShellModel: ObservableObject {
 
     private func toggleCurrentPaneZoom() {
         core.toggleCurrentPaneZoom()
+        focus(.terminal)
+    }
+
+    func togglePaneZoom(_ paneID: String) {
+        core.togglePaneZoom(paneID)
         focus(.terminal)
     }
 

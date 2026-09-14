@@ -328,6 +328,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
     let selectedPath: String?
     let fontScale: CGFloat
     let operation: CoreExplorerOperation?
+    let gitDecorations: WorkspaceGitDecorations?
     let openFile: (URL) -> Void
     let updateExpandedPaths: ([String]) -> Void
     let fileOperations: WorkspaceFileOperations
@@ -402,7 +403,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             expandedPaths: expandedPaths,
             selectedPath: selectedPath,
             fontScale: fontScale,
-            operation: operation
+            operation: operation,
+            gitDecorations: gitDecorations
         )
     }
 
@@ -452,6 +454,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         /// file, so the selection moves only when that path changes.
         private var appliedSelectedPath: String??
         private var fontScale: CGFloat = 1
+        private var gitDecorations: WorkspaceGitDecorations?
         private var suppressExpansionPersistence = false
 
         init(
@@ -494,11 +497,14 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             expandedPaths: Set<String>,
             selectedPath: String?,
             fontScale: CGFloat,
-            operation: CoreExplorerOperation?
+            operation: CoreExplorerOperation?,
+            gitDecorations: WorkspaceGitDecorations? = nil
         ) {
             desiredExpandedPaths = expandedPaths
             self.selectedPath = selectedPath
             self.fontScale = fontScale
+            let gitChanged = self.gitDecorations != gitDecorations
+            self.gitDecorations = gitDecorations
             if handledOperationID == nil {
                 handledOperationID = .some(operation?.id)
             }
@@ -519,6 +525,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 }
             } else {
                 restoreVisibleState()
+                if gitChanged {
+                    outline?.reloadData()
+                }
             }
             observe(operation)
         }
@@ -651,16 +660,24 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             label.identifier = NSUserInterfaceItemIdentifier("label")
             label.translatesAutoresizingMaskIntoConstraints = false
             label.lineBreakMode = .byTruncatingMiddle
+            let git = NSTextField(labelWithString: "")
+            git.identifier = NSUserInterfaceItemIdentifier("git-status")
+            git.translatesAutoresizingMaskIntoConstraints = false
+            git.alignment = .center
             cell.addSubview(icon)
             cell.addSubview(label)
+            cell.addSubview(git)
             cell.textField = label
             NSLayoutConstraint.activate([
                 icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
                 icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 icon.widthAnchor.constraint(equalToConstant: 16),
                 label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                label.trailingAnchor.constraint(equalTo: git.leadingAnchor, constant: -4),
                 label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                git.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                git.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                git.widthAnchor.constraint(equalToConstant: HideTheme.agentMarkWidth),
             ])
             return cell
         }
@@ -687,7 +704,25 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             cell.setAccessibilityIdentifier(
                 editing ? "workspace-item-editor" : "workspace-item-\(node.url.path)"
             )
-            cell.setAccessibilityLabel(node.name)
+            let decoration = node.isEntry
+                ? gitDecorations?.decoration(for: node.url.path, isDirectory: node.isDirectory)
+                : nil
+            let accessibility = decoration.map { "\(node.name), \($0.title)" } ?? node.name
+            cell.setAccessibilityLabel(accessibility)
+            let presentedPath = rootPath.map {
+                WorkspaceOutlinePathPresentation.relativePath(node.url.path, root: $0)
+            } ?? node.url.path
+            cell.toolTip = decoration.map { "\(presentedPath) · \($0.title)" } ?? presentedPath
+
+            if let gitView = cell.subviews.first(where: { $0.identifier?.rawValue == "git-status" }) as? NSTextField {
+                gitView.stringValue = decoration?.badge ?? ""
+                gitView.font = HideTheme.nativeFont(
+                    size: HideTheme.Typography.caption * fontScale,
+                    weight: .medium
+                )
+                gitView.textColor = decoration.map(gitColor) ?? .clear
+                gitView.setAccessibilityLabel(decoration?.title)
+            }
 
             guard let iconView = cell.subviews.first(where: { $0.identifier?.rawValue == "icon" }) as? NSTextField else {
                 return
@@ -738,6 +773,15 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                     iconView.attributedStringValue = NSAttributedString(attachment: attachment)
                 }
                 iconView.textColor = NSColor(HideTheme.color(for: icon.colorHex))
+            }
+        }
+
+        private func gitColor(_ decoration: WorkspaceGitDecoration) -> NSColor {
+            switch decoration.status {
+            case .added, .untracked: HideTheme.Native.success
+            case .deleted, .conflict: HideTheme.Native.danger
+            case .modified: HideTheme.Native.warning
+            case .renamed: HideTheme.Native.accent
             }
         }
 

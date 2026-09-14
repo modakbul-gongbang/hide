@@ -664,21 +664,70 @@ private struct HideSidebar: View {
 
     @ViewBuilder
     private var agentsContent: some View {
-        if model.agents.isEmpty {
+        HideChoiceGroup(
+            label: "Agent scope",
+            values: AgentListScope.allCases,
+            selection: $model.agentListScope,
+            title: { $0.title },
+            identifier: { "agents-scope-\($0.rawValue)" },
+            optionHelp: {
+                $0 == .mine
+                    ? "Show work currently owned by you. Escalated and orphaned work remains visible."
+                    : "Show all work, including delegated agents."
+            },
+            equalWidth: true
+        )
+        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.bottom, HideTheme.spacingXS)
+
+        if model.core.snapshot == nil {
+            HideSectionLabel(title: "Agents", count: 0)
+            EmptySidebarRow(
+                systemImage: "clock",
+                title: "Loading agents",
+                detail: "Waiting for the first runtime snapshot."
+            )
+        } else if !model.agentsConnected {
+            HideSectionLabel(title: "Agents", count: model.visibleAgentList.count)
+            EmptySidebarRow(
+                systemImage: "bolt.slash",
+                title: "Agents unavailable",
+                detail: "The last known rows may be stale while Herdr reconnects."
+            )
+            agentSectionRows
+        } else if model.agents.isEmpty {
             HideSectionLabel(title: "Agents", count: 0)
             EmptySidebarRow(
                 systemImage: "person.2",
                 title: "No agents running",
                 detail: "Start an agent from a project to see it here."
             )
+        } else if model.visibleAgentList.isEmpty {
+            HideSectionLabel(title: "My Work", count: 0)
+            Button {
+                model.agentListScope = .all
+            } label: {
+                EmptySidebarRow(
+                    systemImage: "person.2.badge.gearshape",
+                    title: "Only delegated work is active",
+                    detail: "Show All to inspect the agents being supervised."
+                )
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+            .accessibilityIdentifier("agents-show-all-empty-state")
         } else {
-            // The four group boundaries, in the order the core sorted them.
-            // Membership and order are the core's answer; this only draws it.
-            ForEach(model.agentSections) { section in
-                HideSectionLabel(title: section.group.title, count: section.agents.count)
-                ForEach(section.agents) { agent in
-                    AgentNavigatorRow(agent: agent, showsWorkspace: true)
-                }
+            agentSectionRows
+        }
+    }
+
+    @ViewBuilder
+    private var agentSectionRows: some View {
+        // The four group boundaries, in the order the core sorted them.
+        // Membership and order are the core's answer; this only draws it.
+        ForEach(model.agentSections) { section in
+            HideSectionLabel(title: section.group.title, count: section.agents.count)
+            ForEach(section.agents) { agent in
+                AgentNavigatorRow(agent: agent, showsWorkspace: true)
             }
         }
     }
@@ -1994,16 +2043,22 @@ private struct HideTabCanvas: View {
                 case .browser(let binding):
                     BrowserPaneView(
                         pane: pane, binding: binding,
-                        isFocused: item.isFocused, isZoomed: isZoomed,
+                        isFocused: item.isFocused,
+                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
+                        isZoomed: isZoomed,
                         onFocus: { model.focusPane(pane.id) },
+                        onToggleZoom: { model.togglePaneZoom(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) }
                     )
                 case .unavailable(let reason):
                     HideTerminalPaneCard(
                         paneID: pane.id, kind: "unavailable", title: pane.herdrLabel ?? "Pane unavailable",
-                        status: "ready", isFocused: item.isFocused, isZoomed: isZoomed,
+                        status: "ready", isFocused: item.isFocused,
+                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
+                        isZoomed: isZoomed,
                         onFocus: { model.focusPane(pane.id) },
-                        onClose: { model.closePaneFromHeader(pane.id) }
+                        onClose: { model.closePaneFromHeader(pane.id) },
+                        onToggleZoom: { model.togglePaneZoom(pane.id) }
                     ) {
                         HideEmptyState("Pane unavailable", systemImage: "exclamationmark.triangle", description: Text(reason))
                     }
@@ -2013,6 +2068,7 @@ private struct HideTabCanvas: View {
                         status: model.paneStatus(for: pane.id),
                         statusMessage: model.paneTransportMessage(for: pane.id),
                         isFocused: item.isFocused,
+                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
                         isZoomed: isZoomed,
                         showsFork: model.canForkPane(pane),
                         activity: model.paneActivity(for: pane.id),
@@ -2021,6 +2077,7 @@ private struct HideTabCanvas: View {
                         onFocus: { model.focusPane(pane.id) },
                         onReconnect: { model.reconnectPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) },
+                        onToggleZoom: { model.togglePaneZoom(pane.id) },
                         onFork: { model.forkPaneFromHeader(pane.id) },
                         onOpenPort: { model.openPanePort($0) },
                         // A child chip, a breadcrumb step and a sibling are
