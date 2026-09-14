@@ -10745,8 +10745,7 @@ impl Runtime {
                 // those values did not change, do not rewrite state.json or
                 // run unrelated catalog reconciliation.
                 if self.snapshot.ui_state == previous_ui_state {
-                    return payload.usage_window_visible.is_some()
-                        || payload.usage_popover_open.is_some();
+                    return true;
                 }
                 self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
@@ -14546,6 +14545,38 @@ mod tests {
                 .ui_state
                 .collapsed_checkout_ids
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn usage_activity_hints_are_accepted_without_persisting_ui_state() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        let _ = std::fs::remove_file(&state_path);
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "selected_path": null,
+                "selected_pane_id": null,
+                "usage_window_visible": true,
+                "usage_popover_open": true
+            }
+        }))
+        .expect("usage activity event");
+
+        assert!(runtime.dispatch_json(&event));
+        assert_eq!(
+            runtime.usage_activity(),
+            crate::usage::UsageActivity {
+                window_visible: true,
+                popover_open_generation: 1,
+            }
+        );
+        assert!(
+            !state_path.exists(),
+            "an observation hint must not create persistent UI state"
         );
     }
 
