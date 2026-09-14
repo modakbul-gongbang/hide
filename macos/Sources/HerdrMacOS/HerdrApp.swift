@@ -396,8 +396,9 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuIte
 
     private func installReopenWindowMenuItem() {
         let application = NSApplication.shared
-        guard let windowMenu = application.windowsMenu
-            ?? application.mainMenu?.items.first(where: { $0.title == "Window" })?.submenu
+        guard let windowMenu = application.mainMenu?
+            .items.first(where: { $0.title == "Window" })?.submenu
+            ?? application.windowsMenu
         else {
             HideLaunchTrace.mark(
                 "reopen_closed.window_menu.failed",
