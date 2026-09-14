@@ -7,6 +7,76 @@ The existing `Screen /` boards continue to describe the existing design; this pr
 
 ## Decision history and next tasks: 2026-09-14
 
+### Final 상세 시안: Project Overview 제외
+
+후속 요청에서 사용자는 아래 변경 순서 1~6 중 Project Overview를 제외한 상세 디자인을 먼저 요청했다.
+새 구현용 검토 기준은 `Review / 2026-09-14 Final /`이며 `00 Start here`부터 읽는다.
+Final은 이번 상세 시안 묶음의 이름이며 제품 구현 완료나 아직 보지 않은 상태의 최종 사용자 검수를 뜻하지 않는다.
+기존 Project-first 01-04와 이전 탐색 보드는 이력으로 보존했다.
+Project Overview와 Task Kanban은 이번 변경 대상이 아니다.
+
+| 화면 | 노드 | 변경 내용 |
+| --- | --- | --- |
+| F01 Projects and workspace | h2s8i | 기존 Projects 계층, 부모 요약, 간결한 자식 들여쓰기, 별도 Workspace 열기 |
+| F02 Agents view | S9KrxV | 기존 네 그룹 유지, 공통 상태와 부모 요약, 자식의 위임 소속 |
+| F03 Delegation graph | y4omg | 부모 Pane에서 관계 모달, 노드 선택과 실제 이동 분리 |
+| F04 Child tab and Sessions | dagQX | 전용 자식 탭, 부모 배치 복귀, Workspace 범위의 Sessions |
+| F05 Changes and diff | zZkVy | 오른쪽 변경 목록, 중앙 읽기 전용 diff, 기존 작업 탭 보존 |
+| F06 Session reader | qiR4M | 원본 대화 발췌, 별도 읽기 전용 기록 탭, 도구 결과 기본 접힘 |
+| F07 New Agent and Quick workspace | J3CUcI | 생성 위치 명시, 프로젝트 독립 Workspace, 명시적 Start |
+| F08 Search | uytmT | 검색에 공통 Agent identity와 상태 적용 |
+| F09 Recent Panels | aS0mm | MRU 순서·미리보기·확정 규칙 유지, 상태 표시 일치 |
+
+| 컴포넌트 시트 | 노드 | 구현 시 변경/재사용할 부분 |
+| --- | --- | --- |
+| C01 Agent item | hjWwg | 기존 AgentRow를 확장해 상태·제목·제공자·위치·선택·관계 요약의 의미 통일 |
+| C02 Navigation rows | Y8ipD | Workspace 행의 펼침과 명시적 열기 분리, 빈/없는 경로/단절 상태 |
+| C03 Lineage summary | T3J4uA | Pane 자식 ID 나열 대체, 단일/미계측/부분/단절/정체 상태 |
+| C04 Explorer Git rows | BMEZi | 기존 파일 행에 수정/추가/미추적/충돌/폴더 변경 표시 |
+| C05 Session item and availability | uUT8O | 세션 identity+원본 발췌, 로딩/빈/무결과/미지원/실패/부분/오래된 기록 |
+| C06 New Agent states | j9LXaV | provider/Workspace 선택, 실행 중/생성 실패/실행 실패 |
+| C07 Narrow and interaction states | O6gzR | 320/344/400pt 긴 한글, hover/pressed/disabled/위임 강조 |
+| C08 Branching graph and recovery | zVCTn | 분기 엣지, 타 Workspace 자식, 검색/맞춤/확대축소, 종료/부분/단절 |
+
+새 재사용 master는 Final Agent item `FNgJ2`, Workspace row `YOjWl`, Lineage summary `P8ejA`다.
+기존 Agent identity, Agent node, Explorer entry, Session item master를 함께 재사용한다.
+기존 primitive 버튼·탭·검색·tooltip의 네이티브 owner를 확장하고 화면별 별도 스타일을 구현하지 않는다.
+컴포넌트 상태 시트와 전체 화면은 구현 의도를 담은 정적 도안이며 모든 버튼/입력이 실제 동작하는 프로토타입은 아니다.
+
+#### 이번 시안의 구체적 선택
+
+Workspace의 기존 행 전체 펼침 동작은 보존하고 별도 열기 버튼을 제공한다.
+접기/펼치기는 Pane 포커스·읽음·프로세스를 변경하지 않는다.
+부모 아래의 같은 Workspace 자식은 하나의 들여쓰기와 단순한 연결선으로 표현한다.
+Agents 그룹은 관계 트리로 교체하지 않으며 자식은 기존 Working/Seen 및 escalation 규칙을 따른다.
+타 Workspace 관계는 소속을 표시하고 실제 Pane으로 이동하며 중복 집계하지 않는다.
+Agent 선택은 기존 탭/Pane 이동만 하며 자동 Zoom이나 분할 배치 교체를 하지 않는다.
+자식은 별도 탭으로 열고 부모의 기존 분할 배치는 남겨둔다.
+관계 모달은 배경 조작을 막고 키보드 포커스를 내부에 한정하며, Esc/닫기는 이전 포커스로 복귀한다.
+노드 선택과 검색/MRU 미리보기는 읽음 처리하지 않는다.
+읽음 처리는 기존 실제 Pane 포커스 계약을 따른다.
+오른쪽 도구는 Workspace 범위와 사용자가 선택한 섹션을 유지한다.
+최종 화면의 Git details는 기존 Git 기능에 대한 명시적 진입점이며, 이력·워크트리 관리 기능을 삭제하라는 지시가 아니다.
+기존 기능을 동일하게 열 수 없는 구현 단계에서는 기존 Git 탭도 유지한다.
+삭제된 파일은 Explorer의 가짜 행이 아니라 Changes에서 표시한다.
+Sessions 목록은 실제 원본 메시지 발췌이며 별도 AI 요약 생성 기능을 추가하지 않는다.
+도구 결과는 목록에서 제외하고 읽기 화면에서 명시적으로 펼친다.
+Quick workspace는 프로젝트 독립 실행 위치로 표시하고 Start 전에는 실행하지 않는다.
+기존 Scratch 파일·세션을 자동 삭제하거나 /tmp로 이동하지 않는다.
+
+#### 구현 게이트와 검증 범위
+
+Sessions는 지원 provider의 원본 기록·Workspace 연결·가용성·보존/개인정보 계약을 확인한 뒤 구현한다.
+원본이 없을 때 샘플 대화로 채우지 않고 C05 미지원 상태를 사용한다.
+Quick workspace의 물리 경로와 기존 Scratch 이관/보존 정책은 구현 전 명시적으로 확정한다.
+이 두 데이터 결정은 나머지 탐색/관계/Explorer 작업의 선행 조건이 아니다.
+각 화면의 새 동작은 구현 시 현행 DESIGN.md, status-model.md, 관련 테스트와 함께 갱신한다.
+Pen 검증은 레이아웃·문자·토큰·band를 확인하며 실제 앱 동작을 증명하지 않는다.
+네이티브 검증에서는 실제 320/344/400pt, 키보드, 읽음, 타 Workspace 이동, 깊은 관계와 종료된 노드, 단절 복구를 확인한다.
+Pen에서 opacity 변수 0.45가 0.0045로 해석되는 차이를 확인해 C07은 기존 secondary/muted 색으로 낮은 강조를 표현했다.
+제품 구현은 이 도안의 대체색을 새로운 상태 규칙으로 복사하지 않고 HideTheme의 원래 opacity 값을 사용한다.
+Project Overview 작업은 이 Final 묶음 이후 별도로 진행한다.
+
 ### 합의된 범위
 
 사용자는 01-04 화면의 큰 흐름을 괜찮다고 평가하고, 이력 보존과 IDE 변경 태스크 정리를 요청했다.
