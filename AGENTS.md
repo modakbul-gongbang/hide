@@ -85,7 +85,7 @@ It owns the reproduction procedure, the isolation checklist, the measurement bou
 - No subprocesses, blocking I/O, or large serialization under `Mutex<Runtime>`: `snapshot_delta_payload` takes owned data under the lock and `serialize_snapshot_delta` serializes outside it, and `ChangeNotifier` announces once per burst.
   No per-tick or per-tab git forks: the catalog reads repository facts from the repository's own files (`git_dir.rs`), never from a `git` process.
 - Report idle and driven measurements separately, with the load and workload recorded for each.
-- Native verification uses exactly one identified app and an isolated Herdr server; never manipulate the operator's panes or server.
+- Native verification targets one precisely identified candidate PID/window and an isolated Herdr server; the operator app may remain running. Never quit, restart, focus, or manipulate the operator's app, panes, or server for QA without explicit coordination. Prefer background exact-window capture; see `docs/PERFORMANCE_TESTING.md` for isolation and foreground-interaction boundaries.
 - A Browser plugin pane is only for QA of the browser-pane product surface, never a verification surface for the native shell, editor, Git diff, sidebar, build, or installed app.
 
 <!-- harness:agents-namespace:start -->

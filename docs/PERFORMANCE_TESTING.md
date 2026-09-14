@@ -127,12 +127,15 @@ Inspect running processes rather than assuming the app launched from this checko
 pgrep -fl HerdrMacOS
 ```
 
-Exactly one Hide instance must be running during native verification.
-If an operator instance is open, coordinate a QA window before quitting it normally; never kill all matching processes.
-Record its exact bundle path and restore that same bundle afterward, leaving its Herdr server and terminals intact.
+The operator app and an isolated candidate may run simultaneously; a global single-instance requirement does not apply.
+Identify the candidate by executable path, bundle identifier, PID and exact window ID before capture or interaction, and re-resolve them after any restart.
+Keep the operator app running by default; building and automated tests do not require quitting it.
+Never quit, restart, activate, or otherwise manipulate the operator app for QA without explicit coordination; never kill all matching processes.
+If an explicitly coordinated scenario requires stopping it, record its exact bundle path and restore that same bundle afterward, leaving its Herdr server and terminals intact.
 A worktree-specific bundle identifier or separate app state file does not isolate the Herdr server's shared focus.
-Native automation takes foreground focus in the logged-in macOS session; it cannot promise uninterrupted simultaneous operator use.
-Use a separately authorized machine/session if foreground interference is unacceptable.
+Prove the private server, socket, app state and fixtures are isolated before running both apps; ambiguous targeting or shared state blocks the affected check, not the operator's work.
+Background exact-window screenshots need not activate the candidate, but foreground keyboard, IME, drag and focus scenarios can interrupt the logged-in user's work.
+Coordinate a bounded foreground QA window for those scenarios, or use a separately authorized machine/session; do not claim that background capture verifies foreground interaction.
 
 Build a resource-complete, signed bundle using the existing scripts:
 
@@ -190,6 +193,11 @@ Missing Screen Recording or Accessibility permission blocks native automation.
 ```
 
 Discover windows with `peekaboo window list --app <exact-app> --json`, then take a fresh `peekaboo see --app <exact-app> --json` snapshot.
+For observation while the operator works, prefer `peekaboo see --window-id <candidate-window-id> --no-elements --path <run-path> --json` after resolving that window to the candidate PID.
+Do not activate, raise, move or unminimize the window merely to obtain a screenshot without coordination.
+Verify the selected capture engine returns the target window rather than a screen-region crop, and check the resulting image and unchanged foreground app.
+Occluded-window capture is not proof of minimized, hidden or off-Space capture support; report blank, stale or unavailable frames explicitly rather than silently focusing the app.
+Record occlusion and foreground state; a background window image cannot establish foreground appearance, IME behavior, physical display flicker or matched performance.
 Confirm the exact PID/window before each mutation, prefer fresh element IDs, and verify the result with another observation.
 If an automation command reports a failed postcondition, inspect actual state before retrying; the action may already have happened.
 If daemon-backed targeting is wrong, inspect local CLI help and use `--no-remote` with the same exact target, then verify again.
@@ -352,7 +360,8 @@ Do not substitute a renderer microbenchmark for native QA or a native smoke test
 Stop only owned recording/logging processes, the test app, fixture clients, and the explicitly routed private server.
 Verify their exit and socket cleanup before removing or trashing only the exact recorded private state paths.
 Never use broad process-name kills, a workspace root as a deletion target, or an unscoped `herdr server stop`.
-Restore the recorded operator bundle and verify a real screenshot, exactly one Hide instance, and unchanged operator server ownership.
+Leave the operator app untouched unless its shutdown was explicitly coordinated; in that case restore the recorded bundle.
+Verify the owned candidate exited, the operator app remains available, and operator server ownership is unchanged; multiple independently identified instances are not themselves a verification failure.
 
 The run verdict must include:
 
