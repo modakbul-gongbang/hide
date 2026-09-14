@@ -374,6 +374,15 @@ These visual transitions neither dispatch runtime events nor mark the snapshot r
 Choice controls publish only a changed selection; repeated activation of the selected option has no action.
 Their work scales with the small visible choice set, not the retained project catalog.
 
+Explorer Git decorations reuse the single ChangesReader request for the focused checkout.
+The request exists while Explorer or Changes is visible or an active diff needs it, and `read_if_due` retains the existing two-second refresh bound.
+The Git commands and serialization remain outside `Mutex<Runtime>`; a row, hover, selection, disclosure, edit, drag, scroll, or paint starts no subprocess.
+One refreshed changed-file set builds exact file lookups and changed-ancestor membership once, after which visible row decoration is an in-memory relative-path lookup.
+Changing the focused checkout replaces the root-scoped decoration input, so cached paths from one Workspace cannot paint another.
+An unchanged refresh produces no new snapshot notification, and hiding all three consuming surfaces removes the request.
+Regression owners are the rename/conflict/NUL parser fixtures, `explorer_visibility_keeps_one_checkout_scoped_changes_reader_alive`, and `gitDecorationsUseTheFullChangedSetAndKeepTheHighestRiskState`.
+Native acceptance records idle and driven observations separately with the number of changed paths, visible rows, refresh duration, and the exact interaction workload.
+
 Project activity and checkout-pane context reuse canonical agent projection, current topology and cached worktree HEAD metadata.
 The existing single `git log -1` read now returns timestamp and subject together; no timer or additional Git subprocess is introduced.
 A changed projection indexes agents and visits retained panes once, then sorts projects and each project's checkouts by cached keys.
