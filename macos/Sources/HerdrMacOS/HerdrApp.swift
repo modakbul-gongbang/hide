@@ -33,7 +33,43 @@ enum MainWindowPresentation {
 }
 
 @MainActor
-final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
+enum ReopenWindowMenuPolicy {
+    static let itemIdentifier = NSUserInterfaceItemIdentifier("me.grab.hide.reopen-closed-tab")
+
+    @discardableResult
+    static func install(
+        in menu: NSMenu,
+        target: AnyObject,
+        action: Selector
+    ) -> NSMenuItem {
+        if let existing = menu.item(withTag: itemTag) {
+            menu.removeItem(existing)
+        }
+        let command = ShellMenuCommand.reopenClosedTab
+        let item = NSMenuItem(
+            title: command.title,
+            action: action,
+            keyEquivalent: command.shortcut.menuKeyEquivalent
+        )
+        item.identifier = itemIdentifier
+        item.tag = itemTag
+        item.keyEquivalentModifierMask = command.shortcut.modifierFlags
+        item.target = target
+
+        // AppKit owns this app's main window rather than a SwiftUI WindowGroup,
+        // so SwiftUI's `.windowList` placement never materialises. Insert at
+        // the final separator, immediately before AppKit's window list.
+        let insertionIndex = menu.items.lastIndex(where: \.isSeparatorItem)
+            ?? menu.numberOfItems
+        menu.insertItem(item, at: insertionIndex)
+        return item
+    }
+
+    private static let itemTag = 0x48494445
+}
+
+@MainActor
+final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let model: ShellModel
     private var mainWindow: NSWindow?
     private var switcherReleaseProbe: Timer?
@@ -42,6 +78,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
     private var petVisibilityObservation: AnyCancellable?
     private var paneKeyMonitor: Any?
+    private var reopenClosedMenuItem: NSMenuItem?
 
     override init() {
         let startedAt = Date()
@@ -298,6 +335,19 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                     detail: "command_w_menu_item_missing"
                 )
             }
+            if let windowMenu = NSApplication.shared.windowsMenu {
+                self.reopenClosedMenuItem = ReopenWindowMenuPolicy.install(
+                    in: windowMenu,
+                    target: self,
+                    action: #selector(self.reopenClosedFromWindowMenu(_:))
+                )
+                HideLaunchTrace.mark("reopen_closed.window_menu.installed")
+            } else {
+                HideLaunchTrace.mark(
+                    "reopen_closed.window_menu.failed",
+                    detail: "window_menu_missing"
+                )
+            }
             #if DEBUG
             if CommandLine.arguments.contains("--verification-ui-fixture"),
                CommandLine.arguments.contains("--verification-background") {
@@ -340,6 +390,17 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         // flagsChanged release never reaches this monitor and the keycap hints
         // would stay on screen.
         model.clearShortcutHints()
+    }
+
+    @objc private func reopenClosedFromWindowMenu(_ sender: NSMenuItem) {
+        model.reopenClosed()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.identifier == ReopenWindowMenuPolicy.itemIdentifier {
+            return model.canReopenClosed
+        }
+        return true
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -516,10 +577,6 @@ struct ShellCommands: Commands {
             paneButton(.toggleZoom)
             Divider()
             paneButton(.closePane)
-        }
-        CommandGroup(before: .windowList) {
-            menuButton(.reopenClosedTab) { model.reopenClosed() }
-                .disabled(!model.canReopenClosed)
         }
     }
 

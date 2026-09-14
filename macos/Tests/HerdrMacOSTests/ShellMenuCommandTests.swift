@@ -8,6 +8,31 @@ import Testing
 /// keypress reaches the shell at all.
 @Suite("Shell menu shortcuts")
 struct ShellMenuCommandTests {
+    @MainActor
+    @Test func reopenCommandInstallsBeforeTheWindowList() {
+        final class Target: NSObject {
+            @objc func reopen(_ sender: NSMenuItem) {}
+        }
+
+        let menu = NSMenu(title: "Window")
+        menu.addItem(withTitle: "Minimize", action: nil, keyEquivalent: "m")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "hide", action: nil, keyEquivalent: "")
+        let target = Target()
+
+        let item = ReopenWindowMenuPolicy.install(
+            in: menu,
+            target: target,
+            action: #selector(Target.reopen(_:))
+        )
+
+        #expect(menu.items.map(\.title) == ["Minimize", "Reopen Closed Tab", "", "hide"])
+        #expect(item.identifier == ReopenWindowMenuPolicy.itemIdentifier)
+        #expect(item.keyEquivalent == "z")
+        #expect(item.keyEquivalentModifierMask == [.command, .shift])
+        #expect(item.target === target)
+    }
+
     @Test func theRightPanelTogglesOnCommandShiftB() {
         #expect(ShellMenuCommand.toggleRightPanel.shortcut.canonical == "command+shift+b")
         #expect(ShellMenuCommand.toggleRightPanel.displayShortcut == "⇧⌘B")
