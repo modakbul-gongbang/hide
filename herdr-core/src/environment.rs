@@ -299,4 +299,23 @@ mod tests {
         assert_eq!(report.statuses[2].state, "invalid");
         assert_eq!(report.statuses[3].state, "available");
     }
+
+    #[test]
+    fn invalid_provider_overrides_do_not_fall_back_to_home() {
+        let report = validate_with(|key| match key {
+            HOME_KEY => Some(OsString::from("/private/tmp/hide-home")),
+            CLAUDE_CONFIG_DIR_KEY => Some(OsString::from("relative-claude")),
+            CODEX_HOME_KEY => Some(OsString::from("relative-codex")),
+            _ => None,
+        });
+
+        assert_eq!(
+            report.home_path,
+            Some(PathBuf::from("/private/tmp/hide-home"))
+        );
+        assert!(report.claude_config_dir.is_none());
+        assert!(report.codex_home.is_none());
+        assert_eq!(report.statuses[4].state, "invalid");
+        assert_eq!(report.statuses[5].state, "invalid");
+    }
 }

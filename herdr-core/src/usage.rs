@@ -48,9 +48,15 @@ struct UsageValue {
 }
 
 #[derive(Clone, Debug)]
+enum UsageBucket {
+    Available(UsageValue),
+    Unavailable { label: String },
+}
+
+#[derive(Clone, Debug)]
 struct SuccessfulUsage {
     main: UsageValue,
-    buckets: Vec<UsageValue>,
+    buckets: Vec<UsageBucket>,
     checked_at_unix_ms: u64,
 }
 
@@ -349,8 +355,17 @@ fn snapshot_from_success(
     let buckets = success
         .buckets
         .iter()
-        .map(|bucket| {
-            if bucket.resets_at_unix_seconds <= now_unix_ms / 1_000 {
+        .map(|bucket| match bucket {
+            UsageBucket::Unavailable { label } => ProviderUsageBucketSnapshot {
+                label: label.clone(),
+                state: "unavailable".to_owned(),
+                used_percent: None,
+                resets_at_unix_seconds: None,
+                message: Some(format!("{label} weekly usage response is unavailable")),
+            },
+            UsageBucket::Available(bucket)
+                if bucket.resets_at_unix_seconds <= now_unix_ms / 1_000 =>
+            {
                 ProviderUsageBucketSnapshot {
                     label: bucket.label.clone(),
                     state: "unavailable".to_owned(),
@@ -366,15 +381,14 @@ fn snapshot_from_success(
                         }
                     )),
                 }
-            } else {
-                ProviderUsageBucketSnapshot {
-                    label: bucket.label.clone(),
-                    state: projection_state.to_owned(),
-                    used_percent: Some(bucket.used_percent),
-                    resets_at_unix_seconds: Some(bucket.resets_at_unix_seconds),
-                    message: message.clone(),
-                }
             }
+            UsageBucket::Available(bucket) => ProviderUsageBucketSnapshot {
+                label: bucket.label.clone(),
+                state: projection_state.to_owned(),
+                used_percent: Some(bucket.used_percent),
+                resets_at_unix_seconds: Some(bucket.resets_at_unix_seconds),
+                message: message.clone(),
+            },
         })
         .collect();
     ProviderUsageSnapshot {
@@ -549,7 +563,18 @@ impl UreqUsageClient {
 }
 
 fn parse_retry_after(value: &str) -> Option<Duration> {
-    value.trim().parse::<u64>().ok().map(Duration::from_secs)
+    parse_retry_after_at(value, unix_seconds())
+}
+
+fn parse_retry_after_at(value: &str, now_unix_seconds: u64) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let retry_at = parse_http_date(value)?;
+    Some(Duration::from_secs(
+        retry_at.saturating_sub(now_unix_seconds),
+    ))
 }
 
 fn parse_claude_usage(body: &str, checked_at: u64) -> Result<SuccessfulUsage, FetchFailure> {
@@ -571,8 +596,22 @@ fn parse_claude_usage(body: &str, checked_at: u64) -> Result<SuccessfulUsage, Fe
                 .pointer("/scope/model/display_name")
                 .and_then(Value::as_str)
                 .filter(|label| !label.trim().is_empty())
-                .ok_or_else(|| FetchFailure::schema("scoped_label"))?;
-            buckets.push(parse_claude_value(limit, label)?);
+                .map(str::to_owned);
+            match label {
+                Some(label) => match parse_claude_value(limit, &label) {
+                    Ok(value) => buckets.push(UsageBucket::Available(value)),
+                    Err(failure) => {
+                        log_scoped_failure(failure.kind);
+                        buckets.push(UsageBucket::Unavailable { label });
+                    }
+                },
+                None => {
+                    log_scoped_failure("scoped_label");
+                    buckets.push(UsageBucket::Unavailable {
+                        label: "Scoped model".to_owned(),
+                    });
+                }
+            }
         }
     }
     Ok(SuccessfulUsage {
@@ -639,37 +678,71 @@ fn parse_codex_usage(body: &str, checked_at: u64) -> Result<SuccessfulUsage, Fet
 }
 
 fn read_claude_token(paths: &UsagePaths) -> Result<String, &'static str> {
-    let config_dir = paths
-        .claude_config_dir
-        .clone()
-        .or_else(|| paths.home.as_ref().map(|home| home.join(".claude")))
-        .ok_or("credential_path")?;
+    let config_dir = paths.claude_config_dir.clone().ok_or("credential_path")?;
     let service = claude_config_service(&config_dir).map_err(|_| "credential_service")?;
     let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("hide-claude-keychain".to_owned())
         .spawn(move || {
-            let result = read_claude_keychain_service(&service)
-                .or_else(|| read_claude_keychain_service("Claude Code-credentials"));
+            let result = read_claude_keychain_services(&service, read_claude_keychain_service);
             let _ = sender.send(result);
         })
         .map_err(|_| "keychain_worker")?;
-    if let Ok(Some(token)) = receiver.recv_timeout(KEYCHAIN_TIMEOUT) {
-        return Ok(token);
+    let result = match receiver.recv_timeout(KEYCHAIN_TIMEOUT) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => CredentialLookup::Failed("keychain_timeout"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => CredentialLookup::Failed("keychain_worker"),
+    };
+    resolve_claude_token_lookup(result, || read_claude_credential_file(&config_dir))
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum CredentialLookup {
+    Found(String),
+    Missing,
+    Failed(&'static str),
+}
+
+fn read_claude_keychain_services(
+    service: &str,
+    mut read: impl FnMut(&str) -> CredentialLookup,
+) -> CredentialLookup {
+    match read(service) {
+        CredentialLookup::Missing => read("Claude Code-credentials"),
+        result => result,
     }
-    read_claude_credential_file(&config_dir).ok_or("credentials_missing")
+}
+
+fn resolve_claude_token_lookup(
+    result: CredentialLookup,
+    read_file: impl FnOnce() -> Option<String>,
+) -> Result<String, &'static str> {
+    match result {
+        CredentialLookup::Found(token) => Ok(token),
+        CredentialLookup::Missing => read_file().ok_or("credentials_missing"),
+        CredentialLookup::Failed(kind) => Err(kind),
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn read_claude_keychain_service(service: &str) -> Option<String> {
-    let account = login_account_name()?;
-    let bytes = security_framework::passwords::get_generic_password(service, &account).ok()?;
-    parse_claude_credential_bytes(&bytes)
+fn read_claude_keychain_service(service: &str) -> CredentialLookup {
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25_300;
+
+    let Some(account) = login_account_name() else {
+        return CredentialLookup::Failed("keychain_account");
+    };
+    match security_framework::passwords::get_generic_password(service, &account) {
+        Ok(bytes) => parse_claude_credential_bytes(&bytes)
+            .map(CredentialLookup::Found)
+            .unwrap_or(CredentialLookup::Failed("credentials_schema")),
+        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => CredentialLookup::Missing,
+        Err(_) => CredentialLookup::Failed("keychain_denied"),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn read_claude_keychain_service(_service: &str) -> Option<String> {
-    None
+fn read_claude_keychain_service(_service: &str) -> CredentialLookup {
+    CredentialLookup::Missing
 }
 
 fn read_claude_credential_file(config_dir: &Path) -> Option<String> {
@@ -693,11 +766,7 @@ struct CodexCredentials {
 }
 
 fn read_codex_credentials(paths: &UsagePaths) -> Result<CodexCredentials, &'static str> {
-    let root = paths
-        .codex_home
-        .clone()
-        .or_else(|| paths.home.as_ref().map(|home| home.join(".codex")))
-        .ok_or("credential_path")?;
+    let root = paths.codex_home.clone().ok_or("credential_path")?;
     let value = fs::read(root.join("auth.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -895,6 +964,82 @@ fn parse_rfc3339(value: &str) -> Option<u64> {
     u64::try_from(timestamp).ok()
 }
 
+fn parse_http_date(value: &str) -> Option<u64> {
+    let parts = value.split_whitespace().collect::<Vec<_>>();
+    let (day, month, year, time) = match parts.as_slice() {
+        // IMF-fixdate: Sun, 06 Nov 1994 08:49:37 GMT
+        [weekday, day, month, year, time, "GMT"] if weekday.ends_with(',') => (
+            day.parse::<i64>().ok()?,
+            parse_http_month(month)?,
+            year.parse::<i64>().ok()?,
+            *time,
+        ),
+        // Obsolete RFC 850 form: Sunday, 06-Nov-94 08:49:37 GMT
+        [weekday, date, time, "GMT"] if weekday.ends_with(',') => {
+            let date = date.split('-').collect::<Vec<_>>();
+            let [day, month, year] = date.as_slice() else {
+                return None;
+            };
+            let short_year = year.parse::<i64>().ok()?;
+            let year = if short_year >= 70 {
+                1_900 + short_year
+            } else {
+                2_000 + short_year
+            };
+            (
+                day.parse::<i64>().ok()?,
+                parse_http_month(month)?,
+                year,
+                *time,
+            )
+        }
+        // ANSI C asctime form: Sun Nov  6 08:49:37 1994
+        [_weekday, month, day, time, year] => (
+            day.parse::<i64>().ok()?,
+            parse_http_month(month)?,
+            year.parse::<i64>().ok()?,
+            *time,
+        ),
+        _ => return None,
+    };
+    let time = time.split(':').collect::<Vec<_>>();
+    let [hour, minute, second] = time.as_slice() else {
+        return None;
+    };
+    let hour = hour.parse::<i64>().ok()?;
+    let minute = minute.parse::<i64>().ok()?;
+    let second = second.parse::<i64>().ok()?;
+    if !(1..=days_in_month(year, month)).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+    let timestamp = days_from_civil(year, month, day)
+        .checked_mul(86_400)?
+        .checked_add(hour * 3_600 + minute * 60 + second)?;
+    u64::try_from(timestamp).ok()
+}
+
+fn parse_http_month(value: &str) -> Option<i64> {
+    Some(match value {
+        "Jan" => 1,
+        "Feb" => 2,
+        "Mar" => 3,
+        "Apr" => 4,
+        "May" => 5,
+        "Jun" => 6,
+        "Jul" => 7,
+        "Aug" => 8,
+        "Sep" => 9,
+        "Oct" => 10,
+        "Nov" => 11,
+        "Dec" => 12,
+        _ => return None,
+    })
+}
+
 fn days_in_month(year: i64, month: i64) -> i64 {
     match month {
         2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
@@ -1050,11 +1195,27 @@ fn log_failure(provider: &str, status: Option<u16>, kind: &str) {
     }));
 }
 
+fn log_scoped_failure(kind: &str) {
+    crate::diagnostic!(json!({
+        "component": "provider_usage",
+        "provider": "claude",
+        "scope": "weekly_scoped",
+        "kind": kind,
+    }));
+}
+
 fn unix_milliseconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[cfg(test)]
@@ -1077,18 +1238,28 @@ mod tests {
         assert_eq!(success.main.used_percent, 43.4);
         assert_eq!(success.main.resets_at_unix_seconds, 1_893_456_000);
         assert_eq!(success.buckets.len(), 1);
-        assert_eq!(success.buckets[0].label, "Fable");
-        assert_eq!(success.buckets[0].resets_at_unix_seconds, 1_893_521_045);
+        let UsageBucket::Available(bucket) = &success.buckets[0] else {
+            panic!("Fable should remain available");
+        };
+        assert_eq!(bucket.label, "Fable");
+        assert_eq!(bucket.resets_at_unix_seconds, 1_893_521_045);
     }
 
     #[test]
-    fn malformed_scoped_bucket_is_an_observable_schema_failure() {
-        let failure = parse_claude_usage(
-            r#"{"seven_day":{"utilization":40,"resets_at":"2030-01-01T00:00:00Z"},"limits":[{"kind":"weekly_scoped","utilization":1}]}"#,
+    fn malformed_scoped_bucket_does_not_discard_valid_weekly_usage() {
+        let success = parse_claude_usage(
+            r#"{"seven_day":{"utilization":40,"resets_at":"2030-01-01T00:00:00Z"},"limits":[{"kind":"weekly_scoped","utilization":1},{"kind":"weekly_scoped","utilization":61,"resets_at":"2030-01-02T00:00:00Z","scope":{"model":{"display_name":"Fable"}}}]}"#,
             1_000,
-        ).unwrap_err();
-        assert_eq!(failure.disposition, FailureDisposition::Schema);
-        assert_eq!(failure.kind, "scoped_label");
+        )
+        .unwrap();
+        let state = ProviderState::new("claude", "Claude Code");
+        let projected = snapshot_from_success(&state, &success, "available", None, 1_000);
+        assert_eq!(projected.used_percent, Some(40.0));
+        assert_eq!(projected.buckets.len(), 2);
+        assert_eq!(projected.buckets[0].label, "Scoped model");
+        assert_eq!(projected.buckets[0].state, "unavailable");
+        assert_eq!(projected.buckets[1].label, "Fable");
+        assert_eq!(projected.buckets[1].used_percent, Some(61.0));
     }
 
     #[test]
@@ -1171,6 +1342,89 @@ mod tests {
 
         assert!(!state.can_attempt(now + Duration::from_secs(89)));
         assert!(state.can_attempt(now + Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn retry_after_accepts_delay_seconds_and_all_http_date_forms() {
+        let now = 784_111_717;
+        assert_eq!(
+            parse_retry_after_at("120", now),
+            Some(Duration::from_secs(120))
+        );
+        for value in [
+            "Sun, 06 Nov 1994 08:49:37 GMT",
+            "Sunday, 06-Nov-94 08:49:37 GMT",
+            "Sun Nov  6 08:49:37 1994",
+        ] {
+            assert_eq!(
+                parse_retry_after_at(value, now),
+                Some(Duration::from_secs(60)),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn keychain_denial_stops_before_legacy_or_file_fallback() {
+        let mut visited = Vec::new();
+        let result = read_claude_keychain_services("Claude Code-credentials-config", |service| {
+            visited.push(service.to_owned());
+            CredentialLookup::Failed("keychain_denied")
+        });
+        assert_eq!(result, CredentialLookup::Failed("keychain_denied"));
+        assert_eq!(visited, ["Claude Code-credentials-config"]);
+
+        let mut read_file = false;
+        let result = resolve_claude_token_lookup(result, || {
+            read_file = true;
+            Some("file-token".to_owned())
+        });
+        assert_eq!(result, Err("keychain_denied"));
+        assert!(!read_file);
+    }
+
+    #[test]
+    fn missing_config_keychain_entry_uses_the_legacy_service() {
+        let mut visited = Vec::new();
+        let result = read_claude_keychain_services("Claude Code-credentials-config", |service| {
+            visited.push(service.to_owned());
+            if service == "Claude Code-credentials" {
+                CredentialLookup::Found("token".to_owned())
+            } else {
+                CredentialLookup::Missing
+            }
+        });
+        assert_eq!(result, CredentialLookup::Found("token".to_owned()));
+        assert_eq!(
+            visited,
+            ["Claude Code-credentials-config", "Claude Code-credentials"]
+        );
+    }
+
+    #[test]
+    fn keychain_timeout_never_reads_the_credential_file() {
+        let mut read_file = false;
+        let result =
+            resolve_claude_token_lookup(CredentialLookup::Failed("keychain_timeout"), || {
+                read_file = true;
+                Some("file-token".to_owned())
+            });
+        assert_eq!(result, Err("keychain_timeout"));
+        assert!(!read_file);
+    }
+
+    #[test]
+    fn unresolved_explicit_provider_paths_never_fall_back_to_home() {
+        let paths = UsagePaths {
+            home: Some(PathBuf::from("/private/tmp/provider-home")),
+            claude_config_dir: None,
+            codex_home: None,
+        };
+        assert_eq!(read_claude_token(&paths), Err("credential_path"));
+        assert!(matches!(
+            read_codex_credentials(&paths),
+            Err("credential_path")
+        ));
     }
 
     #[cfg(target_os = "macos")]

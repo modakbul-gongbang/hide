@@ -87,14 +87,16 @@ The toolbar's Weekly Usage popover is a separate read-only capability owned by `
 It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a request through `hide-ai`.
 
 For Claude Code, the core tries the configuration-specific macOS Keychain service, the legacy service, and then `.credentials.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`.
+The next source is tried only when the previous Keychain item is absent; a prompt denial, Keychain error, or timeout fails closed before any credential file or provider request is read.
 For Codex, it reads `auth.json` under `CODEX_HOME` or `~/.codex`.
+An invalid explicit `CLAUDE_CONFIG_DIR` or `CODEX_HOME` disables that provider's credential read instead of falling back to `HOME`.
 The access token exists only long enough to build the HTTPS authorization header.
 Hide never refreshes, replaces, persists, logs, or includes it in a snapshot, and it never exposes the account identifier outside the request header.
 A keychain read is limited to three seconds; a prompt denial, missing credential, or 401 is shown as a sign-in-required state rather than retried or hidden.
 
 The core calls the providers' read-only usage endpoints outside `Mutex<Runtime>` after a one-second launch delay.
 It refreshes every five minutes only while the main window is visible, and refreshes when an older popover is reopened.
-A 429 honors `Retry-After`, or falls back to bounded 5, 10, and 15 minute delays.
+A 429 honors `Retry-After` in either delay-seconds or HTTP-date form, or falls back to bounded 5, 10, and 15 minute delays.
 An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.
 The previous Claude `.usage-cache.json` input is no longer read.
 Failures produce one structured event containing only provider, HTTP status, and error kind.
