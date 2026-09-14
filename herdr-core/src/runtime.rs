@@ -8739,29 +8739,43 @@ impl Runtime {
 
     fn close_context(&self, tab: &TabSnapshot) -> Option<ClosedContext> {
         let tab_id = tab.id.as_ref()?;
-        let workspace_id = tab.workspace_id.as_ref()?;
+        let project_workspace_id = tab.workspace_id.as_ref()?;
         let checkout_id = tab.checkout_id.as_ref()?;
+        let (session_workspace_id, tab_order) = self
+            .herdr_workspace_tab_order
+            .iter()
+            .find(|(_, ids)| ids.iter().any(|id| id == tab_id))?;
         self.snapshot
             .navigator
             .workspaces
             .iter()
+            .filter(|workspace| workspace.id == *project_workspace_id)
             .find_map(|workspace| {
                 workspace
                     .checkouts
                     .iter()
                     .find(|checkout| checkout.id == *checkout_id)
                     .map(|checkout| ClosedContext {
-                        workspace_id: workspace_id.clone(),
+                        workspace_id: session_workspace_id.clone(),
                         workspace_label: workspace.label.clone(),
+                        workspace_ids_before_close: self
+                            .snapshot
+                            .navigator
+                            .workspaces
+                            .iter()
+                            .flat_map(|workspace| workspace.session_workspace_ids.iter().cloned())
+                            .collect(),
+                        tab_ids_before_close: tab_order.clone(),
+                        pane_ids_before_close: tab
+                            .panes
+                            .iter()
+                            .map(|pane| pane.id.clone())
+                            .collect(),
                         checkout_id: checkout_id.clone(),
                         checkout_path: checkout.path.clone(),
                         tab_id: tab_id.clone(),
                         tab_label: tab.label.clone().unwrap_or_else(|| "Tab".into()),
-                        tab_index: self
-                            .herdr_workspace_tab_order
-                            .get(workspace_id)
-                            .and_then(|ids| ids.iter().position(|id| id == tab_id))
-                            .unwrap_or(0),
+                        tab_index: tab_order.iter().position(|id| id == tab_id).unwrap_or(0),
                     })
             })
     }
@@ -21617,6 +21631,45 @@ mod tests {
             Some("file:one.rs")
         );
         assert!(!snapshot.recent_closed.restoring);
+    }
+
+    /// B2, B7: a projected project id is stable across Herdr sessions, but a
+    /// reopened tab must target the Herdr workspace that actually owned it.
+    #[test]
+    fn close_context_keeps_project_lookup_separate_from_session_workspace() {
+        let mut runtime = runtime();
+        let mut project = workspace(
+            "workspace:project",
+            "Fixture",
+            "/repo",
+            vec![checkout(
+                "workspace:project",
+                "checkout:main",
+                "/repo",
+                Some(pane("w7:p2", "/repo")),
+            )],
+        );
+        project.session_workspace_ids = vec!["w7".to_owned()];
+        let tab = &mut project.checkouts[0].tabs[0];
+        tab.id = Some("w7:t2".to_owned());
+        project.checkouts[0].active_tab_id = Some("w7:t2".to_owned());
+        runtime.snapshot.navigator.workspaces = vec![project];
+        runtime.herdr_workspace_tab_order.insert(
+            "w7".to_owned(),
+            vec!["w7:t1".to_owned(), "w7:t2".to_owned()],
+        );
+
+        let context = runtime
+            .close_context(&runtime.snapshot.navigator.workspaces[0].checkouts[0].tabs[0])
+            .expect("complete close context");
+
+        assert_eq!(context.workspace_id, "w7");
+        assert_eq!(context.workspace_ids_before_close, ["w7"]);
+        assert_eq!(context.tab_ids_before_close, ["w7:t1", "w7:t2"]);
+        assert_eq!(context.pane_ids_before_close, ["w7:p2"]);
+        assert_eq!(context.checkout_id, "checkout:main");
+        assert_eq!(context.tab_id, "w7:t2");
+        assert_eq!(context.tab_index, 1);
     }
 
     /// B15, B16, B23: an external-effect failure retains the same top item for

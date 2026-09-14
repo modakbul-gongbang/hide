@@ -15,6 +15,12 @@ pub fn push_bounded(stack: &mut VecDeque<ClosedItem>, item: ClosedItem) {
 pub struct ClosedContext {
     pub workspace_id: String,
     pub workspace_label: String,
+    /// Herdr identities present before the close. A retry only adopts an id
+    /// outside these sets, so an acknowledged-late mutation converges instead
+    /// of creating a second workspace, tab, or pane.
+    pub workspace_ids_before_close: Vec<String>,
+    pub tab_ids_before_close: Vec<String>,
+    pub pane_ids_before_close: Vec<String>,
     pub checkout_id: String,
     pub checkout_path: String,
     pub tab_id: String,

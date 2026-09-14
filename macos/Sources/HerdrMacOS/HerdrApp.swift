@@ -517,7 +517,7 @@ struct ShellCommands: Commands {
             Divider()
             paneButton(.closePane)
         }
-        CommandGroup(after: .windowArrangement) {
+        CommandGroup(after: .windowSize) {
             menuButton(.reopenClosedTab) { model.reopenClosed() }
                 .disabled(!model.canReopenClosed)
         }

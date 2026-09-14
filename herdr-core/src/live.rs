@@ -842,15 +842,7 @@ fn run_herdr_reopen(
             layout,
             panes,
             browser_count,
-        } => reopen_tab(
-            connector,
-            key,
-            context,
-            &layout.root,
-            panes,
-            *browser_count,
-            request.workspace_exists,
-        ),
+        } => reopen_tab(connector, key, context, &layout.root, panes, *browser_count),
         ClosedItem::File { .. } => unreachable!("file reopen uses the filesystem worker"),
     }
 }
@@ -859,7 +851,6 @@ fn ensure_workspace_and_tab(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
-    workspace_exists: bool,
     tab_exists: bool,
     root: &ClosedLayoutNode,
     notices: &mut Vec<String>,
@@ -867,8 +858,36 @@ fn ensure_workspace_and_tab(
     if tab_exists {
         return Err("the requested tab already exists".into());
     }
-    let (workspace_id, tab_id) = if workspace_exists {
+    let snapshot = fetch_session_with_connector(connector)
+        .map_err(|error| format!("session.snapshot before reopen failed: {}", error.message()))?;
+    let original_workspace_exists = snapshot
+        .workspaces
+        .iter()
+        .any(|workspace| workspace.workspace_id == context.workspace_id);
+    let recovered_workspaces = snapshot
+        .workspaces
+        .iter()
+        .filter(|workspace| {
+            !context
+                .workspace_ids_before_close
+                .contains(&workspace.workspace_id)
+                && workspace.label == context.workspace_label
+        })
+        .collect::<Vec<_>>();
+    if !original_workspace_exists && recovered_workspaces.len() > 1 {
+        return Err(format!(
+            "reopen retry found {} new workspaces named {}; refusing to create another",
+            recovered_workspaces.len(),
+            context.workspace_label
+        ));
+    }
+    let (workspace_id, seed_tab_id) = if original_workspace_exists {
         (context.workspace_id.clone(), None)
+    } else if let Some(workspace) = recovered_workspaces.first() {
+        (
+            workspace.workspace_id.clone(),
+            workspace.active_tab_id.clone(),
+        )
     } else {
         let created = reopen_request(
             connector,
@@ -879,11 +898,41 @@ fn ensure_workspace_and_tab(
         let (workspace_id, tab_id, _) = wire::created_workspace(created)?;
         (workspace_id, Some(tab_id))
     };
+    let recovered_tabs = snapshot
+        .tabs
+        .iter()
+        .filter(|tab| {
+            tab.workspace_id == workspace_id
+                && !context.tab_ids_before_close.contains(&tab.tab_id)
+                && tab.label == context.tab_label
+        })
+        .collect::<Vec<_>>();
+    if recovered_tabs.len() > 1 {
+        return Err(format!(
+            "reopen retry found {} new tabs named {}; refusing to create another",
+            recovered_tabs.len(),
+            context.tab_label
+        ));
+    }
+    if let Some(tab) = recovered_tabs.first() {
+        let exported = reopen_request(
+            connector,
+            &format!("herdr-core:{key}:recover-layout"),
+            "layout.export",
+            wire::layout_export_params(&tab.tab_id)?,
+        )?;
+        return wire::exported_layout(exported);
+    }
     let applied = reopen_request(
         connector,
         &format!("herdr-core:{key}:layout"),
         "layout.apply",
-        wire::layout_apply_params(&workspace_id, tab_id.as_deref(), &context.tab_label, root)?,
+        wire::layout_apply_params(
+            &workspace_id,
+            seed_tab_id.as_deref(),
+            &context.tab_label,
+            root,
+        )?,
     )?;
     let layout = wire::applied_layout(applied)?;
     let move_result = reopen_request(
@@ -918,20 +967,63 @@ fn reopen_pane(
             .filter(|id| request.fallback_pane_id.as_deref() == Some(id.as_str()))
             .or(request.fallback_pane_id.as_ref())
             .ok_or_else(|| "the original tab has no pane to split".to_owned())?;
-        let value = reopen_request(
-            connector,
-            &format!("herdr-core:{key}:pane"),
-            "pane.split",
-            wire::pane_split_with_ratio_params(target, placement.direction, &cwd, placement.ratio)?,
-        )?;
-        let new_pane_id = wire::split_pane(value)?;
-        if placement.target_was_first {
-            reopen_request(
+        let snapshot = fetch_session_with_connector(connector).map_err(|error| {
+            format!(
+                "session.snapshot before pane reopen failed: {}",
+                error.message()
+            )
+        })?;
+        let layout = snapshot
+            .layouts
+            .iter()
+            .find(|layout| layout.tab_id == context.tab_id);
+        let recovered_panes = layout
+            .into_iter()
+            .flat_map(|layout| layout.panes.iter())
+            .filter(|candidate| !context.pane_ids_before_close.contains(&candidate.pane_id))
+            .filter(|candidate| {
+                snapshot
+                    .panes
+                    .iter()
+                    .find(|pane| pane.pane_id == candidate.pane_id)
+                    .and_then(|pane| pane.cwd.as_deref())
+                    == Some(cwd.as_str())
+            })
+            .collect::<Vec<_>>();
+        if recovered_panes.len() > 1 {
+            return Err(format!(
+                "reopen retry found {} new panes in {}; refusing to create another",
+                recovered_panes.len(),
+                context.tab_label
+            ));
+        }
+        let new_pane_id = if let Some(pane) = recovered_panes.first() {
+            pane.pane_id.clone()
+        } else {
+            let value = reopen_request(
+                connector,
+                &format!("herdr-core:{key}:pane"),
+                "pane.split",
+                wire::pane_split_with_ratio_params(
+                    target,
+                    placement.direction,
+                    &cwd,
+                    placement.ratio,
+                )?,
+            )?;
+            wire::split_pane(value)?
+        };
+        if placement.target_was_first
+            && let Err(message) = reopen_request(
                 connector,
                 &format!("herdr-core:{key}:swap"),
                 "pane.swap",
                 wire::pane_swap_params(&new_pane_id, target)?,
-            )?;
+            )
+        {
+            notices.push(format!(
+                "The pane reopened but its original side could not be restored: {message}"
+            ));
         }
         new_pane_id
     } else {
@@ -942,15 +1034,7 @@ fn reopen_pane(
             command: None,
             env: Default::default(),
         };
-        let layout = ensure_workspace_and_tab(
-            connector,
-            key,
-            context,
-            request.workspace_exists,
-            false,
-            &root,
-            &mut notices,
-        )?;
+        let layout = ensure_workspace_and_tab(connector, key, context, false, &root, &mut notices)?;
         layout.focused_pane_id
     };
     if let Some(agent) = &pane.agent {
@@ -976,7 +1060,6 @@ fn reopen_tab(
     root: &ClosedLayoutNode,
     panes: &[ClosedPane],
     browser_count: usize,
-    workspace_exists: bool,
 ) -> Result<ReopenOutcome, String> {
     let pane_map = panes
         .iter()
@@ -990,15 +1073,8 @@ fn reopen_tab(
     else {
         return Err("the closed tab contained only Browser panes".into());
     };
-    let layout = ensure_workspace_and_tab(
-        connector,
-        key,
-        context,
-        workspace_exists,
-        false,
-        &root,
-        &mut common_notices,
-    )?;
+    let layout =
+        ensure_workspace_and_tab(connector, key, context, false, &root, &mut common_notices)?;
     let mut new_ids = Vec::new();
     layout.root.pane_ids(&mut new_ids);
     let terminal_panes = terminal_ids
@@ -1070,7 +1146,7 @@ fn start_or_degrade_agent(
             &agent.kind,
             args,
         );
-        if result.is_ok() {
+        if result.is_ok() || agent_is_running(connector, pane_id, &agent.kind) {
             return;
         }
         notices.push(format!(
@@ -1088,11 +1164,24 @@ fn start_or_degrade_agent(
         &name,
         &agent.kind,
         Vec::new(),
-    ) {
+    ) && !agent_is_running(connector, pane_id, &agent.kind)
+    {
         notices.push(format!(
             "Agent could not be started; the shell was kept: {message}"
         ));
     }
+}
+
+fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> bool {
+    fetch_session_with_connector(connector).is_ok_and(|snapshot| {
+        snapshot.agents.iter().any(|agent| {
+            agent.pane_id.as_deref() == Some(pane_id)
+                && agent
+                    .agent
+                    .as_deref()
+                    .is_some_and(|agent_kind| agent_kind.eq_ignore_ascii_case(kind))
+        })
+    })
 }
 
 fn start_agent(
