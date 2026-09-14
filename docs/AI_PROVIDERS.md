@@ -93,6 +93,7 @@ An invalid explicit `CLAUDE_CONFIG_DIR` or `CODEX_HOME` disables that provider's
 The access token exists only long enough to build the HTTPS authorization header.
 Hide never refreshes, replaces, persists, logs, or includes it in a snapshot, and it never exposes the account identifier outside the request header.
 A keychain read is limited to three seconds; a prompt denial, missing credential, or 401 is shown as a sign-in-required state rather than retried or hidden.
+Only one Keychain read may be in flight, so a system prompt that outlives the timeout cannot accumulate background readers on later refresh ticks.
 
 The core calls the providers' read-only usage endpoints outside `Mutex<Runtime>` after a one-second launch delay.
 It refreshes every five minutes only while the main window is visible, and refreshes when an older popover is reopened.

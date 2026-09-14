@@ -1,6 +1,8 @@
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -139,6 +141,7 @@ pub struct ProviderUsageReader {
     codex_fallback: Option<SessionFallback>,
     published: Vec<ProviderUsageSnapshot>,
     http: UreqUsageClient,
+    claude_keychain_in_flight: Arc<AtomicBool>,
 }
 
 impl ProviderUsageReader {
@@ -152,6 +155,7 @@ impl ProviderUsageReader {
             codex_fallback: None,
             published: ProviderUsageSnapshot::initial_rows(),
             http: UreqUsageClient::new(),
+            claude_keychain_in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -194,7 +198,7 @@ impl ProviderUsageReader {
             return;
         }
         let checked_at = unix_milliseconds();
-        let token = match read_claude_token(&self.paths) {
+        let token = match read_claude_token(&self.paths, &self.claude_keychain_in_flight) {
             Ok(token) => token,
             Err(kind) => {
                 self.claude
@@ -677,17 +681,31 @@ fn parse_codex_usage(body: &str, checked_at: u64) -> Result<SuccessfulUsage, Fet
     })
 }
 
-fn read_claude_token(paths: &UsagePaths) -> Result<String, &'static str> {
+fn read_claude_token(
+    paths: &UsagePaths,
+    keychain_in_flight: &Arc<AtomicBool>,
+) -> Result<String, &'static str> {
     let config_dir = paths.claude_config_dir.clone().ok_or("credential_path")?;
     let service = claude_config_service(&config_dir).map_err(|_| "credential_service")?;
+    if keychain_in_flight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("keychain_in_flight");
+    }
     let (sender, receiver) = mpsc::channel();
+    let worker_in_flight = Arc::clone(keychain_in_flight);
     std::thread::Builder::new()
         .name("hide-claude-keychain".to_owned())
         .spawn(move || {
             let result = read_claude_keychain_services(&service, read_claude_keychain_service);
             let _ = sender.send(result);
+            worker_in_flight.store(false, Ordering::Release);
         })
-        .map_err(|_| "keychain_worker")?;
+        .map_err(|_| {
+            keychain_in_flight.store(false, Ordering::Release);
+            "keychain_worker"
+        })?;
     let result = match receiver.recv_timeout(KEYCHAIN_TIMEOUT) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => CredentialLookup::Failed("keychain_timeout"),
@@ -1420,11 +1438,30 @@ mod tests {
             claude_config_dir: None,
             codex_home: None,
         };
-        assert_eq!(read_claude_token(&paths), Err("credential_path"));
+        assert_eq!(
+            read_claude_token(&paths, &Arc::new(AtomicBool::new(false))),
+            Err("credential_path")
+        );
         assert!(matches!(
             read_codex_credentials(&paths),
             Err("credential_path")
         ));
+    }
+
+    #[test]
+    fn a_pending_keychain_lookup_allows_only_one_worker() {
+        let in_flight = Arc::new(AtomicBool::new(true));
+        let paths = UsagePaths {
+            home: None,
+            claude_config_dir: Some(PathBuf::from("/private/tmp/claude")),
+            codex_home: None,
+        };
+
+        assert_eq!(
+            read_claude_token(&paths, &in_flight),
+            Err("keychain_in_flight")
+        );
+        assert!(in_flight.load(Ordering::Acquire));
     }
 
     #[cfg(target_os = "macos")]
