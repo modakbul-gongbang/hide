@@ -10527,7 +10527,7 @@
       "x": 0,
       "y": 1100,
       "name": "Band / Review",
-      "width": 98749,
+      "width": 115237,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -70251,6 +70251,4885 @@
           "textGrowth": "fixed-width",
           "width": "fill_container",
           "content": "Mixed-script Pen renders inspected at 240/320/344/400pt. Native focus, keyboard, resize and accessibility remain implementation verification. See design/agent-workflow-review.md for exact acceptance.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "cyH08",
+      "x": 98829,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / C01 Relation-aware Pane header",
+      "width": 840,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "OJ5Ft",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C01 / 지금 누구의 작업을 보고 있나",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "UC3qP",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "부모로 돌아가기 = 첫 줄. 내가 맡긴 자식 = 둘째 줄. 자식도 다시 부모가 될 수 있다. 28pt + 조건부 24pt. 기존 R2를 대체하는 R3 제안.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "k5wvF",
+          "name": "Proposed / R3 Relation-aware header",
+          "reusable": true,
+          "width": "fill_container",
+          "fill": "$--color-panel",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "JsO9H",
+              "name": "Identity toolbar",
+              "width": "fill_container",
+              "height": 28,
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "UcqQj",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Parent return",
+                  "enabled": false,
+                  "width": 48,
+                  "height": 24,
+                  "fill": "$--color-elevated",
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "B8ErKG",
+                      "name": "Return glyph",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "corner-up-left",
+                      "library": "lucide",
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "N2uNb",
+                      "name": "Parent label",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 24,
+                      "content": "부모",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "Gq6JL",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Direct parent title",
+                  "enabled": false,
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 132,
+                  "content": "기술 교육 콘텐츠 통합 /",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "id": "bYRI3",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Current pane identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "기술 교육 콘텐츠 통합",
+                      "fontSize": "$--text-body"
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "jb7mF": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "DmV27",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Instrumentation reason",
+                  "enabled": false,
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "circle-help"
+                    }
+                  }
+                },
+                {
+                  "id": "aA7Jx",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Restore layout",
+                  "enabled": false,
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "minimize"
+                    }
+                  }
+                },
+                {
+                  "id": "VJFBx",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Pane actions",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "ellipsis"
+                    }
+                  }
+                },
+                {
+                  "id": "kZsP3",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "pkFwB",
+              "name": "Header divider",
+              "fill": "$--color-divider",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "frame",
+              "id": "IC20A",
+              "x": 0,
+              "y": 0,
+              "name": "Direct children",
+              "enabled": false,
+              "width": "fill_container(0)",
+              "height": 24,
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "rZ4fj",
+                  "name": "Children scope",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 24,
+                  "content": "자식",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "id": "lRwfM",
+                  "type": "ref",
+                  "ref": "j0Sji",
+                  "name": "Named child",
+                  "width": 132,
+                  "height": 24
+                },
+                {
+                  "type": "frame",
+                  "id": "NKaf5",
+                  "name": "Other children",
+                  "height": 24,
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-xs"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "quaCF",
+                      "name": "Other children label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 18,
+                      "content": "+2",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "wWRBL",
+                  "name": "Flex",
+                  "width": "fill_container",
+                  "height": 1,
+                  "layout": "vertical"
+                },
+                {
+                  "id": "tyARV",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "View relationships",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "network"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "V45cOF",
+          "name": "01 독립 작업 · 자식 0 · 한 줄",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "01 독립 작업 · 자식 0 · 한 줄",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "n80OeK",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "01 독립 작업 · 자식 0 · 한 줄",
+          "width": 740
+        },
+        {
+          "type": "text",
+          "id": "jKvuU",
+          "name": "02 부모 · 자식 1",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "02 부모 · 자식 1",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "RjbGg",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "02 부모 · 자식 1",
+          "width": 740,
+          "descendants": {
+            "IC20A": {
+              "enabled": true
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "ezK7T",
+          "name": "03 부모 · 자식 3",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "03 부모 · 자식 3",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "ugyNK",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "03 부모 · 자식 3",
+          "width": 740,
+          "descendants": {
+            "IC20A": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "d2Htt",
+          "name": "04 자식 · 자식 없음 · 한 줄",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "04 자식 · 자식 없음 · 한 줄",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "oiPs9",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "04 자식 · 자식 없음 · 한 줄",
+          "width": 740,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": true
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "kcjJy",
+          "name": "05 자식이면서 부모 · 부모 경로와 자식 줄 동시 표시",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "05 자식이면서 부모 · 부모 경로와 자식 줄 동시 표시",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "FOXzs",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "05 자식이면서 부모 · 부모 경로와 자식 줄 동시 표시",
+          "width": 740,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": true
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "IC20A": {
+              "enabled": true
+            },
+            "lRwfM/tfJnw/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "lRwfM/tfJnw/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "lRwfM/tfJnw/x0h40": {
+              "content": "영문 표기 검토"
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "R6fHHB",
+          "name": "06 타 Workspace의 자식 · 부모 버튼에 위치 명시",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "06 타 Workspace의 자식 · 부모 버튼에 위치 명시",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "dQk7u",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "06 타 Workspace의 자식 · 부모 버튼에 위치 명시",
+          "width": 740,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true,
+              "width": 86
+            },
+            "N2uNb": {
+              "content": "부모 · main",
+              "width": 72
+            },
+            "bYRI3/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "bYRI3/x0h40": {
+              "content": "API 응답 검증 · docs"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "QnSjs",
+          "name": "07 부모 종료 · 복귀 비활성 · 상세에서 확인",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "07 부모 종료 · 복귀 비활성 · 상세에서 확인",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "Zbe0B",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "07 부모 종료 · 복귀 비활성 · 상세에서 확인",
+          "width": 740,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true,
+              "width": 76
+            },
+            "B8ErKG": {
+              "fill": "$--color-muted"
+            },
+            "N2uNb": {
+              "content": "부모 종료",
+              "width": 60,
+              "fill": "$--color-muted"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "EA1j3",
+          "name": "08 알려진 자식만 · 미계측을 0명으로 바꾸지 않음",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "08 알려진 자식만 · 미계측을 0명으로 바꾸지 않음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "iwFO4",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "08 알려진 자식만 · 미계측을 0명으로 바꾸지 않음",
+          "width": 740,
+          "descendants": {
+            "DmV27": {
+              "enabled": true
+            },
+            "IC20A": {
+              "enabled": true
+            },
+            "rZ4fj": {
+              "content": "알려진 자식",
+              "width": 56
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "jrWmd",
+          "name": "09 detected · 미계측 · 보조 줄을 만들지 않음",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "09 detected · 미계측 · 보조 줄을 만들지 않음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "ncQ6m",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "09 detected · 미계측 · 보조 줄을 만들지 않음",
+          "width": 740,
+          "descendants": {
+            "bYRI3/x0h40": {
+              "content": "접근성 도움말 점검"
+            },
+            "DmV27": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "MQ4hN",
+          "name": "10 연결 끊김 · stale working/자식 숫자 숨김",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "10 연결 끊김 · stale working/자식 숫자 숨김",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "AEmVd",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "10 연결 끊김 · stale working/자식 숫자 숨김",
+          "width": 740,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "bYRI3/PCeNa": {
+              "content": "⊘",
+              "fill": "$--color-muted"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토 · Disconnected"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "CZ23K",
+          "name": "11 자식 zoom · 부모와 배치 복원은 별도 버튼",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "11 자식 zoom · 부모와 배치 복원은 별도 버튼",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "OKcvy",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "11 자식 zoom · 부모와 배치 복원은 별도 버튼",
+          "width": 740,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": true
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "aA7Jx": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "xnzGm",
+          "name": "12 일반 terminal · 관계 영역 없음",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "12 일반 terminal · 관계 영역 없음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "ZQImH",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "12 일반 terminal · 관계 영역 없음",
+          "width": 740,
+          "descendants": {
+            "bYRI3/PCeNa": {
+              "enabled": false
+            },
+            "bYRI3/YYqJe": {
+              "enabled": false
+            },
+            "bYRI3/x0h40": {
+              "content": "zsh · preview"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "P5EyFD",
+      "x": 99749,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / C02 Narrow and interaction",
+      "width": 920,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "pPGpK",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C02 / 좁아져도 부모 표식은 남는다",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "joC6S",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "240 / 320 / 344 / 400pt. 부모 이름부터 줄이고 ‘부모’ 버튼을 유지한다. 제목은 한 줄, 자식은 이름 한 개 + 나머지 수. 한 줄/두 줄 높이는 폭에 따라 바뀌지 않는다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "nj7iu",
+          "name": "Width 240",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "240pt · 자식이면서 부모 · zoom",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "yh1DN",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Child and parent 240",
+          "width": 240,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": false,
+              "width": 76,
+              "content": "콘텐츠 통합 /"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편…"
+            },
+            "aA7Jx": {
+              "enabled": true
+            },
+            "IC20A": {
+              "enabled": true
+            },
+            "lRwfM": {
+              "width": 100
+            },
+            "lRwfM/tfJnw/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "lRwfM/tfJnw/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "lRwfM/tfJnw/x0h40": {
+              "content": "영문…"
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "rSny9",
+          "name": "Width 320",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "320pt · 자식이면서 부모 · zoom",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "GCtcL",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Child and parent 320",
+          "width": 320,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": false,
+              "width": 76,
+              "content": "콘텐츠 통합 /"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "aA7Jx": {
+              "enabled": true
+            },
+            "IC20A": {
+              "enabled": true
+            },
+            "lRwfM": {
+              "width": 132
+            },
+            "lRwfM/tfJnw/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "lRwfM/tfJnw/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "lRwfM/tfJnw/x0h40": {
+              "content": "영문 표기 검토"
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "hzkjK",
+          "name": "Width 344",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "344pt · 자식이면서 부모 · zoom",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "Z6dAC",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Child and parent 344",
+          "width": 344,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": false,
+              "width": 76,
+              "content": "콘텐츠 통합 /"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "aA7Jx": {
+              "enabled": true
+            },
+            "IC20A": {
+              "enabled": true
+            },
+            "lRwfM": {
+              "width": 132
+            },
+            "lRwfM/tfJnw/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "lRwfM/tfJnw/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "lRwfM/tfJnw/x0h40": {
+              "content": "영문 표기 검토"
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "aBVQf",
+          "name": "Width 400",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "400pt · 자식이면서 부모 · zoom",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "sKxZr",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Child and parent 400",
+          "width": 400,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true
+            },
+            "Gq6JL": {
+              "enabled": true,
+              "width": 76,
+              "content": "콘텐츠 통합 /"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성…"
+            },
+            "aA7Jx": {
+              "enabled": true
+            },
+            "IC20A": {
+              "enabled": true
+            },
+            "lRwfM": {
+              "width": 132
+            },
+            "lRwfM/tfJnw/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "lRwfM/tfJnw/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "lRwfM/tfJnw/x0h40": {
+              "content": "영문 표기 검토"
+            },
+            "NKaf5": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "YZAiW",
+          "name": "Interactions",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "부모 버튼 · hover / keyboard focus / unavailable / pending",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "GpEE5",
+          "name": "Hover",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Hover",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "vkbVI",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Hover",
+          "width": 400,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true,
+              "fill": "$--color-selected-wash"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "WwzY6",
+          "name": "Keyboard focus",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Keyboard focus",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "O0FrFj",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Keyboard focus",
+          "width": 400,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true,
+              "stroke": "$--color-secondary",
+              "strokeWidth": "$--size-tab-indicator"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "qVR1x",
+          "name": "Unavailable",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Unavailable",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "tbIeC",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Unavailable",
+          "width": 400,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true,
+              "width": 76
+            },
+            "N2uNb": {
+              "content": "부모 종료",
+              "width": 60,
+              "fill": "$--color-muted"
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "IdNYA",
+          "name": "Pending",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Pending",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "uAADs",
+          "type": "ref",
+          "ref": "k5wvF",
+          "name": "Pending",
+          "width": 400,
+          "descendants": {
+            "UcqQj": {
+              "enabled": true,
+              "width": 76
+            },
+            "B8ErKG": {
+              "icon": "loader"
+            },
+            "N2uNb": {
+              "content": "이동 중",
+              "width": 60
+            },
+            "bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "iKbGM",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "부모: 이동 target과 전체 제목/Workspace를 동일 tooltip·accessibility help로 제공. 자식: 직접 탭 열기. 관계: 검사만. pending 중 중복 이동을 막고 실패하면 현재 탭과 헤더를 유지한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "EM8hf",
+      "x": 100749,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / C03 Overview component and ownership",
+      "width": 780,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "n0jS1B",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C03 / Overview는 프로젝트 맥락 + 선택한 작업",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "Tj0iD",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "프로젝트 Summary → Workspace 탐색 → 선택한 Workspace 상세. 현재 보는 Pane과 살펴보는 Workspace를 구분한다. 아래 값은 상태 설계용 fixture다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "SkFY0",
+          "name": "Proposed / R3 Project Overview",
+          "reusable": true,
+          "width": 320,
+          "fill": "$--color-panel",
+          "layout": "vertical",
+          "gap": "$--spacing-none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "GBL3W",
+              "name": "Project summary",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "xpSux",
+                  "name": "Project heading",
+                  "width": "fill_container",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "R2U9CW",
+                      "name": "Project name",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "hide",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-headline",
+                      "fontWeight": "semibold"
+                    },
+                    {
+                      "id": "Apxd1",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Refresh Overview",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "rotate-cw"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "CtPLg",
+                  "name": "Project scope",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "프로젝트 · Workspace 2개",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "x4PdSe",
+                  "name": "GitHub",
+                  "width": "fill_container",
+                  "height": 24,
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "OFClH",
+                      "name": "GitHub label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 94,
+                      "content": "GitHub",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "bzN2g",
+                      "name": "GitHub value",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "최근 PR 없음",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "bvp9V",
+                      "name": "Details",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$--color-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FLFml",
+                  "name": "디스크 할당량",
+                  "width": "fill_container",
+                  "height": 24,
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "SB8iv",
+                      "name": "디스크 할당량 label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 94,
+                      "content": "디스크 할당량",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "iHkFm",
+                      "name": "디스크 할당량 value",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "미측정",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "USalI",
+                      "name": "Details",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$--color-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n2Cjg",
+                  "name": "Review merged worktrees",
+                  "height": 24,
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-xs"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ynRpX",
+                      "name": "Review merged worktrees label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 176,
+                      "content": "병합된 Worktree 정리…",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "w5ZQ9r",
+              "name": "Project boundary",
+              "fill": "$--color-divider",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "frame",
+              "id": "kan3J",
+              "x": 0,
+              "y": 0,
+              "name": "Overview availability",
+              "enabled": false,
+              "width": "fill_container(0)",
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "gntHy",
+                  "name": "Availability title",
+                  "fill": "$--color-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "불러오는 중",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-title",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "BWQHk",
+                  "name": "Availability detail",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Workspace 정보를 가져옵니다.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "HtDOB",
+                  "name": "Availability action",
+                  "height": 24,
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-xs"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "x9s5DF",
+                      "name": "Availability action label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 35,
+                      "content": "다시 시도",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "L2cPp",
+              "name": "Workspace navigator",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "b2iQ5",
+                  "name": "Workspace mode",
+                  "width": "fill_container",
+                  "height": 28,
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "cHkFv",
+                      "name": "Workspaces label",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Workspaces",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "semibold"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eFGFO",
+                      "name": "List mode",
+                      "height": 24,
+                      "fill": "$--color-elevated",
+                      "cornerRadius": "$--radius-xs",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "cXIXN",
+                          "name": "List mode label",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 28,
+                          "content": "List",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "NucId",
+                      "name": "Tree mode",
+                      "height": 24,
+                      "cornerRadius": "$--radius-xs",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "EPNsV",
+                          "name": "Tree mode label",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 28,
+                          "content": "Tree",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "I23xx",
+                  "name": "Workspace search",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$--color-elevated",
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "o37M1",
+                      "name": "Search glyph",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "bRjaS",
+                      "name": "Workspace query",
+                      "fill": "$--color-muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Workspace 또는 agent 찾기…",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "nB3CS",
+                  "name": "Attention total",
+                  "fill": "$--color-muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Needs You 없음",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "KXxiq",
+                  "name": "Proposed / R3 Overview workspace row",
+                  "reusable": true,
+                  "width": "fill_container",
+                  "fill": "$--color-elevated",
+                  "cornerRadius": "$--radius-xs",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "padding": "$--spacing-sm",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "qPlQX",
+                      "name": "Workspace identity",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "v0Zjg",
+                          "name": "Branch",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "git-branch",
+                          "library": "lucide",
+                          "fill": "$--color-secondary"
+                        },
+                        {
+                          "type": "text",
+                          "id": "XBNZB",
+                          "name": "Workspace name",
+                          "fill": "$--color-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "main",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-title",
+                          "fontWeight": "medium"
+                        },
+                        {
+                          "type": "text",
+                          "id": "b3Zx7",
+                          "name": "Viewing mark",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 48,
+                          "content": "열려 있음",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "u8SuL",
+                      "name": "Workspace context",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Working · 변경 파일 3개",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "FgxjF",
+                  "type": "ref",
+                  "ref": "KXxiq",
+                  "name": "Inspect docs workspace",
+                  "width": "fill_container",
+                  "fill": [],
+                  "descendants": {
+                    "XBNZB": {
+                      "content": "docs"
+                    },
+                    "b3Zx7": {
+                      "enabled": false
+                    },
+                    "u8SuL": {
+                      "content": "Idle · 변경 없음"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "zK5CB",
+                  "x": 0,
+                  "y": 0,
+                  "name": "No search results",
+                  "enabled": false,
+                  "width": "fill_container(0)",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-sm",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "vxYt0",
+                      "name": "No matching workspace",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "일치하는 Workspace 없음",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "R17x0n",
+                      "name": "Clear workspace filter",
+                      "height": 24,
+                      "cornerRadius": "$--radius-xs",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "REGk4",
+                          "name": "Clear workspace filter label",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 66,
+                          "content": "검색 지우기",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "TQwQs",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Git history preview",
+                  "enabled": false,
+                  "width": "fill_container(0)",
+                  "layout": "vertical",
+                  "gap": "$--spacing-none",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "OmSMX",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 23,
+                      "name": "Known Git parent edge",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 96
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "hDkyo",
+                      "layoutPosition": "absolute",
+                      "x": 34,
+                      "y": 71,
+                      "name": "Known Git parent edge",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 48
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "lNcEM",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 119,
+                      "name": "Known Git parent edge",
+                      "fill": "$--color-divider",
+                      "width": 18,
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "d9ppw",
+                      "name": "Known Git commit",
+                      "width": "fill_container",
+                      "height": 48,
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "m0isEw",
+                          "name": "Git lane",
+                          "width": 64,
+                          "height": 48,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "WoN7N",
+                              "x": 13,
+                              "y": 20,
+                              "name": "Commit node",
+                              "fill": "$--color-secondary",
+                              "width": 7,
+                              "height": 7
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "VBd0c",
+                          "name": "Commit text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "iLMIm",
+                              "name": "Commit subject",
+                              "fill": "$--color-primary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "구성 정리",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "lTBiJ",
+                              "name": "Workspace attachment",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "main · 선택됨",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "yBoKE",
+                      "name": "Known Git commit",
+                      "width": "fill_container",
+                      "height": 48,
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "AGpQU",
+                          "name": "Git lane",
+                          "width": 64,
+                          "height": 48,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "pM3iM",
+                              "x": 31,
+                              "y": 20,
+                              "name": "Commit node",
+                              "fill": "$--color-secondary",
+                              "width": 7,
+                              "height": 7
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "HLZPp",
+                          "name": "Commit text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "W4mYK",
+                              "name": "Commit subject",
+                              "fill": "$--color-primary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "API 문서 정리",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "qsKgF",
+                              "name": "Workspace attachment",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "docs",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "iEXl3",
+                      "name": "Known Git commit",
+                      "width": "fill_container",
+                      "height": 48,
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "xBMe6",
+                          "name": "Git lane",
+                          "width": 64,
+                          "height": 48,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "GYYbp",
+                              "x": 13,
+                              "y": 20,
+                              "name": "Commit node",
+                              "fill": "$--color-secondary",
+                              "width": 7,
+                              "height": 7
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "h8Dn3",
+                          "name": "Commit text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "iYMie",
+                              "name": "Commit subject",
+                              "fill": "$--color-primary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "공통 기반",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "VZpI3",
+                              "name": "Workspace attachment",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "2개 HEAD의 알려진 조상",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "Pqwvq",
+                      "name": "Git distinction",
+                      "fill": "$--color-muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Git 커밋 관계 · 에이전트 위임과 별개",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "DuGIM",
+              "name": "Inspector boundary",
+              "fill": "$--color-divider",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "frame",
+              "id": "s2WPx",
+              "name": "Proposed / R3 Workspace inspector",
+              "reusable": true,
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "udDaj",
+                  "name": "Inspection context",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "선택한 Workspace · main",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "uwvzI",
+                  "name": "Agent scope",
+                  "fill": "$--color-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "현재 보고 있는 에이전트",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "semibold"
+                },
+                {
+                  "id": "MW598",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Inspected agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "기술 교육 콘텐츠 통합"
+                    },
+                    "BsCNW": {
+                      "enabled": false
+                    },
+                    "jb7mF": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "K1PWgy",
+                  "name": "Return to agent",
+                  "height": 24,
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-xs"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lagCN",
+                      "name": "Return to agent label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 132,
+                      "content": "에이전트로 돌아가기 ↗",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ywiS7",
+                  "name": "Agent relationships",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "kpk3p",
+                      "name": "Parent relationship",
+                      "width": "fill_container",
+                      "height": 24,
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "UbGZT",
+                          "name": "Parent role",
+                          "fill": "$--color-muted",
+                          "textGrowth": "fixed-width",
+                          "width": 32,
+                          "content": "부모",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "PJ7aY",
+                          "name": "Parent value",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "없음 · 직접 시작한 작업",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lCNY0",
+                      "name": "Children heading",
+                      "width": "fill_container",
+                      "height": 24,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "XTtE7",
+                          "name": "Children summary",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "자식 3 · 작업 중 2",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "bRI0u",
+                          "name": "Inspect relationships",
+                          "height": 24,
+                          "cornerRadius": "$--radius-xs",
+                          "gap": "$--spacing-xs",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-xs"
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "q8P3O",
+                              "name": "Inspect relationships label",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": 55,
+                              "content": "관계 보기",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "jytOG",
+                      "name": "Direct child previews",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "id": "HRiIN",
+                          "type": "ref",
+                          "ref": "HXWFK",
+                          "name": "First child preview",
+                          "width": "fill_container",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-none"
+                          ],
+                          "descendants": {
+                            "YYqJe": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "x0h40": {
+                              "content": "18편 구성 검토",
+                              "fontWeight": "normal"
+                            },
+                            "EurXP": {
+                              "enabled": false
+                            },
+                            "jb7mF": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "g6pQqP",
+                          "type": "ref",
+                          "ref": "HXWFK",
+                          "name": "Second child preview",
+                          "width": "fill_container",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-none"
+                          ],
+                          "descendants": {
+                            "x0h40": {
+                              "content": "한국어 제목과 English 문서 검토",
+                              "fontWeight": "normal"
+                            },
+                            "EurXP": {
+                              "enabled": false
+                            },
+                            "jb7mF": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Z2ENd",
+                          "name": "All other direct children",
+                          "height": 24,
+                          "cornerRadius": "$--radius-xs",
+                          "gap": "$--spacing-xs",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-xs"
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "g8835K",
+                              "name": "All other direct children label",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": 99,
+                              "content": "나머지 1개 보기",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "dwq3z",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Unavailable notice",
+                  "enabled": false,
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container(0)",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "t87yc",
+                  "name": "Git workspace actions",
+                  "width": "fill_container",
+                  "height": 24,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "CJqXg",
+                      "name": "Change count",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "변경 파일 3개",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "GjfCK",
+                      "name": "View changes",
+                      "height": 24,
+                      "cornerRadius": "$--radius-xs",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "t6ZNK",
+                          "name": "View changes label",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 55,
+                          "content": "변경 보기",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "EsUxu",
+                  "name": "Commit and path details",
+                  "height": 24,
+                  "cornerRadius": "$--radius-xs",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-xs"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "V5plh",
+                      "name": "Commit and path details label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 132,
+                      "content": "› 최근 커밋 · 경로",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "Pkr8Z",
+          "name": "Owner",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Owner: CheckoutOverview.summary / workspaceRow / inspector. 부모·자식은 기존 PaneLineagePresentation 데이터의 명시적 확장. Project scope와 inspection/focus 분리는 보존.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "dzCM1",
+      "x": 101609,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / C04 Overview inspector states",
+      "width": 760,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "JZosc",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C04 / Overview 상태별 상세",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "lsnQ4",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "모든 상세는 같은 Workspace inspector ref. 조회/선택은 terminal focus를 바꾸지 않는다. Open/Return만 이동한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "BdCW5",
+          "name": "01 독립 작업 · 자식 없음",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "01 독립 작업 · 자식 없음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "kJ5eG",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "01 독립 작업 · 자식 없음",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "XTtE7": {
+              "content": "자식 없음"
+            },
+            "bRI0u": {
+              "enabled": false
+            },
+            "jytOG": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "ICkVo",
+          "name": "02 자식 · 부모 있음 · 자식 없음",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "02 자식 · 부모 있음 · 자식 없음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "F6Nz7L",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "02 자식 · 부모 있음 · 자식 없음",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "MW598/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "MW598/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "PJ7aY": {
+              "content": "↰ 기술 교육 콘텐츠 통합"
+            },
+            "XTtE7": {
+              "content": "자식 없음"
+            },
+            "bRI0u": {
+              "enabled": false
+            },
+            "jytOG": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "E5pR1",
+          "name": "03 자식이면서 부모",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "03 자식이면서 부모",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "BhEJP",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "03 자식이면서 부모",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "MW598/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "MW598/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "PJ7aY": {
+              "content": "↰ 기술 교육 콘텐츠 통합"
+            },
+            "XTtE7": {
+              "content": "자식 1 · Idle"
+            },
+            "HRiIN/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "HRiIN/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "HRiIN/x0h40": {
+              "content": "영문 표기 검토"
+            },
+            "g6pQqP": {
+              "enabled": false
+            },
+            "Z2ENd": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "rD0G9",
+          "name": "04 다른 Workspace 살펴보기 · main의 터미널은 그대로",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "04 다른 Workspace 살펴보기 · main의 터미널은 그대로",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "W1w8tz",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "04 다른 Workspace 살펴보기 · main의 터미널은 그대로",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "udDaj": {
+              "content": "살펴보는 Workspace · docs"
+            },
+            "uwvzI": {
+              "content": "이 Workspace의 대표 에이전트"
+            },
+            "MW598/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "MW598/x0h40": {
+              "content": "API 응답 검증"
+            },
+            "MW598/X6LdE": {
+              "content": "Idle",
+              "fill": "$--color-secondary"
+            },
+            "lagCN": {
+              "content": "Workspace 열고 에이전트 보기 ↗",
+              "width": 264
+            },
+            "PJ7aY": {
+              "content": "↰ 콘텐츠 통합 · main"
+            },
+            "XTtE7": {
+              "content": "자식 없음"
+            },
+            "bRI0u": {
+              "enabled": false
+            },
+            "jytOG": {
+              "enabled": false
+            },
+            "dwq3z": {
+              "enabled": true,
+              "content": "터미널은 main에 열려 있습니다."
+            },
+            "CJqXg": {
+              "content": "변경 없음"
+            },
+            "t6ZNK": {
+              "fill": "$--color-muted"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "G3ZRLW",
+          "name": "05 에이전트 없음",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "05 에이전트 없음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "sDazG",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "05 에이전트 없음",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "uwvzI": {
+              "content": "실행 중인 에이전트 없음"
+            },
+            "MW598": {
+              "enabled": false
+            },
+            "lagCN": {
+              "content": "에이전트 시작…",
+              "width": 132
+            },
+            "ywiS7": {
+              "enabled": false
+            },
+            "CJqXg": {
+              "content": "변경 없음"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "BL4db",
+          "name": "06 detected · 미계측",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "06 detected · 미계측",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "rVxoP",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "06 detected · 미계측",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "uwvzI": {
+              "content": "현재 보고 있는 에이전트"
+            },
+            "MW598/PCeNa": {
+              "content": "~",
+              "fill": "$--color-secondary"
+            },
+            "MW598/x0h40": {
+              "content": "접근성 도움말 점검"
+            },
+            "MW598/X6LdE": {
+              "content": "Unknown",
+              "fill": "$--color-secondary"
+            },
+            "PJ7aY": {
+              "content": "확인되지 않음"
+            },
+            "XTtE7": {
+              "content": "자식 계측 안 됨"
+            },
+            "bRI0u": {
+              "enabled": false
+            },
+            "jytOG": {
+              "enabled": false
+            },
+            "dwq3z": {
+              "enabled": true,
+              "content": "계측 정보가 없어 자식 유무를 알 수 없습니다. ⓘ"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "XyPxs",
+          "name": "07 연결 끊김 · 보관된 identity",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "07 연결 끊김 · 보관된 identity",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "W7YlHN",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "07 연결 끊김 · 보관된 identity",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "MW598/PCeNa": {
+              "content": "⊘",
+              "fill": "$--color-muted"
+            },
+            "MW598/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "MW598/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "MW598/X6LdE": {
+              "content": "Disconnected",
+              "fill": "$--color-muted"
+            },
+            "lagCN": {
+              "content": "에이전트 연결 끊김",
+              "width": 154,
+              "fill": "$--color-muted"
+            },
+            "PJ7aY": {
+              "content": "콘텐츠 통합 · 연결 확인 필요",
+              "fill": "$--color-muted"
+            },
+            "XTtE7": {
+              "content": "자식 상태 확인 불가"
+            },
+            "bRI0u": {
+              "enabled": false
+            },
+            "jytOG": {
+              "enabled": false
+            },
+            "dwq3z": {
+              "enabled": true,
+              "content": "마지막 identity를 표시합니다. 현재 진행 수는 숨깁니다."
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "vgGXf",
+          "name": "08 위임 작업 확인 필요 · 부모 Needs You",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "08 위임 작업 확인 필요 · 부모 Needs You",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "Fci4x",
+          "type": "ref",
+          "ref": "s2WPx",
+          "name": "08 위임 작업 확인 필요 · 부모 Needs You",
+          "width": 320,
+          "fill": "$--color-panel",
+          "descendants": {
+            "MW598/PCeNa": {
+              "content": "!",
+              "fill": "$--color-warning"
+            },
+            "MW598/X6LdE": {
+              "content": "Needs You",
+              "fill": "$--color-warning"
+            },
+            "XTtE7": {
+              "content": "자식 작업 확인 필요"
+            },
+            "dwq3z": {
+              "enabled": true,
+              "content": "위임한 작업이 멈춘 것으로 감지됐습니다. 에이전트에서 확인하세요."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "dVzZW",
+      "x": 102449,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / C05 Full workbench master",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "d6CvO",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C05 / 좌측 소속 · 중앙 현재 작업 · 우측 검사 맥락",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "pRRt1",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Sidebar 240 / Overview 320. 부모 작업은 분할 배치를 유지한다. 자식은 자기 탭에 열리고 복귀로 원래 부모 배치에 돌아간다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "kechj",
+          "name": "Proposed / R3 Workbench",
+          "reusable": true,
+          "clip": true,
+          "width": 1440,
+          "height": 800,
+          "fill": "$--color-background",
+          "children": [
+            {
+              "type": "frame",
+              "id": "D1HEL",
+              "name": "R3 Sidebar",
+              "width": 240,
+              "height": "fill_container",
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "uhGvw",
+                  "name": "Application bar",
+                  "width": "fill_container",
+                  "height": 32,
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "nx2ud",
+                      "name": "Brand",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "hide",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-headline",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "id": "sJjBw",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Toggle sidebar",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "panel-left"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "KlQ1d",
+                  "name": "Projects Agents switch",
+                  "width": "fill_container",
+                  "height": 32,
+                  "gap": "$--spacing-xxs",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "FjaJ6",
+                      "name": "Projects",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$--color-elevated",
+                      "cornerRadius": "$--radius-sm",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "x38Cq",
+                          "name": "Projects label",
+                          "fill": "$--color-primary",
+                          "content": "Projects",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "B6rbB",
+                      "name": "Agents",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$--color-sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "MXtnJ",
+                          "name": "Agents label",
+                          "fill": "$--color-secondary",
+                          "content": "Agents",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Mlnua",
+                  "name": "Search and creation",
+                  "width": "fill_container",
+                  "height": 36,
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "nG5HV",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Search",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "search"
+                        }
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "gpwZ3",
+                      "name": "Search label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Search",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "id": "iGJGs",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Open project",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "folder-plus"
+                        }
+                      }
+                    },
+                    {
+                      "id": "Tf3PC",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "New agent",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "plus"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fEPxo",
+                  "name": "Project membership",
+                  "width": "fill_container",
+                  "height": 32,
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "mOXbp",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Project disclosure",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "chevron-down"
+                        }
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "z42Twp",
+                      "name": "Project name",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "hide",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "L18HKF",
+                  "name": "Live project lineage",
+                  "width": 240,
+                  "fill": "$--color-sidebar",
+                  "layout": "vertical",
+                  "gap": "$--spacing-none",
+                  "children": [
+                    {
+                      "id": "Z7e7s3",
+                      "type": "ref",
+                      "ref": "pPtY6",
+                      "name": "Expanded main",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "LAECm",
+                      "name": "Parent depth 0",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "WR4GL",
+                          "type": "ref",
+                          "ref": "n1zn1O",
+                          "name": "Parent",
+                          "width": "fill_container",
+                          "descendants": {
+                            "Lggd1": {
+                              "enabled": true
+                            },
+                            "o2Df2F/PCeNa": {
+                              "content": "●",
+                              "fill": "$--color-agent-working"
+                            },
+                            "o2Df2F/x0h40": {
+                              "content": "기술 교육 콘텐츠 통합",
+                              "fill": "$--color-primary"
+                            },
+                            "o2Df2F/X6LdE": {
+                              "content": "Working",
+                              "fill": "$--color-agent-working"
+                            },
+                            "o2Df2F/BsCNW": {
+                              "content": "자식 3 · 작업 2",
+                              "enabled": true
+                            },
+                            "o2Df2F/jb7mF": {
+                              "content": "",
+                              "enabled": false,
+                              "width": "fill_container(0)"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YaY7R",
+                      "name": "First child depth 1",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        18
+                      ],
+                      "children": [
+                        {
+                          "id": "n78CC",
+                          "type": "ref",
+                          "ref": "n1zn1O",
+                          "name": "First child",
+                          "width": "fill_container",
+                          "descendants": {
+                            "Lggd1": {
+                              "enabled": true
+                            },
+                            "o2Df2F/PCeNa": {
+                              "content": "●",
+                              "fill": "$--color-agent-working"
+                            },
+                            "o2Df2F/YYqJe": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "o2Df2F/x0h40": {
+                              "content": "18편 구성 검토",
+                              "fill": "$--color-secondary"
+                            },
+                            "o2Df2F/X6LdE": {
+                              "content": "Working",
+                              "fill": "$--color-agent-working"
+                            },
+                            "o2Df2F/BsCNW": {
+                              "content": "자식 1",
+                              "enabled": true
+                            },
+                            "o2Df2F/jb7mF": {
+                              "content": "",
+                              "enabled": false,
+                              "width": "fill_container(0)"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cFhBY",
+                      "name": "Grandchild last depth 2",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        36
+                      ],
+                      "children": [
+                        {
+                          "id": "ofvjp",
+                          "type": "ref",
+                          "ref": "n1zn1O",
+                          "name": "Grandchild last",
+                          "width": "fill_container",
+                          "descendants": {
+                            "Lggd1": {
+                              "enabled": false
+                            },
+                            "o2Df2F/PCeNa": {
+                              "content": "○",
+                              "fill": "$--color-muted"
+                            },
+                            "o2Df2F/x0h40": {
+                              "content": "영문 표기와 English 문서 검토",
+                              "fill": "$--color-secondary"
+                            },
+                            "o2Df2F/X6LdE": {
+                              "content": "Idle",
+                              "fill": "$--color-muted"
+                            },
+                            "o2Df2F/BsCNW": {
+                              "content": "",
+                              "enabled": false
+                            },
+                            "o2Df2F/jb7mF": {
+                              "content": "",
+                              "enabled": false,
+                              "width": "fill_container(0)"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "McY3D",
+                      "name": "Middle child depth 1",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        18
+                      ],
+                      "children": [
+                        {
+                          "id": "hvJRk",
+                          "type": "ref",
+                          "ref": "n1zn1O",
+                          "name": "Middle child",
+                          "width": "fill_container",
+                          "descendants": {
+                            "Lggd1": {
+                              "enabled": false
+                            },
+                            "o2Df2F/PCeNa": {
+                              "content": "●",
+                              "fill": "$--color-agent-working"
+                            },
+                            "o2Df2F/x0h40": {
+                              "content": "한국어 제목과 English 문서 검토",
+                              "fill": "$--color-secondary"
+                            },
+                            "o2Df2F/X6LdE": {
+                              "content": "Working",
+                              "fill": "$--color-agent-working"
+                            },
+                            "o2Df2F/BsCNW": {
+                              "content": "",
+                              "enabled": false
+                            },
+                            "o2Df2F/jb7mF": {
+                              "content": "",
+                              "enabled": false,
+                              "width": "fill_container(0)"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "u5UE7",
+                      "name": "Last cross-workspace depth 1",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        18
+                      ],
+                      "children": [
+                        {
+                          "id": "vlaDG",
+                          "type": "ref",
+                          "ref": "n1zn1O",
+                          "name": "Last cross-workspace",
+                          "width": "fill_container",
+                          "descendants": {
+                            "Lggd1": {
+                              "enabled": false
+                            },
+                            "o2Df2F/PCeNa": {
+                              "content": "○",
+                              "fill": "$--color-muted"
+                            },
+                            "o2Df2F/x0h40": {
+                              "content": "API 응답 검증",
+                              "fill": "$--color-secondary"
+                            },
+                            "o2Df2F/X6LdE": {
+                              "content": "Idle",
+                              "fill": "$--color-muted"
+                            },
+                            "o2Df2F/BsCNW": {
+                              "content": "",
+                              "enabled": false
+                            },
+                            "o2Df2F/jb7mF": {
+                              "content": "↗ docs",
+                              "enabled": true,
+                              "width": "fill_container"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eUrJc",
+                      "name": "Independent root depth 0",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "T4k5BF",
+                          "type": "ref",
+                          "ref": "n1zn1O",
+                          "name": "Independent root",
+                          "width": "fill_container",
+                          "descendants": {
+                            "Lggd1": {
+                              "enabled": false
+                            },
+                            "o2Df2F/PCeNa": {
+                              "content": "~",
+                              "fill": "$--color-muted"
+                            },
+                            "o2Df2F/x0h40": {
+                              "content": "접근성 도움말 점검",
+                              "fill": "$--color-primary"
+                            },
+                            "o2Df2F/X6LdE": {
+                              "content": "Unknown",
+                              "fill": "$--color-muted"
+                            },
+                            "o2Df2F/BsCNW": {
+                              "content": "미계측 ⓘ",
+                              "enabled": true
+                            },
+                            "o2Df2F/jb7mF": {
+                              "content": "",
+                              "enabled": false,
+                              "width": "fill_container(0)"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "nh9Nu",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 60,
+                      "name": "0 / connected rail 0 0",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 21
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "KjZOn",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 81,
+                      "name": "1 / connected rail 1 0",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 45
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "sZAlO",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 94,
+                      "name": "1 / connected rail 1 1",
+                      "fill": "$--color-divider",
+                      "width": 10,
+                      "height": 1
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "rMvsm",
+                      "layoutPosition": "absolute",
+                      "x": 34,
+                      "y": 105,
+                      "name": "1 / connected rail 1 2",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 21
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "oaWPg",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 126,
+                      "name": "2 / connected rail 2 0",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 59
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "w24YUS",
+                      "layoutPosition": "absolute",
+                      "x": 34,
+                      "y": 126,
+                      "name": "2 / connected rail 2 1",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 13
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "tO37k",
+                      "layoutPosition": "absolute",
+                      "x": 34,
+                      "y": 139,
+                      "name": "2 / connected rail 2 2",
+                      "fill": "$--color-divider",
+                      "width": 30,
+                      "height": 1
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "vCo0S",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 185,
+                      "name": "1 / connected rail 3 0",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 59
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "x4fVS4",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 198,
+                      "name": "1 / connected rail 3 1",
+                      "fill": "$--color-divider",
+                      "width": 30,
+                      "height": 1
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "AJtRP",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 244,
+                      "name": "1 / connected rail 4 0",
+                      "fill": "$--color-divider",
+                      "width": 1,
+                      "height": 13
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "cLf85",
+                      "layoutPosition": "absolute",
+                      "x": 16,
+                      "y": 257,
+                      "name": "1 / connected rail 4 1",
+                      "fill": "$--color-divider",
+                      "width": 30,
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "id": "wffM2",
+                  "type": "ref",
+                  "ref": "pPtY6",
+                  "name": "Physical docs workspace",
+                  "width": "fill_container",
+                  "descendants": {
+                    "IxbXq": {
+                      "content": "docs"
+                    },
+                    "JzcqS": {
+                      "enabled": false
+                    },
+                    "CvAQF": {
+                      "enabled": true,
+                      "content": "○"
+                    },
+                    "BWWvl": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "s2frrg",
+                  "name": "Sidebar remainder",
+                  "width": "fill_container",
+                  "height": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "SpgTr",
+                  "name": "Device footer",
+                  "width": "fill_container",
+                  "height": 32,
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "YiN2E",
+                      "name": "Device",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "This Mac",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "id": "VSnNi",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Settings",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "settings"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "M1u35",
+              "name": "R3 Canvas",
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "C05dyW",
+                  "name": "Work tab strip 32",
+                  "width": "fill_container",
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "MVS46",
+                      "name": "Tab 작업",
+                      "width": 180,
+                      "height": 32,
+                      "fill": "$--color-elevated",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ksFmK",
+                          "name": "Tab label",
+                          "fill": "$--color-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "작업",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "IYEXj",
+                          "type": "ref",
+                          "ref": "Nyvom",
+                          "name": "Close tab",
+                          "descendants": {
+                            "ZIZFR": {
+                              "icon": "x"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "G97ns",
+                      "name": "Tab README.md",
+                      "width": 180,
+                      "height": 32,
+                      "fill": "$--color-panel",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "FOkLk",
+                          "name": "Tab label",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "README.md",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "Xrg3M",
+                          "type": "ref",
+                          "ref": "Nyvom",
+                          "name": "Close tab",
+                          "descendants": {
+                            "ZIZFR": {
+                              "icon": "x"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "XioAa",
+                      "name": "Tab README.md diff",
+                      "width": 180,
+                      "height": 32,
+                      "fill": "$--color-panel",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "wHt01",
+                          "name": "Tab label",
+                          "fill": "$--color-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "README.md diff",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "id": "tbun3",
+                          "type": "ref",
+                          "ref": "Nyvom",
+                          "name": "Close tab",
+                          "descendants": {
+                            "ZIZFR": {
+                              "icon": "x"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "QGpBy",
+                      "name": "Tab elastic space",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "BM7AZ",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "New tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "plus"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xYkQF",
+                  "name": "Stored two-pane layout",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-sm",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "v29gF",
+                      "name": "Parent agent",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "t6snBX",
+                          "type": "ref",
+                          "ref": "k5wvF",
+                          "name": "R3 Parent header",
+                          "width": "fill_container",
+                          "descendants": {
+                            "IC20A": {
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "lZXQL",
+                          "name": "Parent agent content",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-sm",
+                          "padding": "$--spacing-md",
+                          "children": [
+                            {
+                              "id": "J19DcM",
+                              "type": "ref",
+                              "ref": "eMlZD",
+                              "name": "Browser address controls",
+                              "width": "fill_container(0)",
+                              "enabled": false
+                            },
+                            {
+                              "type": "text",
+                              "id": "Ceddl",
+                              "name": "Terminal sample",
+                              "fill": "$--color-primary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "› 기술 교육 콘텐츠를 정리해 주세요.",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "kgaiT",
+                              "name": "Terminal sample",
+                              "fill": "$--color-agent-working",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "● 구성과 문서 검토를 위임했습니다.",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "lMmOL",
+                              "name": "Terminal sample",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "18편 구성 검토\n문서 확인과 API 검증이 진행 중입니다.",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "FcJgl",
+                              "name": "Terminal sample",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "검토 결과를 모아 다음 변경을 준비합니다.",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "gp9J7",
+                      "name": "Plain terminal",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "KLIAG",
+                          "type": "ref",
+                          "ref": "k5wvF",
+                          "name": "R3 Plain header",
+                          "width": "fill_container",
+                          "descendants": {
+                            "bYRI3/PCeNa": {
+                              "enabled": false
+                            },
+                            "bYRI3/YYqJe": {
+                              "enabled": false
+                            },
+                            "bYRI3/x0h40": {
+                              "content": "zsh · preview"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "glEpQ",
+                          "name": "Plain terminal content",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": "$--spacing-sm",
+                          "padding": "$--spacing-md",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "qosGU",
+                              "name": "Terminal sample",
+                              "fill": "$--color-primary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "$ npm run dev",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "reZ3D",
+                              "name": "Terminal sample",
+                              "fill": "$--color-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Local: http://localhost:5173",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "cgNxB",
+                              "name": "Terminal sample",
+                              "fill": "$--color-success",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "ready",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-terminal-base",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "m2lld",
+                  "name": "Connection status",
+                  "width": "fill_container",
+                  "height": 24,
+                  "fill": "$--color-panel",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "aPfZK",
+                      "name": "Connection",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "● Connected to Herdr",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "cjNce",
+              "name": "Overview panel",
+              "width": 320,
+              "height": "fill_container",
+              "fill": "$--color-panel",
+              "layout": "vertical",
+              "children": [
+                {
+                  "id": "ewK7T",
+                  "type": "ref",
+                  "ref": "ZYylH",
+                  "name": "Panel sections",
+                  "width": "fill_container",
+                  "height": 32,
+                  "descendants": {
+                    "Xd5p2": {
+                      "strokeWidth": {
+                        "bottom": "$--size-tab-indicator"
+                      }
+                    },
+                    "Xd5p2/MHBRM": {
+                      "fill": "$--color-primary"
+                    },
+                    "y3gMz": {
+                      "strokeWidth": "$--spacing-none"
+                    },
+                    "y3gMz/MHBRM": {
+                      "fill": "$--color-secondary"
+                    }
+                  }
+                },
+                {
+                  "id": "QpcIN",
+                  "type": "ref",
+                  "ref": "SkFY0",
+                  "name": "Project Overview",
+                  "width": "fill_container"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "Z8b2qf",
+      "x": 104033,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / F01 Parent overview",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "z3rxQ",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F01 / 부모 작업 · 자식 3개",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "HtPMe",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "현재 작업은 중앙. 우측은 프로젝트의 선택한 Workspace와 현재 작업의 관계. 자식 줄에는 역할 표식, Overview에는 명시적 상태와 다음 행동.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "CCl8E",
+          "type": "ref",
+          "ref": "kechj",
+          "name": "Full workbench",
+          "width": 1440,
+          "height": 800
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "PazKO",
+      "x": 105617,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / F02 Child without children",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "aFuBG",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F02 / 자식 탭에 들어왔다 · 자식 없음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "xJ6BA",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "한 줄 헤더에도 ‘부모’가 남는다. 부모의 작업 탭과 분할 배치는 보존되고, 현재 자식만 전용 탭에 표시한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "XX7li",
+          "type": "ref",
+          "ref": "kechj",
+          "name": "Full workbench",
+          "width": 1440,
+          "height": 800,
+          "descendants": {
+            "hvJRk/o2Df2F": {
+              "fill": "$--color-selected-wash"
+            },
+            "MVS46": {
+              "fill": []
+            },
+            "G97ns": {
+              "fill": "$--color-elevated"
+            },
+            "FOkLk": {
+              "content": "문서 검토"
+            },
+            "t6snBX/UcqQj": {
+              "enabled": true
+            },
+            "t6snBX/Gq6JL": {
+              "enabled": true
+            },
+            "t6snBX/bYRI3/x0h40": {
+              "content": "한국어 제목과 English 문서 검토"
+            },
+            "t6snBX/IC20A": {
+              "enabled": false
+            },
+            "Ceddl": {
+              "content": "› 한국어와 English 문서를 검토합니다."
+            },
+            "kgaiT": {
+              "content": "● 제목과 문장 흐름 확인 중"
+            },
+            "lMmOL": {
+              "content": "검토 결과는 부모 작업에 전달합니다."
+            },
+            "FcJgl": {
+              "content": "부모 버튼으로 원래 작업 배치에 돌아갈 수 있습니다."
+            },
+            "gp9J7": {
+              "enabled": false
+            },
+            "QpcIN/MW598/x0h40": {
+              "content": "한국어 제목과 English 문서 검토"
+            },
+            "QpcIN/PJ7aY": {
+              "content": "↰ 기술 교육 콘텐츠 통합"
+            },
+            "QpcIN/XTtE7": {
+              "content": "자식 없음"
+            },
+            "QpcIN/bRI0u": {
+              "enabled": false
+            },
+            "QpcIN/jytOG": {
+              "enabled": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "mcfz3",
+      "x": 107201,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / F03 Child also delegates",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "t9yAY",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F03 / 자식이면서 부모인 작업",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "x8vMa2",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "첫 줄은 어디에서 왔는지, 둘째 줄은 누구에게 맡겼는지. 부모/자식 양자택일 배지를 쓰지 않는다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "iQjY5",
+          "type": "ref",
+          "ref": "kechj",
+          "name": "Full workbench",
+          "width": 1440,
+          "height": 800,
+          "descendants": {
+            "n78CC/o2Df2F": {
+              "fill": "$--color-selected-wash"
+            },
+            "hvJRk/o2Df2F": {
+              "fill": []
+            },
+            "MVS46": {
+              "fill": []
+            },
+            "G97ns": {
+              "fill": "$--color-elevated"
+            },
+            "FOkLk": {
+              "content": "18편 구성 검토"
+            },
+            "t6snBX/UcqQj": {
+              "enabled": true
+            },
+            "t6snBX/Gq6JL": {
+              "enabled": true
+            },
+            "t6snBX/bYRI3/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "t6snBX/bYRI3/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "t6snBX/IC20A": {
+              "enabled": true
+            },
+            "t6snBX/lRwfM/tfJnw/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "t6snBX/lRwfM/tfJnw/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "t6snBX/lRwfM/tfJnw/x0h40": {
+              "content": "영문 표기와…"
+            },
+            "t6snBX/NKaf5": {
+              "enabled": false
+            },
+            "Ceddl": {
+              "content": "› 18편 구성을 검토합니다."
+            },
+            "kgaiT": {
+              "content": "● 영문 표기 검토를 위임했습니다."
+            },
+            "lMmOL": {
+              "content": "검토 결과는 부모 작업에 전달합니다."
+            },
+            "FcJgl": {
+              "content": "부모 버튼으로 원래 작업 배치에 돌아갈 수 있습니다."
+            },
+            "gp9J7": {
+              "enabled": false
+            },
+            "QpcIN/MW598/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "mode": "fit"
+              }
+            },
+            "QpcIN/MW598/x0h40": {
+              "content": "18편 구성 검토"
+            },
+            "QpcIN/PJ7aY": {
+              "content": "↰ 기술 교육 콘텐츠 통합"
+            },
+            "QpcIN/XTtE7": {
+              "content": "자식 1 · Idle"
+            },
+            "QpcIN/bRI0u": {
+              "enabled": true
+            },
+            "QpcIN/jytOG": {
+              "enabled": true
+            },
+            "QpcIN/HRiIN/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "QpcIN/HRiIN/YYqJe": {
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "mode": "fit"
+              }
+            },
+            "QpcIN/HRiIN/x0h40": {
+              "content": "영문 표기와 English 문서 검토"
+            },
+            "QpcIN/g6pQqP": {
+              "enabled": false
+            },
+            "QpcIN/Z2ENd": {
+              "enabled": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "QmRAz",
+      "x": 108785,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / F04 Inspect without moving",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "F2OaH",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F04 / docs를 살펴봐도 main 작업은 그대로",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "kge7c",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "우측의 선택한 Workspace와 열려 있는 Workspace는 별개다. 명시적인 Workspace 열기만 중앙 탭을 바꾼다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "Z5a2Hc",
+          "type": "ref",
+          "ref": "kechj",
+          "name": "Full workbench",
+          "width": 1440,
+          "height": 800,
+          "descendants": {
+            "QpcIN/KXxiq": {
+              "fill": []
+            },
+            "QpcIN/FgxjF": {
+              "fill": "$--color-selected-wash"
+            },
+            "QpcIN/udDaj": {
+              "content": "살펴보는 Workspace · docs"
+            },
+            "QpcIN/uwvzI": {
+              "content": "이 Workspace의 대표 에이전트"
+            },
+            "QpcIN/MW598/PCeNa": {
+              "content": "○",
+              "fill": "$--color-secondary"
+            },
+            "QpcIN/MW598/x0h40": {
+              "content": "API 응답 검증"
+            },
+            "QpcIN/MW598/X6LdE": {
+              "content": "Idle",
+              "fill": "$--color-secondary"
+            },
+            "QpcIN/lagCN": {
+              "content": "Workspace 열고 에이전트 보기 ↗",
+              "width": 264
+            },
+            "QpcIN/PJ7aY": {
+              "content": "↰ 콘텐츠 통합 · main"
+            },
+            "QpcIN/XTtE7": {
+              "content": "자식 없음"
+            },
+            "QpcIN/bRI0u": {
+              "enabled": false
+            },
+            "QpcIN/jytOG": {
+              "enabled": false
+            },
+            "QpcIN/dwq3z": {
+              "enabled": true,
+              "content": "터미널은 main에 열려 있습니다."
+            },
+            "QpcIN/CJqXg": {
+              "content": "변경 없음"
+            },
+            "QpcIN/t6ZNK": {
+              "fill": "$--color-muted"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "pvK0m",
+      "x": 110369,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / F05 Uninstrumented active agent",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "K5kxr",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F05 / 계측되지 않은 현재 작업",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "Cb7h4",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "자식 없음이라고 단정하지 않는다. 헤더는 한 줄 안내 아이콘, Overview는 확인할 수 없는 이유를 표시한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "PYYh3",
+          "type": "ref",
+          "ref": "kechj",
+          "name": "Full workbench",
+          "width": 1440,
+          "height": 800,
+          "descendants": {
+            "T4k5BF/o2Df2F": {
+              "fill": "$--color-selected-wash"
+            },
+            "t6snBX/bYRI3/PCeNa": {
+              "content": "~",
+              "fill": "$--color-secondary"
+            },
+            "t6snBX/bYRI3/x0h40": {
+              "content": "접근성 도움말 점검"
+            },
+            "t6snBX/DmV27": {
+              "enabled": true
+            },
+            "t6snBX/IC20A": {
+              "enabled": false
+            },
+            "Ceddl": {
+              "content": "› 접근성 도움말을 점검합니다."
+            },
+            "kgaiT": {
+              "content": "계측 정보를 확인할 수 없습니다.",
+              "fill": "$--color-secondary"
+            },
+            "lMmOL": {
+              "content": "터미널 출력은 계속 표시됩니다."
+            },
+            "FcJgl": {
+              "content": "안내 아이콘에서 계측 원인을 확인할 수 있습니다."
+            },
+            "QpcIN/uwvzI": {
+              "content": "현재 보고 있는 에이전트"
+            },
+            "QpcIN/MW598/PCeNa": {
+              "content": "~",
+              "fill": "$--color-secondary"
+            },
+            "QpcIN/MW598/x0h40": {
+              "content": "접근성 도움말 점검"
+            },
+            "QpcIN/MW598/X6LdE": {
+              "content": "Unknown",
+              "fill": "$--color-secondary"
+            },
+            "QpcIN/PJ7aY": {
+              "content": "확인되지 않음"
+            },
+            "QpcIN/XTtE7": {
+              "content": "자식 계측 안 됨"
+            },
+            "QpcIN/bRI0u": {
+              "enabled": false
+            },
+            "QpcIN/jytOG": {
+              "enabled": false
+            },
+            "QpcIN/dwq3z": {
+              "enabled": true,
+              "content": "계측 정보가 없어 자식 유무를 알 수 없습니다. ⓘ"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "KKnrb",
+      "x": 111953,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / F06 Parent zoom preserves context",
+      "width": 1504,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "OJBO9",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F06 / 부모 작업 확대 · 관계와 복원 유지",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "vjH0u",
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "zoom은 배치 표시만 바꾼다. 자식 이름과 관계, Overview의 검사 맥락은 유지한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "l4c1Dc",
+          "type": "ref",
+          "ref": "kechj",
+          "name": "Full workbench",
+          "width": 1440,
+          "height": 800,
+          "descendants": {
+            "t6snBX/aA7Jx": {
+              "enabled": true
+            },
+            "gp9J7": {
+              "enabled": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "rw5bv",
+      "x": 113537,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / C06 Overview availability and Tree",
+      "width": 780,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "SL3yL",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C06 / 모르는 값은 빈 숫자로 채우지 않는다",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "LASC5",
+          "name": "불러오는 중",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "불러오는 중",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "xrg4Q",
+          "type": "ref",
+          "ref": "SkFY0",
+          "name": "불러오는 중",
+          "width": 320,
+          "descendants": {
+            "CtPLg": {
+              "content": "프로젝트 · 불러오는 중"
+            },
+            "bzN2g": {
+              "content": "조회 중"
+            },
+            "iHkFm": {
+              "content": "측정 중"
+            },
+            "kan3J": {
+              "enabled": true
+            },
+            "HtDOB": {
+              "enabled": false
+            },
+            "L2cPp": {
+              "enabled": false
+            },
+            "s2WPx": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "FcEMK",
+          "name": "일부 정보 실패 · 작업 맥락은 유지",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "일부 정보 실패 · 작업 맥락은 유지",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "XNSDn",
+          "type": "ref",
+          "ref": "SkFY0",
+          "name": "일부 정보 실패 · 작업 맥락은 유지",
+          "width": 320,
+          "descendants": {
+            "bzN2g": {
+              "content": "인증 필요",
+              "fill": "$--color-warning"
+            },
+            "iHkFm": {
+              "content": "일부 미측정"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "a56Xk",
+          "name": "검색 결과 없음 · 현재 작업 상세는 유지",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "검색 결과 없음 · 현재 작업 상세는 유지",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "PR5He",
+          "type": "ref",
+          "ref": "SkFY0",
+          "name": "검색 결과 없음 · 현재 작업 상세는 유지",
+          "width": 320,
+          "descendants": {
+            "bRjaS": {
+              "content": "없는 Workspace"
+            },
+            "KXxiq": {
+              "enabled": false
+            },
+            "FgxjF": {
+              "enabled": false
+            },
+            "zK5CB": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "tPl16",
+          "name": "등록된 Workspace 없음",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "등록된 Workspace 없음",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "LRkcv",
+          "type": "ref",
+          "ref": "SkFY0",
+          "name": "등록된 Workspace 없음",
+          "width": 320,
+          "descendants": {
+            "CtPLg": {
+              "content": "프로젝트 · Workspace 0개"
+            },
+            "kan3J": {
+              "enabled": true
+            },
+            "gntHy": {
+              "content": "등록된 Workspace 없음"
+            },
+            "BWQHk": {
+              "content": "Workspace를 선택하거나 추가하세요."
+            },
+            "HtDOB": {
+              "enabled": false
+            },
+            "L2cPp": {
+              "enabled": false
+            },
+            "s2WPx": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "TvB1Z",
+          "name": "원격 · 로컬 전용 Overview",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "원격 · 로컬 전용 Overview",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "BtXzP",
+          "type": "ref",
+          "ref": "SkFY0",
+          "name": "원격 · 로컬 전용 Overview",
+          "width": 320,
+          "descendants": {
+            "GBL3W": {
+              "enabled": false
+            },
+            "kan3J": {
+              "enabled": true
+            },
+            "gntHy": {
+              "content": "로컬 Git 맥락을 볼 수 없습니다"
+            },
+            "BWQHk": {
+              "content": "원격 프로젝트의 Git 정보는 현재 제공되지 않습니다."
+            },
+            "HtDOB": {
+              "enabled": false
+            },
+            "L2cPp": {
+              "enabled": false
+            },
+            "s2WPx": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "iakuY",
+          "name": "Tree · 위임 관계가 아닌 Git 이력",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Tree · 위임 관계가 아닌 Git 이력",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "k7fsBU",
+          "type": "ref",
+          "ref": "SkFY0",
+          "name": "Tree · 위임 관계가 아닌 Git 이력",
+          "width": 320,
+          "descendants": {
+            "eFGFO": {
+              "fill": []
+            },
+            "NucId": {
+              "fill": "$--color-elevated"
+            },
+            "I23xx": {
+              "enabled": false
+            },
+            "nB3CS": {
+              "content": "Git history"
+            },
+            "KXxiq": {
+              "enabled": false
+            },
+            "FgxjF": {
+              "enabled": false
+            },
+            "TQwQs": {
+              "enabled": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "XBhUh",
+      "x": 114397,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R3 Relations / 00 Start here",
+      "width": 840,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "uKnvn",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "R3 / 관계를 읽고 다음 행동을 고르는 화면",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "IGjox",
+          "name": "Header rule",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "자식이 없으면 한 줄. 부모가 있으면 첫 줄에 ‘부모’ 복귀 버튼. 내가 위임한 자식이 있으면 둘째 줄에 ‘자식’ + 이름. 두 관계는 동시에 성립한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "S1taW",
+          "name": "Overview rule",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Overview = 프로젝트 요약 → Workspace 탐색 → 선택한 Workspace 상세. 현재 보는 에이전트의 부모/자식은 상세에만 표시한다. 검사와 실제 이동은 분리한다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "Wa5Qy",
+          "name": "Read order",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F01 부모 → F02 자식(자식 없음) → F03 자식이면서 부모 → F04 다른 Workspace 살펴보기. C01/C02는 헤더와 폭별 상태, C03/C04/C06은 Overview의 컴포넌트와 가용성 상태.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "xssky",
+          "name": "Supersedes",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "R2 C04/C05 및 Pane header 관련 F 화면을 이 R3가 대체한다. R2의 계층·identity·종류별 toolbar와 모든 이전 기록은 유지한다. 사용자 후속 요청으로 Overview가 이번 검토 범위에 추가됐다.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "a6Csc",
+          "name": "Boundary",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "그린 값은 상태 fixture다. native 입력/선택/읽음·resize·동작 검증은 구현 단계에 남는다. 현재 Core가 제공하지 않는 retired reason은 생성하지 않으며, 이유 없는 parent 부재를 종료로 단정하지 않는다.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"

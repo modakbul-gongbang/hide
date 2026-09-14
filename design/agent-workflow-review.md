@@ -1,5 +1,126 @@
 # Agent workflow design review
 
+## R3 Relations: 부모 복귀와 Overview, 2026-09-14
+
+최신 진입 보드는 `Review / 2026-09-14 R3 Relations / 00 Start here` (`XBhUh`)다.
+사용자는 R2의 부모/자식 식별이 약하다는 검토를 받아들여 상태별 개선과 Overview 설계를 추가 요청했다.
+따라서 이전의 Project Overview 제외 조건은 이 후속 요청의 범위에서 해제됐다.
+R2의 헤더와 해당 전체 화면은 R3가 대체하고, Sidebar 계층·공통 identity·Browser/file/diff toolbar 및 이전 보드는 보존한다.
+제품 코드·설치·실행 환경은 변경하지 않았다.
+
+### 가장 먼저 읽을 규칙
+
+**첫 줄은 현재 작업과 부모 복귀, 둘째 줄은 현재 작업이 위임한 자식이다.**
+자식이 없으면 한 줄이며, 그 작업이 다른 작업의 자식이라면 한 줄 안에 `부모` 버튼은 남는다.
+한 작업이 자식이면서 부모일 수 있으므로 배지 하나로 둘 중 하나를 고르지 않는다.
+좁아지면 부모의 이름을 먼저 숨기고 `부모`라는 글자와 복귀 target은 유지한다.
+자식 이름 줄은 `자식`으로 시작해 일반 탭과 구분한다.
+
+Overview는 프로젝트 범위를 유지한다.
+프로젝트 요약, Workspace 탐색, 선택한 Workspace 상세 순서로 읽는다.
+상세는 현재 열려 있는 Workspace라면 실제로 보고 있는 agent를, 다른 Workspace를 살펴보는 중이라면 그 Workspace의 대표 agent를 명시한다.
+현재 Pane이 일반 terminal/browser/file/diff이면 대표 agent를 현재 Pane의 identity처럼 표시하지 않고 `Workspace의 대표 에이전트`로 표기한다.
+상세의 부모/자식 미리보기는 선택한 agent의 직접 관계이며 Workspace 전체 Pane 목록이 아니다.
+
+### 보드와 공유 master
+
+| 보드 | ID | 검토할 내용 |
+| --- | --- | --- |
+| 00 Start here | `XBhUh` | R2 대체 범위와 읽는 순서 |
+| C01 Relation-aware Pane header | `cyH08` | 독립·부모·자식·동시 역할·타 Workspace·복귀 불가·부분 계측·미계측·단절·zoom·일반 terminal |
+| C02 Narrow and interaction | `P5EyFD` | 240/320/344/400pt, hover/focus/불가/pending |
+| C03 Overview component and ownership | `EM8hf` | 320pt 프로젝트 Overview master |
+| C04 Overview inspector states | `dzCM1` | 선택한 Workspace 상세 8가지 상태 |
+| C05 Full workbench master | `dVzZW` | Sidebar 240 / Canvas / Overview 320의 공통 전체 화면 |
+| C06 Overview availability and Tree | `rw5bv` | 로딩·일부 실패·검색 결과 없음·Workspace 없음·원격·Git Tree |
+| F01 Parent overview | `Z8b2qf` | 부모의 분할 배치, 직접 자식 3개와 작업 2개 |
+| F02 Child without children | `PazKO` | 자식 없는 자식의 한 줄 헤더와 부모 복귀 |
+| F03 Child also delegates | `mcfz3` | 자식이면서 부모인 작업의 두 방향 관계 |
+| F04 Inspect without moving | `QmRAz` | docs 검사 중에도 main의 터미널 유지 |
+| F05 Uninstrumented active agent | `pvK0m` | 미계측을 자식 0명으로 오인하지 않음 |
+| F06 Parent zoom preserves context | `KKnrb` | zoom 중 관계와 배치 복원 유지 |
+
+| 변경 컴포넌트 / master | 현재 code owner와 확장 범위 | 사용 화면 | 상태 | 클릭 / 키보드 | 수용 조건 |
+| --- | --- | --- | --- | --- | --- |
+| Relation-aware header `k5wvF` | `HideTerminalPaneCard`, `PaneHeaderPresentation`, `PaneLineageHeader` | C01/C02, F01-F06 | root/child/both, narrow, zoom, partial, disconnected | 부모는 복귀, 자식 이름은 전용 탭, 관계는 inspection, overflow는 기존 Pane command | 240pt에서도 부모 글자가 사라지지 않음; 두 줄 높이가 resize로 변하지 않음 |
+| Project Overview `SkFY0` | `CheckoutOverview.summary`, `.body` | C03/C06, 모든 F 화면 | loading/partial/empty/remote, Tree/List | refresh·GitHub·disk·cleanup은 기존 동작; 필터와 Tree/List는 inspection만 | 프로젝트 범위 유지, Git 관계를 agent 위임으로 표시하지 않음 |
+| Overview Workspace row `KXxiq` | `CheckoutOverview.workspaceRow`, `OverviewPresentation` | Overview List | selected/viewing/other, canonical aggregate | 행은 검사, keyboard highlight/Return도 검사 | `열려 있음`과 selected wash를 분리; 선택만으로 Pane/tab/read 변화 없음 |
+| Workspace inspector `s2WPx` | `CheckoutOverview.inspector`; focused identity와 직접 lineage는 명시적 확장 | C04, 모든 Overview | no agent, root/child/both, foreign, unknown, disconnected, escalation | Open/Return만 focus 이동; 관계 보기·commit/path는 검사 | 다른 Workspace의 변경 보기는 열기 전 비활성; 현재 Pane과 대표 agent를 혼동하지 않음 |
+| Full workbench `kechj` | `HideTabStrip`, `HideMainView`, `ShellView` | F01-F06 | parent layout/child dedicated tab/zoom | 부모 복귀는 현재 authoritative 배치를 선택 | 자식을 operator Pane에 split하지 않음; 부모 배치를 재생하거나 덮어쓰지 않음 |
+
+Header identity는 기존 `HXWFK`, named child는 `j0Sji`, icon buttons와 panel tabs는 기존 System master를 참조한다.
+상태는 각 master의 실제 ref와 descendant override로 그렸다.
+이전 R2 master를 고쳐 이력을 바꾸지 않고 R3 master를 추가했다.
+
+### 헤더 상태와 우선순위
+
+| 상태 | 첫 줄 | 둘째 줄 | 행동과 수용 조건 |
+| --- | --- | --- | --- |
+| 직접 시작한 작업, 자식 0 | 현재 identity와 actions | 없음 | 비어 있는 관계 영역을 예약하지 않음 |
+| 부모, 자식 1 | 현재 identity | `자식` + 이름 | `+0`이나 중복 total 없음 |
+| 부모, 자식 다수 | 현재 identity | `자식` + 보이는 이름 + `+N` | 보이는 수와 N의 합은 알려진 direct children 수 |
+| 자식, 자식 0 | `부모` + 여유가 있으면 부모 제목 + 현재 identity | 없음 | 한 줄이어도 자식임을 식별하고 한 번에 복귀 |
+| 자식이면서 부모 | 같은 부모 복귀 경로 | 현재 작업의 자식 | 자기 부모와 자기 자식을 별도 방향으로 읽음 |
+| 다른 Workspace의 부모 | `부모 · main` 등 위치 | 해당 시 현재 작업의 자식 | 이동 전에 전체 제목·Workspace를 help로 설명 |
+| 부모 복귀 불가 | 비활성 부모 target과 확인된 이유 | 현재 확인 가능한 자식만 | 부모 ID가 없다는 이유만으로 `종료`를 만들지 않음 |
+| 계측 불가 | detected agent에만 안내 아이콘 | 알려진 자식이 없으면 없음 | 0명과 unknown을 구분 |
+| 부분 계측 | 안내 아이콘 | `알려진 자식` + 확인된 이름 | 전체 total인 것처럼 표시하지 않음 |
+| 연결 끊김 | retained identity + Disconnected | 현재 진행 수 숨김 | 복귀/열기는 현재 capability로 판단 |
+| zoom | 현재 identity, 부모 target, 복원 버튼 | 해당 시 자식 | 부모 이동과 zoom 복원을 다른 action으로 제공 |
+
+부모 버튼은 48×24pt이며 좁은 폭에서도 글자가 남는다.
+첫 줄 28pt와 hairline 1pt, 자식 줄 24pt를 사용한다.
+overflow와 close는 24pt, zoom 중에는 restore도 유지하며, parent name은 현재 title보다 먼저 축약한다.
+240pt에서 긴 제목은 `18편…` 같은 한 줄 말줄임이며 폰트를 줄이거나 두 줄로 늘리지 않는다.
+자식 chip도 같은 규칙으로 이름만 축약하고 상태/provider/역할 표식은 유지한다.
+fork, split, ports, 전체 ancestors/siblings는 capability가 있을 때 overflow의 기존 intent로 접근한다.
+R3 표본은 관계 식별을 우선해 이 부가 action을 직접 버튼으로 반복하지 않는다.
+Browser/file/diff에는 agent controls를 추가하지 않으며 종류별 toolbar 계약은 R2를 유지한다.
+
+hover와 keyboard focus는 footprint를 바꾸지 않는다.
+부모 버튼에 keyboard focus가 있을 때 Enter/Space는 한 번의 복귀 intent를 실행한다.
+pending은 같은 target에 표시하고 중복 실행을 막으며 실패하면 기존 Pane과 배치를 유지하고 이유를 노출한다.
+tooltip과 accessibility help는 같은 전체 agent 제목, Workspace, action을 제공한다.
+헤더 바탕을 클릭한 focus와 action 실행을 분리하며 terminal responder가 입력을 가질 때 전역 화살표 키를 가로채지 않는다.
+
+### Overview에 보여줄 정보
+
+1. **프로젝트 요약:** Project 이름과 Workspace 수, 기존 GitHub 조회 결과, 디스크 측정 상태, 명시적인 Worktree 정리 진입점.
+2. **Workspace 탐색:** Tree/List, List 검색과 canonical attention 순서, 선택 표시와 현재 열려 있는 Workspace 표시.
+3. **선택한 Workspace 상세:** branch/짧은 위치, 현재 보는 agent 또는 대표 agent의 identity와 status, 명시적 Open/Return.
+4. **선택한 agent의 관계:** 부모 이름/복귀, 직접 자식의 상태 요약, 최대 2개 identity 미리보기, 나머지 관계 보기.
+5. **Workspace 변경 맥락:** 변경 파일과 View changes, 존재할 때 PR, 접힌 최근 commit/path/reveal/copy.
+
+기존 Tree/List의 검사 selection과 실제 terminal focus 분리는 유지한다.
+R3는 List를 보여주는 작업 중심 표본이며 저장된 Tree/List 선택을 강제로 초기화한다는 뜻이 아니다.
+Git Tree 표본의 커밋과 HEAD 연결은 알려진 Git parent fixture이며 에이전트가 만든 commit이라고 주장하지 않는다.
+실제 Tree의 commit window, shallow/frontier, missing/unborn HEAD, horizontal scroll 규칙은 기존 owner를 보존한다.
+활성 Pane이 agent일 때 현재 agent를 상세에 쓰는 것은 기존 representative-only inspector에 대한 R3 확장 제안이다.
+그 agent가 사라지면 남은 representative로 조용히 바꾸어 `현재 보고 있는`이라고 주장하지 않고 scope label을 함께 변경한다.
+타 Workspace를 검사할 때는 `살펴보는 Workspace`와 `터미널은 main에 열려 있습니다`를 보여준다.
+자식 미리보기와 부모 행의 click target은 24pt 이상이고 키보드로 따로 접근하며, 모달을 살펴보는 것만으로 read를 올리지 않는다.
+에이전트가 없는 열린 Workspace에서는 Start agent, 다른 Workspace에서는 명시적 Open workspace를 먼저 제공한다.
+GitHub 실패가 agent 정보를 지우지 않고, 불완전한 disk 측정을 0이나 완전한 total로 표시하지 않는다.
+검색 결과 없음은 필터 지우기와 기존 inspector를 유지하며, Workspace 자체가 없는 상태와 구분한다.
+원격 Overview는 현재 local-only 계약대로 이유를 표시한다.
+PR과 commit detail의 미존재는 행을 생략하는 것으로 처리하고 예시 값을 채우지 않는다.
+
+### 남은 구현 결정과 검증 경계
+
+이 문서는 디자인 제안이며 `DESIGN.md`의 현행 구현 계약을 변경한 것이 아니다.
+focused agent를 Overview inspector에 연결하는 입력, parent unavailable reason, capability별 overflow 항목은 구현 PRD에서 기존 owner와 함께 확정해야 한다.
+현재 core는 retired parent ID를 생략하므로 확인된 종료 근거가 없으면 `부모 종료` 표본을 그대로 적용하지 않고 unknown/unavailable로 표시해야 한다.
+기존 status-model의 delegated Working/Seen, read, escalation 규칙은 변경하지 않는다.
+표시 수와 제목은 상태 검토 fixture이며 실제 프로젝트의 작업/PR/디스크 측정 결과가 아니다.
+Pen의 opacity 백분율 차이와 native font 차이는 R2의 검증 경계를 유지한다.
+실제 native 키보드·focus·read·resize·접근성 동작은 이번 디자인 작업에서 실행 검증하지 않았다.
+렌더와 복구 편집 기록은 `agents/runs/workflow-r3-relations/`에만 보관한다.
+R3 13개 보드와 주요 전체 화면을 원본 크기로 export하고 240/320/344/400pt의 한글·영문 혼합 제목, 부모 버튼, 자식 줄, Overview의 상태와 간격을 직접 검사했다.
+이 과정에서 좁은 제목의 두 줄 넘침, 버튼 label 폭, Sidebar rail의 다중 행 높이 차이를 수정했다.
+가시 요소의 bounds 검사에서 clipping 0건, 미정의 변수 0건을 확인했다.
+최종 `gen-pen.mjs`, `check-design-contract.mjs`, `git diff --check`가 통과했다.
+디자인 계약 검사는 theme literal 위반 0건, 11개 회귀 fixture, component/control ownership, 133개 생성 토큰과 band 일치를 확인하며 미적 승인이나 native E2E 검증을 대신하지 않는다.
+
 ## R2 Compact: 2026-09-14 재검토 기준
 
 최신 검토 대상은 `Review / 2026-09-14 R2 Compact /`이며 시작 보드는 `MxsEs`다.
