@@ -69,7 +69,7 @@ enum ReopenWindowMenuPolicy {
 }
 
 @MainActor
-final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     let model: ShellModel
     private var mainWindow: NSWindow?
     private var switcherReleaseProbe: Timer?
@@ -411,7 +411,16 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuIte
             target: self,
             action: #selector(reopenClosedFromWindowMenu(_:))
         )
+        windowMenu.delegate = self
         HideLaunchTrace.mark("reopen_closed.window_menu.installed")
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        reopenClosedMenuItem = ReopenWindowMenuPolicy.install(
+            in: menu,
+            target: self,
+            action: #selector(reopenClosedFromWindowMenu(_:))
+        )
     }
 
     @objc private func reopenClosedFromWindowMenu(_ sender: NSMenuItem) {
