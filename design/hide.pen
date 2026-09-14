@@ -35,17 +35,15 @@
           "type": "rectangle",
           "id": "band-system-rule",
           "name": "Rule",
-          "fill": "$--color-divider",
           "width": "fill_container",
-          "height": 1
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     },
     {
       "type": "frame",
       "id": "fnd-sheet",
-      "x": 0,
-      "y": -4200,
       "name": "System / Foundations",
       "clip": true,
       "width": 1180,
@@ -58,9 +56,9 @@
           "type": "frame",
           "id": "fnd-title",
           "name": "Title block",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-sm",
+          "width": "fill_container",
           "children": [
             {
               "type": "text",
@@ -77,12 +75,12 @@
               "id": "fnd-title-sub",
               "name": "Single dark mode. Four-s",
               "fill": "$--color-secondary",
-              "textGrowth": "fixed-width",
-              "width": "fill_container",
               "content": "Single dark mode. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen.mjs writes from HideTheme.swift, and the sheet itself is redrawn by the same run.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-subhead",
-              "fontWeight": "normal"
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
             }
           ]
         },
@@ -90,17 +88,17 @@
           "type": "frame",
           "id": "fnd-surface",
           "name": "Surface ladder",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-surface-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -118,28 +116,31 @@
               "type": "frame",
               "id": "fnd-surface-ladder",
               "name": "Ladder",
+              "layout": "horizontal",
+              "gap": 0,
+              "alignItems": "start",
               "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
                   "id": "fnd-surface-ladder-color-background",
                   "name": "background",
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "gap": "$--spacing-xxs",
                   "width": "fill_container",
                   "height": 140,
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-background",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
                   "cornerRadius": [
                     "$--radius-lg",
                     0,
                     0,
                     "$--radius-lg"
                   ],
-                  "stroke": "$--color-divider",
-                  "strokeWidth": "$--size-hairline",
-                  "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-xxs",
-                  "padding": "$--spacing-lg",
-                  "justifyContent": "end",
                   "children": [
                     {
                       "type": "text",
@@ -167,16 +168,17 @@
                   "type": "frame",
                   "id": "fnd-surface-ladder-color-sidebar",
                   "name": "sidebar",
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "gap": "$--spacing-xxs",
                   "width": "fill_container",
                   "height": 140,
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-sidebar",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-xxs",
-                  "padding": "$--spacing-lg",
-                  "justifyContent": "end",
+                  "cornerRadius": 0,
                   "children": [
                     {
                       "type": "text",
@@ -204,16 +206,17 @@
                   "type": "frame",
                   "id": "fnd-surface-ladder-color-panel",
                   "name": "panel",
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "gap": "$--spacing-xxs",
                   "width": "fill_container",
                   "height": 140,
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-panel",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-xxs",
-                  "padding": "$--spacing-lg",
-                  "justifyContent": "end",
+                  "cornerRadius": 0,
                   "children": [
                     {
                       "type": "text",
@@ -241,16 +244,17 @@
                   "type": "frame",
                   "id": "fnd-surface-ladder-color-elevated",
                   "name": "elevated",
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "gap": "$--spacing-xxs",
                   "width": "fill_container",
                   "height": 140,
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-elevated",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-xxs",
-                  "padding": "$--spacing-lg",
-                  "justifyContent": "end",
+                  "cornerRadius": 0,
                   "children": [
                     {
                       "type": "text",
@@ -278,22 +282,22 @@
                   "type": "frame",
                   "id": "fnd-surface-ladder-color-balloon",
                   "name": "balloon",
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "gap": "$--spacing-xxs",
                   "width": "fill_container",
                   "height": 140,
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-balloon",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
                   "cornerRadius": [
                     0,
                     "$--radius-lg",
                     "$--radius-lg",
                     0
                   ],
-                  "stroke": "$--color-divider",
-                  "strokeWidth": "$--size-hairline",
-                  "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-xxs",
-                  "padding": "$--spacing-lg",
-                  "justifyContent": "end",
                   "children": [
                     {
                       "type": "text",
@@ -325,17 +329,17 @@
           "type": "frame",
           "id": "fnd-ink",
           "name": "Text",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-ink-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -353,8 +357,10 @@
               "type": "frame",
               "id": "fnd-ink-set",
               "name": "Inks",
-              "width": "fill_container",
+              "layout": "horizontal",
               "gap": "$--spacing-xxxl",
+              "alignItems": "start",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
@@ -362,6 +368,7 @@
                   "name": "primary",
                   "layout": "vertical",
                   "gap": "$--spacing-xs",
+                  "width": "fit_content",
                   "children": [
                     {
                       "type": "text",
@@ -391,6 +398,7 @@
                   "name": "secondary",
                   "layout": "vertical",
                   "gap": "$--spacing-xs",
+                  "width": "fit_content",
                   "children": [
                     {
                       "type": "text",
@@ -420,6 +428,7 @@
                   "name": "muted",
                   "layout": "vertical",
                   "gap": "$--spacing-xs",
+                  "width": "fit_content",
                   "children": [
                     {
                       "type": "text",
@@ -449,6 +458,7 @@
                   "name": "accent",
                   "layout": "vertical",
                   "gap": "$--spacing-xs",
+                  "width": "fit_content",
                   "children": [
                     {
                       "type": "text",
@@ -480,17 +490,17 @@
           "type": "frame",
           "id": "fnd-semantic",
           "name": "Semantic",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-semantic-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -507,12 +517,12 @@
                   "id": "fnd-semantic-note",
                   "name": "The only saturated colou",
                   "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
                   "content": "The only saturated colour in the chrome. Everything else stays on the neutral ladder.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
                 }
               ]
             },
@@ -520,39 +530,41 @@
               "type": "frame",
               "id": "fnd-semantic-set",
               "name": "Chips",
-              "width": "fill_container",
+              "layout": "horizontal",
               "gap": "$--spacing-md",
+              "alignItems": "start",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
                   "id": "fnd-semantic-set-color-agent-working",
                   "name": "agent working",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
                   "width": "fill_container",
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-panel",
-                  "cornerRadius": "$--radius-lg",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-md",
-                  "padding": "$--spacing-lg",
+                  "cornerRadius": "$--radius-lg",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-sm",
                       "id": "fnd-semantic-set-color-agent-working-dot",
                       "name": "Colour",
-                      "fill": "$--color-agent-working",
                       "width": 24,
-                      "height": 24
+                      "height": 24,
+                      "fill": "$--color-agent-working",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "type": "frame",
                       "id": "fnd-semantic-set-color-agent-working-text",
                       "name": "Text",
-                      "width": "fill_container",
                       "layout": "vertical",
                       "gap": "$--spacing-xxs",
+                      "width": "fill_container",
                       "children": [
                         {
                           "type": "text",
@@ -582,32 +594,32 @@
                   "type": "frame",
                   "id": "fnd-semantic-set-color-success",
                   "name": "success",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
                   "width": "fill_container",
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-panel",
-                  "cornerRadius": "$--radius-lg",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-md",
-                  "padding": "$--spacing-lg",
+                  "cornerRadius": "$--radius-lg",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-sm",
                       "id": "fnd-semantic-set-color-success-dot",
                       "name": "Colour",
-                      "fill": "$--color-success",
                       "width": 24,
-                      "height": 24
+                      "height": 24,
+                      "fill": "$--color-success",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "type": "frame",
                       "id": "fnd-semantic-set-color-success-text",
                       "name": "Text",
-                      "width": "fill_container",
                       "layout": "vertical",
                       "gap": "$--spacing-xxs",
+                      "width": "fill_container",
                       "children": [
                         {
                           "type": "text",
@@ -637,32 +649,32 @@
                   "type": "frame",
                   "id": "fnd-semantic-set-color-warning",
                   "name": "warning",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
                   "width": "fill_container",
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-panel",
-                  "cornerRadius": "$--radius-lg",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-md",
-                  "padding": "$--spacing-lg",
+                  "cornerRadius": "$--radius-lg",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-sm",
                       "id": "fnd-semantic-set-color-warning-dot",
                       "name": "Colour",
-                      "fill": "$--color-warning",
                       "width": 24,
-                      "height": 24
+                      "height": 24,
+                      "fill": "$--color-warning",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "type": "frame",
                       "id": "fnd-semantic-set-color-warning-text",
                       "name": "Text",
-                      "width": "fill_container",
                       "layout": "vertical",
                       "gap": "$--spacing-xxs",
+                      "width": "fill_container",
                       "children": [
                         {
                           "type": "text",
@@ -692,32 +704,32 @@
                   "type": "frame",
                   "id": "fnd-semantic-set-color-danger",
                   "name": "danger",
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
                   "width": "fill_container",
+                  "padding": "$--spacing-lg",
                   "fill": "$--color-panel",
-                  "cornerRadius": "$--radius-lg",
                   "stroke": "$--color-divider",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": "$--spacing-md",
-                  "padding": "$--spacing-lg",
+                  "cornerRadius": "$--radius-lg",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-sm",
                       "id": "fnd-semantic-set-color-danger-dot",
                       "name": "Colour",
-                      "fill": "$--color-danger",
                       "width": 24,
-                      "height": 24
+                      "height": 24,
+                      "fill": "$--color-danger",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "type": "frame",
                       "id": "fnd-semantic-set-color-danger-text",
                       "name": "Text",
-                      "width": "fill_container",
                       "layout": "vertical",
                       "gap": "$--spacing-xxs",
+                      "width": "fill_container",
                       "children": [
                         {
                           "type": "text",
@@ -751,17 +763,17 @@
           "type": "frame",
           "id": "fnd-pr",
           "name": "Pull request and graph",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-pr-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -778,12 +790,12 @@
                   "id": "fnd-pr-note",
                   "name": "Status colours a row sho",
                   "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
                   "content": "Status colours a row shows for a pull request, and the four lanes the Overview graph cycles through.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
                 }
               ]
             },
@@ -791,47 +803,49 @@
               "type": "frame",
               "id": "fnd-pr-body",
               "name": "Rows",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-md",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
                   "id": "fnd-pr-set",
                   "name": "Chips",
-                  "width": "fill_container",
+                  "layout": "horizontal",
                   "gap": "$--spacing-md",
+                  "alignItems": "start",
+                  "width": "fill_container",
                   "children": [
                     {
                       "type": "frame",
                       "id": "fnd-pr-set-color-pr-open",
                       "name": "open",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-pr-set-color-pr-open-dot",
                           "name": "Colour",
-                          "fill": "$--color-pr-open",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-pr-open",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-pr-set-color-pr-open-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -861,32 +875,32 @@
                       "type": "frame",
                       "id": "fnd-pr-set-color-pr-merged",
                       "name": "merged",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-pr-set-color-pr-merged-dot",
                           "name": "Colour",
-                          "fill": "$--color-pr-merged",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-pr-merged",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-pr-set-color-pr-merged-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -916,32 +930,32 @@
                       "type": "frame",
                       "id": "fnd-pr-set-color-pr-closed",
                       "name": "closed",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-pr-set-color-pr-closed-dot",
                           "name": "Colour",
-                          "fill": "$--color-pr-closed",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-pr-closed",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-pr-set-color-pr-closed-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -971,32 +985,32 @@
                       "type": "frame",
                       "id": "fnd-pr-set-color-pr-draft",
                       "name": "draft",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-pr-set-color-pr-draft-dot",
                           "name": "Colour",
-                          "fill": "$--color-pr-draft",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-pr-draft",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-pr-set-color-pr-draft-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1028,39 +1042,41 @@
                   "type": "frame",
                   "id": "fnd-lane-set",
                   "name": "Chips",
-                  "width": "fill_container",
+                  "layout": "horizontal",
                   "gap": "$--spacing-md",
+                  "alignItems": "start",
+                  "width": "fill_container",
                   "children": [
                     {
                       "type": "frame",
                       "id": "fnd-lane-set-color-graph-lane-1",
                       "name": "lane 1",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-lane-set-color-graph-lane-1-dot",
                           "name": "Colour",
-                          "fill": "$--color-graph-lane-1",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-graph-lane-1",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-lane-set-color-graph-lane-1-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1090,32 +1106,32 @@
                       "type": "frame",
                       "id": "fnd-lane-set-color-graph-lane-2",
                       "name": "lane 2",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-lane-set-color-graph-lane-2-dot",
                           "name": "Colour",
-                          "fill": "$--color-graph-lane-2",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-graph-lane-2",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-lane-set-color-graph-lane-2-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1145,32 +1161,32 @@
                       "type": "frame",
                       "id": "fnd-lane-set-color-graph-lane-3",
                       "name": "lane 3",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-lane-set-color-graph-lane-3-dot",
                           "name": "Colour",
-                          "fill": "$--color-graph-lane-3",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-graph-lane-3",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-lane-set-color-graph-lane-3-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1200,32 +1216,32 @@
                       "type": "frame",
                       "id": "fnd-lane-set-color-graph-lane-4",
                       "name": "lane 4",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-lane-set-color-graph-lane-4-dot",
                           "name": "Colour",
-                          "fill": "$--color-graph-lane-4",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-graph-lane-4",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-lane-set-color-graph-lane-4-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1257,39 +1273,41 @@
                   "type": "frame",
                   "id": "fnd-diff-set",
                   "name": "Chips",
-                  "width": "fill_container",
+                  "layout": "horizontal",
                   "gap": "$--spacing-md",
+                  "alignItems": "start",
+                  "width": "fill_container",
                   "children": [
                     {
                       "type": "frame",
                       "id": "fnd-diff-set-color-diff-added",
                       "name": "diff added",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-diff-set-color-diff-added-dot",
                           "name": "Colour",
-                          "fill": "$--color-diff-added",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-diff-added",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-diff-set-color-diff-added-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1319,32 +1337,32 @@
                       "type": "frame",
                       "id": "fnd-diff-set-color-diff-removed",
                       "name": "diff removed",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-diff-set-color-diff-removed-dot",
                           "name": "Colour",
-                          "fill": "$--color-diff-removed",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-diff-removed",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-diff-set-color-diff-removed-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1374,32 +1392,32 @@
                       "type": "frame",
                       "id": "fnd-diff-set-color-divider",
                       "name": "divider",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-diff-set-color-divider-dot",
                           "name": "Colour",
-                          "fill": "$--color-divider",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-divider",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-diff-set-color-divider-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1429,32 +1447,32 @@
                       "type": "frame",
                       "id": "fnd-diff-set-color-hover-wash",
                       "name": "hover wash",
+                      "layout": "vertical",
+                      "gap": "$--spacing-md",
                       "width": "fill_container",
+                      "padding": "$--spacing-lg",
                       "fill": "$--color-panel",
-                      "cornerRadius": "$--radius-lg",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
                       "strokeAlignment": "inner",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "padding": "$--spacing-lg",
+                      "cornerRadius": "$--radius-lg",
                       "children": [
                         {
                           "type": "rectangle",
-                          "cornerRadius": "$--radius-sm",
                           "id": "fnd-diff-set-color-hover-wash-dot",
                           "name": "Colour",
-                          "fill": "$--color-hover-wash",
                           "width": 24,
-                          "height": 24
+                          "height": 24,
+                          "fill": "$--color-hover-wash",
+                          "cornerRadius": "$--radius-sm"
                         },
                         {
                           "type": "frame",
                           "id": "fnd-diff-set-color-hover-wash-text",
                           "name": "Text",
-                          "width": "fill_container",
                           "layout": "vertical",
                           "gap": "$--spacing-xxs",
+                          "width": "fill_container",
                           "children": [
                             {
                               "type": "text",
@@ -1490,17 +1508,17 @@
           "type": "frame",
           "id": "fnd-type",
           "name": "Type scale",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-type-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -1517,12 +1535,12 @@
                   "id": "fnd-type-note",
                   "name": "Inter with ss03 in the a",
                   "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
                   "content": "Inter with ss03 in the app. pen renders plain Inter, so glyph shapes here are approximate; sizes are exact. Terminal and editor sizes render in JetBrains Mono, standing in for SF Mono.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
                 }
               ]
             },
@@ -1530,49 +1548,51 @@
               "type": "frame",
               "id": "fnd-type-scale",
               "name": "Scale",
-              "width": "fill_container",
               "layout": "vertical",
+              "gap": 0,
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
                   "id": "fnd-type-scale-text-micro",
                   "name": "text-micro",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-micro-name",
                       "name": "micro",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "micro",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-micro-px",
                       "name": "9px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "9px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1590,42 +1610,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-caption",
                   "name": "text-caption",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-caption-name",
                       "name": "caption",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "caption",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-caption-px",
                       "name": "10px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "10px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1643,42 +1664,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-body",
                   "name": "text-body",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-body-name",
                       "name": "body",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "body",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-body-px",
                       "name": "11px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "11px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1696,42 +1718,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-subhead",
                   "name": "text-subhead",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-subhead-name",
                       "name": "subhead",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "subhead",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-subhead-px",
                       "name": "12px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "12px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1749,42 +1772,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-title",
                   "name": "text-title",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-title-name",
                       "name": "title",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "title",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-title-px",
                       "name": "13px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "13px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1802,42 +1826,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-terminal-base",
                   "name": "text-terminal-base",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-terminal-base-name",
                       "name": "terminal-base",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "terminal-base",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-terminal-base-px",
                       "name": "14px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "14px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1855,42 +1880,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-editor-document",
                   "name": "text-editor-document",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-editor-document-name",
                       "name": "editor-document",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "editor-document",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-editor-document-px",
                       "name": "15px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "15px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1908,42 +1934,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-headline",
                   "name": "text-headline",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-headline-name",
                       "name": "headline",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "headline",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-headline-px",
                       "name": "17px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "17px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -1961,42 +1988,43 @@
                   "type": "frame",
                   "id": "fnd-type-scale-text-display",
                   "name": "text-display",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-md",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-md",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-display-name",
                       "name": "display",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 120,
                       "content": "display",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 120
                     },
                     {
                       "type": "text",
                       "id": "fnd-type-scale-text-display-px",
                       "name": "30px",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "30px",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2018,17 +2046,17 @@
           "type": "frame",
           "id": "fnd-spacing",
           "name": "Spacing",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-spacing-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -2046,9 +2074,10 @@
               "type": "frame",
               "id": "fnd-spacing-steps",
               "name": "Steps",
-              "width": "fill_container",
+              "layout": "horizontal",
               "gap": "$--spacing-xl",
               "alignItems": "end",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
@@ -2056,14 +2085,16 @@
                   "name": "xxs",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-xxs-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 2,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2083,14 +2114,16 @@
                   "name": "xs",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-xs-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 4,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2110,14 +2143,16 @@
                   "name": "sm",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-sm-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 8,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2137,14 +2172,16 @@
                   "name": "md",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-md-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 12,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2164,14 +2201,16 @@
                   "name": "lg",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-lg-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 16,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2191,14 +2230,16 @@
                   "name": "xl",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-xl-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 24,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2218,14 +2259,16 @@
                   "name": "xxl",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-xxl-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 32,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2245,14 +2288,16 @@
                   "name": "xxxl",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
                       "id": "fnd-spacing-steps-spacing-xxxl-bar",
                       "name": "Bar",
-                      "fill": "$--color-accent",
                       "width": 40,
-                      "height": 40
+                      "height": 40,
+                      "fill": "$--color-accent"
                     },
                     {
                       "type": "text",
@@ -2274,17 +2319,17 @@
           "type": "frame",
           "id": "fnd-radius",
           "name": "Radius",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-radius-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -2301,12 +2346,12 @@
                   "id": "fnd-radius-note",
                   "name": "Runs from the 4px select",
                   "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
                   "content": "Runs from the 4px selection to the 16px container. Borders are 1px; there are no drop shadows anywhere in the system.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
                 }
               ]
             },
@@ -2314,9 +2359,10 @@
               "type": "frame",
               "id": "fnd-radius-steps",
               "name": "Steps",
-              "width": "fill_container",
+              "layout": "horizontal",
               "gap": "$--spacing-xl",
               "alignItems": "end",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
@@ -2324,18 +2370,20 @@
                   "name": "xs",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-xs",
                       "id": "fnd-radius-steps-radius-xs-box",
                       "name": "Box",
-                      "fill": "$--color-panel",
                       "width": 72,
                       "height": 72,
+                      "fill": "$--color-panel",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-xs"
                     },
                     {
                       "type": "text",
@@ -2355,18 +2403,20 @@
                   "name": "sm",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-sm",
                       "id": "fnd-radius-steps-radius-sm-box",
                       "name": "Box",
-                      "fill": "$--color-panel",
                       "width": 72,
                       "height": 72,
+                      "fill": "$--color-panel",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "type": "text",
@@ -2386,18 +2436,20 @@
                   "name": "md",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-md",
                       "id": "fnd-radius-steps-radius-md-box",
                       "name": "Box",
-                      "fill": "$--color-panel",
                       "width": 72,
                       "height": 72,
+                      "fill": "$--color-panel",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-md"
                     },
                     {
                       "type": "text",
@@ -2417,18 +2469,20 @@
                   "name": "lg",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-lg",
                       "id": "fnd-radius-steps-radius-lg-box",
                       "name": "Box",
-                      "fill": "$--color-panel",
                       "width": 72,
                       "height": 72,
+                      "fill": "$--color-panel",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-lg"
                     },
                     {
                       "type": "text",
@@ -2448,18 +2502,20 @@
                   "name": "xl",
                   "layout": "vertical",
                   "gap": "$--spacing-sm",
+                  "width": "fit_content",
+                  "alignItems": "start",
                   "children": [
                     {
                       "type": "rectangle",
-                      "cornerRadius": "$--radius-xl",
                       "id": "fnd-radius-steps-radius-xl-box",
                       "name": "Box",
-                      "fill": "$--color-panel",
                       "width": 72,
                       "height": 72,
+                      "fill": "$--color-panel",
                       "stroke": "$--color-divider",
                       "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-xl"
                     },
                     {
                       "type": "text",
@@ -2481,17 +2537,17 @@
           "type": "frame",
           "id": "fnd-size",
           "name": "Sizes the layout is built on",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-size-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -2508,12 +2564,12 @@
                   "id": "fnd-size-note",
                   "name": "The heights and widths a",
                   "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
                   "content": "The heights and widths a board reaches for before writing a number, and the HideTheme constant each one is.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
                 }
               ]
             },
@@ -2521,49 +2577,51 @@
               "type": "frame",
               "id": "fnd-size-set",
               "name": "Sizes",
-              "width": "fill_container",
               "layout": "vertical",
+              "gap": 0,
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
                   "id": "fnd-size-set-size-hairline",
                   "name": "hairline",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-hairline-label",
                       "name": "hairline",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "hairline",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-hairline-value",
                       "name": "1",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "1",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2581,42 +2639,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-pane-header",
                   "name": "pane header",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-pane-header-label",
                       "name": "pane header",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "pane header",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-pane-header-value",
                       "name": "28",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "28",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2634,42 +2693,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-tab-strip",
                   "name": "tab strip",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-tab-strip-label",
                       "name": "tab strip",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "tab strip",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-tab-strip-value",
                       "name": "32",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "32",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2687,42 +2747,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-control-compact",
                   "name": "control, compact",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-control-compact-label",
                       "name": "control, compact",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "control, compact",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-control-compact-value",
                       "name": "24",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "24",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2740,42 +2801,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-control-regular",
                   "name": "control, regular",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-control-regular-label",
                       "name": "control, regular",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "control, regular",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-control-regular-value",
                       "name": "36",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "36",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2793,42 +2855,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-icon-button-standard",
                   "name": "icon button, standard",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-icon-button-standard-label",
                       "name": "icon button, standard",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "icon button, standard",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-icon-button-standard-value",
                       "name": "32",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "32",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2846,42 +2909,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-keycap-height",
                   "name": "keycap",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-keycap-height-label",
                       "name": "keycap",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "keycap",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-keycap-height-value",
                       "name": "18",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "18",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2899,42 +2963,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-badge-height",
                   "name": "badge",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-badge-height-label",
                       "name": "badge",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "badge",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-badge-height-value",
                       "name": "16",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "16",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -2952,42 +3017,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-checkout-row",
                   "name": "checkout row",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-checkout-row-label",
                       "name": "checkout row",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "checkout row",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-checkout-row-value",
                       "name": "36",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "36",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3005,42 +3071,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-sidebar-ideal",
                   "name": "sidebar, ideal",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-sidebar-ideal-label",
                       "name": "sidebar, ideal",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "sidebar, ideal",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-sidebar-ideal-value",
                       "name": "292",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "292",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3058,42 +3125,43 @@
                   "type": "frame",
                   "id": "fnd-size-set-size-panel-ideal",
                   "name": "panel, ideal",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-panel-ideal-label",
                       "name": "panel, ideal",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "panel, ideal",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-panel-ideal-value",
                       "name": "355",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "355",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3115,17 +3183,17 @@
           "type": "frame",
           "id": "fnd-opacity",
           "name": "Opacity",
-          "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-lg",
+          "width": "fill_container",
           "children": [
             {
               "type": "frame",
               "id": "fnd-opacity-head",
               "name": "Heading",
-              "width": "fill_container",
               "layout": "vertical",
               "gap": "$--spacing-xs",
+              "width": "fill_container",
               "children": [
                 {
                   "type": "text",
@@ -3142,12 +3210,12 @@
                   "id": "fnd-opacity-note",
                   "name": "Applied to a whole view,",
                   "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
                   "content": "Applied to a whole view, never baked into a colour; a wash colour carries its own alpha instead.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
                 }
               ]
             },
@@ -3155,49 +3223,51 @@
               "type": "frame",
               "id": "fnd-opacity-set",
               "name": "Sizes",
-              "width": "fill_container",
               "layout": "vertical",
+              "gap": 0,
+              "width": "fill_container",
               "children": [
                 {
                   "type": "frame",
                   "id": "fnd-opacity-set-opacity-secondary",
                   "name": "secondary",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-secondary-label",
                       "name": "secondary",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "secondary",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-secondary-value",
                       "name": "0.72",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "0.72",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3215,42 +3285,43 @@
                   "type": "frame",
                   "id": "fnd-opacity-set-opacity-read-status",
                   "name": "read status",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-read-status-label",
                       "name": "read status",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "read status",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-read-status-value",
                       "name": "0.55",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "0.55",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3268,42 +3339,43 @@
                   "type": "frame",
                   "id": "fnd-opacity-set-opacity-dimmed",
                   "name": "dimmed",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-dimmed-label",
                       "name": "dimmed",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "dimmed",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-dimmed-value",
                       "name": "0.5",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "0.5",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3321,42 +3393,43 @@
                   "type": "frame",
                   "id": "fnd-opacity-set-opacity-disabled",
                   "name": "disabled",
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "gap": "$--spacing-xl",
                   "width": "fill_container",
+                  "padding": [
+                    "$--spacing-sm",
+                    0
+                  ],
                   "stroke": "$--color-divider",
                   "strokeWidth": {
                     "bottom": "$--size-hairline"
                   },
                   "strokeAlignment": "inner",
-                  "gap": "$--spacing-xl",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
-                  ],
-                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-disabled-label",
                       "name": "disabled",
                       "fill": "$--color-primary",
-                      "textGrowth": "fixed-width",
-                      "width": 200,
                       "content": "disabled",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 200
                     },
                     {
                       "type": "text",
                       "id": "fnd-opacity-set-opacity-disabled-value",
                       "name": "0.45",
                       "fill": "$--color-muted",
-                      "textGrowth": "fixed-width",
-                      "width": 60,
                       "content": "0.45",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "normal"
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 60
                     },
                     {
                       "type": "text",
@@ -3374,7 +3447,9 @@
             }
           ]
         }
-      ]
+      ],
+      "x": 0,
+      "y": -4200
     },
     {
       "type": "frame",
@@ -3970,9 +4045,9 @@
           "type": "rectangle",
           "id": "band-component-rule",
           "name": "Rule",
-          "fill": "$--color-divider",
           "width": "fill_container",
-          "height": 1
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     },
@@ -5322,9 +5397,9 @@
           "type": "rectangle",
           "id": "band-screen-rule",
           "name": "Rule",
-          "fill": "$--color-divider",
           "width": "fill_container",
-          "height": 1
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     },
@@ -10452,7 +10527,7 @@
       "x": 0,
       "y": 1100,
       "name": "Band / Review",
-      "width": 115237,
+      "width": 126101,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -10480,9 +10555,9 @@
           "type": "rectangle",
           "id": "band-review-rule",
           "name": "Rule",
-          "fill": "$--color-divider",
           "width": "fill_container",
-          "height": 1
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     },
@@ -75063,49 +75138,9 @@
     },
     {
       "type": "frame",
-      "id": "band-scratch",
-      "x": 0,
-      "y": 3700,
-      "name": "Band / Scratch",
-      "width": 1200,
-      "layout": "vertical",
-      "gap": "$--spacing-sm",
-      "children": [
-        {
-          "type": "text",
-          "id": "band-scratch-title",
-          "name": "Title",
-          "fill": "$--color-secondary",
-          "content": "Scratch",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-display",
-          "fontWeight": "600"
-        },
-        {
-          "type": "text",
-          "id": "band-scratch-holds",
-          "name": "Holds",
-          "fill": "$--color-muted",
-          "content": "Scratch /  exploration; deleted or redrawn as a Screen or Review board before a pull request",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "rectangle",
-          "id": "band-scratch-rule",
-          "name": "Rule",
-          "fill": "$--color-divider",
-          "width": "fill_container",
-          "height": 1
-        }
-      ]
-    },
-    {
-      "type": "frame",
       "id": "mR198",
-      "x": 0,
-      "y": 4252,
+      "x": 115317,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / C01 Focus and relationship icons",
       "width": 900,
       "fill": "$--color-background",
@@ -75741,8 +75776,8 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 0,
-      "y": 5692,
+      "x": 116297,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / C02 Overview scope alternatives",
       "width": 900,
       "fill": "$--color-background",
@@ -76068,7 +76103,7 @@
                                 "$--spacing-none",
                                 "$--spacing-none",
                                 "$--spacing-none",
-                                18
+                                "$--size-lineage-indent"
                               ],
                               "children": [
                                 {
@@ -76123,49 +76158,64 @@
                                 "$--spacing-none",
                                 "$--spacing-none",
                                 "$--spacing-none",
-                                36
+                                "$--size-lineage-indent"
                               ],
                               "children": [
                                 {
-                                  "id": "dtL62",
-                                  "type": "ref",
-                                  "ref": "AdQ5R",
-                                  "name": "Grandchild",
+                                  "type": "frame",
+                                  "id": "Q1CFR",
+                                  "name": "Second lineage depth",
                                   "width": "fill_container",
-                                  "fill": [],
-                                  "descendants": {
-                                    "I0ooxZ": {
-                                      "enabled": true,
-                                      "fill": []
-                                    },
-                                    "k7EiIc/PCeNa": {
-                                      "content": "○",
-                                      "fill": "$--color-secondary"
-                                    },
-                                    "k7EiIc/YYqJe": {
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
-                                        "mode": "fit"
+                                  "layout": "vertical",
+                                  "padding": [
+                                    "$--spacing-none",
+                                    "$--spacing-none",
+                                    "$--spacing-none",
+                                    "$--size-lineage-indent"
+                                  ],
+                                  "children": [
+                                    {
+                                      "id": "dtL62",
+                                      "type": "ref",
+                                      "ref": "AdQ5R",
+                                      "name": "Grandchild",
+                                      "width": "fill_container",
+                                      "fill": [],
+                                      "descendants": {
+                                        "I0ooxZ": {
+                                          "enabled": true,
+                                          "fill": []
+                                        },
+                                        "k7EiIc/PCeNa": {
+                                          "content": "○",
+                                          "fill": "$--color-secondary"
+                                        },
+                                        "k7EiIc/YYqJe": {
+                                          "fill": {
+                                            "type": "image",
+                                            "enabled": true,
+                                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                                            "mode": "fit"
+                                          }
+                                        },
+                                        "k7EiIc/x0h40": {
+                                          "content": "영문 표기와 English…",
+                                          "fontWeight": "normal"
+                                        },
+                                        "k7EiIc/X6LdE": {
+                                          "content": "Idle",
+                                          "fill": "$--color-secondary"
+                                        },
+                                        "k7EiIc/BsCNW": {
+                                          "content": "",
+                                          "enabled": false
+                                        },
+                                        "zfxBo": {
+                                          "enabled": false
+                                        }
                                       }
-                                    },
-                                    "k7EiIc/x0h40": {
-                                      "content": "영문 표기와 English…",
-                                      "fontWeight": "normal"
-                                    },
-                                    "k7EiIc/X6LdE": {
-                                      "content": "Idle",
-                                      "fill": "$--color-secondary"
-                                    },
-                                    "k7EiIc/BsCNW": {
-                                      "content": "",
-                                      "enabled": false
-                                    },
-                                    "zfxBo": {
-                                      "enabled": false
                                     }
-                                  }
+                                  ]
                                 }
                               ]
                             },
@@ -76179,7 +76229,7 @@
                                 "$--spacing-none",
                                 "$--spacing-none",
                                 "$--spacing-none",
-                                18
+                                "$--size-lineage-indent"
                               ],
                               "children": [
                                 {
@@ -76235,7 +76285,7 @@
                                 "$--spacing-none",
                                 "$--spacing-none",
                                 "$--spacing-none",
-                                18
+                                "$--size-lineage-indent"
                               ],
                               "children": [
                                 {
@@ -76600,8 +76650,8 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 0,
-      "y": 6700,
+      "x": 117277,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / C03 Inspect without moving focus",
       "width": 900,
       "fill": "$--color-background",
@@ -76697,8 +76747,8 @@
     {
       "type": "frame",
       "id": "d9hSDu",
-      "x": 0,
-      "y": 7622,
+      "x": 118257,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / C04 Complete workbench master",
       "width": 1488,
       "fill": "$--color-background",
@@ -77858,8 +77908,8 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 0,
-      "y": 8624,
+      "x": 119825,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / F01 Parent focused",
       "width": 1488,
       "fill": "$--color-background",
@@ -77902,8 +77952,8 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 0,
-      "y": 9626,
+      "x": 121393,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / F02 Child focused",
       "width": 1488,
       "fill": "$--color-background",
@@ -78049,8 +78099,8 @@
     {
       "type": "frame",
       "id": "b6Nt3Q",
-      "x": 0,
-      "y": 10628,
+      "x": 122961,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / C05 Header width and non-agent states",
       "width": 900,
       "fill": "$--color-background",
@@ -78077,7 +78127,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "28pt 첫 줄. 알려진 자식이 있으면 24pt 한 줄 추가. 부모 이름은 400pt 미만에서 숨기고 24pt 복귀 아이콘은 유지. 종류별 본문 toolbar는 R2를 유지.",
+          "content": "28pt 첫 줄. 알려진 자식이 있으면 24pt 한 줄 추가. 480pt 미만에서는 부모 이름을 숨기고 24pt 복귀 아이콘을 유지. 종류별 본문 toolbar는 R2를 유지.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -78389,8 +78439,8 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 0,
-      "y": 11455,
+      "x": 123941,
+      "y": 1200,
       "name": "Review / 2026-09-14 R4 Focus / C06 Task tree availability and row states",
       "width": 1080,
       "fill": "$--color-background",
@@ -78602,14 +78652,6 @@
                       "fill": "$--color-secondary"
                     },
                     "SSLvi/k7EiIc/X6LdE": {
-                      "content": "Disconnected",
-                      "fill": "$--color-secondary"
-                    },
-                    "dtL62/k7EiIc/PCeNa": {
-                      "content": "⊘",
-                      "fill": "$--color-secondary"
-                    },
-                    "dtL62/k7EiIc/X6LdE": {
                       "content": "Disconnected",
                       "fill": "$--color-secondary"
                     },
@@ -78839,6 +78881,192 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "CKb4q",
+      "x": 125101,
+      "y": 1200,
+      "name": "Review / 2026-09-14 R4 Focus / 00 Start here",
+      "width": 1000,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "S6Rz5V",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "R4 / 현재 작업은 선명하게, 관계는 방향으로",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "Fg36P",
+          "name": "Intent",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "우측 zoom 상시 노출 · 부모/자식 글자를 방향 아이콘으로 전환 · 표시된 Pane, 입력 focus, Overview 검사 selection을 분리.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "n9zvR",
+          "name": "Revision",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "R3의 header 역할 글자와 zoom 노출 규칙은 R4가 대체. Overview는 A/B 범위 제안이며 구조 선택 전 제품 계약으로 승격하지 않는다. 기존 R2/R3 보드와 code owner는 보존.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "WnNKh",
+          "name": "C01 · 독립/부모/자식/동시 역할, focus/no focus, zoom, 240/320pt",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C01 · 독립/부모/자식/동시 역할, focus/no focus, zoom, 240/320pt",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "nxzAX",
+          "name": "C02 · A 프로젝트 전체 작업 관계(추천) / B 현재 작업의 관계 비교",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C02 · A 프로젝트 전체 작업 관계(추천) / B 현재 작업의 관계 비교",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "WJwFj",
+          "name": "C03 · 자식을 검사해도 부모 Pane은 그대로",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C03 · 자식을 검사해도 부모 Pane은 그대로",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "n50BBP",
+          "name": "C04 · 재사용 전체 화면 master · Sidebar 240 / Overview 320",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C04 · 재사용 전체 화면 master · Sidebar 240 / Overview 320",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "u4r74",
+          "name": "C05 · 344/400pt와 일반 terminal/browser/file/diff, 미계측/단절",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C05 · 344/400pt와 일반 terminal/browser/file/diff, 미계측/단절",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "jvAQY",
+          "name": "C06 · Overview 빈 상태/로딩/단절과 hover/focus/read/unread",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "C06 · Overview 빈 상태/로딩/단절과 hover/focus/read/unread",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "x4Cq2",
+          "name": "F01 / F02 · 부모 입력 focus → 자식 전용 탭의 입력 focus",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "F01 / F02 · 부모 입력 focus → 자식 전용 탭의 입력 focus",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "gjBqw",
+          "name": "Principles",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "원칙 5: 기존 identity와 status 유지. 원칙 7: 관계는 방향 아이콘, focus는 중립 강조. 원칙 11: Overview 두 구조를 비교한 뒤 선택. 원칙 12: 한국어와 English, 240pt 실제 폭 렌더 검사.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "band-scratch",
+      "x": 0,
+      "y": 3700,
+      "name": "Band / Scratch",
+      "width": 1200,
+      "layout": "vertical",
+      "gap": "$--spacing-sm",
+      "children": [
+        {
+          "type": "text",
+          "id": "band-scratch-title",
+          "name": "Title",
+          "fill": "$--color-secondary",
+          "content": "Scratch",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-display",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "band-scratch-holds",
+          "name": "Holds",
+          "fill": "$--color-muted",
+          "content": "Scratch /  exploration; deleted or redrawn as a Screen or Review board before a pull request",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "rectangle",
+          "id": "band-scratch-rule",
+          "name": "Rule",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$--color-divider"
         }
       ]
     }
