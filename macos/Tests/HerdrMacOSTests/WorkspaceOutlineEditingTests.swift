@@ -122,6 +122,46 @@ import Testing
         return host
     }
 
+    @Test @MainActor func outlineColumnUsesTheActuallyVisibleClippedWidth() throws {
+        let coordinator = WorkspaceOutlineView.Coordinator(
+            openFile: { _ in },
+            updateExpandedPaths: { _ in },
+            fileOperations: WorkspaceFileOperations(
+                createFile: { _, _ in },
+                createDirectory: { _, _ in },
+                rename: { _, _ in },
+                move: { _, _ in },
+                requestTrash: { _ in }
+            )
+        )
+        let scroll = WorkspaceOutlineView.makeScrollView(coordinator: coordinator)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 200))
+        scroll.frame = NSRect(x: 0, y: 0, width: 320, height: 200)
+        container.addSubview(scroll)
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = container
+        defer {
+            if let outline = scroll.documentView as? NSOutlineView {
+                outline.delegate = nil
+                outline.dataSource = nil
+            }
+            window.contentView = nil
+            window.close()
+        }
+
+        container.layoutSubtreeIfNeeded()
+        scroll.layoutSubtreeIfNeeded()
+
+        let column = try #require((scroll.documentView as? NSOutlineView)?.tableColumns.first)
+        #expect(column.width == 260)
+    }
+
     @Test func rowMenuFollowsTheTargetAndTheEmptyAreaOffersOnlyCreation() async throws {
         let host = try await Self.makeHost()
         defer { host.tearDown() }

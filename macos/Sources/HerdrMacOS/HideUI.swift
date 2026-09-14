@@ -607,6 +607,10 @@ private struct HideSidebar: View {
             SidebarContentPicker()
             SidebarCommandBar()
 
+            if model.sidebarContent == .agents {
+                AgentScopePicker()
+            }
+
             SidebarList {
                 switch model.sidebarContent {
                 case .projects:
@@ -664,22 +668,6 @@ private struct HideSidebar: View {
 
     @ViewBuilder
     private var agentsContent: some View {
-        HideChoiceGroup(
-            label: "Agent scope",
-            values: AgentListScope.allCases,
-            selection: $model.agentListScope,
-            title: { $0.title },
-            identifier: { "agents-scope-\($0.rawValue)" },
-            optionHelp: {
-                $0 == .mine
-                    ? "Show work currently owned by you. Escalated and orphaned work remains visible."
-                    : "Show all work, including delegated agents."
-            },
-            equalWidth: true
-        )
-        .padding(.horizontal, HideTheme.spacingSM)
-        .padding(.bottom, HideTheme.spacingXS)
-
         if model.core.snapshot == nil {
             HideSectionLabel(title: "Agents", count: 0)
             EmptySidebarRow(
@@ -730,6 +718,33 @@ private struct HideSidebar: View {
                 AgentNavigatorRow(agent: agent, showsWorkspace: true)
             }
         }
+    }
+}
+
+/// The agent scope is navigation chrome, not a row in the scrollable result.
+/// Keeping it above `SidebarList` prevents AppKit's list row clipping from
+/// collapsing the segmented control and keeps both scopes reachable while the
+/// operator scrolls a long agent list.
+private struct AgentScopePicker: View {
+    @EnvironmentObject private var model: ShellModel
+
+    var body: some View {
+        HideChoiceGroup(
+            label: "Agent scope",
+            values: AgentListScope.allCases,
+            selection: $model.agentListScope,
+            title: { $0.title },
+            identifier: { "agents-scope-\($0.rawValue)" },
+            optionHelp: {
+                $0 == .mine
+                    ? "Show work currently owned by you. Escalated and orphaned work remains visible."
+                    : "Show all work, including delegated agents."
+            },
+            equalWidth: true
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.bottom, HideTheme.spacingXS)
     }
 }
 
