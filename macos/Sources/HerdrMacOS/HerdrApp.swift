@@ -335,19 +335,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuIte
                     detail: "command_w_menu_item_missing"
                 )
             }
-            if let windowMenu = NSApplication.shared.windowsMenu {
-                self.reopenClosedMenuItem = ReopenWindowMenuPolicy.install(
-                    in: windowMenu,
-                    target: self,
-                    action: #selector(self.reopenClosedFromWindowMenu(_:))
-                )
-                HideLaunchTrace.mark("reopen_closed.window_menu.installed")
-            } else {
-                HideLaunchTrace.mark(
-                    "reopen_closed.window_menu.failed",
-                    detail: "window_menu_missing"
-                )
-            }
             #if DEBUG
             if CommandLine.arguments.contains("--verification-ui-fixture"),
                CommandLine.arguments.contains("--verification-background") {
@@ -390,6 +377,29 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuIte
         // flagsChanged release never reaches this monitor and the keycap hints
         // would stay on screen.
         model.clearShortcutHints()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        installReopenWindowMenuItem()
+    }
+
+    private func installReopenWindowMenuItem() {
+        let application = NSApplication.shared
+        guard let windowMenu = application.windowsMenu
+            ?? application.mainMenu?.items.first(where: { $0.title == "Window" })?.submenu
+        else {
+            HideLaunchTrace.mark(
+                "reopen_closed.window_menu.failed",
+                detail: "window_menu_missing"
+            )
+            return
+        }
+        reopenClosedMenuItem = ReopenWindowMenuPolicy.install(
+            in: windowMenu,
+            target: self,
+            action: #selector(reopenClosedFromWindowMenu(_:))
+        )
+        HideLaunchTrace.mark("reopen_closed.window_menu.installed")
     }
 
     @objc private func reopenClosedFromWindowMenu(_ sender: NSMenuItem) {
@@ -441,6 +451,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuIte
                     detail: "source_\(source)_visible_true_windows_\(application.windows.count)"
                 )
             }
+            self.installReopenWindowMenuItem()
             _ = self
         }
     }
