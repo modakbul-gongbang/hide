@@ -296,25 +296,17 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
 
     /// Repositions the marked-text (preedit) overlay to the current caret.
     ///
-    /// SwiftTerm places the overlay only when the marked text itself changes,
+    /// SwiftTerm places the overlay when the marked text itself changes,
     /// using the caret position at that moment. Committed text in this app
     /// round-trips through the pane PTY, so the caret advances a few
     /// milliseconds later, after the echo is fed back - and the overlay for
     /// the next syllable is left covering the character that was just
-    /// committed. Re-asserting the same marked text after terminal output
-    /// re-runs SwiftTerm's overlay layout against the advanced caret.
+    /// committed. This runs after every feed, so it re-anchors only when the
+    /// caret has actually moved: re-asserting the marked text on each frame
+    /// of an agent's output cost about 50 ms a keystroke (2026-09-14).
     func refreshMarkedTextOverlayPosition() {
         syncCaretVisibilityWithComposition()
-        guard hasMarkedText() else { return }
-        let range = markedRange()
-        guard range.length > 0,
-              let marked = attributedSubstring(forProposedRange: range, actualRange: nil)
-        else { return }
-        super.setMarkedText(
-            marked,
-            selectedRange: NSRange(location: marked.length, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
+        refreshMarkedTextOverlayAnchor()
     }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {

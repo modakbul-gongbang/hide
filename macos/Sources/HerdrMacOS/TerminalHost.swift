@@ -56,6 +56,7 @@ struct TerminalHost: NSViewRepresentable {
         terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
         terminal.terminalDisplayTick = { [weak coordinator = context.coordinator] period in
             TerminalLatency.displayPeriod(period, paneID: paneID)
+            coordinator?.displayPeriod = period
             coordinator?.flushSettledSize()
         }
         terminal.terminalDelegate = context.coordinator
@@ -177,6 +178,10 @@ struct TerminalHost: NSViewRepresentable {
         weak var terminal: TerminalView?
         private var settledSize = SettledTerminalSize()
         private var reportedFirstSize = false
+        private var undrawnSampleGeneration = 0
+        /// The last period the display link reported; the undrawn sampler
+        /// spaces its two samples by it, the way drawn frames are spaced.
+        var displayPeriod: Double = 1.0 / 60.0
         init(
             bridge: CoreBridge,
             paneID: String,
@@ -203,6 +208,28 @@ struct TerminalHost: NSViewRepresentable {
                 // This updates the frame guard only. It never resizes the PTY.
                 bridge.reportTerminalViewport(paneID: paneID, cols: newCols, rows: newRows, newView: !reportedFirstSize)
                 reportedFirstSize = true
+                sampleSettledSizeWhileUndrawn()
+            }
+        }
+
+        /// A pane that is not drawn never ticks - a hidden tab, a view with
+        /// no window - so its PTY kept the old grid while the frame guard
+        /// already expected the new one, and every frame was held for a
+        /// resize only a drawn frame could send. Two samples one display
+        /// period apart at one grid deliver it, exactly as two drawn frames
+        /// do; a newer layout restarts the pair, so a drag still sends only
+        /// the grid it settles on.
+        @MainActor private func sampleSettledSizeWhileUndrawn() {
+            undrawnSampleGeneration &+= 1
+            let generation = undrawnSampleGeneration
+            let period = displayPeriod
+            DispatchQueue.main.asyncAfter(deadline: .now() + period) { [weak self] in
+                guard let self, self.undrawnSampleGeneration == generation else { return }
+                self.flushSettledSize()
+                DispatchQueue.main.asyncAfter(deadline: .now() + period) { [weak self] in
+                    guard let self, self.undrawnSampleGeneration == generation else { return }
+                    self.flushSettledSize()
+                }
             }
         }
 

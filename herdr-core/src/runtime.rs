@@ -1325,6 +1325,10 @@ pub struct Runtime {
     terminal_sizes: HashMap<String, (u16, u16)>,
     terminal_view_sizes: HashMap<String, (u16, u16)>,
     terminal_frames_need_full: HashSet<String>,
+    /// The foreign grid a pane's held frames are arriving at, so a burst is
+    /// diagnosed once per grid rather than once per frame: one contested pane
+    /// wrote 8,500 mismatch lines in twelve minutes and rotated the log.
+    terminal_foreign_frame_sizes: HashMap<String, (u16, u16)>,
     /// Panes whose attach is held until a view reports their size. Herdr
     /// sizes the PTY from the attach, so starting one at a guess costs a
     /// full frame at the wrong size and a second one after the resize.
@@ -1625,6 +1629,7 @@ impl Runtime {
             next_remote_file_generation: 0,
             terminal_view_sizes: HashMap::new(),
             terminal_frames_need_full: HashSet::new(),
+            terminal_foreign_frame_sizes: HashMap::new(),
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
@@ -3871,6 +3876,8 @@ impl Runtime {
         self.terminal_recovery.retain(|pane_id, _| keep(pane_id));
         self.terminal_frames_need_full
             .retain(|pane_id| keep(pane_id));
+        self.terminal_foreign_frame_sizes
+            .retain(|pane_id, _| keep(pane_id));
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         self.panes_scrolled_before_size
             .retain(|pane_id| keep(pane_id));
@@ -3887,6 +3894,7 @@ impl Runtime {
             + self.terminal_sizes.len()
             + self.terminal_view_sizes.len()
             + self.terminal_frames_need_full.len()
+            + self.terminal_foreign_frame_sizes.len()
             + self.panes_awaiting_size.len()
             + self.panes_scrolled_before_size.len()
             + self.panes_closing.len()
@@ -7851,6 +7859,15 @@ impl Runtime {
         }
     }
 
+    /// The grid a frame has to arrive at to be drawn: the view's own grid
+    /// while one is known, else the settled size the attach asked for.
+    fn expected_terminal_size(&self, pane_id: &str) -> Option<(u16, u16)> {
+        self.terminal_view_sizes
+            .get(pane_id)
+            .or_else(|| self.terminal_sizes.get(pane_id))
+            .copied()
+    }
+
     /// Appends only the decoded frame bytes when the delivering official
     /// terminal session is still the current generation and mode.
     /// None retires the reader; Some(false) keeps reading a held frame without
@@ -7871,23 +7888,27 @@ impl Runtime {
         {
             return None;
         }
-        let expected = self
-            .terminal_view_sizes
-            .get(pane_id)
-            .or_else(|| self.terminal_sizes.get(pane_id))
-            .copied();
-        if expected != Some((frame.height, frame.width)) {
+        let expected = self.expected_terminal_size(pane_id);
+        let arrived = (frame.height, frame.width);
+        if expected != Some(arrived) {
             self.terminal_frames_need_full.insert(pane_id.to_owned());
-            // Logged per held frame to the file and stderr sink only. A push
-            // into the snapshot's diagnostics would restamp the revisioned
-            // rest section on every frame of a mismatch burst.
-            crate::diagnostic!(serde_json::json!({
-                "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
-                "pane_id": pane_id, "frame": [frame.width, frame.height],
-                "expected": expected.map(|(height, width)| [width, height]),
-            }));
+            // Logged to the file and stderr sink only, once per foreign grid.
+            // A push into the snapshot's diagnostics would restamp the
+            // revisioned rest section on every frame of a mismatch burst.
+            if self
+                .terminal_foreign_frame_sizes
+                .insert(pane_id.to_owned(), arrived)
+                != Some(arrived)
+            {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
+                    "pane_id": pane_id, "frame": [frame.width, frame.height],
+                    "expected": expected.map(|(height, width)| [width, height]),
+                }));
+            }
             return Some(false);
         }
+        self.terminal_foreign_frame_sizes.remove(pane_id);
         if self.terminal_frames_need_full.contains(pane_id) && !frame.full {
             return Some(false);
         }
@@ -10979,6 +11000,14 @@ impl Runtime {
                 mode.as_str()
             ),
         );
+        // The view's grid is the one the frame guard accepts, so it is the
+        // grid the attach asks for. Starting at a settled size the view has
+        // already left holds every frame until a resize, and a pane that is
+        // not drawn sends none: five attempts at 50x25 against a 41x18 view,
+        // then retries exhausted (2026-09-14).
+        if let Some(view) = self.terminal_view_sizes.get(pane_id).copied() {
+            self.terminal_sizes.insert(pane_id.to_owned(), view);
+        }
         #[cfg(test)]
         if self.suppress_terminal_session_workers {
             self.terminal_sessions.insert(
@@ -12330,6 +12359,41 @@ mod tests {
                 .unwrap()
                 .width,
             115
+        );
+    }
+
+    /// A view that reported 41x18 while the settled size still said 50x25
+    /// had every attach frame held and its retries exhausted: the attach
+    /// asks for the grid the frame guard accepts.
+    #[test]
+    fn a_control_session_attaches_at_the_grid_the_view_reported() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        let pane = "w-view:p1";
+        runtime.terminal_sizes.insert(pane.into(), (25, 50));
+        runtime.terminal_view_sizes.insert(pane.into(), (18, 41));
+        runtime.start_terminal_session(
+            pane,
+            TerminalSessionMode::Control,
+            1,
+            "automatic_initial",
+            None,
+        );
+        assert_eq!(runtime.terminal_sizes[pane], (18, 41));
+        let generation = runtime.terminal_session_generations[pane];
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                pane,
+                generation,
+                TerminalSessionMode::Control,
+                b"attach frame",
+                crate::model::TerminalFrame {
+                    width: 41,
+                    height: 18,
+                    full: true
+                }
+            ),
+            Some(true)
         );
     }
 
@@ -19836,6 +19900,9 @@ mod tests {
         runtime.terminal_sizes.insert(pane.into(), (80, 24));
         runtime.terminal_view_sizes.insert(pane.into(), (120, 40));
         runtime.terminal_frames_need_full.insert(pane.into());
+        runtime
+            .terminal_foreign_frame_sizes
+            .insert(pane.into(), (9, 84));
         runtime.panes_awaiting_size.insert(pane.into());
         runtime.panes_scrolled_before_size.insert(pane.into());
         runtime.panes_closing.insert(pane.into());
@@ -19847,6 +19914,7 @@ mod tests {
         assert!(!runtime.terminal_sizes.contains_key(pane));
         assert!(!runtime.terminal_view_sizes.contains_key(pane));
         assert!(!runtime.terminal_frames_need_full.contains(pane));
+        assert!(!runtime.terminal_foreign_frame_sizes.contains_key(pane));
         assert!(!runtime.panes_awaiting_size.contains(pane));
         assert!(!runtime.panes_scrolled_before_size.contains(pane));
         assert!(!runtime.panes_closing.contains(pane));
