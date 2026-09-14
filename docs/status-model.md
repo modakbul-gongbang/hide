@@ -237,7 +237,7 @@ Its refresh action reloads one repository; its external action opens the PR URL 
 
 The first appearance of a local Git project requests its GitHub status once for the runtime session.
 Repeated appearances are no-ops; explicit refresh advances that repository's generation.
-The existing Git section trigger, selected Overview project and sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
 The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
 Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
@@ -273,3 +273,10 @@ Its active-branch and draft counts describe the selected results, not every PR i
 The details state the reader's lookup window and offer the existing PR URL and scoped refresh actions.
 A failed or unrequested lookup never becomes a zero count.
 The workspace inspector uses the canonical representative agent and disconnected override; inspection itself never acknowledges an agent.
+
+## Task identity
+
+The core publishes `identity_label` separately from the compact activity `summary`.
+It resolves the composer chat title, then the available activity summary, then the named agent, then the workspace label.
+Projects, Agents, Overview, and lineage controls consume that identity; truncation belongs to each view and does not shorten tooltip text.
+Projection adds one bounded-by-metadata string per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.

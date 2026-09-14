@@ -357,6 +357,10 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
     assert_eq!(path[0].label, "Project coordinator");
     assert_eq!(path[1].label, "Hide design QA");
     assert_eq!(crate::sidebar::agent_chip(child).label, path[1].label);
+    assert_eq!(child.identity_label, "Hide design QA");
+    let parent = rows.iter().find(|row| row.pane_id == "w1:p1").unwrap();
+    assert_eq!(parent.identity_label, "Project coordinator");
+    assert_eq!(serde_json::to_value(parent).unwrap()["identity_label"], "Project coordinator");
 }
 
 // PRD D-18: the path is a function of the current list, so a child exiting
@@ -1320,12 +1324,12 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     assert!(parent.instrumented);
     assert_eq!(
         parent.chips.iter().map(|chip| chip.label.as_str()).collect::<Vec<_>>(),
-        ["Reviewer", "Implementor"],
+        ["정체 임계값을 물어보는 중", "구현 중: 계보 투영과 위임 표시"],
         "chips follow the lineage's own child order"
     );
-    assert_eq!(parent.representative.as_ref().unwrap().label, "Reviewer");
+    assert_eq!(parent.representative.as_ref().unwrap().label, "정체 임계값을 물어보는 중");
     assert_eq!((parent.subagents.working, parent.subagents.done), (Some(2), Some(4)));
-    assert!(pane("w1:p2").lineage_path.iter().any(|step| step.label == "Observer"));
+    assert!(pane("w1:p2").lineage_path.iter().any(|step| step.label == "delegating the orchestrator wo"));
 
     // A pane Hide cannot see into, and the reason a restart would fix it.
     let unseen = pane("w1:p4").children.expect("it has a session");

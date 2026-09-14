@@ -272,6 +272,7 @@ mod tests {
             id: pane_id.to_owned(),
             pane_id: pane_id.to_owned(),
             workspace_label: "Fixture".to_owned(),
+            identity_label: "Fixture".to_owned(),
             checkout_label: None,
             agent_kind: "codex".to_owned(),
             demand: demand.to_owned(),

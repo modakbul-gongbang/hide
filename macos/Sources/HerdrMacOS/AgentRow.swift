@@ -114,8 +114,8 @@ struct AgentRowPresentation: Equatable {
 
 extension AgentRowPresentation {
     /// A sidebar row. At `prominent` the project name is the title and the
-    /// summary sits beneath it; nested under a checkout the summary is the
-    /// title on its own, because the project name is already the heading.
+    /// canonical task name sits beneath it; nested under a checkout the task
+    /// name is the title, because the project name is already the heading.
     init(
         agent: SidebarAgent,
         density: AgentRowDensity,
@@ -128,8 +128,8 @@ extension AgentRowPresentation {
         symbol = status.symbol
         statusLabel = status.label
         statusColor = status.color
-        title = density == .prominent ? agent.workspaceLabel : agent.summary
-        detail = density == .prominent ? agent.summary : nil
+        title = density == .prominent ? agent.workspaceLabel : agent.identityLabel
+        detail = density == .prominent ? agent.identityLabel : nil
         qualifier = density == .prominent ? agent.checkoutQualifier : nil
         elapsed = agent.elapsed
         ambient = agent.ambient

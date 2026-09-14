@@ -30,23 +30,9 @@ enum PaneLineagePresentation {
         steps.last { $0.paneID != currentPaneID }
     }
 
-    /// The chips that fit, and how many did not.
-    ///
-    /// Overflow folds into the same `+N` the Workspace summary chip uses
-    /// rather than a second pattern (PRD B6, D-20).
-    static func chipRow(_ chips: [CoreAgentChip], limit: Int) -> (visible: [CoreAgentChip], overflow: Int) {
-        guard limit > 0 else { return ([], chips.count) }
-        guard chips.count > limit else { return (chips, 0) }
-        // One slot is spent on the `+N` itself, so the count it shows is
-        // honest rather than one short.
-        let kept = Array(chips.prefix(limit - 1))
-        return (kept, chips.count - kept.count)
-    }
-
-    /// How many chips fit in the width the row was given.
-    static func chipLimit(width: CGFloat) -> Int {
-        let slot = HideTheme.Layout.paneChildChipMaxWidth + HideTheme.spacingXS
-        return max(1, Int((width / slot).rounded(.down)))
+    /// One recognizable child and an exact count of its remaining siblings.
+    static func chipRow(_ chips: [CoreAgentChip]) -> (visible: [CoreAgentChip], overflow: Int) {
+        (Array(chips.prefix(1)), max(0, chips.count - 1))
     }
 
     /// The count badge for the in-process subagents, or nothing to draw.
@@ -91,6 +77,8 @@ enum PaneLineagePresentation {
 struct PaneChildChip: View {
     let chip: CoreAgentChip
     let connected: Bool
+    var pending = false
+    var navigationPending = false
     let onSelect: () -> Void
 
     private var status: AgentStatusPresentation {
@@ -106,19 +94,21 @@ struct PaneChildChip: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: HideTheme.spacingXXS) {
-                Text(status.symbol)
-                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
-                    .foregroundStyle(status.color)
-                    .frame(width: HideTheme.agentMarkWidth)
+            HStack(spacing: HideTheme.spacingXS) {
+                if pending {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    AgentStatusMark(symbol: status.symbol, color: status.color)
+                }
+                AgentBadge(agentKind: chip.agentKind, stateColor: status.color, size: HideTheme.compactAgentBadgeSize)
                 Text(chip.label)
-                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
                     .foregroundStyle(chip.delegated ? HideTheme.secondary : HideTheme.primary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
             }
             .padding(.horizontal, HideTheme.spacingXS)
-            .frame(height: HideTheme.Layout.panelCollapseControlSize)
+            .frame(height: HideTheme.Control.compactHeight)
             .frame(maxWidth: HideTheme.Layout.paneChildChipMaxWidth, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
@@ -127,7 +117,8 @@ struct PaneChildChip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(HideInteractiveButtonStyle())
-        .hideTooltip("\(chip.label): \(status.label). \(chip.detail)")
+        .disabled(navigationPending)
+        .hideTooltip("\(pending ? "Opening " : "")\(chip.label): \(status.label). \(chip.detail)")
         .accessibilityLabel("\(chip.label), \(status.label). \(chip.detail)")
         .accessibilityHint("Shows this child in place of the current pane")
     }
@@ -191,49 +182,44 @@ struct PaneChildRow: View {
     @State private var inspectedPaneID: String?
 
     var body: some View {
-        GeometryReader { proxy in
-            // One child slot plus the honest +N overflow slot.
-            let row = PaneLineagePresentation.chipRow(children.chips, limit: 2)
-            HStack(spacing: HideTheme.spacingXS) {
-                ForEach(row.visible) { chip in
-                    PaneChildChip(chip: chip, connected: connected) { onSelect(chip.paneID) }
-                }
-
-                if row.overflow > 0 {
-                    Text("+\(row.overflow)")
-                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                        .foregroundStyle(HideTheme.secondary)
-                        .padding(.horizontal, HideTheme.spacingXS)
-                        .frame(height: HideTheme.Layout.panelCollapseControlSize)
-                        .background(
-                            RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
-                                .fill(HideTheme.elevated)
-                        )
-                        .hideTooltip("\(row.overflow) more children. The sidebar lists them all.")
-                        .accessibilityLabel("\(row.overflow) more children")
-                }
-
-                if !children.chips.isEmpty {
-                    Button {
-                        inspectedPaneID = inspectedPaneID ?? children.chips.first?.paneID
-                        showsRelationship = true
-                    } label: {
-                        Image(systemName: "arrow.triangle.branch")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                    }
-                    .buttonStyle(HideInteractiveButtonStyle())
-                    .hideTooltip("Inspect this pane's direct children")
-                    .accessibilityLabel("Inspect child relationships")
-                }
-
-                Spacer(minLength: HideTheme.spacingNone)
-
-                if let badge = PaneLineagePresentation.subagentBadge(children.subagents) {
-                    PaneSubagentBadge(text: badge.text, accessibilityName: badge.accessibility)
-                }
+        // One child slot plus the honest +N overflow slot.
+        let row = PaneLineagePresentation.chipRow(children.chips)
+        HStack(spacing: HideTheme.spacingXS) {
+            ForEach(row.visible) { chip in
+                PaneChildChip(
+                    chip: chip, connected: connected,
+                    pending: operation?.isPending == true && operation?.targetPaneID == chip.paneID,
+                    navigationPending: operation?.isPending == true
+                ) { onSelect(chip.paneID) }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+
+            if !children.chips.isEmpty {
+                Button {
+                    inspectedPaneID = inspectedPaneID ?? children.chips.first?.paneID
+                    showsRelationship = true
+                } label: {
+                    HStack(spacing: HideTheme.spacingXS) {
+                        Image(systemName: "arrow.triangle.branch")
+                        if row.overflow > 0 { Text("+\(row.overflow)") }
+                    }
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                    .padding(.horizontal, HideTheme.spacingXS)
+                    .frame(height: HideTheme.Control.compactHeight)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(HideInteractiveButtonStyle())
+                .fixedSize()
+                .hideTooltip("Inspect this pane's \(children.chips.count) direct children")
+                .accessibilityLabel("Inspect child relationships")
+            }
+
+            Spacer(minLength: HideTheme.spacingNone)
+
+            if let badge = PaneLineagePresentation.subagentBadge(children.subagents) {
+                PaneSubagentBadge(text: badge.text, accessibilityName: badge.accessibility)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, HideTheme.spacingSM)
         .frame(
             maxWidth: .infinity,
@@ -305,7 +291,7 @@ struct PaneParentReturn: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(HideInteractiveButtonStyle())
-        .disabled(pending)
+        .disabled(operation?.isPending == true)
         .hideTooltip(failure ?? (pending ? "Opening parent \(parent.label)" : "Return to parent \(parent.label)"))
         .accessibilityLabel(failure ?? (pending ? "Opening parent \(parent.label)" : "Return to parent \(parent.label)"))
         .accessibilityIdentifier("pane-parent-return-\(parent.paneID)")
@@ -363,45 +349,56 @@ private struct PaneRelationshipSheet: View {
                     variant: .toolbar
                 ) { dismiss() }
             }
-            ForEach(children) { child in
-                let status = AgentStatusPresentation(
-                    demand: child.demand,
-                    activity: child.activity,
-                    emphasized: child.emphasized,
-                    symbol: child.symbol,
-                    label: child.statusLabel,
-                    connected: connected
-                )
-                Button {
-                    inspectedPaneID = child.paneID
-                } label: {
-                    HStack(spacing: HideTheme.spacingSM) {
-                        AgentStatusMark(symbol: status.symbol, color: status.color)
-                        AgentBadge(
-                            agentKind: child.agentKind,
-                            stateColor: status.color,
-                            size: HideTheme.compactAgentBadgeSize
+            ScrollView {
+                VStack(spacing: HideTheme.spacingXS) {
+                    ForEach(children) { child in
+                        let status = AgentStatusPresentation(
+                            demand: child.demand,
+                            activity: child.activity,
+                            emphasized: child.emphasized,
+                            symbol: child.symbol,
+                            label: child.statusLabel,
+                            connected: connected
                         )
-                        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                            Text(child.label).lineLimit(1)
-                            Text(child.detail)
-                                .foregroundStyle(HideTheme.secondary)
-                                .lineLimit(1)
+                        Button {
+                            inspectedPaneID = child.paneID
+                        } label: {
+                            HStack(spacing: HideTheme.spacingSM) {
+                                AgentStatusMark(symbol: status.symbol, color: status.color)
+                                AgentBadge(
+                                    agentKind: child.agentKind,
+                                    stateColor: status.color,
+                                    size: HideTheme.compactAgentBadgeSize
+                                )
+                                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                                    Text(child.label)
+                                        .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(child.detail)
+                                        .hideFont(size: HideTheme.Typography.caption)
+                                        .foregroundStyle(HideTheme.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                if inspectedPaneID == child.paneID {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                            .padding(HideTheme.spacingSM)
+                            .background(
+                                inspectedPaneID == child.paneID ? HideTheme.elevated : Color.clear,
+                                in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                            )
+                            .contentShape(Rectangle())
                         }
-                        Spacer()
-                        if inspectedPaneID == child.paneID {
-                            Image(systemName: "checkmark")
-                        }
+                        .buttonStyle(HideInteractiveButtonStyle())
+                        .disabled(operation?.isPending == true)
+                        .hideTooltip("\(child.label): \(child.detail)")
                     }
-                    .padding(HideTheme.spacingSM)
-                    .background(
-                        inspectedPaneID == child.paneID ? HideTheme.elevated : Color.clear,
-                        in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
-                    )
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(HideInteractiveButtonStyle())
             }
+            .frame(maxHeight: HideTheme.Layout.relationshipListMaxHeight)
             if let failureReason {
                 HStack(alignment: .top, spacing: HideTheme.spacingSM) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -428,7 +425,8 @@ private struct PaneRelationshipSheet: View {
                         onOpen(inspectedPaneID)
                     }
                 }
-                .disabled(inspectedPaneID == nil || isPending)
+                .buttonStyle(HideTextButtonStyle(appearance: .prominent))
+                .disabled(inspectedPaneID == nil || operation?.isPending == true)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -449,7 +447,7 @@ private struct PaneRelationshipSheet: View {
     private var matchingOperation: PaneSelectionOperation? {
         guard let operation,
               operation.sourcePaneID == sourcePaneID,
-              requestedPaneID == operation.targetPaneID
+              inspectedPaneID == operation.targetPaneID
         else { return nil }
         return operation
     }
@@ -468,68 +466,5 @@ private struct PaneRelationshipSheet: View {
               case .failed(_, let retryable) = matchingOperation.phase
         else { return false }
         return retryable
-    }
-}
-
-/// The Overview worktree row's one agent line.
-///
-/// Overview's value is width, so this is a line rather than a new area
-/// (PRD B34, D-32, D-55). An empty line with no mark is a worktree nobody is
-/// working in; an empty line with the mark is one Hide cannot see into, and
-/// the difference is what the third mark position exists for (PRD B35, D-60).
-struct WorktreeAgentLine: View {
-    let line: CoreWorktreeAgentLine
-    let connected: Bool
-    let onSelect: (String) -> Void
-
-    var body: some View {
-        if line.agents.isEmpty && line.uninstrumentedReason == nil {
-            // Nobody is working here, and that is an answer rather than a
-            // gap, so the row says nothing rather than apologising.
-            EmptyView()
-        } else {
-            GeometryReader { proxy in
-                // The Git panel is narrow, so the line folds the way the pane
-                // header's chip row does rather than running off the edge.
-                // The mark, when there is one, costs a slot of its own.
-                let slots = PaneLineagePresentation.chipLimit(width: proxy.size.width)
-                let limit = line.uninstrumentedReason == nil ? slots : slots - 1
-                let row = PaneLineagePresentation.chipRow(line.agents, limit: limit)
-                HStack(spacing: HideTheme.spacingXS) {
-                    if let reason = line.uninstrumentedReason {
-                        PaneInstrumentationHelp(
-                            reason: reason,
-                            accessibilityName: line.uninstrumentedLabel ?? reason
-                        )
-                    }
-                    ForEach(row.visible) { agent in
-                        PaneChildChip(chip: agent, connected: connected) { onSelect(agent.paneID) }
-                    }
-                    if row.overflow > 0 {
-                        Text("+\(row.overflow)")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                            .foregroundStyle(HideTheme.secondary)
-                            .padding(.horizontal, HideTheme.spacingXS)
-                            .frame(height: HideTheme.Layout.panelCollapseControlSize)
-                            .background(
-                                RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
-                                    .fill(HideTheme.elevated)
-                            )
-                            .hideTooltip("\(row.overflow) more agents. The sidebar lists them all.")
-                            .accessibilityLabel("\(row.overflow) more agents")
-                    }
-                    Spacer(minLength: HideTheme.spacingNone)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            }
-            .frame(
-                maxWidth: .infinity,
-                minHeight: HideTheme.Layout.paneChildRowHeight,
-                maxHeight: HideTheme.Layout.paneChildRowHeight,
-                alignment: .leading
-            )
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Agents in this worktree")
-        }
     }
 }

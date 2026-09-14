@@ -4017,7 +4017,7 @@
       "x": 0,
       "y": -1300,
       "name": "Band / Component",
-      "width": 10573,
+      "width": 12141,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -4089,7 +4089,7 @@
               "fill": "$--color-secondary",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "32 tall (--size-tab-strip), inset --spacing-md, hairline below. Section tabs lead; the trailing lane holds panel-scope actions only and is absent on a panel that has none.",
+              "content": "32 tall (--size-tab-strip), inset --spacing-md, hairline below. Overview / Explorer / Changes only. Saved Git opens Overview; Git and PR details remain in Overview.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -4184,20 +4184,6 @@
                           "fill": "$--color-secondary"
                         }
                       }
-                    },
-                    {
-                      "id": "WTLEo",
-                      "type": "ref",
-                      "ref": "ywjtY",
-                      "name": "Tab Git",
-                      "strokeWidth": 0,
-                      "descendants": {
-                        "MHBRM": {
-                          "content": "Git",
-                          "fontWeight": "400",
-                          "fill": "$--color-secondary"
-                        }
-                      }
                     }
                   ]
                 },
@@ -4228,65 +4214,6 @@
                   ]
                 }
               ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "cs-panel-header-02",
-          "name": "State / Git selected",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xs",
-          "children": [
-            {
-              "type": "text",
-              "id": "cs-panel-header-name-03",
-              "name": "State name",
-              "fill": "$--color-muted",
-              "content": "Git selected",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "600"
-            },
-            {
-              "id": "cs-panel-header-ref-01",
-              "type": "ref",
-              "ref": "Lyc6J",
-              "name": "Row / Git selected",
-              "width": "fill_container",
-              "descendants": {
-                "s0cn6G": {
-                  "strokeWidth": 0
-                },
-                "s0cn6G/MHBRM": {
-                  "fontWeight": "400",
-                  "fill": "$--color-secondary"
-                },
-                "A378Ca": {
-                  "strokeWidth": 0
-                },
-                "A378Ca/MHBRM": {
-                  "fontWeight": "400",
-                  "fill": "$--color-secondary"
-                },
-                "C6JgPj": {
-                  "strokeWidth": 0
-                },
-                "C6JgPj/MHBRM": {
-                  "fontWeight": "400",
-                  "fill": "$--color-secondary"
-                },
-                "WTLEo": {
-                  "strokeWidth": {
-                    "bottom": 2
-                  }
-                },
-                "WTLEo/MHBRM": {
-                  "fontWeight": "600",
-                  "fill": "$--color-primary"
-                }
-              }
             }
           ]
         },
@@ -4337,13 +4264,6 @@
                 "C6JgPj/MHBRM": {
                   "fontWeight": "600",
                   "fill": "$--color-primary"
-                },
-                "WTLEo": {
-                  "strokeWidth": 0
-                },
-                "WTLEo/MHBRM": {
-                  "fontWeight": "400",
-                  "fill": "$--color-secondary"
                 }
               }
             }
@@ -8715,7 +8635,8 @@
               "name": "Nested identity",
               "width": "fill_container"
             }
-          ]
+          ],
+          "alignItems": "start"
         },
         {
           "type": "text",
@@ -9943,7 +9864,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "현재 표시: 밝은 header 바탕. 실제 keyboard focus: Pane의 중립 outline. 부모/자식 링크는 이 강조를 받지 않는다. 우측 zoom은 항상 같은 위치.",
+          "content": "28pt identity + known children only: 24pt row. First child uses status, provider and body title; +N inspects remaining children. Titles come from canonical metadata. Zero / one / many and 240pt Korean states reuse this master.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -10086,7 +10007,7 @@
                   "y": 0,
                   "name": "Child navigation",
                   "enabled": false,
-                  "width": 240,
+                  "width": "fill_container",
                   "height": 24,
                   "gap": "$--spacing-xs",
                   "padding": [
@@ -10095,17 +10016,6 @@
                   ],
                   "alignItems": "center",
                   "children": [
-                    {
-                      "id": "tNmM9",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Child relationships",
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "corner-down-right"
-                        }
-                      }
-                    },
                     {
                       "type": "frame",
                       "id": "D3WNsG",
@@ -10165,7 +10075,7 @@
                                   "type": "text",
                                   "id": "S4qUt",
                                   "name": "Canonical title",
-                                  "fill": "$--color-primary",
+                                  "fill": "$--color-secondary",
                                   "textGrowth": "fixed-width",
                                   "width": "fill_container",
                                   "content": "18편 구성 검토",
@@ -10235,14 +10145,16 @@
                               "fontSize": "$--text-caption",
                               "fontWeight": "normal"
                             }
-                          ]
+                          ],
+                          "alignItems": "center"
                         }
-                      ]
+                      ],
+                      "fill": "$--color-elevated"
                     },
                     {
                       "type": "frame",
                       "id": "eAf6e",
-                      "name": "Other children",
+                      "name": "Inspect direct children",
                       "height": 24,
                       "cornerRadius": "$--radius-xs",
                       "gap": "$--spacing-xs",
@@ -10252,6 +10164,17 @@
                       ],
                       "alignItems": "center",
                       "children": [
+                        {
+                          "id": "tNmM9",
+                          "type": "ref",
+                          "ref": "Nyvom",
+                          "name": "Child relationships",
+                          "descendants": {
+                            "ZIZFR": {
+                              "icon": "git-branch"
+                            }
+                          }
+                        },
                         {
                           "type": "text",
                           "id": "O737L",
@@ -10273,17 +10196,6 @@
                       "width": "fill_container",
                       "height": 1,
                       "layout": "vertical"
-                    },
-                    {
-                      "id": "WrSUt",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Open relationship overview",
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "network"
-                        }
-                      }
                     }
                   ]
                 }
@@ -10455,7 +10367,7 @@
             "x0tCD0": {
               "width": 348
             },
-            "eAf6e": {
+            "O737L": {
               "enabled": false
             }
           }
@@ -10651,12 +10563,12 @@
             "x0tCD0": {
               "width": 348
             },
-            "eAf6e": {
-              "enabled": false
-            },
             "JLRBz": {
               "enabled": false,
               "width": 740
+            },
+            "O737L": {
+              "enabled": false
             }
           }
         },
@@ -11016,11 +10928,234 @@
     },
     {
       "type": "frame",
+      "id": "ZEwQt",
+      "x": 10653,
+      "y": -1200,
+      "name": "Component / Spec / Relationship action states",
+      "width": 1488,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "BJE4x",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Relationship action",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "bfWz6",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "One core request ID owns Pending, unavailable, and failed outcomes. Retry creates a new request only after the prior outcome settles. No state changes pane geometry.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "p7Vim",
+          "name": "Component / Relationship action",
+          "reusable": true,
+          "width": 336,
+          "height": 142,
+          "fill": "$--color-elevated",
+          "cornerRadius": "$--radius-sm",
+          "stroke": "$--color-divider",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "padding": "$--spacing-md",
+          "children": [
+            {
+              "type": "text",
+              "id": "X0q77P",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Ready",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "semibold"
+            },
+            {
+              "type": "frame",
+              "id": "NWjEb",
+              "name": "Outcome",
+              "width": "fill_container",
+              "gap": "$--spacing-sm",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "hXsaD",
+                  "name": "Outcome icon",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "arrow-up-right",
+                  "library": "lucide",
+                  "fill": "$--color-secondary"
+                },
+                {
+                  "type": "text",
+                  "id": "kxAP3",
+                  "name": "Outcome message",
+                  "fill": "$--color-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Open API 응답 검증 in its dedicated tab.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pjkfU",
+              "name": "Action row",
+              "width": "fill_container",
+              "height": 28,
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "IM099",
+                  "name": "Action",
+                  "width": 96,
+                  "height": 28,
+                  "fill": "$--color-selected-wash",
+                  "cornerRadius": "$--radius-xs",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "L48tb",
+                      "name": "Action label",
+                      "fill": "$--color-primary",
+                      "content": "Open",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "semibold"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "UEiTE",
+          "name": "Reachable states",
+          "width": "fill_container",
+          "gap": "$--spacing-md",
+          "children": [
+            {
+              "id": "JkiOZ",
+              "type": "ref",
+              "ref": "p7Vim",
+              "name": "Ready",
+              "width": "fill_container"
+            },
+            {
+              "id": "hoLKN",
+              "type": "ref",
+              "ref": "p7Vim",
+              "name": "Pending same target",
+              "width": "fill_container",
+              "descendants": {
+                "X0q77P": {
+                  "content": "Pending · same target"
+                },
+                "hXsaD": {
+                  "icon": "loader-circle",
+                  "fill": "$--color-agent-working"
+                },
+                "kxAP3": {
+                  "content": "API 응답 검증을 여는 중입니다. 같은 Open 요청은 잠시 비활성화됩니다."
+                },
+                "IM099": {
+                  "fill": "$--color-panel"
+                },
+                "L48tb": {
+                  "content": "Opening…",
+                  "fill": "$--color-muted"
+                }
+              }
+            },
+            {
+              "id": "erUbd",
+              "type": "ref",
+              "ref": "p7Vim",
+              "name": "Target unavailable",
+              "width": "fill_container",
+              "descendants": {
+                "X0q77P": {
+                  "content": "Target unavailable"
+                },
+                "hXsaD": {
+                  "icon": "circle-alert",
+                  "fill": "$--color-warning"
+                },
+                "kxAP3": {
+                  "content": "대상 Pane을 찾을 수 없습니다. 기존 Pane과 배치는 그대로 유지됩니다.",
+                  "fill": "$--color-warning"
+                },
+                "L48tb": {
+                  "content": "Retry"
+                }
+              }
+            },
+            {
+              "id": "U92G6o",
+              "type": "ref",
+              "ref": "p7Vim",
+              "name": "Open failed with retry",
+              "width": "fill_container",
+              "descendants": {
+                "X0q77P": {
+                  "content": "Open failed"
+                },
+                "hXsaD": {
+                  "icon": "triangle-alert",
+                  "fill": "$--color-warning"
+                },
+                "kxAP3": {
+                  "content": "Herdr did not confirm pane focus. The current layout remains available; retry this request.",
+                  "fill": "$--color-warning"
+                },
+                "L48tb": {
+                  "content": "Retry"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "band-screen",
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 12984,
+      "width": 12549,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -15171,32 +15306,6 @@
                       "fontSize": "$--text-subhead"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "YWi95",
-                  "name": "Tab Git",
-                  "stroke": "$--color-primary",
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "KYAhT",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Git",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead"
-                    }
-                  ]
                 }
               ]
             },
@@ -16671,32 +16780,6 @@
                       "name": "Label",
                       "fill": "$--color-secondary",
                       "content": "Changes",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "zW7u8",
-                  "name": "Tab Git",
-                  "stroke": "$--color-primary",
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Q4LkT",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Git",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-subhead"
                     }
@@ -20060,32 +20143,6 @@
                       "fontWeight": "600"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "ug2m2",
-                  "name": "Tab Git",
-                  "stroke": "$--color-primary",
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "csbbT",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Git",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead"
-                    }
-                  ]
                 }
               ]
             },
@@ -21593,808 +21650,8 @@
     },
     {
       "type": "frame",
-      "id": "uZe5J",
-      "x": 2049,
-      "y": 0,
-      "name": "Screen / Panel / Git",
-      "clip": true,
-      "width": 355,
-      "height": 900,
-      "fill": "$--color-panel",
-      "layout": "vertical",
-      "children": [
-        {
-          "type": "frame",
-          "id": "ILO8d",
-          "name": "Panel header (44, inset 14)",
-          "width": "fill_container",
-          "height": 44,
-          "fill": "$--color-panel",
-          "stroke": "$--color-divider",
-          "strokeWidth": {
-            "bottom": "$--size-hairline"
-          },
-          "strokeAlignment": "inner",
-          "padding": [
-            0,
-            "$--asbuilt-panel-padding"
-          ],
-          "justifyContent": "space_between",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "dIqj5",
-              "name": "Section tabs",
-              "gap": "$--spacing-sm",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "R30qWf",
-                  "name": "Tab Overview",
-                  "stroke": "$--color-primary",
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Xj8C8",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Overview",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "KtZgN",
-                  "name": "Tab Explorer",
-                  "stroke": "$--color-primary",
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "rZpzN",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Explorer",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "e5FBzA",
-                  "name": "Tab Changes",
-                  "stroke": "$--color-primary",
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "ALogB",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Changes",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "A5PjYK",
-                  "name": "Tab Git",
-                  "stroke": "$--color-primary",
-                  "strokeWidth": {
-                    "bottom": 2
-                  },
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    "$--spacing-xs",
-                    "$--spacing-xs",
-                    "$--spacing-xs"
-                  ],
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Y1KWTr",
-                      "name": "Label",
-                      "fill": "$--color-primary",
-                      "content": "Git",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead",
-                      "fontWeight": "600"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "I2GBV",
-              "name": "Collapse control",
-              "width": 24,
-              "height": 24,
-              "cornerRadius": "$--radius-sm",
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "kAEoc",
-                  "name": "Glyph",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "panel-right",
-                  "library": "lucide",
-                  "fill": "$--color-secondary"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "Z7QZ7M",
-          "name": "header / base + SPINNER where every other panel has a button (finding 11)",
-          "width": "fill_container",
-          "gap": "$--spacing-sm",
-          "padding": "$--spacing-md",
-          "justifyContent": "space_between",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "text",
-              "id": "zufAO",
-              "name": "Base",
-              "fill": "$--color-secondary",
-              "content": "base: main",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-body",
-              "fontWeight": "500"
-            },
-            {
-              "type": "frame",
-              "id": "x89P1l",
-              "name": "ProgressView (the icon button is set to opacity 0)",
-              "width": 24,
-              "height": 24,
-              "layout": "none",
-              "children": [
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "fSwo9",
-                  "x": 17.3,
-                  "y": 10,
-                  "name": "spoke",
-                  "opacity": 0.3,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "EOGyr",
-                  "x": 15.542640687119285,
-                  "y": 14.242640687119284,
-                  "name": "spoke",
-                  "opacity": 0.385,
-                  "rotation": -45,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "tLvj0",
-                  "x": 11.3,
-                  "y": 16,
-                  "name": "spoke",
-                  "opacity": 0.47,
-                  "rotation": -90,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "B0sEKK",
-                  "x": 7.057359312880715,
-                  "y": 14.242640687119284,
-                  "name": "spoke",
-                  "opacity": 0.5549999999999999,
-                  "rotation": -135,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "Xt1oF",
-                  "x": 5.3,
-                  "y": 10,
-                  "name": "spoke",
-                  "opacity": 0.64,
-                  "rotation": -180,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "jwTdk",
-                  "x": 7.057359312880714,
-                  "y": 5.757359312880715,
-                  "name": "spoke",
-                  "opacity": 0.7250000000000001,
-                  "rotation": -225,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "vxx0v",
-                  "x": 11.299999999999999,
-                  "y": 4,
-                  "name": "spoke",
-                  "opacity": 0.81,
-                  "rotation": -270,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                },
-                {
-                  "type": "rectangle",
-                  "cornerRadius": 0.7,
-                  "id": "tCQ0r",
-                  "x": 15.542640687119285,
-                  "y": 5.757359312880714,
-                  "name": "spoke",
-                  "opacity": 0.895,
-                  "rotation": -315,
-                  "fill": "$--color-muted",
-                  "width": 1.4,
-                  "height": 4
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "lQt8z",
-          "name": "VOID - 436pt measured (header y94 to first row y530); drawn at 360 to keep the 900 proportion",
-          "width": "fill_container",
-          "height": 360
-        },
-        {
-          "type": "frame",
-          "id": "F84Bi3",
-          "name": "row / main (isMain - elevated). No fixed slots: fields are laid at their measured x",
-          "width": 420,
-          "height": 40,
-          "fill": "$--color-elevated",
-          "layout": "none",
-          "children": [
-            {
-              "type": "text",
-              "id": "IjeJQ",
-              "x": 12,
-              "y": 13,
-              "name": "main",
-              "fill": "$--color-primary",
-              "content": "main",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-body",
-              "fontWeight": "600"
-            },
-            {
-              "type": "text",
-              "id": "xOy0s",
-              "x": 124,
-              "y": 14,
-              "name": "·",
-              "fill": "$--color-secondary",
-              "content": "·",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "aAibd",
-              "x": 134,
-              "y": 14,
-              "name": "7 panes",
-              "fill": "$--color-secondary",
-              "content": "7 panes",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "bgvLy",
-              "x": 183,
-              "y": 13,
-              "name": "○",
-              "fill": "$--color-secondary",
-              "content": "○",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "zH8A9",
-              "x": 201,
-              "y": 14,
-              "name": "↑0 ↓0",
-              "fill": "$--color-secondary",
-              "content": "↑0 ↓0",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "x2KNk",
-              "x": 243,
-              "y": 13,
-              "name": "✓",
-              "fill": "$--color-secondary",
-              "content": "✓",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "l6ygko",
-              "x": 261,
-              "y": 14,
-              "name": "↑1",
-              "fill": "$--color-secondary",
-              "content": "↑1",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "M789B",
-              "x": 280,
-              "y": 14,
-              "name": "fetched 29m ago",
-              "fill": "$--color-muted",
-              "content": "fetched 29m ago",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "mxPDl",
-              "x": 370,
-              "y": 14,
-              "name": "—",
-              "fill": "$--color-muted",
-              "content": "—",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "PDDkx",
-              "x": 382,
-              "y": 14,
-              "name": "1 min ago",
-              "fill": "$--color-muted",
-              "content": "1 min ago",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "y13SQ",
-              "x": 439,
-              "y": 14,
-              "name": "PR",
-              "fill": "$--color-secondary",
-              "content": "PR",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "id": "xKUB5",
-              "type": "ref",
-              "ref": "eHAjc",
-              "name": "main worktree badge",
-              "x": 48,
-              "y": 11,
-              "descendants": {
-                "n8L5dm": {
-                  "content": "main worktree",
-                  "fontSize": "$--text-micro"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "P0cLng",
-          "name": "row / prd-hide-orchestrator - branch and path wrap, columns wander",
-          "width": 420,
-          "height": 76,
-          "layout": "none",
-          "children": [
-            {
-              "type": "text",
-              "id": "S2HTs",
-              "x": 12,
-              "y": 12,
-              "name": "prd/hide-orchest",
-              "fill": "$--color-primary",
-              "textGrowth": "fixed-width",
-              "width": 54,
-              "content": "prd/hide-orchestrator",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-body",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "Z9w44",
-              "x": 74,
-              "y": 12,
-              "name": "../herdr-ide.wor",
-              "fill": "$--color-muted",
-              "textGrowth": "fixed-width",
-              "width": 54,
-              "content": "../herdr-ide.worktrees/hide-orchestrator",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "RQIif",
-              "x": 146,
-              "y": 26,
-              "name": "1 panes",
-              "fill": "$--color-secondary",
-              "content": "1 panes",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "YzfIE",
-              "x": 192,
-              "y": 25,
-              "name": "○",
-              "fill": "$--color-secondary",
-              "content": "○",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "iiweV",
-              "x": 210,
-              "y": 26,
-              "name": "↑21 ↓2",
-              "fill": "$--color-secondary",
-              "content": "↑21 ↓2",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "OX5kB",
-              "x": 257,
-              "y": 25,
-              "name": "✓",
-              "fill": "$--color-secondary",
-              "content": "✓",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "ZcR8n",
-              "x": 274,
-              "y": 26,
-              "name": "pushed",
-              "fill": "$--color-secondary",
-              "content": "pushed",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "EcHb9",
-              "x": 318,
-              "y": 20,
-              "name": "fetched 29m ago",
-              "fill": "$--color-muted",
-              "textGrowth": "fixed-width",
-              "width": 44,
-              "content": "fetched 29m ago",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "gpSqW",
-              "x": 368,
-              "y": 26,
-              "name": "—",
-              "fill": "$--color-muted",
-              "content": "—",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "Ibx2Z",
-              "x": 381,
-              "y": 26,
-              "name": "1 min ago",
-              "fill": "$--color-muted",
-              "content": "1 min ago",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "qun0b",
-              "x": 439,
-              "y": 26,
-              "name": "PR",
-              "fill": "$--color-secondary",
-              "content": "PR",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "M5bdL7",
-          "name": "row / feat-hide-ai-claude-backend - 5-line path, 89pt tall against row 1 at 40",
-          "width": 420,
-          "height": 89,
-          "layout": "none",
-          "children": [
-            {
-              "type": "text",
-              "id": "b40v87",
-              "x": 12,
-              "y": 12,
-              "name": "feat/hide-ai-cla",
-              "fill": "$--color-primary",
-              "textGrowth": "fixed-width",
-              "width": 54,
-              "content": "feat/hide-ai-claude-backend",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-body",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "Lyk6m",
-              "x": 74,
-              "y": 12,
-              "name": "../herdr-ide.wor",
-              "fill": "$--color-muted",
-              "textGrowth": "fixed-width",
-              "width": 54,
-              "content": "../herdr-ide.worktrees/hide-ai-claude-backend",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "r4LRB",
-              "x": 147,
-              "y": 33,
-              "name": "0 panes",
-              "fill": "$--color-secondary",
-              "content": "0 panes",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "RTM24",
-              "x": 210,
-              "y": 33,
-              "name": "↑0 ↓2",
-              "fill": "$--color-secondary",
-              "content": "↑0 ↓2",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "QvL2p",
-              "x": 274,
-              "y": 33,
-              "name": "pushed",
-              "fill": "$--color-secondary",
-              "content": "pushed",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "v5czY",
-              "x": 318,
-              "y": 27,
-              "name": "fetched 29m ago",
-              "fill": "$--color-muted",
-              "textGrowth": "fixed-width",
-              "width": 44,
-              "content": "fetched 29m ago",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "Y3ueIk",
-              "x": 368,
-              "y": 33,
-              "name": "—",
-              "fill": "$--color-muted",
-              "content": "—",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "tGPv3",
-              "x": 381,
-              "y": 33,
-              "name": "1 min ago",
-              "fill": "$--color-muted",
-              "content": "1 min ago",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
-              "id": "ETduQ",
-              "x": 439,
-              "y": 33,
-              "name": "PR",
-              "fill": "$--color-secondary",
-              "content": "PR",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
-              "type": "icon",
-              "id": "DeWcc",
-              "x": 186,
-              "y": 29,
-              "name": "merged mark",
-              "width": 12,
-              "height": 12,
-              "icon": "circle-check",
-              "library": "lucide",
-              "fill": "$--color-success"
-            },
-            {
-              "type": "ellipse",
-              "id": "aAjLo",
-              "x": 250,
-              "y": 30,
-              "name": "dirty mark",
-              "fill": "$--color-warning",
-              "width": 10,
-              "height": 10
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "BYTvy",
-          "name": "Spacer",
-          "width": "fill_container",
-          "height": "fill_container"
-        },
-        {
-          "type": "frame",
-          "id": "U9mPv",
-          "name": "pager - renders at y1105, below the panel, over the status bar",
-          "opacity": "$--opacity-disabled",
-          "width": "fill_container",
-          "height": 12,
-          "padding": [
-            0,
-            "$--spacing-md"
-          ],
-          "justifyContent": "end",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "text",
-              "id": "jY69J",
-              "name": "Page",
-              "fill": "$--color-muted",
-              "content": "0",
-              "fontFamily": "$--font-mono",
-              "fontSize": "$--text-micro",
-              "fontWeight": "normal"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "type": "frame",
       "id": "Snwg0",
-      "x": 2484,
+      "x": 2049,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -22762,7 +22019,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 4052,
+      "x": 3617,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -22790,7 +22047,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Node selection inspects. Open agent enters its dedicated tab. Escape restores the invocation control.",
+          "content": "Direct children uses canonical task identities. Selection inspects; Open navigates. Pending disables selection and Open; a scoped failure retains Retry.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -22817,11 +22074,11 @@
             {
               "type": "frame",
               "id": "x64B8b",
-              "x": 280,
-              "y": 104,
+              "x": 540,
+              "y": 240,
               "name": "Relationship dialog",
-              "width": 920,
-              "height": 580,
+              "width": 360,
+              "height": 292,
               "fill": "$--color-panel",
               "cornerRadius": "$--radius-md",
               "stroke": "$--color-divider",
@@ -22845,9 +22102,9 @@
                       "fill": "$--color-primary",
                       "textGrowth": "fixed-width",
                       "width": "fill_container",
-                      "content": "기술 교육 콘텐츠 통합 / 관계",
+                      "content": "Direct children",
                       "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-title",
+                      "fontSize": "$--text-headline",
                       "fontWeight": "normal"
                     },
                     {
@@ -22866,54 +22123,70 @@
                 {
                   "type": "frame",
                   "id": "LFppF",
-                  "name": "Graph controls",
+                  "name": "Direct child list",
                   "width": "fill_container",
-                  "height": 32,
-                  "gap": "$--spacing-sm",
-                  "alignItems": "center",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "QO45A",
-                      "name": "Mode and query",
-                      "fill": "$--color-secondary",
-                      "textGrowth": "fixed-width",
+                      "type": "ref",
+                      "id": "DFffh",
+                      "ref": "HXWFK",
+                      "name": "Selected child",
                       "width": "fill_container",
-                      "content": "Graph   List    ·    에이전트 검색",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead",
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "id": "yESr0",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Fit graph",
+                      "fill": "$--color-elevated",
+                      "padding": "$--spacing-sm",
+                      "alignItems": "center",
                       "descendants": {
-                        "ZIZFR": {
-                          "icon": "scan"
+                        "x0h40": {
+                          "content": "18편 구성 검토",
+                          "fontSize": "$--text-body"
+                        },
+                        "EurXP": {
+                          "enabled": false
+                        },
+                        "jb7mF": {
+                          "enabled": true,
+                          "content": "18편 구성 검토",
+                          "width": "fill_container",
+                          "fontSize": "$--text-caption"
+                        },
+                        "w4jdH": {
+                          "enabled": true,
+                          "content": "✓",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body"
                         }
                       }
                     },
                     {
-                      "id": "bCRsC",
                       "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Zoom out",
+                      "id": "B3MPA",
+                      "ref": "HXWFK",
+                      "name": "Direct child",
+                      "width": "fill_container",
+                      "fill": "$--color-panel",
+                      "padding": "$--spacing-sm",
+                      "alignItems": "center",
                       "descendants": {
-                        "ZIZFR": {
-                          "icon": "minus"
-                        }
-                      }
-                    },
-                    {
-                      "id": "CAADK",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Zoom in",
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "plus"
+                        "x0h40": {
+                          "content": "긴 한국어 작업명과 English가 함께 있는 사용자 작업의 전체 구성 검토",
+                          "fontSize": "$--text-body"
+                        },
+                        "EurXP": {
+                          "enabled": false
+                        },
+                        "jb7mF": {
+                          "enabled": true,
+                          "content": "긴 한국어 작업명과 English가 함께 있는 사용자 작업의 전체 구성 검토",
+                          "width": "fill_container",
+                          "fontSize": "$--text-caption"
+                        },
+                        "w4jdH": {
+                          "enabled": false,
+                          "content": "✓",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body"
                         }
                       }
                     }
@@ -22921,290 +22194,37 @@
                 },
                 {
                   "type": "frame",
-                  "id": "FhGoZ",
-                  "name": "Graph and inspector",
+                  "id": "kwBJG",
+                  "name": "Open selected child",
                   "width": "fill_container",
-                  "height": "fill_container",
-                  "gap": "$--spacing-lg",
+                  "justifyContent": "end",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "Q0KOHE",
-                      "name": "Known direct delegation graph",
-                      "width": 570,
-                      "height": "fill_container",
-                      "fill": "$--color-background",
-                      "layout": "none",
+                      "id": "mJHV1",
+                      "name": "Open agent button",
+                      "width": 48,
+                      "height": 24,
+                      "fill": "$--color-accent",
+                      "cornerRadius": "$--radius-sm",
+                      "justifyContent": "center",
+                      "alignItems": "center",
                       "children": [
                         {
-                          "id": "wrhuP",
-                          "type": "ref",
-                          "ref": "FKLct",
-                          "name": "Parent",
-                          "x": 180,
-                          "y": 24,
-                          "width": 200,
-                          "height": 104,
-                          "stroke": "$--color-divider",
-                          "descendants": {
-                            "I2DYha/PCeNa": {
-                              "content": "●",
-                              "fill": "$--color-agent-working"
-                            },
-                            "I2DYha/x0h40": {
-                              "content": "기술 교육 콘텐츠 통합"
-                            },
-                            "I2DYha/X6LdE": {
-                              "content": "Working",
-                              "fill": "$--color-agent-working"
-                            },
-                            "I2DYha/jb7mF": {
-                              "content": "hide · main"
-                            }
-                          }
-                        },
-                        {
-                          "id": "DFffh",
-                          "type": "ref",
-                          "ref": "FKLct",
-                          "name": "First child",
-                          "x": 16,
-                          "y": 190,
-                          "width": 168,
-                          "height": 104,
-                          "stroke": "$--color-divider",
-                          "descendants": {
-                            "I2DYha/PCeNa": {
-                              "content": "●",
-                              "fill": "$--color-agent-working"
-                            },
-                            "I2DYha/YYqJe": {
-                              "fill": {
-                                "type": "image",
-                                "enabled": true,
-                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
-                                "mode": "fit"
-                              }
-                            },
-                            "I2DYha/x0h40": {
-                              "content": "18편 구성 검토"
-                            },
-                            "I2DYha/X6LdE": {
-                              "content": "Working",
-                              "fill": "$--color-agent-working"
-                            },
-                            "I2DYha/jb7mF": {
-                              "content": "hide · main"
-                            }
-                          }
-                        },
-                        {
-                          "id": "B3MPA",
-                          "type": "ref",
-                          "ref": "FKLct",
-                          "name": "Middle child",
-                          "x": 196,
-                          "y": 190,
-                          "width": 168,
-                          "height": 104,
-                          "stroke": "$--color-divider",
-                          "descendants": {
-                            "I2DYha/PCeNa": {
-                              "content": "●",
-                              "fill": "$--color-agent-working"
-                            },
-                            "I2DYha/x0h40": {
-                              "content": "한국어 문서 검토"
-                            },
-                            "I2DYha/X6LdE": {
-                              "content": "Working",
-                              "fill": "$--color-agent-working"
-                            },
-                            "I2DYha/jb7mF": {
-                              "content": "hide · main"
-                            }
-                          }
-                        },
-                        {
-                          "id": "abcpd",
-                          "type": "ref",
-                          "ref": "FKLct",
-                          "name": "Last child selected",
-                          "x": 376,
-                          "y": 190,
-                          "width": 168,
-                          "height": 104,
-                          "stroke": "$--color-primary",
-                          "descendants": {
-                            "I2DYha/PCeNa": {
-                              "content": "○",
-                              "fill": "$--color-muted"
-                            },
-                            "I2DYha/x0h40": {
-                              "content": "API 응답 검증"
-                            },
-                            "I2DYha/X6LdE": {
-                              "content": "Idle",
-                              "fill": "$--color-muted"
-                            },
-                            "I2DYha/jb7mF": {
-                              "content": "hide · docs"
-                            }
-                          }
-                        },
-                        {
-                          "type": "rectangle",
-                          "id": "OEy7E",
-                          "x": 280,
-                          "y": 128,
-                          "name": "Parent departure",
-                          "fill": "$--color-divider",
-                          "width": 1,
-                          "height": 32
-                        },
-                        {
-                          "type": "rectangle",
-                          "id": "W8Rza",
-                          "x": 100,
-                          "y": 160,
-                          "name": "Sibling branch",
-                          "fill": "$--color-divider",
-                          "width": 360,
-                          "height": 1
-                        },
-                        {
-                          "type": "rectangle",
-                          "id": "LUiEz",
-                          "x": 100,
-                          "y": 160,
-                          "name": "First child arrival",
-                          "fill": "$--color-divider",
-                          "width": 1,
-                          "height": 30
-                        },
-                        {
-                          "type": "rectangle",
-                          "id": "qPivi",
-                          "x": 280,
-                          "y": 160,
-                          "name": "Middle arrival",
-                          "fill": "$--color-divider",
-                          "width": 1,
-                          "height": 30
-                        },
-                        {
-                          "type": "rectangle",
-                          "id": "Y1HPDZ",
-                          "x": 460,
-                          "y": 160,
-                          "name": "Last arrival",
-                          "fill": "$--color-divider",
-                          "width": 1,
-                          "height": 30
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "kwBJG",
-                      "name": "Selected agent inspector",
-                      "width": "fill_container",
-                      "height": "fill_container",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "children": [
-                        {
-                          "id": "QwoUN",
-                          "type": "ref",
-                          "ref": "HXWFK",
-                          "name": "Inspected canonical identity",
-                          "width": "fill_container",
-                          "descendants": {
-                            "PCeNa": {
-                              "content": "○",
-                              "fill": "$--color-muted"
-                            },
-                            "x0h40": {
-                              "content": "API 응답 검증"
-                            },
-                            "X6LdE": {
-                              "content": "Idle",
-                              "fill": "$--color-muted"
-                            },
-                            "BsCNW": {
-                              "enabled": false
-                            },
-                            "jb7mF": {
-                              "enabled": true,
-                              "width": "fill_container",
-                              "content": "hide · docs"
-                            }
-                          }
-                        },
-                        {
                           "type": "text",
-                          "id": "VAu2W",
-                          "name": "Ownership",
-                          "fill": "$--color-secondary",
+                          "id": "Wcecz",
+                          "name": "Open agent label",
+                          "fill": "$--color-background",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "Delegated · Seen\nParent: 기술 교육 콘텐츠 통합\nWorkspace: docs",
+                          "content": "Open",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-body",
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "mJHV1",
-                          "name": "Open agent button",
-                          "width": "fill_container",
-                          "height": 36,
-                          "fill": "$--color-elevated",
-                          "cornerRadius": "$--radius-sm",
-                          "justifyContent": "center",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "Wcecz",
-                              "name": "Open agent label",
-                              "fill": "$--color-primary",
-                              "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "Open agent ↗",
-                              "fontFamily": "$--font-ui",
-                              "fontSize": "$--text-subhead",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "text",
-                          "id": "SJX0C",
-                          "name": "Opening consequence",
-                          "fill": "$--color-secondary",
-                          "textGrowth": "fixed-width",
-                          "width": "fill_container",
-                          "content": "Opens the child’s dedicated tab in docs. The parent’s split layout stays available.",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "normal"
+                          "fontWeight": "semibold"
                         }
                       ]
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "NPaFl",
-                  "name": "Graph footer",
-                  "fill": "$--color-secondary",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
-                  "content": "3 direct children · 2 working · 1 Seen     /     Selection has not acknowledged this agent.",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
                 }
               ]
             }
@@ -23215,7 +22235,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 5620,
+      "x": 5185,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -24033,7 +23053,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 6220,
+      "x": 5785,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -24130,7 +23150,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 7200,
+      "x": 6765,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -25317,7 +24337,7 @@
                 {
                   "type": "frame",
                   "id": "ZCeiQ",
-                  "name": "Overview Explorer Changes Git",
+                  "name": "Overview Explorer Changes",
                   "width": "fill_container",
                   "height": 32,
                   "fill": "$--color-panel",
@@ -25419,32 +24439,6 @@
                               "fontSize": "$--text-subhead"
                             }
                           ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "I8SQj",
-                          "name": "Tab Git",
-                          "stroke": "$--color-primary",
-                          "strokeAlignment": "inner",
-                          "padding": [
-                            0,
-                            "$--spacing-xs",
-                            "$--spacing-xs",
-                            "$--spacing-xs"
-                          ],
-                          "justifyContent": "center",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "n80wC",
-                              "name": "Label",
-                              "fill": "$--color-secondary",
-                              "content": "Git",
-                              "fontFamily": "$--font-ui",
-                              "fontSize": "$--text-subhead"
-                            }
-                          ]
                         }
                       ]
                     },
@@ -25489,7 +24483,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 8768,
+      "x": 8333,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -25636,7 +24630,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 10336,
+      "x": 9901,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -26084,7 +25078,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 11496,
+      "x": 11061,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,
@@ -27057,6 +26051,10 @@
     "--size-settings-control-w": {
       "type": "number",
       "value": 200
+    },
+    "--size-relationship-list-max": {
+      "type": "number",
+      "value": 360
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

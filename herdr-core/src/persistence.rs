@@ -235,9 +235,24 @@ fn temporary_path(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    /// AC4, SC3. A read record written before a restart is the same after it,
-    /// so an item the operator read stays read and one they did not stays in
-    /// Needs You or Done.
+    #[test]
+    fn retired_git_panel_restores_overview_without_losing_other_ui_state() {
+        let mut persisted = serde_json::to_value(UiStateSnapshot::default()).unwrap();
+        persisted["right_panel_section"] = serde_json::json!("git");
+        persisted["collapsed_agent_pane_ids"] = serde_json::json!(["parent"]);
+        let state: UiStateSnapshot = serde_json::from_value(persisted).unwrap();
+        assert_eq!(state.right_panel_section, RightPanelSection::Overview);
+        assert_eq!(state.collapsed_agent_pane_ids, ["parent"]);
+        assert_eq!(
+            serde_json::to_value(&state).unwrap()["right_panel_section"],
+            "overview"
+        );
+        assert_eq!(
+            RightPanelSection::parse("git"),
+            Some(RightPanelSection::Overview)
+        );
+    }
+
     #[test]
     fn read_records_survive_a_restart() {
         let root = std::env::temp_dir().join(format!("herdr-core-read-{}", std::process::id()));

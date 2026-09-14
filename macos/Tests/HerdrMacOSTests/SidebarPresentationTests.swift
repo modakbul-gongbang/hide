@@ -417,3 +417,16 @@ private func presentationAgent(
     #expect(readError.symbol == "×")
     #expect(readError.color == HideTheme.danger.opacity(HideTheme.readStatusOpacity))
 }
+
+@Test func sidebarIdentityUsesTheCanonicalTaskInsteadOfTheActivitySummary() {
+    let agent = SidebarAgent(
+        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project",
+        agentKind: "codex", symbol: "●", summary: "A shorter activity summary",
+        identityLabel: "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름",
+        elapsed: "0s", lastActivity: "", ambient: nil
+    )
+    let compact = AgentRowPresentation(agent: agent, density: .compact, connected: true)
+    let prominent = AgentRowPresentation(agent: agent, density: .prominent, connected: true)
+    #expect(compact.title == "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름")
+    #expect(prominent.detail == compact.title)
+}

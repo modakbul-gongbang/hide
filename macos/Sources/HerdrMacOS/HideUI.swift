@@ -1646,7 +1646,7 @@ private struct AgentNavigatorRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-            HStack(spacing: HideTheme.spacingNone) {
+            HStack(alignment: .top, spacing: HideTheme.spacingNone) {
                 if !showsWorkspace {
                     Button {
                         model.core.dispatch(kind: "agent_tree_toggle", payload: ["pane_id": agent.paneID])
@@ -1655,7 +1655,8 @@ private struct AgentNavigatorRow: View {
                             .foregroundStyle(HideTheme.muted)
                     }
                     .buttonStyle(HideInteractiveButtonStyle())
-                    .frame(width: HideTheme.lineageChevronWidth)
+                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.compactAgentBadgeSize)
+                    .padding(.top, HideTheme.compactAgentRowVerticalPadding)
                     // The toggle sits directly above the line it opens, so
                     // the branch starts at its own control instead of
                     // floating a column away from it.
@@ -1740,7 +1741,7 @@ private struct AgentNavigatorRow: View {
 
         .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (shortcutVisible))
         .accessibilityIdentifier("hide-agent-\(agent.id)")
-        .hideTooltip(agent.summary, command: model.agentShortcutNumber(paneID: agent.paneID).map(HideCommand.agent), inline: true)
+        .hideTooltip(agent.identityLabel, command: model.agentShortcutNumber(paneID: agent.paneID).map(HideCommand.agent), inline: true)
     }
 }
 

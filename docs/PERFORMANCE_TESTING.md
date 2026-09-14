@@ -126,12 +126,15 @@ Inspect running processes rather than assuming the app launched from this checko
 pgrep -fl HerdrMacOS
 ```
 
-Exactly one Hide instance must be running during native verification.
-If an operator instance is open, coordinate a QA window before quitting it normally; never kill all matching processes.
-Record its exact bundle path and restore that same bundle afterward, leaving its Herdr server and terminals intact.
+The operator app and an isolated candidate may run simultaneously; a global single-instance requirement does not apply.
+Identify the candidate by executable path, bundle identifier, PID and exact window ID before capture or interaction, and re-resolve them after any restart.
+Keep the operator app running by default; building and automated tests do not require quitting it.
+Never quit, restart, activate, or otherwise manipulate the operator app for QA without explicit coordination; never kill all matching processes.
+If an explicitly coordinated scenario requires stopping it, record its exact bundle path and restore that same bundle afterward, leaving its Herdr server and terminals intact.
 A worktree-specific bundle identifier or separate app state file does not isolate the Herdr server's shared focus.
-Native automation takes foreground focus in the logged-in macOS session; it cannot promise uninterrupted simultaneous operator use.
-Use a separately authorized machine/session if foreground interference is unacceptable.
+Prove the private server, socket, app state and fixtures are isolated before running both apps; ambiguous targeting or shared state blocks the affected check, not the operator's work.
+Background exact-window screenshots need not activate the candidate, but foreground keyboard, IME, drag and focus scenarios can interrupt the logged-in user's work.
+Coordinate a bounded foreground QA window for those scenarios, or use a separately authorized machine/session; do not claim that background capture verifies foreground interaction.
 
 Build a resource-complete, signed bundle using the existing scripts:
 
@@ -189,6 +192,11 @@ Missing Screen Recording or Accessibility permission blocks native automation.
 ```
 
 Discover windows with `peekaboo window list --app <exact-app> --json`, then take a fresh `peekaboo see --app <exact-app> --json` snapshot.
+For observation while the operator works, prefer `peekaboo see --window-id <candidate-window-id> --no-elements --path <run-path> --json` after resolving that window to the candidate PID.
+Do not activate, raise, move or unminimize the window merely to obtain a screenshot without coordination.
+Verify the selected capture engine returns the target window rather than a screen-region crop, and check the resulting image and unchanged foreground app.
+Occluded-window capture is not proof of minimized, hidden or off-Space capture support; report blank, stale or unavailable frames explicitly rather than silently focusing the app.
+Record occlusion and foreground state; a background window image cannot establish foreground appearance, IME behavior, physical display flicker or matched performance.
 Confirm the exact PID/window before each mutation, prefer fresh element IDs, and verify the result with another observation.
 If an automation command reports a failed postcondition, inspect actual state before retrying; the action may already have happened.
 If daemon-backed targeting is wrong, inspect local CLI help and use `--no-remote` with the same exact target, then verify again.
@@ -270,7 +278,7 @@ Inspect symbolication before calculating mutex-wait ratios; predominantly `???` 
 Long sampling windows under high load have failed to symbolicate in past runs; collect several short valid windows and report rejected windows too.
 State the denominator and thread when reporting a wait fraction, and distinguish waiting on the runtime mutex from time spent holding it.
 During idle observation, inspect snapshot publications, `rest` revisions, attach counts, and git subprocess activity rather than inferring no work from a static UI.
-`bash scripts/measure-git-section-idle.sh` drives that idle observation for the Git section against an isolated server and records the subprocess and publication counts the paragraph above asks for.
+`bash scripts/measure-git-section-idle.sh` drives that idle observation for the Overview Git context against an isolated server and records the subprocess and publication counts the paragraph above asks for.
 Core diagnostics are mirrored in the app state directory's `Logs/core.jsonl`, with one previous 1 MiB file; copy both into the run evidence before rotation loses the relevant window.
 
 ### Memory and renderer replay
@@ -351,7 +359,8 @@ Do not substitute a renderer microbenchmark for native QA or a native smoke test
 Stop only owned recording/logging processes, the test app, fixture clients, and the explicitly routed private server.
 Verify their exit and socket cleanup before removing or trashing only the exact recorded private state paths.
 Never use broad process-name kills, a workspace root as a deletion target, or an unscoped `herdr server stop`.
-Restore the recorded operator bundle and verify a real screenshot, exactly one Hide instance, and unchanged operator server ownership.
+Leave the operator app untouched unless its shutdown was explicitly coordinated; in that case restore the recorded bundle.
+Verify the owned candidate exited, the operator app remains available, and operator server ownership is unchanged; multiple independently identified instances are not themselves a verification failure.
 
 The run verdict must include:
 
@@ -373,15 +382,6 @@ Search migration retains its existing filtering and result-ID reconciliation cos
 These visual transitions neither dispatch runtime events nor mark the snapshot rest payload dirty.
 Choice controls publish only a changed selection; repeated activation of the selected option has no action.
 Their work scales with the small visible choice set, not the retained project catalog.
-
-Explorer Git decorations reuse the single ChangesReader request for the focused checkout.
-The request exists while Explorer or Changes is visible or an active diff needs it, and `read_if_due` retains the existing two-second refresh bound.
-The Git commands and serialization remain outside `Mutex<Runtime>`; a row, hover, selection, disclosure, edit, drag, scroll, or paint starts no subprocess.
-One refreshed changed-file set builds exact file lookups and changed-ancestor membership once, after which visible row decoration is an in-memory relative-path lookup.
-Changing the focused checkout replaces the root-scoped decoration input, so cached paths from one Workspace cannot paint another.
-An unchanged refresh produces no new snapshot notification, and hiding all three consuming surfaces removes the request.
-Regression owners are the rename/conflict/NUL parser fixtures, `explorer_visibility_keeps_one_checkout_scoped_changes_reader_alive`, and `gitDecorationsUseTheFullChangedSetAndKeepTheHighestRiskState`.
-Native acceptance records idle and driven observations separately with the number of changed paths, visible rows, refresh duration, and the exact interaction workload.
 
 Project activity and checkout-pane context reuse canonical agent projection, current topology and cached worktree HEAD metadata.
 The existing single `git log -1` read now returns timestamp and subject together; no timer or additional Git subprocess is introduced.
@@ -426,3 +426,9 @@ Completed intents are retained until dismissal; duplicate confirmation does no w
 
 Regression owners include `overview_inspection_does_not_focus_or_repeat_publish`, `overview_history_preserves_real_merge_parents_and_reads_all_heads_once`, `overview_close_and_idle_do_not_run_additional_git_commands`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
 Native acceptance additionally covers Tree/List inspection versus explicit focus, narrow Korean/English wrapping, unknown/partial summaries, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
+
+### Background candidate launch
+
+Debug candidates support `--verification-background` from the first window presentation, including the pre-runtime recheck.
+It orders the exact candidate window behind existing windows without activating the application or making the window key.
+This works with a live private server as well as snapshot fixtures; it does not authorize foreground input.

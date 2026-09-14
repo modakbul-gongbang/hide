@@ -179,7 +179,7 @@ enum HideTheme {
     static let radiusLarge: CGFloat = 10
     static let radiusExtraLarge: CGFloat = 16
 
-    /// Git section and lineage geometry, shared by the sidebar's agent tree and
+    /// Git context and lineage geometry, shared by the sidebar's agent tree and
     /// the worktree list so the two indent the same way.
     /// Semantic PR colors follow GitHub's dark status palette, independent of chrome.
     enum PullRequest {
@@ -302,6 +302,7 @@ enum HideTheme {
 
     enum Layout {
         static let pullRequestPopoverWidth: CGFloat = 360
+        static let relationshipListMaxHeight: CGFloat = 360
         static let hairlineWidth: CGFloat = 1
         static let resizeHandleThickness: CGFloat = 2
         /// The strip that answers the pointer. Wider than the 2pt marker it

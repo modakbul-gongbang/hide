@@ -207,7 +207,7 @@ enum ShellTabStrip {
                 let agent = pane.flatMap { agentsByPane[$0.id] }
                 let paneTitle = pane.map {
                     PaneHeaderPresentation.title(
-                        herdrLabel: $0.herdrLabel, agentSummary: agent?.summary ?? $0.summary,
+                        herdrLabel: $0.herdrLabel, agentSummary: agent?.identityLabel ?? $0.summary,
                         terminalTitle: $0.terminalTitle, workspaceLabel: $0.workspaceLabel, paneID: $0.id
                     )
                 } ?? entry.label
@@ -897,7 +897,7 @@ final class ShellModel: ObservableObject {
         let agent = agents.first { $0.paneID == paneID }
         return PaneHeaderPresentation.title(
             herdrLabel: pane.herdrLabel,
-            agentSummary: agent?.summary ?? pane.summary,
+            agentSummary: agent?.identityLabel ?? pane.summary,
             terminalTitle: pane.terminalTitle,
             workspaceLabel: pane.workspaceLabel,
             paneID: pane.id

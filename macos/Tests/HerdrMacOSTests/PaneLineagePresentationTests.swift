@@ -187,27 +187,12 @@ private func focusOutcome(
 @Test func chipsBeyondTheRowFoldIntoAnHonestOverflowCount() {
     let five = (1...5).map { chip("w1:p\($0)", "Child \($0)") }
 
-    let fits = PaneLineagePresentation.chipRow(five, limit: 5)
-    #expect(fits.visible.count == 5)
-    #expect(fits.overflow == 0, "nothing is folded when everything fits")
-
-    // One slot pays for the `+N` itself, so three chips are drawn and the
-    // count names the two that were not.
-    let folded = PaneLineagePresentation.chipRow(five, limit: 4)
-    #expect(folded.visible.map(\.label) == ["Child 1", "Child 2", "Child 3"])
-    #expect(folded.overflow == 2)
-    #expect(folded.visible.count + folded.overflow == five.count)
-
-    let none = PaneLineagePresentation.chipRow(five, limit: 0)
-    #expect(none.visible.isEmpty)
-    #expect(none.overflow == 5, "a row with no room still says how many there are")
-}
-
-@Test func theChipLimitFollowsTheWidthTheRowWasGiven() {
-    #expect(PaneLineagePresentation.chipLimit(width: 0) == 1, "a row always offers one slot")
-    let slot = HideTheme.Layout.paneChildChipMaxWidth + HideTheme.spacingXS
-    #expect(PaneLineagePresentation.chipLimit(width: slot * 3) == 3)
-    #expect(PaneLineagePresentation.chipLimit(width: slot * 3 - 1) == 2)
+    for count in [0, 1, 2, 5] {
+        let row = PaneLineagePresentation.chipRow(Array(five.prefix(count)))
+        #expect(row.visible.map(\.label) == (count == 0 ? [] : ["Child 1"]))
+        #expect(row.overflow == max(0, count - 1))
+        #expect(row.visible.count + row.overflow == count)
+    }
 }
 
 /// PRD B24, B32, D-53: unknown is drawn as unknown, never as a zero.

@@ -53,9 +53,9 @@ struct ChangesPresentationTests {
         #expect(firstRow < 80, "Short diff content must start at the top, not the vertical center")
     }
 
-    @Test func theRightPanelOffersOverviewExplorerChangesAndGit() {
-        #expect(RightPanelSection.allCases == [.overview, .explorer, .changes, .git])
-        #expect(RightPanelSection.allCases.map(\.title) == ["Overview", "Explorer", "Changes", "Git"])
+    @Test func theRightPanelOffersOverviewExplorerAndChanges() {
+        #expect(RightPanelSection.allCases == [.overview, .explorer, .changes])
+        #expect(RightPanelSection.allCases.map(\.title) == ["Overview", "Explorer", "Changes"])
     }
 
     @Test func aChangesPayloadDecodesItsEntriesStatusesAndDiff() throws {

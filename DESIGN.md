@@ -822,6 +822,8 @@ The former Review candidates, Final, R2, R3, and the family-only Overview compar
 It is a measurement rather than a chosen spacing: the distance from a row's status mark to its agent badge, so a child's mark sits centered under its parent's badge and the tree reads as columns.
 It replaced a step that shrank after two levels, which kept deep trees narrow at the cost of the marks lining up with nothing.
 `lineageChevronWidth` reserves 16pt on every project agent row for the disclosure control, and that column is where the connector lives: the trunk drops from the control that opens the branch, so a branch and the thing that shows or hides it are one column rather than two.
+The disclosure occupies the first identity line rather than the center of a multiline row, and the descending rail starts below its glyph.
+Continuing ancestor rails remain in that ancestor parent column through deeper descendants.
 `lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a stall notice does not slide the connector off the mark.
 The Git worktree section sizes its own text from `HideTheme.gitRowFontSize` (11pt) for a worktree row and `HideTheme.gitDetailFontSize` (10pt) for the ahead/behind, pushed and disk detail beside it.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
@@ -874,7 +876,10 @@ A pane with children gains a second 24pt row for the child chips, and that row e
 This is a user decision between four candidates, not a default: compressing the marks onto the breadcrumb row, relying on the sidebar alone, and a bottom status bar were all rejected, because the chip has to carry the child's name where the operator is already looking.
 
 An authoritative parent becomes one compact Return control in the first row, with icon-only fallback before current identity or actions are truncated.
-The second row names the first direct child and folds the rest into an honest `+N` relationship control.
+The second row names the first direct child with the shared status mark, 16pt provider badge, body type and 24pt hit area; the remaining children fold into the adjacent `+N` relationship control.
+Long names truncate at the tail inside the bounded chip, with their full identity in the shared tooltip.
+The direct-children sheet uses a bounded scrolling list, and each title may wrap to two lines.
+Pending navigation disables child changes; Retry remains attached to the inspected target that failed.
 The relationship sheet inspects on row selection and navigates only through its explicit Open action.
 A relationship Open or parent Return publishes one request-scoped pending state from the existing control and the retained canvas.
 The same target cannot dispatch again while that request is pending.
@@ -1131,9 +1136,9 @@ It is recomputed from the core's timestamp on each snapshot, so it ages while th
 The project name takes the row's width first; the trailing detail truncates in a narrow sidebar rather than pushing the name out.
 Raised Needs You and Done groups retain their status ordering above Projects.
 
-The right panel starts with Overview, followed by Explorer, Changes, and Git.
+The right panel starts with Overview, followed by Explorer and Changes.
 The compact section selector uses text labels on one line without a competing checkout title.
-Existing saved section selections survive; new state starts on Overview.
+Saved Git section selections migrate to Overview; other selections survive, and new state starts on Overview.
 Overview is project-scoped and opens in Tasks, which shows the current Project's live task forest across its Workspaces with a compact selected-task inspector.
 Git is a separate Overview mode that preserves the existing Project Summary, GitHub result, allocated disk measurement, cleanup entry, ancestry graph, worktree list, and selected-workspace inspector.
 GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
@@ -1163,7 +1168,7 @@ The pinned Herdr contract offers lifetime-scoped display metadata and agent line
 Retired or moved panes leave the current context on the next topology projection; a retired parent ID is omitted.
 Remote Overview explicitly reports that local Git context is unavailable.
 Explorer contains file navigation only, with no checkout summary above it.
-Changes and Git keep their existing responsibilities.
+Changes retains its diff navigation; Git/PR context remains in Overview and Workspace controls.
 
 Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.
 Nested roots belong to the longest matching root; hard links share one inode allocation, and descendant symlinks are not followed.
@@ -1198,7 +1203,7 @@ A completed removal disappears from the core snapshot and a repeated request is 
 Save failures remain caller-visible; normal no-op results never become alerts.
 
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
-Git and the selected Overview project retain their open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
+The selected Overview project retains its open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
 All triggers share the existing bounded background reader, authentication and cache.
 Explorer and Changes do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
@@ -1233,9 +1238,7 @@ A token name alone is not approval to add a new visual treatment.
 Every interactive component's contract specifies its label and accessible name, supported sizes/roles, default, hovered, pressed, keyboard-focused, selected and disabled states where applicable.
 Pending actions must show pending feedback and preserve the existing retry/duplicate-action contract.
 Relationship navigation uses the core's request-specific pane-focus outcome as that contract's authority.
-The pending Pen draft for `Component / Relationship action` and its referenced Ready, Pending, Target unavailable, and Open failed states uses existing semantic and surface tokens without opacity overrides, so the disabled Open label, warning icon, long Korean or English reason, and Retry action remain legible.
-That draft is preserved in the current Pen live document and run exports but is not yet adopted into `design/hide.pen`, because the available non-foreground app connection can save only to the source document URI and worktree Save As requires separate foreground coordination.
-Until that save occurs, the run evidence names the draft IDs and this document describes the implemented behavior, but the existing committed canvas remains authoritative only for its already-persisted boards.
+The adopted `Component / Spec / Relationship action states` and its referenced Ready, Pending, Target unavailable, and Open failed states use existing semantic and surface tokens without opacity overrides, so the disabled Open label, warning icon, long Korean or English reason, and Retry action remain legible.
 Status indicators retain text or a symbol alongside color; actual product state supplies their values.
 Keyboard activation, selection, IME handling and focus semantics remain part of the control contract when its appearance changes.
 Focus and hover are local presentation state and must not publish core snapshots or trigger Git/disk work.

@@ -271,6 +271,8 @@ pub struct SidebarAgentSnapshot {
     /// Derived: closing this pane would interrupt work or discard a result the
     /// operator has not read.
     pub requires_close_confirmation: bool,
+    /// Canonical task identity, distinct from the compact activity summary.
+    pub identity_label: String,
     pub summary: String,
     pub elapsed: String,
     /// The ordering key: the label plugin's activity timestamp when it has one,
@@ -943,24 +945,23 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's four persisted sections.
+/// The right panel's three persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
+    #[serde(alias = "git")]
     Overview,
     Explorer,
     Changes,
-    Git,
 }
 
 impl RightPanelSection {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "overview" => Some(Self::Overview),
+            "overview" | "git" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
-            "git" => Some(Self::Git),
             _ => None,
         }
     }
@@ -972,7 +973,7 @@ pub struct UiStateSnapshot {
     pub left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
     pub right_panel_visible: bool,
-    /// Which of the right panel's two sections is showing. Persisted rather
+    /// Which of the right panel's three sections is showing. Persisted rather
     /// than held in the view, because hiding the panel tears the view down
     /// and the section has to come back the way it was left.
     #[serde(default)]

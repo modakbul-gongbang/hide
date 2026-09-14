@@ -4966,10 +4966,9 @@ impl Runtime {
                 .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
                 .filter(|workspace| {
                     (self.github_lookup_requested()
-                        && (self.snapshot.ui_state.right_panel_section == RightPanelSection::Git
-                            || self
-                                .focused_local_checkout()
-                                .is_some_and(|(focused, _)| focused.path == workspace.path)))
+                        && self
+                            .focused_local_checkout()
+                            .is_some_and(|(focused, _)| focused.path == workspace.path))
                         || self.sidebar_github_projects.contains(&workspace.path)
                 })
                 .map(|workspace| crate::github::GithubProjectRequest {
@@ -4988,7 +4987,7 @@ impl Runtime {
         self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
-                RightPanelSection::Git | RightPanelSection::Overview
+                RightPanelSection::Overview
             )
     }
 
@@ -5342,7 +5341,7 @@ impl Runtime {
         let paths = if self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
-                RightPanelSection::Git | RightPanelSection::Overview
+                RightPanelSection::Overview
             ) {
             self.focused_local_checkout()
                 .and_then(|(workspace, _)| self.worktree_catalog.project(&workspace.path))
@@ -10925,10 +10924,7 @@ impl Runtime {
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
                 let git_was_visible = current.right_panel_visible
-                    && matches!(
-                        current.right_panel_section,
-                        RightPanelSection::Git | RightPanelSection::Overview
-                    );
+                    && matches!(current.right_panel_section, RightPanelSection::Overview);
                 self.snapshot.ui_state = UiStateSnapshot {
                     left_sidebar_visible: payload
                         .left_sidebar_visible
@@ -10999,7 +10995,7 @@ impl Runtime {
                 let git_is_visible = self.snapshot.ui_state.right_panel_visible
                     && matches!(
                         self.snapshot.ui_state.right_panel_section,
-                        RightPanelSection::Git | RightPanelSection::Overview
+                        RightPanelSection::Overview
                     );
                 if git_is_visible && !git_was_visible {
                     if let Some((workspace, _)) = self.focused_local_checkout() {
@@ -12345,10 +12341,10 @@ mod tests {
         assert_eq!(runtime.github_request().projects[0].generation, 1);
     }
 
-    /// Without sidebar requests, pull requests are absent until Git is visible.
-    /// Once visible, one request per project is stable until header refresh.
+    /// Overview reads its focused project; explicit sidebar requests remain
+    /// independent of the retired right-panel Git tab.
     #[test]
-    fn pull_requests_are_scoped_to_overview_and_visible_git_section() {
+    fn pull_requests_are_scoped_to_overview_and_explicit_sidebar_requests() {
         let mut runtime = runtime();
         let mut hide = workspace(
             "workspace-1",
@@ -12383,17 +12379,11 @@ mod tests {
         assert!(generations(&runtime).is_empty());
         assert!(!runtime.projected_card().github.loading);
         runtime.snapshot.ui_state.right_panel_visible = true;
-        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Git;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
         assert!(runtime.projected_card().github.loading);
-        assert_eq!(
-            generations(&runtime),
-            vec![("/tmp/hide".to_owned(), 0), ("/tmp/other".to_owned(), 0)]
-        );
+        assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 0)]);
         runtime.refresh_pull_requests("/tmp/hide");
-        assert_eq!(
-            generations(&runtime),
-            vec![("/tmp/hide".to_owned(), 1), ("/tmp/other".to_owned(), 0)]
-        );
+        assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 1)]);
         runtime.refresh_card();
         assert!(runtime.snapshot.card.github.loading);
         let leave_git = serde_json::to_vec(&serde_json::json!({
@@ -12408,7 +12398,7 @@ mod tests {
         .expect("leave Git event");
         assert!(runtime.dispatch_json(&leave_git));
         assert!(!runtime.snapshot.card.github.loading);
-        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Git;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
         runtime.snapshot.ui_state.right_panel_visible = false;
         assert!(!runtime.projected_card().github.loading);
     }

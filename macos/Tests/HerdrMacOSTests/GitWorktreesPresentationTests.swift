@@ -4,9 +4,9 @@ import Testing
 
 @Suite("Worktree panel contract")
 struct GitWorktreesPresentationTests {
-    @Test func gitSelectionAndLineageCollapseDecodeFromPersistentState() throws {
+    @Test func retiredGitSelectionOpensOverviewAndPreservesLineageCollapse() throws {
         let state = try JSONDecoder().decode(CoreUIStateSnapshot.self, from: Data(#"{"right_panel_section":"git","expanded_paths":[],"collapsed_agent_pane_ids":["parent"],"collapsed_checkout_ids":["main"],"project_base_branches":{"/repo":"release"}}"#.utf8))
-        #expect(state.rightPanelSection == .git)
+        #expect(state.rightPanelSection == .overview)
         #expect(state.collapsedAgentPaneIDs == ["parent"])
         #expect(state.collapsedCheckoutIDs == ["main"])
         #expect(state.projectBaseBranches["/repo"] == "release")

@@ -1309,6 +1309,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let statusLabel: String
     /// Whether closing this pane needs confirmation first.
     let requiresCloseConfirmation: Bool
+    let identityLabel: String
     let summary: String
     let elapsed: String
     let lastActivity: String
@@ -1350,6 +1351,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel: String = "Idle",
         requiresCloseConfirmation: Bool = false,
         summary: String,
+        identityLabel: String? = nil,
         elapsed: String,
         lastActivity: String,
         ambient: CoreAmbientSignal?
@@ -1368,6 +1370,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.emphasized = emphasized
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.identityLabel = identityLabel ?? summary
         self.summary = summary
         self.elapsed = elapsed
         self.lastActivity = lastActivity
@@ -1391,6 +1394,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel = try container.decode(String.self, forKey: .statusLabel)
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
         summary = try container.decode(String.self, forKey: .summary)
+        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
         ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
@@ -1423,6 +1427,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case emphasized
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
+        case identityLabel = "identity_label"
         case summary
         case elapsed
         case lastActivity = "last_activity"
@@ -1759,13 +1764,23 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-/// The right panel's four sections. The core owns which one is showing, so the
+/// The right panel's three sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
     case overview
     case explorer
     case changes
-    case git
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        // A saved retired tab opens the existing project Overview.
+        if value == "git" { self = .overview; return }
+        guard let section = Self(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown right panel section: \(value)")
+        }
+        self = section
+    }
 
     var id: String { rawValue }
 
@@ -1774,7 +1789,6 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .explorer: "Explorer"
         case .changes: "Changes"
-        case .git: "Git"
         }
     }
 
@@ -1783,7 +1797,6 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "info.circle"
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
-        case .git: HideTheme.gitSectionIcon
         }
     }
 }

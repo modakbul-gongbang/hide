@@ -892,7 +892,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
 
-    Ok(SidebarAgentSnapshot {
+    let mut projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
         workspace_label,
@@ -912,6 +912,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         emphasized: false,
         status_label: String::new(),
         requires_close_confirmation: false,
+        identity_label: String::new(),
         summary,
         elapsed,
         last_activity,
@@ -940,7 +941,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         raised_hint: None,
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
-    })
+    };
+    projected.identity_label = agent_identity_label(&projected);
+    Ok(projected)
 }
 
 /// The prefix every pane id on a remote target carries. A pane id without it

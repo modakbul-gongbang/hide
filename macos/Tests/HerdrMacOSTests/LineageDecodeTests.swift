@@ -103,6 +103,7 @@ import Testing
         "unread": false, "blocked": false, "group": "needs_you",
         "symbol": "\\u25cf", "emphasized": true, "status_label": "Working",
         "requires_close_confirmation": true, "summary": "waiting",
+        "identity_label": "전체 작업 조율과 긴 한국어 작업 이름",
         "elapsed": "16m", "last_activity": "1",
         "delegated": false,
         "stall_level": "hard",
@@ -110,6 +111,7 @@ import Testing
     }
     """
     let agent = try JSONDecoder().decode(SidebarAgent.self, from: Data(payload.utf8))
+    #expect(agent.identityLabel == "전체 작업 조율과 긴 한국어 작업 이름")
     #expect(!agent.delegated)
     #expect(agent.stallLevel == "hard")
     #expect(agent.stallNotice?.contains("16 minutes") == true)

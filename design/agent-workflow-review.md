@@ -43,7 +43,7 @@ The current Herdr/Sasu dispatch contract may omit parent lineage, so Hide filter
 | Component / Spec / Relationship node | `d8bYuE` |
 | Component / Spec / Search and Recent Sessions identity | `dexoX` |
 | Component / Spec / Explorer Git states | `BMEZi` |
-| Component / Spec / Relationship action states | `ZEwQt` (live draft, not yet persisted) |
+| Component / Spec / Relationship action states | `ZEwQt` |
 
 The deleted `Review / UI Handoff / 00 Start here` and `90 Shared dependencies` boards were navigation aids, not product masters.
 Their adopted reusable content now lives in the Component band and all changed product compositions live in the Screen band.
@@ -59,8 +59,8 @@ Their adopted reusable content now lives in the Component band and all changed p
 | Named child chip `j0Sji` | `PaneChildRow`, `PaneLineagePresentation` | One direct child is named and remaining direct children fold into an honest `+N`. |
 | Workbench `OwIFR` | `HideMainView`, `HideTabStrip`, `ShellModel.swift` | A delegated child occupies its own tab and returning chooses the authoritative parent placement. |
 | Browser chrome `KUcQU`, address toolbar `eMlZD`, document toolbar `hxdu7` | `BrowserPaneView.swift`, `EditorViewerOverlay.swift` | Browser, file, and diff surfaces keep their own controls and never inherit agent-only actions. |
-| Graph node `FKLct` | `PaneRelationshipSheet`, `CorePaneChildren`, `CoreLineageStep` | Node selection inspects, Open navigates, and unavailable lineage stays explicit. |
-| Relationship action `p7Vim` (live draft, not yet persisted) | `ShellModel.swift`, `PaneLineageHeader.swift`, `HideUI.swift`, `CoreBridge.swift`, `runtime.rs` | One request ID carries Ready, Pending, Target unavailable, and Open failed outcomes across the sheet, Return control, direct child chip, and retained canvas. |
+| Agent identity `HXWFK` in the Direct children sheet | `PaneRelationshipSheet`, `CorePaneChildren`, `CoreLineageStep` | Row selection inspects, Open navigates, and unavailable lineage stays explicit. |
+| Relationship action `p7Vim` | `ShellModel.swift`, `PaneLineageHeader.swift`, `HideUI.swift`, `CoreBridge.swift`, `runtime.rs` | One request ID carries Ready, Pending, Target unavailable, and Open failed outcomes across the sheet, Return control, direct child chip, and retained canvas. |
 | Project task overview `G4Sj9`, task item `AdQ5R` | `CheckoutOverview.swift`, `OverviewPresentation.swift` | The current Project's authoritative live forest crosses Workspaces without guessing missing parent links. |
 | Explorer Git row `mSu8p`, panel `Wo6qx` | `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs` | A fixed status slot renders M, A, U, R, conflict, folder-changed, and clean states without changing file-tree interaction. |
 

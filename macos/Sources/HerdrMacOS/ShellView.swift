@@ -581,7 +581,7 @@ struct PaneTerminalCell<Content: View>: View {
             paneID: pane.id,
             title: PaneHeaderPresentation.title(
                 herdrLabel: pane.herdrLabel,
-                agentSummary: pane.summary,
+                agentSummary: agent?.identityLabel ?? pane.summary,
                 terminalTitle: pane.terminalTitle,
                 workspaceLabel: pane.workspaceLabel,
                 paneID: pane.id
@@ -617,8 +617,8 @@ enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
     /// A Herdr label is a name the user chose for this pane, so it outranks
-    /// everything. The agent summary is the context label the sidebar already
-    /// shows for this agent, so the header and the sidebar name one pane the
+    /// everything. The core's agent identity is the task name the sidebar
+    /// already shows, so the header and the sidebar name one pane the
     /// same way. A terminal title is what the running program calls itself;
     /// Claude Code flips it between the session name and a status line such
     /// as "Claude is waiting for…", which is why it ranks below the summary.

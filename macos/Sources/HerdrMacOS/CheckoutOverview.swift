@@ -20,7 +20,7 @@ struct CheckoutOverview: View {
     private var rows: [CoreCheckoutSnapshot] {
         let entries = workspace?.checkouts ?? []
         return entries.filter { row in
-            query.isEmpty || ([row.label, row.path] + model.agents(in: row).map(\.summary))
+            query.isEmpty || ([row.label, row.path] + model.agents(in: row).map(\.identityLabel))
                 .contains { $0.localizedCaseInsensitiveContains(query) }
         }.sorted { left, right in
             rank(left) == rank(right) ? left.path < right.path : rank(left) < rank(right)
@@ -291,7 +291,7 @@ struct CheckoutOverview: View {
                         stateColor: state.color,
                         size: HideTheme.compactAgentBadgeSize
                     )
-                    Text(row.agent.summary)
+                    Text(row.agent.identityLabel)
                         .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                         .foregroundStyle(row.agent.delegated ? HideTheme.secondary : HideTheme.primary)
                         .lineLimit(1)
@@ -309,12 +309,12 @@ struct CheckoutOverview: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(HideInteractiveButtonStyle())
-            .accessibilityLabel("Inspect \(row.agent.summary), \(state.label), \(row.checkoutLabel)")
+            .accessibilityLabel("Inspect \(row.agent.identityLabel), \(state.label), \(row.checkoutLabel)")
 
             HideIconButton(
                 systemImage: shown ? "rectangle.inset.filled" : "arrow.up.right.square",
                 help: shown ? "This pane is shown" : "Open this agent pane",
-                accessibilityLabel: shown ? "Agent pane is shown" : "Open \(row.agent.summary)",
+                accessibilityLabel: shown ? "Agent pane is shown" : "Open \(row.agent.identityLabel)",
                 variant: .toolbar
             ) {
                 model.selectAgent(paneID: row.agent.paneID)
@@ -339,7 +339,7 @@ struct CheckoutOverview: View {
                     )
             }
         }
-        .hideTooltip("\(row.agent.summary) · \(row.checkoutLabel) · \(state.label)")
+        .hideTooltip("\(row.agent.identityLabel) · \(row.checkoutLabel) · \(state.label)")
         .accessibilityIdentifier("overview-task-\(row.agent.paneID)")
     }
 
@@ -371,7 +371,7 @@ struct CheckoutOverview: View {
                         size: HideTheme.compactAgentBadgeSize
                     )
                     VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
-                        Text(agent.summary)
+                        Text(agent.identityLabel)
                             .hideFont(size: HideTheme.Typography.title, weight: .semibold)
                             .lineLimit(2)
                         Text("\(state.symbol) \(state.label) · \(inspectedAgentCheckout?.label ?? agent.workspaceLabel)")
@@ -441,7 +441,7 @@ struct CheckoutOverview: View {
                 }
                 if let agent = representative(checkout) {
                     HStack(spacing: HideTheme.spacingXS) {
-                        Text(agent.summary).lineLimit(1)
+                        Text(agent.identityLabel).lineLimit(1)
                         Spacer(minLength: HideTheme.spacingXS)
                         status(agent)
                     }
@@ -490,7 +490,7 @@ struct CheckoutOverview: View {
                 if let agent = representative(selected) {
                     HStack(alignment: .center, spacing: HideTheme.spacingSM) {
                         VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
-                            Text(agent.summary).lineLimit(2)
+                            Text(agent.identityLabel).lineLimit(2)
                             status(agent)
                         }
                         Spacer(minLength: HideTheme.spacingXS)

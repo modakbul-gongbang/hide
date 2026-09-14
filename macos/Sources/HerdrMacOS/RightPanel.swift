@@ -45,9 +45,6 @@ struct RightPanel: View {
             case .explorer:
                 fileTree
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .git:
-                GitWorktreesView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .changes:
                 ChangesView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
