@@ -47,3 +47,44 @@ struct SwiftTermImeOverlayTests {
         #expect(unusedRowPixel.alphaComponent < 0.05)
     }
 }
+
+@MainActor
+@Suite("SwiftTerm IME overlay cost")
+struct SwiftTermImeOverlayCostTests {
+    private func composing(_ text: String, in view: TerminalView) {
+        view.setMarkedText(
+            NSAttributedString(string: text),
+            selectedRange: NSRange(location: text.utf16.count, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+    }
+
+    @Test func everyCompositionStepSharesOneAttributeSet() throws {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 480, height: 240), font: nil)
+        composing("ㅎ", in: view)
+        let first = try #require(view.markedTextOverlay?.textStorage?.attributes(at: 0, effectiveRange: nil))
+        composing("한", in: view)
+        let second = try #require(view.markedTextOverlay?.textStorage?.attributes(at: 0, effectiveRange: nil))
+        #expect(view.markedTextOverlay?.string == "한")
+        let firstParagraph = try #require(first[.paragraphStyle] as? NSParagraphStyle)
+        let secondParagraph = try #require(second[.paragraphStyle] as? NSParagraphStyle)
+        #expect(firstParagraph === secondParagraph, "a fresh paragraph style per step made every attribute dictionary a new table entry")
+        #expect((first[.font] as? NSFont) === (second[.font] as? NSFont))
+    }
+
+    @Test func anchorRefreshRebuildsOnlyAfterTheCaretMoved() throws {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 480, height: 240), font: nil)
+        composing("한", in: view)
+        let overlay = try #require(view.markedTextOverlay)
+        let placed = overlay.frame
+        view.refreshMarkedTextOverlayAnchor()
+        #expect(view.markedTextOverlay === overlay)
+        #expect(overlay.frame == placed, "an unmoved caret must not lay the overlay out again")
+        // The caret advances on the display pass after the PTY echo lands,
+        // so the test moves it the way that pass does.
+        view.caretView.frame.origin.y -= view.cellDimension.height
+        view.refreshMarkedTextOverlayAnchor()
+        #expect(overlay.frame.origin.y == placed.origin.y - view.cellDimension.height, "a moved caret re-anchors the overlay")
+        #expect(overlay.string == "한")
+    }
+}
