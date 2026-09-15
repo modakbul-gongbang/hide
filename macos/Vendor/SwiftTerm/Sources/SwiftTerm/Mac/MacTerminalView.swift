@@ -321,7 +321,25 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
-    private var markedTextOverlay: DictationOverlayTextView?
+    var markedTextOverlay: DictationOverlayTextView?
+    /// The inputs the overlay attributes were last built from. Each
+    /// `addAttributes` interns its dictionary in Foundation's attribute
+    /// table, and a fresh paragraph style per call made every dictionary a
+    /// new entry: with an agent streaming output during composition the
+    /// table probe reached about 50 ms a keystroke (2026-09-14).
+    private struct MarkedTextOverlayStyle: Equatable {
+        let font: NSFont
+        let foreground: NSColor
+        let lineHeight: CGFloat
+        let kern: CGFloat
+    }
+    private var markedTextOverlayStyle: MarkedTextOverlayStyle?
+    private var markedTextOverlayAttributes: [NSAttributedString.Key: Any] = [:]
+    /// The marked text the overlay currently shows, by identity: the input
+    /// method hands over a new string for every composition step.
+    private weak var markedTextOverlayText: NSAttributedString?
+    /// The caret frame the overlay was last laid out against.
+    private var markedTextOverlayAnchor: NSRect?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
@@ -2030,10 +2048,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     /// Shows or hides a floating overlay that previews in-progress marked text
     /// (e.g. dictation hypotheses or IME composition) at the current cursor position.
+    /// Re-anchors an active composition overlay after the caret moved.
+    /// Committed text reaches the caret through the host's PTY echo, so the
+    /// caret advances after the composition step that committed it; nothing
+    /// is rebuilt while the caret still stands where the overlay was laid out.
+    public func refreshMarkedTextOverlayAnchor() {
+        guard markedTextStorage != nil, markedTextOverlayAnchor != caretView.frame else { return }
+        updateMarkedTextOverlay()
+    }
+
     private func updateMarkedTextOverlay() {
         guard let markedTextStorage, markedTextStorage.length > 0 else {
             markedTextOverlay?.removeFromSuperview()
             markedTextOverlay = nil
+            markedTextOverlayText = nil
+            markedTextOverlayAnchor = nil
             return
         }
 
@@ -2063,30 +2092,43 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         let lineHeight = cellDimension.height
-        let para = NSMutableParagraphStyle()
-        para.minimumLineHeight = lineHeight
-        para.maximumLineHeight = lineHeight
-        para.lineBreakMode = .byWordWrapping
-
-        // Match the terminal's effective foreground color. This preserves
-        // host-selected themes and terminal foreground-color changes.
-        //
         // The terminal pixel-snaps each cell's width, so the effective per-cell
         // advance is slightly wider than the font's natural advance. Apply a
         // matching `.kern` so overlay characters line up with the terminal grid.
         let glyphW = font.glyph(withName: "W")
         let naturalAdvance = font.advancement(forGlyph: glyphW).width
         let kern = max(0, cellDimension.width - naturalAdvance)
-
-        let display = NSMutableAttributedString(attributedString: markedTextStorage)
-        let fullRange = NSRange(location: 0, length: display.length)
-        display.addAttributes([
-            .font: font,
-            .foregroundColor: effectiveNativeForegroundColor,
-            .paragraphStyle: para,
-            .kern: kern,
-        ], range: fullRange)
-        overlay.textStorage?.setAttributedString(display)
+        // Match the terminal's effective foreground color. This preserves
+        // host-selected themes and terminal foreground-color changes.
+        let style = MarkedTextOverlayStyle(
+            font: font,
+            foreground: effectiveNativeForegroundColor,
+            lineHeight: lineHeight,
+            kern: kern
+        )
+        let styleChanged = style != markedTextOverlayStyle
+        if styleChanged {
+            let para = NSMutableParagraphStyle()
+            para.minimumLineHeight = lineHeight
+            para.maximumLineHeight = lineHeight
+            para.lineBreakMode = .byWordWrapping
+            markedTextOverlayAttributes = [
+                .font: style.font,
+                .foregroundColor: style.foreground,
+                .paragraphStyle: para.copy(),
+                .kern: style.kern,
+            ]
+            markedTextOverlayStyle = style
+        }
+        if styleChanged || markedTextOverlayText !== markedTextStorage {
+            let display = NSMutableAttributedString(attributedString: markedTextStorage)
+            display.addAttributes(
+                markedTextOverlayAttributes,
+                range: NSRange(location: 0, length: display.length)
+            )
+            overlay.textStorage?.setAttributedString(display)
+            markedTextOverlayText = markedTextStorage
+        }
 
         // The overlay spans the full content width. Line 1 skips the portion
         // already occupied by text to the left of the caret (e.g. the prompt)
@@ -2115,6 +2157,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             width: overlayWidth,
             height: overlayHeight
         )
+        markedTextOverlayAnchor = caretView.frame
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {

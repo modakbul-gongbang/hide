@@ -51,6 +51,8 @@
     "--spacing-xl": "spacingXL",
     "--spacing-xxl": "spacingXXL",
     "--spacing-xxxl": "spacingXXXL",
+    "--size-sidebar-hierarchy-grandchild": "sidebarHierarchyGrandchildInset",
+    "--size-sidebar-hierarchy-great-grandchild": "sidebarHierarchyGreatGrandchildInset",
 
     "--radius-xs": "radiusExtraSmall",
     "--radius-sm": "radiusSmall",

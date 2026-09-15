@@ -92,9 +92,8 @@ Retry starts a new request after the failed one has settled.
 The result remains visible in the retained canvas when navigation removes the source sheet or header, including direct child-chip navigation.
 The shell does not treat `lastError`, an inactive historical layout, or optimistic remote navigation as success or failure, and it emits no rollback focus event or UI-owned timeout.
 
-The B24 Pen sheet `ZEwQt`, master `p7Vim`, modal states `dFThD`, child Open states `V4miTY`, and parent Return states `u9CJj` remain in the live `hide.pen - Edited` document and the run exports.
-They are not yet present in the worktree file because the non-foreground app connection cannot Save As to the worktree path.
-Do not treat the IDs as adopted canvas references until a separately coordinated Pen Save As persists them and the generator/checkers pass on that saved file.
+The B24 action sheet `ZEwQt` and its state references are adopted in the committed canvas.
+The sidebar's inactive checkout/project states reuse the adopted row masters and retain the existing Project row as a maintained component.
 
 The header wash marks the pane currently shown by Hide.
 The outer primary hairline marks the actual terminal responder.

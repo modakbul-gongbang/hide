@@ -55,6 +55,7 @@ An asynchronous task still costs work and can accumulate a queue; it is not a pe
 | Tooltip dismissal / hover exit | Publish a real transition once and cancel obsolete reveal | Repeated no-op publication to every tooltip consumer |
 | Hidden shortcut hints | No target exposure projection while hidden | Per-control recomputation of the complete hint set |
 | Terminal wheel / typing | Prompt delivery preserving routing, ordering, and signed scroll quantity | Wait for an unrelated frame; drop intentional input as a duplicate |
+| IME composition step / terminal feed while composing | Show the new marked text; re-anchor the overlay once the caret has moved | Rebuild the overlay's attribute dictionary or attributed string when neither the text nor the caret changed |
 | Drag / repaint | Update affected geometry or damaged visible content | Per-event persistence or rebuilding unchanged rows |
 
 ### Two-level recent navigation cost contract

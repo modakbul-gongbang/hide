@@ -582,6 +582,16 @@ struct FocusDevicePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct InactiveCheckoutsTogglePayload {
+    project_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InactiveProjectsTogglePayload {
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RemoveWorkspacePayload {
     workspace_id: String,
 }
@@ -1023,6 +1033,12 @@ struct UiStateUpdatePayload {
     last_agent_bypass: Option<bool>,
     #[serde(default)]
     scratch_expanded: Option<bool>,
+    /// Ephemeral observation hints for the core-owned provider usage timer.
+    /// They ride the existing UI-state event but are never persisted.
+    #[serde(default)]
+    usage_window_visible: Option<bool>,
+    #[serde(default)]
+    usage_popover_open: Option<bool>,
 }
 
 /// Which changed file the changes view is showing the diff for. `None`
@@ -1232,6 +1248,8 @@ enum ValidatedEvent {
     FocusTab(FocusTabPayload),
     ReorderTab(ReorderTabPayload),
     FocusDevice(FocusDevicePayload),
+    InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
+    InactiveProjectsToggle(InactiveProjectsTogglePayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
     RemoveDevice(RemoveDevicePayload),
@@ -1366,6 +1384,10 @@ pub struct Runtime {
     terminal_sizes: HashMap<String, (u16, u16)>,
     terminal_view_sizes: HashMap<String, (u16, u16)>,
     terminal_frames_need_full: HashSet<String>,
+    /// The foreign grid a pane's held frames are arriving at, so a burst is
+    /// diagnosed once per grid rather than once per frame: one contested pane
+    /// wrote 8,500 mismatch lines in twelve minutes and rotated the log.
+    terminal_foreign_frame_sizes: HashMap<String, (u16, u16)>,
     /// Panes whose attach is held until a view reports their size. Herdr
     /// sizes the PTY from the attach, so starting one at a guess costs a
     /// full frame at the wrong size and a second one after the resize.
@@ -1409,6 +1431,9 @@ pub struct Runtime {
     /// What the providers last answered. Held beside the snapshot so a
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
+    usage_window_visible: bool,
+    usage_popover_open: bool,
+    usage_popover_open_generation: u64,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1670,6 +1695,7 @@ impl Runtime {
             next_remote_file_generation: 0,
             terminal_view_sizes: HashMap::new(),
             terminal_frames_need_full: HashSet::new(),
+            terminal_foreign_frame_sizes: HashMap::new(),
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
@@ -1682,6 +1708,9 @@ impl Runtime {
             pending_ai_settings_save: None,
             ai_observing: false,
             background_ai_providers: Vec::new(),
+            usage_window_visible: false,
+            usage_popover_open: false,
+            usage_popover_open_generation: 0,
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             #[cfg(test)]
@@ -3959,6 +3988,8 @@ impl Runtime {
         self.terminal_recovery.retain(|pane_id, _| keep(pane_id));
         self.terminal_frames_need_full
             .retain(|pane_id| keep(pane_id));
+        self.terminal_foreign_frame_sizes
+            .retain(|pane_id, _| keep(pane_id));
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         self.panes_scrolled_before_size
             .retain(|pane_id| keep(pane_id));
@@ -3975,6 +4006,7 @@ impl Runtime {
             + self.terminal_sizes.len()
             + self.terminal_view_sizes.len()
             + self.terminal_frames_need_full.len()
+            + self.terminal_foreign_frame_sizes.len()
             + self.panes_awaiting_size.len()
             + self.panes_scrolled_before_size.len()
             + self.panes_closing.len()
@@ -4910,6 +4942,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        self.refresh_inactive_groups();
 
         let focused_project = self
             .snapshot
@@ -5545,6 +5578,13 @@ impl Runtime {
         true
     }
 
+    pub(crate) fn usage_activity(&self) -> crate::usage::UsageActivity {
+        crate::usage::UsageActivity {
+            window_visible: self.usage_window_visible,
+            popover_open_generation: self.usage_popover_open_generation,
+        }
+    }
+
     /// Recomputes the pet's pose, badge row, and attention queue from the
     /// current agent list and connection state. Idempotent: the same inputs
     /// produce the same snapshot and report no change.
@@ -5740,6 +5780,17 @@ impl Runtime {
         sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
     }
 
+    /// Recomputes the two inactive folds from current core facts. No row is
+    /// moved or copied: the full collections stay authoritative for search,
+    /// focus, and non-sidebar consumers.
+    fn refresh_inactive_groups(&mut self) -> bool {
+        crate::project_context::refresh_inactive_groups(
+            &mut self.snapshot.navigator,
+            &self.snapshot.ui_state,
+            unix_milliseconds(),
+        )
+    }
+
     /// Refills every pane's child summary and breadcrumb from the final agent
     /// list.
     ///
@@ -5869,7 +5920,7 @@ impl Runtime {
         if delegated_tabs_changed {
             self.rebuild_tab_strips();
         }
-        changed || delegated_tabs_changed
+        changed | delegated_tabs_changed | self.refresh_inactive_groups()
     }
 
     /// Whether a delegated child's clock should be running at all.
@@ -6909,7 +6960,7 @@ impl Runtime {
         self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
         let changed = before != agents;
         self.snapshot.navigator.agents = agents;
-        changed
+        changed | self.refresh_inactive_groups()
     }
 
     fn ensure_terminal_pane(&mut self, pane_id: &str) {
@@ -8146,6 +8197,15 @@ impl Runtime {
         }
     }
 
+    /// The grid a frame has to arrive at to be drawn: the view's own grid
+    /// while one is known, else the settled size the attach asked for.
+    fn expected_terminal_size(&self, pane_id: &str) -> Option<(u16, u16)> {
+        self.terminal_view_sizes
+            .get(pane_id)
+            .or_else(|| self.terminal_sizes.get(pane_id))
+            .copied()
+    }
+
     /// Appends only the decoded frame bytes when the delivering official
     /// terminal session is still the current generation and mode.
     /// None retires the reader; Some(false) keeps reading a held frame without
@@ -8166,23 +8226,27 @@ impl Runtime {
         {
             return None;
         }
-        let expected = self
-            .terminal_view_sizes
-            .get(pane_id)
-            .or_else(|| self.terminal_sizes.get(pane_id))
-            .copied();
-        if expected != Some((frame.height, frame.width)) {
+        let expected = self.expected_terminal_size(pane_id);
+        let arrived = (frame.height, frame.width);
+        if expected != Some(arrived) {
             self.terminal_frames_need_full.insert(pane_id.to_owned());
-            // Logged per held frame to the file and stderr sink only. A push
-            // into the snapshot's diagnostics would restamp the revisioned
-            // rest section on every frame of a mismatch burst.
-            crate::diagnostic!(serde_json::json!({
-                "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
-                "pane_id": pane_id, "frame": [frame.width, frame.height],
-                "expected": expected.map(|(height, width)| [width, height]),
-            }));
+            // Logged to the file and stderr sink only, once per foreign grid.
+            // A push into the snapshot's diagnostics would restamp the
+            // revisioned rest section on every frame of a mismatch burst.
+            if self
+                .terminal_foreign_frame_sizes
+                .insert(pane_id.to_owned(), arrived)
+                != Some(arrived)
+            {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
+                    "pane_id": pane_id, "frame": [frame.width, frame.height],
+                    "expected": expected.map(|(height, width)| [width, height]),
+                }));
+            }
             return Some(false);
         }
+        self.terminal_foreign_frame_sizes.remove(pane_id);
         if self.terminal_frames_need_full.contains(pane_id) && !frame.full {
             return Some(false);
         }
@@ -9071,6 +9135,7 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
+        self.refresh_inactive_groups();
         // Selecting a checkout measures it, and selecting the one already
         // selected measures it again - that is the card's cheapest refresh
         // for a number that moves whenever a build runs (R8).
@@ -9619,6 +9684,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
+                self.refresh_inactive_groups();
                 self.visible_tab_ids
                     .insert(payload.checkout_id.clone(), payload.tab_id.clone());
                 // Nothing is cleared here. The tab being selected already has
@@ -9709,6 +9775,72 @@ impl Runtime {
                 self.deactivate_editor_tab();
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::InactiveCheckoutsToggle(payload) => {
+                let Some(group) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.path == payload.project_path)
+                    .map(|workspace| &workspace.inactive_checkouts)
+                else {
+                    self.set_error(
+                        "inactive_checkouts.unknown_project",
+                        format!("Project {} is not available", payload.project_path),
+                        false,
+                    );
+                    return true;
+                };
+                if group.checkout_ids.is_empty() {
+                    self.set_error(
+                        "inactive_checkouts.unavailable",
+                        format!("Project {} has no inactive checkouts", payload.project_path),
+                        false,
+                    );
+                    return true;
+                }
+                let expanded = &mut self
+                    .snapshot
+                    .ui_state
+                    .expanded_inactive_checkout_project_paths;
+                if expanded.contains(&payload.project_path) {
+                    expanded.retain(|path| path != &payload.project_path);
+                } else {
+                    expanded.push(payload.project_path);
+                    expanded.sort();
+                }
+                self.refresh_inactive_groups();
+                self.persist_ui_state();
+                true
+            }
+            ValidatedEvent::InactiveProjectsToggle(payload) => {
+                let available = self
+                    .snapshot
+                    .navigator
+                    .inactive_projects
+                    .iter()
+                    .any(|group| {
+                        group.device_id == payload.device_id && !group.project_ids.is_empty()
+                    });
+                if !available {
+                    self.set_error(
+                        "inactive_projects.unavailable",
+                        format!("Device {} has no inactive projects", payload.device_id),
+                        false,
+                    );
+                    return true;
+                }
+                let expanded = &mut self.snapshot.ui_state.expanded_inactive_project_device_ids;
+                if expanded.contains(&payload.device_id) {
+                    expanded.retain(|device_id| device_id != &payload.device_id);
+                } else {
+                    expanded.push(payload.device_id);
+                    expanded.sort();
+                }
+                self.refresh_inactive_groups();
+                self.persist_ui_state();
                 true
             }
             ValidatedEvent::RemoveWorkspace(payload) => {
@@ -10920,9 +11052,20 @@ impl Runtime {
                 true
             }
             ValidatedEvent::UiStateUpdate(payload) => {
+                if let Some(visible) = payload.usage_window_visible {
+                    self.usage_window_visible = visible;
+                }
+                if let Some(open) = payload.usage_popover_open {
+                    if open && !self.usage_popover_open {
+                        self.usage_popover_open_generation =
+                            self.usage_popover_open_generation.saturating_add(1);
+                    }
+                    self.usage_popover_open = open;
+                }
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
+                let previous_ui_state = current.clone();
                 let git_was_visible = current.right_panel_visible
                     && matches!(current.right_panel_section, RightPanelSection::Overview);
                 self.snapshot.ui_state = UiStateSnapshot {
@@ -10944,6 +11087,10 @@ impl Runtime {
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids
                         .unwrap_or(current.collapsed_checkout_ids),
+                    expanded_inactive_checkout_project_paths: current
+                        .expanded_inactive_checkout_project_paths,
+                    expanded_inactive_project_device_ids: current
+                        .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
                     collapsed_agent_pane_ids: payload
                         .collapsed_agent_pane_ids
@@ -10980,12 +11127,21 @@ impl Runtime {
                         .unwrap_or(current.last_agent_bypass),
                     scratch_expanded: payload.scratch_expanded.unwrap_or(current.scratch_expanded),
                 };
+                // Visibility and popover activity wake the provider reader,
+                // but they are not durable preferences. The shell sends the
+                // current durable values with the shared UI-state event; if
+                // those values did not change, do not rewrite state.json or
+                // run unrelated catalog reconciliation.
+                if self.snapshot.ui_state == previous_ui_state {
+                    return true;
+                }
                 self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                self.refresh_inactive_groups();
                 self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(
                     &mut self.snapshot.navigator.workspaces,
@@ -11271,6 +11427,14 @@ impl Runtime {
                 mode.as_str()
             ),
         );
+        // The view's grid is the one the frame guard accepts, so it is the
+        // grid the attach asks for. Starting at a settled size the view has
+        // already left holds every frame until a resize, and a pane that is
+        // not drawn sends none: five attempts at 50x25 against a 41x18 view,
+        // then retries exhausted (2026-09-14).
+        if let Some(view) = self.terminal_view_sizes.get(pane_id).copied() {
+            self.terminal_sizes.insert(pane_id.to_owned(), view);
+        }
         #[cfg(test)]
         if self.suppress_terminal_session_workers {
             self.terminal_sessions.insert(
@@ -11796,6 +11960,12 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "focus_tab" => decode!(FocusTabPayload, FocusTab),
         "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
+        "inactive_checkouts_toggle" => {
+            decode!(InactiveCheckoutsTogglePayload, InactiveCheckoutsToggle)
+        }
+        "inactive_projects_toggle" => {
+            decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
+        }
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
@@ -12616,6 +12786,41 @@ mod tests {
                 .unwrap()
                 .width,
             115
+        );
+    }
+
+    /// A view that reported 41x18 while the settled size still said 50x25
+    /// had every attach frame held and its retries exhausted: the attach
+    /// asks for the grid the frame guard accepts.
+    #[test]
+    fn a_control_session_attaches_at_the_grid_the_view_reported() {
+        let mut runtime = runtime();
+        runtime.suppress_terminal_session_workers = true;
+        let pane = "w-view:p1";
+        runtime.terminal_sizes.insert(pane.into(), (25, 50));
+        runtime.terminal_view_sizes.insert(pane.into(), (18, 41));
+        runtime.start_terminal_session(
+            pane,
+            TerminalSessionMode::Control,
+            1,
+            "automatic_initial",
+            None,
+        );
+        assert_eq!(runtime.terminal_sizes[pane], (18, 41));
+        let generation = runtime.terminal_session_generations[pane];
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                pane,
+                generation,
+                TerminalSessionMode::Control,
+                b"attach frame",
+                crate::model::TerminalFrame {
+                    width: 41,
+                    height: 18,
+                    full: true
+                }
+            ),
+            Some(true)
         );
     }
 
@@ -14339,6 +14544,8 @@ mod tests {
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
                 home_path: None,
+                claude_config_dir: None,
+                codex_home: None,
             },
         )
     }
@@ -14657,6 +14864,7 @@ mod tests {
             session_workspace_ids: Vec::new(),
             last_activity_unix_ms: None,
             checkouts,
+            inactive_checkouts: Default::default(),
         }
     }
 
@@ -14728,6 +14936,129 @@ mod tests {
                 .ui_state
                 .collapsed_checkout_ids
                 .is_empty()
+        );
+    }
+
+    /// B5, B12. The two fold events own independent persisted keys and update
+    /// the snapshot immediately. Repeating each toggle converges back to the
+    /// default collapsed state without changing project disclosure.
+    #[test]
+    fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
+        let mut runtime = runtime();
+        let path = "/tmp/hide-runtime-inactive";
+        let settled = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
+            id: id.to_owned(),
+            workspace_id: "workspace-inactive".to_owned(),
+            label: id.to_owned(),
+            path: checkout_path.to_owned(),
+            is_worktree,
+            worktree: Some(crate::model::WorktreeSnapshot {
+                merged: Some(true),
+                ..Default::default()
+            }),
+            ..CheckoutSnapshot::default()
+        };
+        runtime.snapshot.navigator.workspaces = vec![workspace(
+            "workspace-inactive",
+            "Inactive",
+            path,
+            vec![
+                settled("primary", path, false),
+                settled("secondary", "/tmp/hide-runtime-inactive-secondary", true),
+            ],
+        )];
+        runtime.refresh_inactive_groups();
+        assert_eq!(
+            runtime.snapshot.navigator.workspaces[0]
+                .inactive_checkouts
+                .checkout_ids,
+            ["secondary"]
+        );
+        assert_eq!(runtime.snapshot.navigator.inactive_projects.len(), 1);
+
+        let checkout_toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inactive_checkouts_toggle",
+            "payload": { "project_path": path }
+        }))
+        .unwrap();
+        let project_toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inactive_projects_toggle",
+            "payload": { "device_id": "local" }
+        }))
+        .unwrap();
+
+        assert!(runtime.dispatch_json(&checkout_toggle));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .inactive_checkouts
+                .expanded
+        );
+        assert_eq!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_checkout_project_paths,
+            [path]
+        );
+        assert!(runtime.dispatch_json(&project_toggle));
+        assert!(runtime.snapshot.navigator.inactive_projects[0].expanded);
+        assert_eq!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_project_device_ids,
+            ["local"]
+        );
+
+        assert!(runtime.dispatch_json(&checkout_toggle));
+        assert!(runtime.dispatch_json(&project_toggle));
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_checkout_project_paths
+                .is_empty()
+        );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_project_device_ids
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn usage_activity_hints_are_accepted_without_persisting_ui_state() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        let _ = std::fs::remove_file(&state_path);
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "selected_path": null,
+                "selected_pane_id": null,
+                "usage_window_visible": true,
+                "usage_popover_open": true
+            }
+        }))
+        .expect("usage activity event");
+
+        assert!(runtime.dispatch_json(&event));
+        assert_eq!(
+            runtime.usage_activity(),
+            crate::usage::UsageActivity {
+                window_visible: true,
+                popover_open_generation: 1,
+            }
+        );
+        assert!(
+            !state_path.exists(),
+            "an observation hint must not create persistent UI state"
         );
     }
 
@@ -20507,6 +20838,9 @@ mod tests {
         runtime.terminal_sizes.insert(pane.into(), (80, 24));
         runtime.terminal_view_sizes.insert(pane.into(), (120, 40));
         runtime.terminal_frames_need_full.insert(pane.into());
+        runtime
+            .terminal_foreign_frame_sizes
+            .insert(pane.into(), (9, 84));
         runtime.panes_awaiting_size.insert(pane.into());
         runtime.panes_scrolled_before_size.insert(pane.into());
         runtime.panes_closing.insert(pane.into());
@@ -20518,6 +20852,7 @@ mod tests {
         assert!(!runtime.terminal_sizes.contains_key(pane));
         assert!(!runtime.terminal_view_sizes.contains_key(pane));
         assert!(!runtime.terminal_frames_need_full.contains(pane));
+        assert!(!runtime.terminal_foreign_frame_sizes.contains_key(pane));
         assert!(!runtime.panes_awaiting_size.contains(pane));
         assert!(!runtime.panes_scrolled_before_size.contains(pane));
         assert!(!runtime.panes_closing.contains(pane));

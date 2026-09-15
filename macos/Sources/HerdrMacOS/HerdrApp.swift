@@ -25,6 +25,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     private var petMenuBarController: PetMenuBarController?
     private var petHotkeyRegistrar: PetHotkeyRegistrar?
     private var petVisibilityObservation: AnyCancellable?
+    private var usageWindowObservation: AnyCancellable?
     private var paneKeyMonitor: Any?
 
     override init() {
@@ -88,6 +89,24 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         MainWindowChrome.apply(to: window, content: content)
         window.center()
         mainWindow = window
+        let visibilityNotifications: [Notification.Name] = [
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.willCloseNotification,
+        ]
+        usageWindowObservation = Publishers.MergeMany(
+            visibilityNotifications.map {
+                NotificationCenter.default.publisher(for: $0, object: window)
+            }
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.publishUsageWindowVisibility() }
+        }
+        model.core.runtimeReadyHandler = { [weak self] in
+            self?.publishUsageWindowVisibility()
+        }
         paneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             MainActor.assumeIsolated {
@@ -336,6 +355,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     private func presentMainWindow(_ window: NSWindow, source: String) {
         let application = NSApplication.shared
         MainWindowPresentation.present(window, application: application, background: verificationBackground)
+        publishUsageWindowVisibility()
         HideLaunchTrace.mark(
             "main_window.visible",
             detail: "source_\(source)_visible_\(window.isVisible)_windows_\(application.windows.count)"
@@ -354,8 +374,16 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                     detail: "source_\(source)_visible_true_windows_\(application.windows.count)"
                 )
             }
-            _ = self
+            self.publishUsageWindowVisibility()
         }
+    }
+
+    private func publishUsageWindowVisibility() {
+        guard let mainWindow else { return }
+        let visible = mainWindow.isVisible
+            && !mainWindow.isMiniaturized
+            && mainWindow.occlusionState.contains(.visible)
+        model.core.setUsageWindowVisible(visible)
     }
 
     /// `herdr-ide://show|hide|toggle`. The retired app's `herdr-pet://`
@@ -411,6 +439,9 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model.core.runtimeReadyHandler = nil
+        usageWindowObservation?.cancel()
+        usageWindowObservation = nil
         if let paneKeyMonitor {
             NSEvent.removeMonitor(paneKeyMonitor)
             self.paneKeyMonitor = nil

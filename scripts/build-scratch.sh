@@ -12,8 +12,7 @@
 # A check script must not write into the tree it is judging: `cargo test`
 # building into the worktree's own `target/` makes the working tree dirty while
 # a verification run is reading it. So the test build goes to a scratch
-# directory. `scripts/rust-test.sh` reached the same conclusion for the same
-# reason and keys its default the same way.
+# directory. `scripts/rust-test.sh` uses this same test cache.
 #
 # But that directory must never be shared between worktrees. Cargo names a
 # workspace member's artifacts by its path relative to the workspace root, so
@@ -32,13 +31,13 @@
 #
 # See docs/BUILD.md.
 
-hide_scratch_checkout="$(basename "$(git rev-parse --show-toplevel)")"
-# TMPDIR carries a trailing slash on macOS; a doubled separator survives into
-# every path a check script prints, so strip it once here.
-hide_scratch_tmp="${TMPDIR:-/tmp}"
-hide_scratch_tmp="${hide_scratch_tmp%/}"
-HIDE_SCRATCH_ROOT="$hide_scratch_tmp/hide-verify-$hide_scratch_checkout"
+# Resolve the physical checkout, not its basename or a runner's HOME/TMPDIR.
+# Equal directory names in different parents must never share build output.
+hide_scratch_checkout="$(git rev-parse --show-toplevel)" || return
+hide_scratch_checkout="$(cd "$hide_scratch_checkout" && pwd -P)" || return
+hide_scratch_key="$(printf '%s' "$hide_scratch_checkout" | LC_ALL=C shasum -a 256)" || return
+HIDE_SCRATCH_ROOT="/tmp/hide-verify-$(id -u)/${hide_scratch_key%% *}"
 HIDE_CARGO_SCRATCH="$HIDE_SCRATCH_ROOT/cargo"
 HIDE_SWIFT_SCRATCH="$HIDE_SCRATCH_ROOT/swift"
-unset hide_scratch_checkout hide_scratch_tmp
+unset hide_scratch_checkout hide_scratch_key
 export HIDE_SCRATCH_ROOT HIDE_CARGO_SCRATCH HIDE_SWIFT_SCRATCH

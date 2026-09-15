@@ -1136,6 +1136,16 @@ It is recomputed from the core's timestamp on each snapshot, so it ages while th
 The project name takes the row's width first; the trailing detail truncates in a narrow sidebar rather than pushing the name out.
 Raised Needs You and Done groups retain their status ordering above Projects.
 
+Inactive work is folded without changing that activity order.
+A project's merged, closed, or seven-day inactive secondary checkouts move behind one trailing `Inactive N` disclosure, while its primary and every checkout with live work, local changes, unpushed commits, or current focus remain visible.
+When every checkout in a project is inactive, the project moves behind the trailing `Inactive projects N` disclosure for its device.
+Both rows use the existing sidebar interaction feedback and chevron language, default closed, and remember expansion independently at the project-path and device levels.
+Opening a fold restores the original project or checkout rows, including their existing elapsed time and pull-request state, so the reason stays encoded in the row rather than repeated as explanatory copy.
+Search continues to index the complete project tree; choosing a folded result brings the focused row back into the active list without opening either fold.
+The project tree uses one token-based indentation ladder: top-level projects and the device inactive disclosure start at the root inset, their checkout or archived-project children advance one level, and checkout rows revealed by an inactive disclosure advance once more.
+Selection begins just before the selected checkout's own content edge instead of spanning back to the top-level edge, so its background preserves the child relationship.
+Each completed project block leaves the same project-level vertical gap before the next sibling or top-level inactive disclosure; rows inside a block retain their compact spacing.
+
 The right panel starts with Overview, followed by Explorer and Changes.
 The compact section selector uses text labels on one line without a competing checkout title.
 Saved Git section selections migrate to Overview; other selections survive, and new state starts on Overview.

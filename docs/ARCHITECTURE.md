@@ -30,6 +30,8 @@ The notifier announces once per burst rather than once per change.
 `herdr_core_snapshot` clears the announcement flag **before** it takes the lock; clearing it after the read would swallow a change that landed during the read.
 Launch creates the core once, after the runtime resolution (login-shell PATH, binary, version) has finished, and the first window is presented before that resolution completes.
 The first attach uses the size the view reported, or the size persisted from the last launch, and never a placeholder; a pane with no known size is held back and says it is waiting.
+An attach asks for the grid the view itself reports whenever one is known, because that grid is the one the frame guard accepts: starting at a settled size the view had already left held every frame until a resize, and a pane that is not drawn cannot send one through the display tick, so the shell also samples a settled size from the run loop one display period apart (`TerminalHost.Coordinator`).
+A frame at a foreign grid is diagnosed once per grid, not once per frame; the held frames themselves are the ordinary signal that the resize has not landed.
 
 A clicked path is one event, not a sequence.
 The shell resolves the token on the filesystem, decides which registered checkout owns it by the longest symlink-resolved prefix, and sends `reveal_path`; the core then decides the focused checkout, the right panel's visibility and section, the tree's expanded set and selection, and the editor tab together.

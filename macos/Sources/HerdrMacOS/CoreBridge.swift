@@ -348,6 +348,7 @@ struct CoreNavigatorSnapshot: Decodable {
     let focusedCheckoutID: String?
     let devices: [CoreDeviceSnapshot]
     let workspaces: [CoreWorkspaceSnapshot]
+    let inactiveProjects: [CoreInactiveProjectGroupSnapshot]
     let agents: [SidebarAgent]
     let providerUsage: [CoreProviderUsageSnapshot]
     /// The one space that is not a project.
@@ -361,6 +362,7 @@ struct CoreNavigatorSnapshot: Decodable {
         case focusedCheckoutID = "focused_checkout_id"
         case devices
         case workspaces
+        case inactiveProjects = "inactive_projects"
         case agents
         case providerUsage = "provider_usage"
     }
@@ -373,6 +375,10 @@ struct CoreNavigatorSnapshot: Decodable {
         focusedCheckoutID = try container.decodeIfPresent(String.self, forKey: .focusedCheckoutID)
         devices = try container.decodeIfPresent([CoreDeviceSnapshot].self, forKey: .devices) ?? []
         workspaces = try container.decodeIfPresent([CoreWorkspaceSnapshot].self, forKey: .workspaces) ?? []
+        inactiveProjects = try container.decodeIfPresent(
+            [CoreInactiveProjectGroupSnapshot].self,
+            forKey: .inactiveProjects
+        ) ?? []
         agents = try container.decodeIfPresent([SidebarAgent].self, forKey: .agents) ?? []
         providerUsage = try container.decodeIfPresent(
             [CoreProviderUsageSnapshot].self,
@@ -380,6 +386,19 @@ struct CoreNavigatorSnapshot: Decodable {
         ) ?? []
         scratch = try container.decodeIfPresent(CoreScratchSnapshot.self, forKey: .scratch)
             ?? CoreScratchSnapshot.empty
+    }
+}
+
+struct CoreInactiveProjectGroupSnapshot: Decodable, Identifiable {
+    var id: String { deviceID }
+    let deviceID: String
+    let expanded: Bool
+    let projectIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case deviceID = "device_id"
+        case expanded
+        case projectIDs = "project_ids"
     }
 }
 
@@ -463,6 +482,9 @@ struct CoreProviderUsageSnapshot: Decodable, Identifiable {
     let resetsAtUnixSeconds: UInt64?
     let message: String?
     let lastCheckedAtUnixMilliseconds: UInt64?
+    let lastSuccessAtUnixMilliseconds: UInt64?
+    let lastErrorKind: String?
+    let buckets: [CoreProviderUsageBucketSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -473,6 +495,41 @@ struct CoreProviderUsageSnapshot: Decodable, Identifiable {
         case resetsAtUnixSeconds = "resets_at_unix_seconds"
         case message
         case lastCheckedAtUnixMilliseconds = "last_checked_at_unix_ms"
+        case lastSuccessAtUnixMilliseconds = "last_success_at_unix_ms"
+        case lastErrorKind = "last_error_kind"
+        case buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(String.self, forKey: .provider)
+        label = try container.decode(String.self, forKey: .label)
+        windowMinutes = try container.decode(UInt64.self, forKey: .windowMinutes)
+        state = try container.decode(String.self, forKey: .state)
+        usedPercent = try container.decodeIfPresent(Double.self, forKey: .usedPercent)
+        resetsAtUnixSeconds = try container.decodeIfPresent(UInt64.self, forKey: .resetsAtUnixSeconds)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        lastCheckedAtUnixMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .lastCheckedAtUnixMilliseconds)
+        lastSuccessAtUnixMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .lastSuccessAtUnixMilliseconds)
+        lastErrorKind = try container.decodeIfPresent(String.self, forKey: .lastErrorKind)
+        buckets = try container.decodeIfPresent([CoreProviderUsageBucketSnapshot].self, forKey: .buckets) ?? []
+    }
+}
+
+struct CoreProviderUsageBucketSnapshot: Decodable, Identifiable {
+    var id: String { "\(label)-\(resetsAtUnixSeconds ?? 0)" }
+    let label: String
+    let state: String
+    let usedPercent: Double?
+    let resetsAtUnixSeconds: UInt64?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case state
+        case usedPercent = "used_percent"
+        case resetsAtUnixSeconds = "resets_at_unix_seconds"
+        case message
     }
 }
 
@@ -512,6 +569,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     /// neither, which is what lets the row leave its time blank.
     let lastActivityUnixMS: UInt64?
     let checkouts: [CoreCheckoutSnapshot]
+    let inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -528,6 +586,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case temporary
         case lastActivityUnixMS = "last_activity_unix_ms"
         case checkouts
+        case inactiveCheckouts = "inactive_checkouts"
     }
 
     init(
@@ -544,7 +603,8 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         registered: Bool,
         temporary: Bool,
         lastActivityUnixMS: UInt64? = nil,
-        checkouts: [CoreCheckoutSnapshot]
+        checkouts: [CoreCheckoutSnapshot],
+        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot = .empty
     ) {
         self.id = id
         self.label = label
@@ -560,6 +620,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         self.temporary = temporary
         self.lastActivityUnixMS = lastActivityUnixMS
         self.checkouts = checkouts
+        self.inactiveCheckouts = inactiveCheckouts
     }
 
     init(from decoder: Decoder) throws {
@@ -578,6 +639,22 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
         lastActivityUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .lastActivityUnixMS)
         checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
+        inactiveCheckouts = try container.decodeIfPresent(
+            CoreInactiveCheckoutGroupSnapshot.self,
+            forKey: .inactiveCheckouts
+        ) ?? .empty
+    }
+}
+
+struct CoreInactiveCheckoutGroupSnapshot: Decodable, Equatable {
+    let expanded: Bool
+    let checkoutIDs: [String]
+
+    static let empty = CoreInactiveCheckoutGroupSnapshot(expanded: false, checkoutIDs: [])
+
+    enum CodingKeys: String, CodingKey {
+        case expanded
+        case checkoutIDs = "checkout_ids"
     }
 }
 
@@ -1629,6 +1706,8 @@ struct CoreUIStateSnapshot: Decodable {
     let expandedPaths: [String]
     let collapsedWorkspaceIDs: [String]
     let collapsedCheckoutIDs: [String]
+    let expandedInactiveCheckoutProjectPaths: [String]
+    let expandedInactiveProjectDeviceIDs: [String]
     let selectedPath: String?
     let selectedPaneID: String?
     let shortcutBindings: [String: String]
@@ -1666,6 +1745,8 @@ struct CoreUIStateSnapshot: Decodable {
         case expandedPaths = "expanded_paths"
         case collapsedWorkspaceIDs = "collapsed_workspace_ids"
         case collapsedCheckoutIDs = "collapsed_checkout_ids"
+        case expandedInactiveCheckoutProjectPaths = "expanded_inactive_checkout_project_paths"
+        case expandedInactiveProjectDeviceIDs = "expanded_inactive_project_device_ids"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
         case shortcutBindings = "shortcut_bindings"
@@ -1697,6 +1778,14 @@ struct CoreUIStateSnapshot: Decodable {
         collapsedCheckoutIDs = try container.decodeIfPresent(
             [String].self,
             forKey: .collapsedCheckoutIDs
+        ) ?? []
+        expandedInactiveCheckoutProjectPaths = try container.decodeIfPresent(
+            [String].self,
+            forKey: .expandedInactiveCheckoutProjectPaths
+        ) ?? []
+        expandedInactiveProjectDeviceIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .expandedInactiveProjectDeviceIDs
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
@@ -2441,6 +2530,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var commandDevice = CommandDevice.local
     private var routingError: String?
     private let remoteTargets: [[String: String]]
+    var runtimeReadyHandler: (() -> Void)?
 
     private struct CommandDevice {
         let id: String
@@ -2657,6 +2747,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
         startupDiagnostic = nil
         refreshSnapshot()
+        runtimeReadyHandler?()
         return true
     }
 
@@ -2831,6 +2922,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
         ])
+    }
+
+    func toggleInactiveCheckouts(projectPath: String) {
+        dispatch(
+            kind: "inactive_checkouts_toggle",
+            payload: ["project_path": projectPath]
+        )
+    }
+
+    func toggleInactiveProjects(deviceID: String) {
+        dispatch(
+            kind: "inactive_projects_toggle",
+            payload: ["device_id": deviceID]
+        )
     }
 
     func reconnectPane(_ paneID: String) {
@@ -3367,7 +3472,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         fontSize: Double? = nil,
         lastAgentKind: String? = nil,
         lastAgentBypass: Bool? = nil,
-        scratchExpanded: Bool? = nil
+        scratchExpanded: Bool? = nil,
+        usageWindowVisible: Bool? = nil,
+        usagePopoverOpen: Bool? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -3409,6 +3516,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         if let scratchExpanded {
             payload["scratch_expanded"] = scratchExpanded
         }
+        if let usageWindowVisible {
+            payload["usage_window_visible"] = usageWindowVisible
+        }
+        if let usagePopoverOpen {
+            payload["usage_popover_open"] = usagePopoverOpen
+        }
         if selectedPaneID != nil || focusedCheckoutID != nil {
             HideLaunchTrace.mark(
                 "core.dispatch.anchor",
@@ -3416,6 +3529,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             )
         }
         dispatch(kind: "ui_state_update", payload: payload)
+    }
+
+    func setUsageWindowVisible(_ visible: Bool) {
+        persistUIState(usageWindowVisible: visible)
+    }
+
+    func setUsagePopoverOpen(_ open: Bool) {
+        persistUIState(usagePopoverOpen: open)
     }
 
     /// Selects the changed file whose diff the changes view shows, or clears

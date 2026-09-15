@@ -348,6 +348,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     session_workspace_ids: vec![space.id.clone()],
                     last_activity_unix_ms: None,
                     checkouts: Vec::new(),
+                    inactive_checkouts: Default::default(),
                 });
                 projects.len() - 1
             }
@@ -579,6 +580,7 @@ fn inspect(
         session_workspace_ids: Vec::new(),
         last_activity_unix_ms: None,
         checkouts,
+        inactive_checkouts: Default::default(),
     }
 }
 

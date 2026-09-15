@@ -291,7 +291,14 @@ fn snapshot_exposes_the_production_schema_and_status() {
             .iter()
             .map(|entry| entry["key"].as_str().expect("environment key"))
             .collect::<Vec<_>>(),
-        ["HOME", "SSH_AUTH_SOCK", "PATH", "HERDR_SOCKET_PATH"]
+        [
+            "HOME",
+            "SSH_AUTH_SOCK",
+            "PATH",
+            "HERDR_SOCKET_PATH",
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+        ]
     );
     assert!(environment.iter().all(|entry| entry.get("value").is_none()));
     let provider_usage = snapshot["navigator"]["provider_usage"]
@@ -300,10 +307,14 @@ fn snapshot_exposes_the_production_schema_and_status() {
     assert_eq!(provider_usage.len(), 2);
     assert_eq!(provider_usage[0]["provider"], "claude");
     assert_eq!(provider_usage[0]["window_minutes"], 10_080);
-    assert_eq!(provider_usage[0]["state"], "unavailable");
+    assert_eq!(provider_usage[0]["state"], "loading");
+    assert_eq!(provider_usage[0]["message"], "Checking usage…");
+    assert_eq!(provider_usage[0]["buckets"], json!([]));
+    assert!(provider_usage[0]["last_success_at_unix_ms"].is_null());
+    assert!(provider_usage[0]["last_error_kind"].is_null());
     assert_eq!(provider_usage[1]["provider"], "codex");
     assert_eq!(provider_usage[1]["window_minutes"], 10_080);
-    assert_eq!(provider_usage[1]["state"], "unavailable");
+    assert_eq!(provider_usage[1]["state"], "loading");
     assert!(snapshot["status"]["last_error"].is_null());
     assert!(snapshot.get("spike").is_none());
 

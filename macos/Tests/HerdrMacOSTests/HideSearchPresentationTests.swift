@@ -102,6 +102,39 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
     ])
 }
 
+@Test func foldedProjectSearchRoutesToPrimaryWithoutExpandingItsGroup() throws {
+    let workspace = try searchWorkspace(id: "workspace-1", paneID: "pane-1")
+    let collapsed = CoreInactiveProjectGroupSnapshot(
+        deviceID: "local",
+        expanded: false,
+        projectIDs: [workspace.id]
+    )
+    let expanded = CoreInactiveProjectGroupSnapshot(
+        deviceID: "local",
+        expanded: true,
+        projectIDs: [workspace.id]
+    )
+
+    let entries = HideSearchPresentation.foldedProjectEntries(
+        workspaces: [workspace],
+        groups: [collapsed],
+        query: "same"
+    )
+
+    #expect(entries.map(\.id) == ["project-workspace-1"])
+    #expect(entries.map(\.route) == [
+        .project(
+            workspaceID: "workspace-1",
+            primaryCheckoutID: "workspace-1-checkout"
+        ),
+    ])
+    #expect(HideSearchPresentation.foldedProjectEntries(
+        workspaces: [workspace],
+        groups: [expanded],
+        query: ""
+    ).isEmpty)
+}
+
 @Test func searchKeyboardSelectionRoutesHighlightedResultAndReconcilesRetirement() throws {
     let rows = ["a", "b", "c"].map { id in
         HideSearchEntry(id: id, title: id, subtitle: id, kind: .agent(searchAgent(paneID: id)))

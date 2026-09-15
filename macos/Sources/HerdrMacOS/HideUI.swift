@@ -660,8 +660,22 @@ private struct HideSidebar: View {
                 detail: "Add a folder to create your first project."
             )
         } else {
-            ForEach(model.workspaces) { workspace in
-                WorkspaceNavigatorRow(workspace: workspace)
+            ForEach(model.sidebarProjectRows) { row in
+                switch row {
+                case .workspace(let workspace, let hierarchyLevel):
+                    WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
+                case .inactiveProjects(let group, let folded):
+                    InactiveFoldRow(
+                        title: "Inactive projects",
+                        count: folded.count,
+                        itemName: "project",
+                        expanded: group.expanded,
+                        accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                        hierarchyLevel: .root,
+                        action: { model.toggleInactiveProjects(in: group) }
+                    )
+                    .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
+                }
             }
         }
     }
@@ -948,7 +962,7 @@ private struct SidebarUtilityBar: View {
     }
 
     private func availablePercent(for usage: CoreProviderUsageSnapshot) -> Double? {
-        guard usage.state == "available" else { return nil }
+        guard ["available", "stale", "fallback"].contains(usage.state) else { return nil }
         return usage.usedPercent
     }
 
@@ -1035,6 +1049,9 @@ private struct SidebarUtilityBar: View {
             .popover(isPresented: $showingUsage, arrowEdge: .bottom) {
                 HideUsagePopover(usages: usages)
             }
+            .onChange(of: showingUsage) { _, open in
+                model.core.setUsagePopoverOpen(open)
+            }
 
             HideIconButton(
                 systemImage: "gearshape",
@@ -1092,44 +1109,57 @@ private struct HideUsagePopover: View {
     let usages: [CoreProviderUsageSnapshot]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
-            HStack(spacing: HideTheme.spacingSM) {
-                Text("Weekly Usage")
-                    .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                    .foregroundStyle(HideTheme.primary)
-                Spacer()
-                Text("7 days")
-                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-            }
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
+                HStack(spacing: HideTheme.spacingSM) {
+                    Text("Weekly Usage")
+                        .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                    Spacer()
+                    Text("7 days")
+                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                }
 
-            if usages.isEmpty {
-                Text("Provider usage is not available yet.")
-                    .hideFont(size: HideTheme.Typography.caption)
-                    .foregroundStyle(HideTheme.secondary)
-            } else {
                 ForEach(usages) { usage in
-                    HideWeeklyUsageRow(usage: usage)
+                    VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+                        HideWeeklyUsageRow(usage: usage, bucket: nil, now: context.date)
+                        ForEach(usage.buckets) { bucket in
+                            HideWeeklyUsageRow(usage: usage, bucket: bucket, now: context.date)
+                        }
+                    }
                 }
             }
+            .padding(HideTheme.spacingLG)
+            .frame(width: 250)
+            .background(HideTheme.panel)
+            .preferredColorScheme(.dark)
+            .accessibilityIdentifier("hide-weekly-usage")
         }
-        .padding(HideTheme.spacingLG)
-        .frame(width: 250)
-        .background(HideTheme.panel)
-        .preferredColorScheme(.dark)
-        .accessibilityIdentifier("hide-weekly-usage")
     }
 }
 
 private struct HideWeeklyUsageRow: View {
     let usage: CoreProviderUsageSnapshot
+    let bucket: CoreProviderUsageBucketSnapshot?
+    let now: Date
+
+    private var label: String { bucket?.label ?? usage.label }
+    private var state: String { bucket?.state ?? usage.state }
+    private var usedPercent: Double? { bucket?.usedPercent ?? usage.usedPercent }
+    private var resetsAtUnixSeconds: UInt64? { bucket?.resetsAtUnixSeconds ?? usage.resetsAtUnixSeconds }
+    private var message: String? { bucket?.message ?? usage.message }
+    private var hasValue: Bool {
+        ["available", "stale", "fallback"].contains(state) && usedPercent != nil
+    }
 
     private var clampedProgress: Double {
-        min(max(usage.usedPercent ?? 0, 0), 100) / 100
+        guard hasValue else { return 0 }
+        return min(max(usedPercent ?? 0, 0), 100) / 100
     }
 
     private var usageColor: Color {
-        guard let percent = usage.usedPercent, usage.state == "available" else {
+        guard let percent = usedPercent, hasValue else {
             return HideTheme.muted
         }
         if percent >= 90 { return HideTheme.danger }
@@ -1138,36 +1168,77 @@ private struct HideWeeklyUsageRow: View {
     }
 
     private var valueLabel: String {
-        guard let percent = usage.usedPercent, usage.state == "available" else {
-            return "Unavailable"
+        if state == "loading" {
+            return "…"
         }
+        guard let percent = usedPercent, hasValue else { return "Unavailable" }
         return "\(Int(percent.rounded()))%"
     }
 
-    private var helpText: String {
-        if let message = usage.message {
-            return message
-        }
-        guard let reset = usage.resetsAtUnixSeconds else {
-            return "1-week plan usage"
-        }
+    private var relativeReset: String? {
+        guard let reset = resetsAtUnixSeconds else { return nil }
+        let seconds = max(0, Int(Date(timeIntervalSince1970: TimeInterval(reset)).timeIntervalSince(now)))
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = max(1, (seconds % 3_600) / 60)
+        if days > 0 { return "in \(days)d \(hours)h" }
+        if hours > 0 { return "in \(hours)h \(minutes)m" }
+        return "in \(minutes)m"
+    }
+
+    private var absoluteReset: String? {
+        guard let reset = resetsAtUnixSeconds else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(reset))
         return "Resets \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var helpText: String {
+        if state == "fallback", let source = usage.lastSuccessAtUnixMilliseconds {
+            let date = Date(timeIntervalSince1970: TimeInterval(source) / 1_000)
+            return "From last Codex session · \(date.formatted(date: .abbreviated, time: .shortened))"
+        }
+        if let message {
+            if bucket != nil, let absoluteReset {
+                return "\(label) · \(message) · \(absoluteReset)"
+            }
+            return message
+        }
+        return [bucket == nil ? nil : label, absoluteReset]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
             HStack(spacing: HideTheme.spacingSM) {
-                HideProviderMark(usage: usage, isMuted: false)
+                if bucket != nil {
+                    Text("└")
+                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                        .frame(width: HideTheme.spacingSM)
+                }
+                HideProviderMark(usage: usage, isMuted: !hasValue)
 
-                Text(usage.label)
-                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                Text(label)
+                    .hideFont(
+                        size: bucket == nil ? HideTheme.Typography.body : HideTheme.Typography.caption,
+                        weight: .medium
+                    )
                     .foregroundStyle(HideTheme.secondary)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                    .truncationMode(.tail)
+                if let relativeReset {
+                    Text("· \(relativeReset)")
+                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                Spacer(minLength: HideTheme.spacingXS)
                 Text(valueLabel)
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold, design: .monospaced)
-                    .foregroundStyle(usage.state == "available" ? usageColor : HideTheme.muted)
+                    .foregroundStyle(hasValue ? usageColor : HideTheme.muted)
+                    .fixedSize(horizontal: true, vertical: false)
             }
 
             GeometryReader { geometry in
@@ -1184,9 +1255,13 @@ private struct HideWeeklyUsageRow: View {
         }
         .hideTooltip(helpText)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(usage.label)
+        .accessibilityLabel(label)
         .accessibilityValue(valueLabel)
-        .accessibilityIdentifier("hide-weekly-usage-\(usage.provider)")
+        .accessibilityIdentifier(
+            bucket == nil
+                ? "hide-weekly-usage-\(usage.provider)"
+                : "hide-weekly-usage-\(usage.provider)-bucket"
+        )
     }
 }
 
@@ -1283,6 +1358,7 @@ private struct WorkspaceNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
     let workspace: CoreWorkspaceSnapshot
+    let hierarchyLevel: SidebarHierarchyLevel
 
     private var isFocusedWorkspace: Bool {
         model.focusedWorkspace?.id == workspace.id
@@ -1356,20 +1432,43 @@ private struct WorkspaceNavigatorRow: View {
                 .fixedSize()
                 .frame(width: 24, height: 28)
             }
-            .padding(.leading, HideTheme.spacingMD)
+            .padding(.leading, hierarchyLevel.contentLeadingInset)
             .padding(.trailing, HideTheme.spacingSM)
 
             if workspace.expanded {
-                ForEach(workspace.checkouts) { checkout in
-                    checkoutGroup(checkout)
+                ForEach(model.activeCheckouts(in: workspace)) { checkout in
+                    checkoutGroup(checkout, hierarchyLevel: hierarchyLevel.childLevel)
+                }
+                let inactive = model.inactiveCheckouts(in: workspace)
+                if !inactive.isEmpty {
+                    InactiveFoldRow(
+                        title: "Inactive",
+                        count: inactive.count,
+                        itemName: "checkout",
+                        expanded: workspace.inactiveCheckouts.expanded,
+                        accessibilityID: "hide-inactive-checkouts-\(workspace.id)",
+                        hierarchyLevel: hierarchyLevel.childLevel,
+                        action: { model.toggleInactiveCheckouts(in: workspace) }
+                    )
+                    if workspace.inactiveCheckouts.expanded {
+                        ForEach(inactive) { checkout in
+                            checkoutGroup(
+                                checkout,
+                                hierarchyLevel: hierarchyLevel.childLevel.childLevel
+                            )
+                        }
+                    }
                 }
             }
         }
-        .padding(.bottom, HideTheme.spacingXS)
+        .padding(.bottom, HideTheme.spacingSM)
         .onAppear { model.requestGithubStatus(workspace) }
     }
 
-    private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
+    private func checkoutGroup(
+        _ checkout: CoreCheckoutSnapshot,
+        hierarchyLevel: SidebarHierarchyLevel
+    ) -> some View {
         let isFocused = model.focusedCheckout?.id == checkout.id
         let visibleAgents = SidebarGrouping.tree(model.agents, checkoutID: checkout.id,
             ownedPaneIDs: Set(checkout.tabs.flatMap(\.panes).map(\.id)))
@@ -1412,7 +1511,48 @@ private struct WorkspaceNavigatorRow: View {
                     .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
             }
         }
-        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.leading, hierarchyLevel.selectionLeadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
+    }
+}
+
+/// One disclosure pattern for both inactive levels. It uses the sidebar's
+/// existing interactive feedback and tokens; only the core decides which rows
+/// belong behind it.
+private struct InactiveFoldRow: View {
+    let title: String
+    let count: Int
+    let itemName: String
+    let expanded: Bool
+    let accessibilityID: String
+    let hierarchyLevel: SidebarHierarchyLevel
+    let action: () -> Void
+
+    var body: some View {
+        let countedItemName = count == 1 ? itemName : "\(itemName)s"
+        Button(action: action) {
+            HStack(spacing: HideTheme.spacingSM) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
+                    .foregroundStyle(HideTheme.muted)
+                    .frame(width: 12, height: 20)
+                Text("\(title) \(count)")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                    .foregroundStyle(HideTheme.secondary)
+                Spacer(minLength: HideTheme.spacingXS)
+            }
+            .padding(.horizontal, HideTheme.spacingSM)
+            .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(HideInteractiveButtonStyle())
+        .padding(.leading, hierarchyLevel.selectionLeadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
+        .accessibilityLabel(
+            "\(title), \(count) \(countedItemName), \(expanded ? "expanded" : "collapsed")"
+        )
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier(accessibilityID)
     }
 }
 
@@ -2603,14 +2743,23 @@ private struct HideSearchSheet: View {
         return HideSearchEntry.filtered(entries, query: query)
     }
 
+    private var projectEntries: [HideSearchEntry] {
+        HideSearchPresentation.foldedProjectEntries(
+            workspaces: model.workspaces,
+            groups: model.inactiveProjectGroups,
+            query: query
+        )
+    }
+
     private var entries: [HideSearchEntry] {
-        agentGroups.flatMap(\.entries) + checkoutEntries
+        agentGroups.flatMap(\.entries) + projectEntries + checkoutEntries
     }
 
     var body: some View {
         let groups = agentGroups
+        let projects = projectEntries
         let checkouts = checkoutEntries
-        let resultIDs = (groups.flatMap(\.entries) + checkouts).map(\.id)
+        let resultIDs = (groups.flatMap(\.entries) + projects + checkouts).map(\.id)
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 HideSearchField(
@@ -2637,6 +2786,17 @@ private struct HideSearchSheet: View {
                                 .padding(.horizontal, HideTheme.spacingMD)
                                 .padding(.top, HideTheme.spacingSM)
                             ForEach(group.entries) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if !projects.isEmpty {
+                            Text("WORKSPACES > PROJECTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(projects) { entry in
                                 searchButton(entry)
                             }
                         }
@@ -2723,6 +2883,7 @@ private struct HideSearchSheet: View {
         switch entry.kind {
         case let .agent(agent): model.selectAgent(agent)
         case let .checkout(_, checkout): model.selectCheckout(checkout)
+        case let .project(_, primaryCheckout): model.selectCheckout(primaryCheckout)
         }
         dismiss()
     }
@@ -2735,6 +2896,31 @@ struct HideSearchAgentGroup: Identifiable {
 }
 
 enum HideSearchPresentation {
+    static func foldedProjectEntries(
+        workspaces: [CoreWorkspaceSnapshot],
+        groups: [CoreInactiveProjectGroupSnapshot],
+        query: String
+    ) -> [HideSearchEntry] {
+        let byID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let entries = groups
+            .filter { !$0.expanded }
+            .flatMap(\.projectIDs)
+            .compactMap { projectID -> HideSearchEntry? in
+                guard let workspace = byID[projectID],
+                      let primary = workspace.checkouts.first(where: {
+                          !$0.isWorktree && $0.path == workspace.path
+                      })
+                else { return nil }
+                return HideSearchEntry(
+                    id: "project-\(workspace.id)",
+                    title: workspace.repoName,
+                    subtitle: workspace.path,
+                    kind: .project(workspace, primary)
+                )
+            }
+        return HideSearchEntry.filtered(entries, query: query)
+    }
+
     static func agentGroups(
         workspaces: [CoreWorkspaceSnapshot],
         agents: [SidebarAgent],
@@ -2768,11 +2954,13 @@ struct HideSearchEntry: Identifiable {
     enum Kind {
         case agent(SidebarAgent)
         case checkout(CoreWorkspaceSnapshot, CoreCheckoutSnapshot)
+        case project(CoreWorkspaceSnapshot, CoreCheckoutSnapshot)
 
         var systemImage: String {
             switch self {
             case .agent: "sparkles"
             case .checkout: "rectangle.stack"
+            case .project: "folder"
             }
         }
     }
@@ -2780,6 +2968,7 @@ struct HideSearchEntry: Identifiable {
     enum Route: Equatable {
         case agent(paneID: String)
         case checkout(workspaceID: String, checkoutID: String)
+        case project(workspaceID: String, primaryCheckoutID: String)
     }
 
     let id: String
@@ -2793,6 +2982,8 @@ struct HideSearchEntry: Identifiable {
             .agent(paneID: agent.paneID)
         case let .checkout(workspace, checkout):
             .checkout(workspaceID: workspace.id, checkoutID: checkout.id)
+        case let .project(workspace, primaryCheckout):
+            .project(workspaceID: workspace.id, primaryCheckoutID: primaryCheckout.id)
         }
     }
 
