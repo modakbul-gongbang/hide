@@ -186,13 +186,13 @@ impl ActiveSubscription {
 
 pub(crate) fn spawn(
     context: SessionSyncContext,
-    home_path: Option<std::path::PathBuf>,
+    usage_paths: Option<crate::usage::UsagePaths>,
 ) -> Result<SessionSyncHandle, String> {
     let (sender, receiver) = channel();
     let worker_sender = sender.clone();
     let worker = thread::Builder::new()
         .name("herdr-core-session-sync".to_owned())
-        .spawn(move || run_coordinator(context, home_path, receiver, worker_sender))
+        .spawn(move || run_coordinator(context, usage_paths, receiver, worker_sender))
         .map_err(|error| format!("session sync worker could not be started: {error}"))?;
     Ok(SessionSyncHandle {
         sender,
@@ -202,10 +202,11 @@ pub(crate) fn spawn(
 
 fn run_coordinator(
     context: SessionSyncContext,
-    home_path: Option<std::path::PathBuf>,
+    usage_paths: Option<crate::usage::UsagePaths>,
     receiver: Receiver<CoordinatorMessage>,
     sender: Sender<CoordinatorMessage>,
 ) {
+    let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut replica: Option<SessionReplica> = None;
     let mut subscription: Option<ActiveSubscription> = None;
     let mut subscription_generation = 0_u64;
@@ -226,9 +227,7 @@ fn run_coordinator(
     }
     // Kept for the counter sweep below, which runs on a fresh snapshot.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
-    let mut usage_reader = context
-        .is_local()
-        .then(|| crate::usage::ProviderUsageReader::new(home_path));
+    let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
     // Git reads describe this machine's checkouts, so only the local
     // coordinator runs one.
     let mut changes_reader = context.is_local().then(crate::changes::ChangesReader::new);
@@ -337,13 +336,17 @@ fn run_coordinator(
             }
         }
 
-        if let Some(provider_usage) = usage_reader
-            .as_mut()
-            .and_then(crate::usage::ProviderUsageReader::read_if_due)
-            && !publish_provider_usage(&context, provider_usage)
-        {
-            stop_subscription(&mut subscription);
-            return;
+        if let Some(reader) = usage_reader.as_mut() {
+            let Some(activity) = read_usage_activity(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(provider_usage) = reader.read_if_due(activity)
+                && !publish_provider_usage(&context, provider_usage)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
         }
 
         if let Some(reader) = changes_reader.as_mut() {
@@ -1060,6 +1063,11 @@ fn publish_provider_usage(
         context.notifier.notify();
     }
     true
+}
+
+fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
+    let runtime = context.runtime.upgrade()?;
+    runtime.lock().ok().map(|guard| guard.usage_activity())
 }
 
 /// Hands the runtime the hook-install judgement, which was read on this
@@ -3203,6 +3211,8 @@ mod tests {
                 remote_enabled: false,
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
+                claude_config_dir: None,
+                codex_home: None,
             },
         )))
     }
@@ -3585,6 +3595,8 @@ mod tests {
                 remote_enabled: true,
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
+                claude_config_dir: None,
+                codex_home: None,
             },
         )));
         let context = SessionSyncContext::remote(

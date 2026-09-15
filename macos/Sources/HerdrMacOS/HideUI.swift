@@ -896,7 +896,7 @@ private struct SidebarUtilityBar: View {
     }
 
     private func availablePercent(for usage: CoreProviderUsageSnapshot) -> Double? {
-        guard usage.state == "available" else { return nil }
+        guard ["available", "stale", "fallback"].contains(usage.state) else { return nil }
         return usage.usedPercent
     }
 
@@ -983,6 +983,9 @@ private struct SidebarUtilityBar: View {
             .popover(isPresented: $showingUsage, arrowEdge: .bottom) {
                 HideUsagePopover(usages: usages)
             }
+            .onChange(of: showingUsage) { _, open in
+                model.core.setUsagePopoverOpen(open)
+            }
 
             HideIconButton(
                 systemImage: "gearshape",
@@ -1040,44 +1043,57 @@ private struct HideUsagePopover: View {
     let usages: [CoreProviderUsageSnapshot]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
-            HStack(spacing: HideTheme.spacingSM) {
-                Text("Weekly Usage")
-                    .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                    .foregroundStyle(HideTheme.primary)
-                Spacer()
-                Text("7 days")
-                    .hideFont(size: HideTheme.Typography.micro, weight: .semibold, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-            }
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
+                HStack(spacing: HideTheme.spacingSM) {
+                    Text("Weekly Usage")
+                        .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
+                        .foregroundStyle(HideTheme.primary)
+                    Spacer()
+                    Text("7 days")
+                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                }
 
-            if usages.isEmpty {
-                Text("Provider usage is not available yet.")
-                    .hideFont(size: HideTheme.Typography.caption)
-                    .foregroundStyle(HideTheme.secondary)
-            } else {
                 ForEach(usages) { usage in
-                    HideWeeklyUsageRow(usage: usage)
+                    VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+                        HideWeeklyUsageRow(usage: usage, bucket: nil, now: context.date)
+                        ForEach(usage.buckets) { bucket in
+                            HideWeeklyUsageRow(usage: usage, bucket: bucket, now: context.date)
+                        }
+                    }
                 }
             }
+            .padding(HideTheme.spacingLG)
+            .frame(width: 250)
+            .background(HideTheme.panel)
+            .preferredColorScheme(.dark)
+            .accessibilityIdentifier("hide-weekly-usage")
         }
-        .padding(HideTheme.spacingLG)
-        .frame(width: 250)
-        .background(HideTheme.panel)
-        .preferredColorScheme(.dark)
-        .accessibilityIdentifier("hide-weekly-usage")
     }
 }
 
 private struct HideWeeklyUsageRow: View {
     let usage: CoreProviderUsageSnapshot
+    let bucket: CoreProviderUsageBucketSnapshot?
+    let now: Date
+
+    private var label: String { bucket?.label ?? usage.label }
+    private var state: String { bucket?.state ?? usage.state }
+    private var usedPercent: Double? { bucket?.usedPercent ?? usage.usedPercent }
+    private var resetsAtUnixSeconds: UInt64? { bucket?.resetsAtUnixSeconds ?? usage.resetsAtUnixSeconds }
+    private var message: String? { bucket?.message ?? usage.message }
+    private var hasValue: Bool {
+        ["available", "stale", "fallback"].contains(state) && usedPercent != nil
+    }
 
     private var clampedProgress: Double {
-        min(max(usage.usedPercent ?? 0, 0), 100) / 100
+        guard hasValue else { return 0 }
+        return min(max(usedPercent ?? 0, 0), 100) / 100
     }
 
     private var usageColor: Color {
-        guard let percent = usage.usedPercent, usage.state == "available" else {
+        guard let percent = usedPercent, hasValue else {
             return HideTheme.muted
         }
         if percent >= 90 { return HideTheme.danger }
@@ -1086,36 +1102,77 @@ private struct HideWeeklyUsageRow: View {
     }
 
     private var valueLabel: String {
-        guard let percent = usage.usedPercent, usage.state == "available" else {
-            return "Unavailable"
+        if state == "loading" {
+            return "…"
         }
+        guard let percent = usedPercent, hasValue else { return "Unavailable" }
         return "\(Int(percent.rounded()))%"
     }
 
-    private var helpText: String {
-        if let message = usage.message {
-            return message
-        }
-        guard let reset = usage.resetsAtUnixSeconds else {
-            return "1-week plan usage"
-        }
+    private var relativeReset: String? {
+        guard let reset = resetsAtUnixSeconds else { return nil }
+        let seconds = max(0, Int(Date(timeIntervalSince1970: TimeInterval(reset)).timeIntervalSince(now)))
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = max(1, (seconds % 3_600) / 60)
+        if days > 0 { return "in \(days)d \(hours)h" }
+        if hours > 0 { return "in \(hours)h \(minutes)m" }
+        return "in \(minutes)m"
+    }
+
+    private var absoluteReset: String? {
+        guard let reset = resetsAtUnixSeconds else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(reset))
         return "Resets \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var helpText: String {
+        if state == "fallback", let source = usage.lastSuccessAtUnixMilliseconds {
+            let date = Date(timeIntervalSince1970: TimeInterval(source) / 1_000)
+            return "From last Codex session · \(date.formatted(date: .abbreviated, time: .shortened))"
+        }
+        if let message {
+            if bucket != nil, let absoluteReset {
+                return "\(label) · \(message) · \(absoluteReset)"
+            }
+            return message
+        }
+        return [bucket == nil ? nil : label, absoluteReset]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
             HStack(spacing: HideTheme.spacingSM) {
-                HideProviderMark(usage: usage, isMuted: false)
+                if bucket != nil {
+                    Text("└")
+                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                        .frame(width: HideTheme.spacingSM)
+                }
+                HideProviderMark(usage: usage, isMuted: !hasValue)
 
-                Text(usage.label)
-                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                Text(label)
+                    .hideFont(
+                        size: bucket == nil ? HideTheme.Typography.body : HideTheme.Typography.caption,
+                        weight: .medium
+                    )
                     .foregroundStyle(HideTheme.secondary)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                    .truncationMode(.tail)
+                if let relativeReset {
+                    Text("· \(relativeReset)")
+                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                        .foregroundStyle(HideTheme.muted)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                Spacer(minLength: HideTheme.spacingXS)
                 Text(valueLabel)
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold, design: .monospaced)
-                    .foregroundStyle(usage.state == "available" ? usageColor : HideTheme.muted)
+                    .foregroundStyle(hasValue ? usageColor : HideTheme.muted)
+                    .fixedSize(horizontal: true, vertical: false)
             }
 
             GeometryReader { geometry in
@@ -1132,9 +1189,13 @@ private struct HideWeeklyUsageRow: View {
         }
         .hideTooltip(helpText)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(usage.label)
+        .accessibilityLabel(label)
         .accessibilityValue(valueLabel)
-        .accessibilityIdentifier("hide-weekly-usage-\(usage.provider)")
+        .accessibilityIdentifier(
+            bucket == nil
+                ? "hide-weekly-usage-\(usage.provider)"
+                : "hide-weekly-usage-\(usage.provider)-bucket"
+        )
     }
 }
 

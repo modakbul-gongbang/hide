@@ -5528,7 +5528,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 3352,
+      "width": 4528,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -7805,8 +7805,426 @@
     },
     {
       "type": "frame",
-      "id": "Vmhg4",
+      "id": "screen-toolbar-weekly-usage-states",
+      "name": "Screen / Toolbar / Weekly Usage states",
+      "width": 1096,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xxl",
+      "children": [
+        {
+          "type": "text",
+          "id": "weekly-usage-states-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Weekly Usage popover states",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "weekly-usage-states-spec",
+          "name": "Spec",
+          "fill": "$--color-muted",
+          "content": "250pt popover · reset is derived beside each label · 3pt progress · provider state stays inside its row",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "weekly-usage-state-cards",
+          "name": "States",
+          "width": "fill_container",
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "children": [
+            {
+              "type": "frame",
+              "id": "weekly-usage-available",
+              "name": "Available",
+              "width": 250,
+              "fill": "$--color-panel",
+              "cornerRadius": "$--radius-lg",
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "weekly-usage-available-heading",
+                  "name": "Heading",
+                  "fill": "$--color-primary",
+                  "content": "Weekly Usage                    7 days",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-available-rule",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-available-claude",
+                  "name": "Claude Code row",
+                  "fill": "$--color-primary",
+                  "content": "Claude Code · in 2d 19h          76%",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "weekly-usage-available-claude-bar",
+                  "name": "Claude Code progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "weekly-usage-available-claude-fill",
+                      "name": "Progress",
+                      "width": 164,
+                      "height": 3,
+                      "fill": "$--color-warning"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-available-fable",
+                  "name": "Fable child row",
+                  "fill": "$--color-secondary",
+                  "content": "└ Fable · in 2d 19h                 61%",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "weekly-usage-available-fable-bar",
+                  "name": "Fable progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "weekly-usage-available-fable-fill",
+                      "name": "Progress",
+                      "width": 132,
+                      "height": 3,
+                      "fill": "$--color-success"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-available-codex",
+                  "name": "Codex row",
+                  "fill": "$--color-primary",
+                  "content": "Codex · in 5h 12m                   45%",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "weekly-usage-available-codex-bar",
+                  "name": "Codex progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "weekly-usage-available-codex-fill",
+                      "name": "Progress",
+                      "width": 98,
+                      "height": 3,
+                      "fill": "$--color-success"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "weekly-usage-loading",
+              "name": "Loading",
+              "width": 250,
+              "fill": "$--color-panel",
+              "cornerRadius": "$--radius-lg",
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "weekly-usage-loading-heading",
+                  "name": "Heading",
+                  "fill": "$--color-primary",
+                  "content": "Weekly Usage                    7 days",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-loading-rule",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-loading-claude",
+                  "name": "Claude Code row",
+                  "fill": "$--color-muted",
+                  "content": "Claude Code                               …",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-loading-claude-bar",
+                  "name": "Empty progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-loading-codex",
+                  "name": "Codex row",
+                  "fill": "$--color-muted",
+                  "content": "Codex                                        …",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-loading-codex-bar",
+                  "name": "Empty progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-loading-note",
+                  "name": "Tooltip state",
+                  "fill": "$--color-muted",
+                  "content": "Checking usage…",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "weekly-usage-unavailable",
+              "name": "Unavailable",
+              "width": 250,
+              "fill": "$--color-panel",
+              "cornerRadius": "$--radius-lg",
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "weekly-usage-unavailable-heading",
+                  "name": "Heading",
+                  "fill": "$--color-primary",
+                  "content": "Weekly Usage                    7 days",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-unavailable-rule",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-unavailable-claude",
+                  "name": "Claude Code row",
+                  "fill": "$--color-secondary",
+                  "content": "Claude Code                 Unavailable",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-unavailable-claude-bar",
+                  "name": "Empty progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-unavailable-claude-note",
+                  "name": "Claude Code tooltip",
+                  "fill": "$--color-muted",
+                  "content": "Sign in with claude to see usage",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-unavailable-codex",
+                  "name": "Codex row",
+                  "fill": "$--color-secondary",
+                  "content": "Codex                          Unavailable",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-unavailable-codex-bar",
+                  "name": "Empty progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-unavailable-codex-note",
+                  "name": "Codex tooltip",
+                  "fill": "$--color-muted",
+                  "content": "Sign in with codex to see usage",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "weekly-usage-offline",
+              "name": "Offline retained value",
+              "width": 250,
+              "fill": "$--color-panel",
+              "cornerRadius": "$--radius-lg",
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "weekly-usage-offline-heading",
+                  "name": "Heading",
+                  "fill": "$--color-primary",
+                  "content": "Weekly Usage                    7 days",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-offline-rule",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-offline-claude",
+                  "name": "Claude Code row",
+                  "fill": "$--color-primary",
+                  "content": "Claude Code · in 2d 19h          76%",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-offline-claude-bar",
+                  "name": "Retained progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-warning"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-offline-fable",
+                  "name": "Fable child row",
+                  "fill": "$--color-secondary",
+                  "content": "└ Fable · in 2d 19h                 61%",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-offline-fable-bar",
+                  "name": "Retained progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-success"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-offline-codex",
+                  "name": "Codex row",
+                  "fill": "$--color-primary",
+                  "content": "Codex · in 5h 12m                   45%",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "weekly-usage-offline-codex-bar",
+                  "name": "Retained progress",
+                  "width": "fill_container",
+                  "height": 3,
+                  "fill": "$--color-success"
+                },
+                {
+                  "type": "text",
+                  "id": "weekly-usage-offline-note",
+                  "name": "Tooltip state",
+                  "fill": "$--color-muted",
+                  "content": "Last checked 12m ago · offline",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ],
       "x": 1320,
+      "y": 0
+    },
+    {
+      "type": "frame",
+      "id": "Vmhg4",
+      "x": 2496,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -8459,7 +8877,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 1692,
+      "x": 2868,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -9810,7 +10228,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 2127,
+      "x": 3303,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -10918,7 +11336,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 2562,
+      "x": 3738,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -11490,7 +11908,7 @@
     {
       "type": "frame",
       "id": "uZe5J",
-      "x": 2997,
+      "x": 4173,
       "y": 0,
       "name": "Screen / Panel / Git",
       "clip": true,
