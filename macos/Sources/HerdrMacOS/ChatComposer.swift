@@ -156,14 +156,25 @@ enum ChatSubmissionRouting {
 /// where the sentence inside it was the entire content. Anything that is not
 /// one of these envelopes is the CLI talking in prose, and is left alone.
 enum HerdrErrorEnvelope {
-    static func message(in text: String) -> String? {
+    struct Error: Equatable {
+        let code: String
+        let message: String
+    }
+
+    static func error(in text: String) -> Error? {
         guard let data = text.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let error = root["error"] as? [String: Any],
+              let code = error["code"] as? String,
+              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let message = error["message"] as? String,
               !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
-        return message
+        return Error(code: code, message: message)
+    }
+
+    static func message(in text: String) -> String? {
+        error(in: text)?.message
     }
 }
 

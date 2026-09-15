@@ -475,6 +475,7 @@ final class ShellModel: ObservableObject {
     private var handledTaskOperationIDs: Set<UInt64> = []
     private var pendingScratchChat: (provider: AgentProvider, message: String, bypass: Bool)?
     @Published var interactionNotice: String?
+    @Published var herdrProtocolMismatch: HerdrProtocolMismatchDetails?
     /// When the last reported fork failure happened, so one failure is raised
     /// once rather than on every snapshot that still carries it.
     /// Panes with a fork in flight, which is what puts "forking…" in the
@@ -567,6 +568,9 @@ final class ShellModel: ObservableObject {
         }
         browser.onReceipt = { [weak core] receipt in
             core?.recordBrowserStatus(receipt)
+        }
+        core.localHerdrMutationRejectionHandler = { [weak self] readiness in
+            self?.presentLocalHerdrMutationRejection(readiness)
         }
         #if DEBUG
         // Replay a supplied remote projection without asking an SSH target to
@@ -1917,6 +1921,11 @@ final class ShellModel: ObservableObject {
         }
         if operation.kind == "scratch_chat_tab", let pending = pendingScratchChat {
             pendingScratchChat = nil
+            guard requireLocalHerdrMutationReadiness() else {
+                composerSubmitting = false
+                showComposer = false
+                return
+            }
             core.startAgentInCreatedPane(
                 paneID: paneID,
                 path: path,
@@ -1935,6 +1944,7 @@ final class ShellModel: ObservableObject {
             worktreeWorkspace = nil
             worktreeDraft = WorktreeSheetDraft()
             if let raw = operation.agentKind, let provider = AgentProvider(rawValue: raw) {
+                guard requireLocalHerdrMutationReadiness() else { return }
                 core.startAgentInCreatedPane(
                     paneID: paneID,
                     path: path,
@@ -2103,6 +2113,10 @@ final class ShellModel: ObservableObject {
         case .start(let resolved):
             destination = resolved
         }
+        guard requireLocalHerdrMutationReadiness() else {
+            showComposer = false
+            return
+        }
         // The operator's choices are remembered before the work starts, so a
         // failed launch still leaves the composer offering what they picked.
         core.persistUIState(
@@ -2145,6 +2159,75 @@ final class ShellModel: ObservableObject {
         interactionNotice = nil
     }
 
+    func dismissHerdrProtocolMismatch() {
+        herdrProtocolMismatch = nil
+    }
+
+    func openHideReleases() {
+        herdrProtocolMismatch = nil
+        guard let url = URL(string: "https://github.com/modakbul-gongbang/hide/releases") else {
+            interactionNotice = "Hide could not form the Releases address."
+            return
+        }
+        ExternalBrowser.open(url) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    func openHerdrRestartGuide() {
+        herdrProtocolMismatch = nil
+        guard let url = URL(
+            string: "https://github.com/modakbul-gongbang/hide/blob/main/docs/INSTALL.md#hide-says-the-running-herdr-speaks-another-protocol"
+        ) else {
+            interactionNotice = "Hide could not form the restart guide address."
+            return
+        }
+        ExternalBrowser.open(url) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    func openHerdrProtocolRecovery(_ details: HerdrProtocolMismatchDetails) {
+        switch details.recovery {
+        case .restartBundledHerdr:
+            openHerdrRestartGuide()
+        case .updateHide:
+            openHideReleases()
+        case .reviewDiagnostics:
+            break
+        }
+    }
+
+    func copyHerdrProtocolDiagnostics(_ details: HerdrProtocolMismatchDetails) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(details.diagnostics, forType: .string)
+        herdrProtocolMismatch = nil
+    }
+
+    @discardableResult
+    private func requireLocalHerdrMutationReadiness() -> Bool {
+        let readiness = core.localHerdrMutationReadiness
+        guard case .connected = readiness else {
+            presentLocalHerdrMutationRejection(readiness)
+            return false
+        }
+        return true
+    }
+
+    private func presentLocalHerdrMutationRejection(
+        _ readiness: LocalHerdrMutationReadiness
+    ) {
+        switch readiness {
+        case .connected:
+            return
+        case .protocolMismatch(let details):
+            interactionNotice = nil
+            herdrProtocolMismatch = details
+        case .initializing(let message), .unavailable(let message):
+            interactionNotice = message
+        }
+    }
+
     func addDevice(label: String, alias: String) {
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = "device:\(trimmedAlias.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression))"
@@ -2177,6 +2260,10 @@ final class ShellModel: ObservableObject {
     }
 
     private func startTerminal(for checkout: CoreCheckoutSnapshot, focusHerdr: Bool) {
+        guard requireLocalHerdrMutationReadiness() else {
+            checkoutStartState = .failed(core.localHerdrMutationReadiness.message)
+            return
+        }
         guard pendingCheckoutStarts.insert(checkout.id).inserted else {
             checkoutStartState = .starting
             return
@@ -2703,6 +2790,7 @@ final class ShellModel: ObservableObject {
     /// the operator dismiss a dialog to see the result it was covering, and it
     /// said the same thing whether the fork then worked or failed.
     func forkPaneFromHeader(_ paneID: String) {
+        guard requireLocalHerdrMutationReadiness() else { return }
         paneNotices[paneID] = nil
         guard let pane = paneMetadata(for: paneID), canForkPane(pane) else {
             paneNotices[paneID] = "This pane has no agent session that can be forked."
@@ -2726,6 +2814,9 @@ final class ShellModel: ObservableObject {
     }
 
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
+        if case .local = closeTarget {
+            guard requireLocalHerdrMutationReadiness() else { return }
+        }
         let paneID = closeTarget.paneID
         guard let pane = paneMetadata(for: paneID) else {
             consequenceResult = "Select a pane before closing."
@@ -2856,10 +2947,20 @@ final class ShellModel: ObservableObject {
     func confirmConsequencePreview() {
         guard let consequenceNotice else { return }
         if let target = pendingTabCloseTarget {
+            if case .local = target, !requireLocalHerdrMutationReadiness() {
+                pendingTabCloseTarget = nil
+                self.consequenceNotice = nil
+                return
+            }
             executeTabClose(target, confirmed: true)
             consequenceResult = "Confirmed close requested for tab \(target.tabID)."
             pendingTabCloseTarget = nil
         } else if let target = pendingPaneCloseTarget {
+            if case .local = target, !requireLocalHerdrMutationReadiness() {
+                pendingPaneCloseTarget = nil
+                self.consequenceNotice = nil
+                return
+            }
             let paneID = target.paneID
             executePaneClose(target, confirmed: true)
             consequenceResult = "Confirmed close requested for pane \(paneID)."

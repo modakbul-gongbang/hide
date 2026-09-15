@@ -128,6 +128,7 @@ struct TerminalHost: NSViewRepresentable {
         context.coordinator.onOpenLink = onOpenLink
         (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
         applyPaneFind(to: terminal)
+        context.coordinator.replayGeometryIfReady(from: terminal)
         let showing = canvasVisible && paneVisible
         if terminal.isHidden == showing {
             // Applied on the next run-loop turn: hiding an NSView inside
@@ -206,10 +207,40 @@ struct TerminalHost: NSViewRepresentable {
             MainActor.assumeIsolated {
                 settledSize.report(cols: newCols, rows: newRows)
                 // This updates the frame guard only. It never resizes the PTY.
-                bridge.reportTerminalViewport(paneID: paneID, cols: newCols, rows: newRows, newView: !reportedFirstSize)
-                reportedFirstSize = true
+                if bridge.reportTerminalViewport(
+                    paneID: paneID,
+                    cols: newCols,
+                    rows: newRows,
+                    newView: !reportedFirstSize
+                ) == .accepted {
+                    reportedFirstSize = true
+                }
                 sampleSettledSizeWhileUndrawn()
             }
+        }
+
+        /// A terminal view can lay itself out before the core has confirmed
+        /// Herdr compatibility. The admission boundary rejects that first
+        /// geometry so no command reaches an unknown server, but SwiftTerm
+        /// may never report the unchanged grid again. A published connected
+        /// snapshot rebuilds this representable and replays the exact current
+        /// grid once, preserving both the compatibility gate and initial
+        /// terminal attachment.
+        @MainActor func replayGeometryIfReady(from terminal: TerminalView) {
+            guard case .connected = bridge.localHerdrMutationReadiness else { return }
+            if !reportedFirstSize {
+                let cols = terminal.getTerminal().cols
+                let rows = terminal.getTerminal().rows
+                guard cols > 0, rows > 0 else { return }
+                guard bridge.reportTerminalViewport(
+                    paneID: paneID,
+                    cols: cols,
+                    rows: rows,
+                    newView: true
+                ) == .accepted else { return }
+                reportedFirstSize = true
+            }
+            flushSettledSize()
         }
 
         /// A pane that is not drawn never ticks - a hidden tab, a view with
@@ -235,7 +266,9 @@ struct TerminalHost: NSViewRepresentable {
 
         @MainActor func flushSettledSize() {
             guard let grid = settledSize.displayTick() else { return }
-            bridge.resizeTerminal(paneID: paneID, cols: grid.cols, rows: grid.rows)
+            if bridge.resizeTerminal(paneID: paneID, cols: grid.cols, rows: grid.rows) == .accepted {
+                settledSize.markDelivered(grid)
+            }
         }
 
         func setTerminalTitle(source: TerminalView, title: String) {}

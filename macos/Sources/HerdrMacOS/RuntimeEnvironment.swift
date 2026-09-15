@@ -295,6 +295,10 @@ enum HerdrRuntimeResolver {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
         process.arguments = ["-a", "256", path]
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "LANG": "C",
+            "LC_ALL": "C",
+        ]) { _, safeValue in safeValue }
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do {
@@ -684,8 +688,9 @@ enum HerdrTerminalLauncher {
             arguments: arguments
         )
         guard result.status == 0 else {
-            let detail = String(decoding: result.error, as: UTF8.self)
+            let rawDetail = String(decoding: result.error, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = HerdrErrorEnvelope.message(in: rawDetail) ?? rawDetail
             return TerminalLaunchResult(
                 succeeded: false,
                 message: detail.isEmpty

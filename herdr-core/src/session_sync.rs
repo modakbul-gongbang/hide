@@ -1353,7 +1353,7 @@ fn stale_if_projected(
     replica: Option<&SessionReplica>,
     error: SessionFetchError,
 ) -> SessionFetchError {
-    if replica.is_none() || matches!(error, SessionFetchError::Protocol(_)) {
+    if replica.is_none() || matches!(error, SessionFetchError::Protocol { .. }) {
         return error;
     }
     SessionFetchError::Stale(error.message().to_owned())
@@ -1927,7 +1927,7 @@ impl SessionReplica {
 
     fn apply(&mut self, event: ReplicaEnvelope) -> Result<ApplyOutcome, SessionFetchError> {
         if event.protocol != HERDR_PROTOCOL_REVISION {
-            return Err(protocol_mismatch(event.protocol));
+            return Err(protocol_mismatch(event.protocol, None));
         }
         if event.host != self.host {
             return Err(SessionFetchError::Stale(format!(
@@ -4151,8 +4151,10 @@ mod tests {
         let message = mismatch.message();
         assert!(
             message.contains(&format!("protocol {}", HERDR_PROTOCOL_REVISION + 1))
-                && message.contains(&format!("needs protocol {HERDR_PROTOCOL_REVISION}"))
-                && message.contains("herdr server stop"),
+                && message.contains(&format!("supports protocol {HERDR_PROTOCOL_REVISION}"))
+                && message.contains("Update Hide")
+                && message.contains("No workspace or agent was created")
+                && !message.contains("server stop"),
             "the mismatch names both revisions and the remedy: {message}"
         );
         assert_eq!(replica.project().focused_pane_id, before.focused_pane_id);

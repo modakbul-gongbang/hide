@@ -81,7 +81,7 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.0-preview.2026-09-15-deefc5857a5c arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
 
 ## Verify the installed app
 
@@ -103,11 +103,13 @@ Also run `pgrep -fl HerdrMacOS` to rule out a second dev or worktree instance; m
 ## First launch
 
 hide runs the Herdr it bundles.
-On launch it verifies the bundled Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
+On launch it verifies the bundled Herdr v0.9.0-preview.2026-09-15-deefc5857a5c binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
 Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket; hide and every `herdr` process it starts follow the same value.
 
 A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.
-When it does not, hide stays disconnected and names both revisions: stop that server with `herdr server stop` and reopen hide so it starts its own, or update hide to a release built against that Herdr.
+When it does not, hide stays disconnected and blocks workspace, terminal, chat, and agent creation before any command is sent.
+The compatibility alert compares the protocol numbers and points to the older component: it opens the safe restart guide for an older running Herdr, or the hide Releases page for an older hide.
+It can also copy version and protocol diagnostics, but it never stops or replaces the running server.
 
 A separate Herdr installation is not required.
 The bundled binary is at `hide.app/Contents/Resources/herdr-runtime/herdr` if you want the matching CLI on your `PATH`.
@@ -137,7 +139,7 @@ Quit only owned test instances, rebuild and reinstall when intended, then launch
 For QA, use the isolation and restoration procedure in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); do not stop the operator's Herdr server.
 
 <!-- herdr-provenance:start -->
-hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-15-deefc5857a5c), built from commit `deefc5857a5c`.
 This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
 The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
 <!-- herdr-provenance:end -->
@@ -150,7 +152,15 @@ Reinstall hide from a release archive whose checksum verified, or rebuild it; th
 ### hide says the running Herdr speaks another protocol
 
 A Herdr server started outside hide (an installed CLI, an older hide) owns the socket and was built against a different protocol revision.
-Run `herdr server stop` with that CLI, or quit the other app, then reopen hide so it starts its bundled Herdr.
+The alert compares the required and running protocol numbers so it does not tell you to update the wrong component.
+
+If the running Herdr is older, finish or save the work in its panes first.
+Then stop that session from a terminal with `herdr session stop default`, or use `herdr server stop` for an explicitly supervised server, and reopen hide.
+Hide will start the compatible Herdr bundled inside the app, so a separate install or `herdr update` is not required.
+
+If the running Herdr is newer, choose `Open Hide Releases` and install a compatible hide release.
+If either protocol number is unavailable, choose `Copy Diagnostics` and include the result in the issue report instead of guessing which component to replace.
+No workspace or agent was created, and hide leaves the running server and its panes untouched until you deliberately perform the safe recovery step.
 
 ### An agent cannot start
 

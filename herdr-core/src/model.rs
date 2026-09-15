@@ -1864,6 +1864,9 @@ pub struct ProviderStatusSnapshot {
     pub state: String,
     pub socket_path: Option<String>,
     pub message: Option<String>,
+    pub expected_protocol: Option<u64>,
+    pub received_protocol: Option<u64>,
+    pub received_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2056,6 +2059,9 @@ impl Snapshot {
                     state: herdr_state.to_owned(),
                     socket_path: options.herdr_socket_path.clone(),
                     message: herdr_message,
+                    expected_protocol: None,
+                    received_protocol: None,
+                    received_version: None,
                 },
                 remote: options
                     .remote_targets

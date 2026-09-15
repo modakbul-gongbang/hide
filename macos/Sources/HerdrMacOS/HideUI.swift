@@ -219,6 +219,22 @@ struct ShellView: View {
             .background(HideTheme.panel)
         }
         .alert(
+            model.herdrProtocolMismatch?.title ?? "Hide and Herdr aren’t compatible",
+            isPresented: Binding(
+                get: { model.herdrProtocolMismatch != nil },
+                set: { if !$0 { model.dismissHerdrProtocolMismatch() } }
+            ),
+            presenting: model.herdrProtocolMismatch
+        ) { details in
+            if let actionLabel = details.primaryActionLabel {
+                Button(actionLabel) { model.openHerdrProtocolRecovery(details) }
+            }
+            Button("Copy Diagnostics") { model.copyHerdrProtocolDiagnostics(details) }
+            Button("OK", role: .cancel, action: model.dismissHerdrProtocolMismatch)
+        } message: { details in
+            Text(details.message)
+        }
+        .alert(
             "Hide",
             isPresented: Binding(
                 get: { model.interactionNotice != nil },

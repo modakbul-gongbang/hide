@@ -2022,7 +2022,12 @@ pub enum SessionFetchError {
     /// The socket exists but the request failed (connect, timeout, IO).
     Unreachable(String),
     /// The server answered with an incompatible protocol revision.
-    Protocol(String),
+    Protocol {
+        message: String,
+        expected_protocol: u64,
+        received_protocol: u64,
+        received_version: Option<String>,
+    },
     /// A previously valid projection is retained while the event stream
     /// reconnects or performs an explicit snapshot resynchronization.
     Stale(String),
@@ -2035,7 +2040,7 @@ impl SessionFetchError {
         match self {
             Self::SocketMissing(_) => "socket_missing",
             Self::Unreachable(_) => "unreachable",
-            Self::Protocol(_) => "protocol_mismatch",
+            Self::Protocol { .. } => "protocol_mismatch",
             Self::Stale(_) => "stale",
             Self::Malformed(_) => "malformed",
         }
@@ -2045,9 +2050,25 @@ impl SessionFetchError {
         match self {
             Self::SocketMissing(message)
             | Self::Unreachable(message)
-            | Self::Protocol(message)
             | Self::Stale(message)
             | Self::Malformed(message) => message,
+            Self::Protocol { message, .. } => message,
+        }
+    }
+
+    pub fn protocol_details(&self) -> Option<(u64, u64, Option<&str>)> {
+        match self {
+            Self::Protocol {
+                expected_protocol,
+                received_protocol,
+                received_version,
+                ..
+            } => Some((
+                *expected_protocol,
+                *received_protocol,
+                received_version.as_deref(),
+            )),
+            _ => None,
         }
     }
 }

@@ -6,7 +6,7 @@ import SwiftUI
 enum HideTheme {
     static let modifierSymbols: [PaneShortcut.Modifier: String] = [.control: "⌃", .option: "⌥", .shift: "⇧", .command: "⌘"]
     @MainActor private static let inter: CGFont = {
-        guard let url = Bundle.module.url(forResource: "InterVariable", withExtension: "ttf"),
+        guard let url = PackagedResourceBundle.app?.url(forResource: "InterVariable", withExtension: "ttf"),
               let provider = CGDataProvider(url: url as CFURL), let font = CGFont(provider) else {
             preconditionFailure("The bundled Inter font is missing or unreadable")
         }

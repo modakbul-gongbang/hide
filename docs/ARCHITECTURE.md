@@ -108,7 +108,11 @@ Terminal input, scroll, resize and release messages and the parameterless snapsh
 
 ## The bundled Herdr runtime
 
-The app runs the Herdr it bundles: `HerdrRuntimeResolver` verifies the bundled binary against the manifest digest and starts it on the default socket when no server is running there; a server that is already running is joined as it is when its protocol matches, and refused with the two revisions and the `herdr server stop` remedy when it does not.
+The app runs the Herdr it bundles: `HerdrRuntimeResolver` verifies the bundled binary against the manifest digest and starts it on the default socket when no server is running there; a server that is already running is joined as it is when its protocol matches.
+When it does not match, the core projects the required protocol and the running server's protocol and version as typed status.
+The shell blocks every local Herdr mutation before dispatch.
+When the running Herdr is older, the native alert points to the safe restart guide; when Hide is older, it points to Hide Releases; when the comparison is unknown, it offers only copyable safe diagnostics and dismissal.
+Hide never stops or replaces a running server automatically because doing so could interrupt panes owned by another client.
 There is no installed-CLI candidate list and no version floor; the pin is exact.
 The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
 Move the pin with `scripts/bump-herdr.sh <release-tag>` (a stable `v0.8.3` or a `preview-...` tag), which verifies the asset, writes the contract that binary reports, and rewrites the tag, version and digest tokens in the README, install guide and third-party notice.

@@ -96,6 +96,7 @@ struct ChatComposerTests {
             HerdrErrorEnvelope.message(in: envelope)
                 == "agent target pane w2:p7 is not an available shell"
         )
+        #expect(HerdrErrorEnvelope.error(in: envelope)?.code == "agent_pane_busy")
     }
 
     /// Anything that is not one of those envelopes is the CLI talking in

@@ -4329,6 +4329,13 @@ impl Runtime {
             .as_ref()
             .map(|payload| self.reconcile_session_catalog(payload, precomputed))
             .unwrap_or(false);
+        let protocol_details = fetched.as_ref().err().and_then(|error| {
+            error
+                .protocol_details()
+                .map(|(expected, received, version)| {
+                    (expected, received, version.map(str::to_owned))
+                })
+        });
         let (state, message, agents, layouts, layout, selection_changed) = match fetched {
             Ok(payload) => {
                 self.consume_restore_hint(&payload);
@@ -4645,11 +4652,20 @@ impl Runtime {
         }
 
         let mut changed = catalog_changed || selection_changed || timed_out || !excluded.is_empty();
+        let (expected_protocol, received_protocol, received_version) = protocol_details
+            .map(|(expected, received, version)| (Some(expected), Some(received), version))
+            .unwrap_or((None, None, None));
         if self.snapshot.status.herdr.state != state
             || self.snapshot.status.herdr.message.as_deref() != message.as_deref()
+            || self.snapshot.status.herdr.expected_protocol != expected_protocol
+            || self.snapshot.status.herdr.received_protocol != received_protocol
+            || self.snapshot.status.herdr.received_version != received_version
         {
             self.snapshot.status.herdr.state = state.to_owned();
             self.snapshot.status.herdr.message = message;
+            self.snapshot.status.herdr.expected_protocol = expected_protocol;
+            self.snapshot.status.herdr.received_protocol = received_protocol;
+            self.snapshot.status.herdr.received_version = received_version;
             changed = true;
         }
         if let Some(mut agents) = agents {
@@ -20667,6 +20683,30 @@ mod tests {
         runtime.ingest_session(Ok(working_payload()));
         assert_eq!(runtime.snapshot().pet.pose, "carrying");
         assert_eq!(runtime.snapshot().pet.connection, "connected");
+    }
+
+    #[test]
+    fn protocol_mismatch_exposes_typed_diagnostics_and_clears_them_on_recovery() {
+        let mut runtime = runtime();
+        runtime.ingest_session(Err(SessionFetchError::Protocol {
+            message: "incompatible runtime".to_owned(),
+            expected_protocol: 23,
+            received_protocol: 22,
+            received_version: Some("0.9.0".to_owned()),
+        }));
+
+        let mismatch = &runtime.snapshot().status.herdr;
+        assert_eq!(mismatch.state, "protocol_mismatch");
+        assert_eq!(mismatch.expected_protocol, Some(23));
+        assert_eq!(mismatch.received_protocol, Some(22));
+        assert_eq!(mismatch.received_version.as_deref(), Some("0.9.0"));
+
+        runtime.ingest_session(Ok(working_payload()));
+        let connected = &runtime.snapshot().status.herdr;
+        assert_eq!(connected.state, "connected");
+        assert_eq!(connected.expected_protocol, None);
+        assert_eq!(connected.received_protocol, None);
+        assert_eq!(connected.received_version, None);
     }
 
     /// AC2, AC4, SC3. An operator focus writes the pane's read record to the
