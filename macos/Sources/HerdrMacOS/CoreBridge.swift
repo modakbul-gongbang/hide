@@ -2681,6 +2681,7 @@ struct LocalHerdrMutationDispatchPolicy {
         "focus_pane",
         "focus_tab",
         "fork_pane",
+        "git_worktree_open",
         "key",
         "migrate_main_branch",
         "reconnect_pane",

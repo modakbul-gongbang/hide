@@ -638,7 +638,7 @@ pub(crate) fn workspace_create_with_env_params(
         cwd: Some(cwd.into()),
         label: Some(label.into()),
         focus: true,
-        env: Default::default(),
+        env: env.into_iter().collect(),
         source_workspace_id: None,
     })
 }
