@@ -2574,6 +2574,43 @@ struct CoreDispatchRoutingPolicy {
     }
 }
 
+/// Names every shell event that can ask the local Herdr session to change.
+///
+/// This is the last synchronous boundary before an event enters the core. A
+/// caller can forget a view-level readiness check, but it still cannot send a
+/// mutating request while the current core snapshot says the session is not
+/// compatible. Local-only UI and file events remain available so the last
+/// useful screen can still be inspected and recovered.
+struct LocalHerdrMutationDispatchPolicy {
+    private static let eventKinds: Set<String> = [
+        "close_pane",
+        "close_tab",
+        "create_pane",
+        "create_tab",
+        "create_workspace",
+        "focus_checkout",
+        "focus_pane",
+        "focus_tab",
+        "fork_pane",
+        "key",
+        "reconnect_pane",
+        "reorder_tab",
+        "resize_pane",
+        "terminal_click",
+        "terminal_resize",
+        "terminal_scroll",
+        "terminal_viewport",
+        "toggle_zoom",
+    ]
+
+    static func requiresConnectedHerdr(
+        kind: String,
+        whenDeviceIsRemote: Bool = false
+    ) -> Bool {
+        !whenDeviceIsRemote && eventKinds.contains(kind)
+    }
+}
+
 /// Whether a typed core event entered the runtime.
 ///
 /// Most callers only need fire-and-forget dispatch. Pane relationship Open is
@@ -2627,9 +2664,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var routingError: String?
     private let remoteTargets: [[String: String]]
     var runtimeReadyHandler: (() -> Void)?
+    var localHerdrMutationRejectionHandler: ((LocalHerdrMutationReadiness) -> Void)?
 
     var localHerdrMutationReadiness: LocalHerdrMutationReadiness {
-        LocalHerdrMutationPolicy.evaluate(
+        if fixtureMode {
+            return .connected
+        }
+        return LocalHerdrMutationPolicy.evaluate(
             runtimeSelection: runtimeSelection,
             status: snapshot?.status.herdr,
             startupDiagnostic: startupDiagnostic,
@@ -3702,6 +3743,22 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 detail: "kind=\(kind) device_id=\(commandDevice.id)"
             )
             return .rejected(message)
+        }
+        if LocalHerdrMutationDispatchPolicy.requiresConnectedHerdr(
+            kind: kind,
+            whenDeviceIsRemote: commandDevice.isRemote
+        ) {
+            let readiness = localHerdrMutationReadiness
+            guard case .connected = readiness else {
+                let message = readiness.message
+                bridgeError = message
+                localHerdrMutationRejectionHandler?(readiness)
+                HideLaunchTrace.mark(
+                    "core.dispatch.blocked",
+                    detail: "kind=\(kind) reason=local_herdr_not_ready"
+                )
+                return .rejected(message)
+            }
         }
         guard let core else {
             let message = "Hide is still starting. Try again when the Herdr status is available."
