@@ -2519,14 +2519,23 @@ private struct HideSearchSheet: View {
         return HideSearchEntry.filtered(entries, query: query)
     }
 
+    private var projectEntries: [HideSearchEntry] {
+        HideSearchPresentation.foldedProjectEntries(
+            workspaces: model.workspaces,
+            groups: model.inactiveProjectGroups,
+            query: query
+        )
+    }
+
     private var entries: [HideSearchEntry] {
-        agentGroups.flatMap(\.entries) + checkoutEntries
+        agentGroups.flatMap(\.entries) + projectEntries + checkoutEntries
     }
 
     var body: some View {
         let groups = agentGroups
+        let projects = projectEntries
         let checkouts = checkoutEntries
-        let resultIDs = (groups.flatMap(\.entries) + checkouts).map(\.id)
+        let resultIDs = (groups.flatMap(\.entries) + projects + checkouts).map(\.id)
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 HideSearchField(
@@ -2553,6 +2562,17 @@ private struct HideSearchSheet: View {
                                 .padding(.horizontal, HideTheme.spacingMD)
                                 .padding(.top, HideTheme.spacingSM)
                             ForEach(group.entries) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if !projects.isEmpty {
+                            Text("WORKSPACES > PROJECTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(projects) { entry in
                                 searchButton(entry)
                             }
                         }
@@ -2639,6 +2659,7 @@ private struct HideSearchSheet: View {
         switch entry.kind {
         case let .agent(agent): model.selectAgent(agent)
         case let .checkout(_, checkout): model.selectCheckout(checkout)
+        case let .project(_, primaryCheckout): model.selectCheckout(primaryCheckout)
         }
         dismiss()
     }
@@ -2651,6 +2672,31 @@ struct HideSearchAgentGroup: Identifiable {
 }
 
 enum HideSearchPresentation {
+    static func foldedProjectEntries(
+        workspaces: [CoreWorkspaceSnapshot],
+        groups: [CoreInactiveProjectGroupSnapshot],
+        query: String
+    ) -> [HideSearchEntry] {
+        let byID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let entries = groups
+            .filter { !$0.expanded }
+            .flatMap(\.projectIDs)
+            .compactMap { projectID -> HideSearchEntry? in
+                guard let workspace = byID[projectID],
+                      let primary = workspace.checkouts.first(where: {
+                          !$0.isWorktree && $0.path == workspace.path
+                      })
+                else { return nil }
+                return HideSearchEntry(
+                    id: "project-\(workspace.id)",
+                    title: workspace.repoName,
+                    subtitle: workspace.path,
+                    kind: .project(workspace, primary)
+                )
+            }
+        return HideSearchEntry.filtered(entries, query: query)
+    }
+
     static func agentGroups(
         workspaces: [CoreWorkspaceSnapshot],
         agents: [SidebarAgent],
@@ -2684,11 +2730,13 @@ struct HideSearchEntry: Identifiable {
     enum Kind {
         case agent(SidebarAgent)
         case checkout(CoreWorkspaceSnapshot, CoreCheckoutSnapshot)
+        case project(CoreWorkspaceSnapshot, CoreCheckoutSnapshot)
 
         var systemImage: String {
             switch self {
             case .agent: "sparkles"
             case .checkout: "rectangle.stack"
+            case .project: "folder"
             }
         }
     }
@@ -2696,6 +2744,7 @@ struct HideSearchEntry: Identifiable {
     enum Route: Equatable {
         case agent(paneID: String)
         case checkout(workspaceID: String, checkoutID: String)
+        case project(workspaceID: String, primaryCheckoutID: String)
     }
 
     let id: String
@@ -2709,6 +2758,8 @@ struct HideSearchEntry: Identifiable {
             .agent(paneID: agent.paneID)
         case let .checkout(workspace, checkout):
             .checkout(workspaceID: workspace.id, checkoutID: checkout.id)
+        case let .project(workspace, primaryCheckout):
+            .project(workspaceID: workspace.id, primaryCheckoutID: primaryCheckout.id)
         }
     }
 
