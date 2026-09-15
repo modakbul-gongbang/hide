@@ -11,8 +11,10 @@ The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls state out (`herdr_core_snapshot`) when the change notifier announces.
 The event sync coordinator (`session_sync.rs`) bootstraps from `session.snapshot`, resumes ordered topology updates through `events.subscribe`, and refreshes agent telemetry with `agent.list` once per second.
 A tick whose `agent.list` is unchanged publishes nothing, so an idle session recomputes no projection; the catalog's own refresh window still publishes, because the rebuild can only happen inside `publish_replica`.
-The Git section refreshes local worktree state only when repository metadata, tracked paths, or Herdr worktree topology changes; disk usage refreshes when the section opens or its header refresh is pressed, and all three layers run outside the runtime mutex.
+The Git context refreshes local worktree state only when repository metadata, tracked paths, or Herdr worktree topology changes; disk usage refreshes when the section opens or its header refresh is pressed, and all three layers run outside the runtime mutex.
 Pull requests also load once when a local Git project first appears in the sidebar and refresh from that project's menu or PR popover; these scoped requests reuse the same background reader, cache and generation coalescing.
+The Changes reader is also the only Git-status owner for Explorer decorations: it reads one focused checkout while Explorer or Changes is visible or a diff tab needs it, normalizes rename and conflict state, and publishes one root-scoped changed-file set for both Swift surfaces.
+The AppKit outline derives file and ancestor-folder decorations from that snapshot in memory; it never starts Git from a row, scroll, hover, or paint.
 Per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
 Everything the shell renders comes from that one snapshot pull.
 
@@ -44,6 +46,9 @@ Herdr reports a refusal as an unchanged move with a reason rather than as an err
 Ownership is the fourth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; a per-child stall clock is what brings work back when it stops being anybody's problem.
 `docs/status-model.md` owns both rules.
+The Agents `My Work` view filters only the core-final Delegated answer and leaves hard escalations and visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
+Overview builds the current Project's task forest from the same canonical agents and authoritative child IDs.
+Missing parents and cycles remain visible roots, and selecting a task is shell-local inspection until an explicit Open dispatches the existing pane-selection event.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
 The hook helper reports it through `herdr pane report-metadata`, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
@@ -84,4 +89,3 @@ There is no installed-CLI candidate list and no version floor; the pin is exact.
 The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
 Move the pin with `scripts/bump-herdr.sh <release-tag>` (a stable `v0.8.3` or a `preview-...` tag), which verifies the asset, writes the contract that binary reports, and rewrites the tag, version and digest tokens in the README, install guide and third-party notice.
 `.github/workflows/herdr-update.yml` polls for a new stable release weekly and opens a PR with that bump after running both test suites; it never merges, because the core's Herdr behavior assumptions are only asserted against fixtures this repository wrote.
-

@@ -28,13 +28,19 @@ import Testing
             (window.contentView as! NSScrollView).documentView as! WorkspaceNSOutlineView
         }
 
-        func apply(operation: CoreExplorerOperation? = nil, expanded: Set<String> = [], selected: String? = nil) {
+        func apply(
+            operation: CoreExplorerOperation? = nil,
+            expanded: Set<String> = [],
+            selected: String? = nil,
+            gitDecorations: WorkspaceGitDecorations? = nil
+        ) {
             coordinator.apply(
                 rootURL: root,
                 expandedPaths: expanded,
                 selectedPath: selected,
                 fontScale: 1,
-                operation: operation
+                operation: operation,
+                gitDecorations: gitDecorations
             )
         }
 
@@ -120,6 +126,72 @@ import Testing
         host.apply()
         try await host.settle { coordinator.visibleRowNames == [root.lastPathComponent, "src", "README.md"] }
         return host
+    }
+
+    @Test(arguments: [240.0, 320.0, 344.0, 400.0])
+    func nestedGitBadgeStaysInsideTheFinalClippedCellGeometry(viewportWidth: Double) async throws {
+        let host = try await Self.makeHost()
+        let scroll = try #require(host.window.contentView as? NSScrollView)
+        let outline = host.outline
+        let source = host.root.appendingPathComponent("src")
+        let file = source.appendingPathComponent("lib.rs")
+        let decorations = WorkspaceGitDecorations(
+            rootPath: host.root.path,
+            entries: [
+                CoreChangedFile(
+                    path: file.path,
+                    relativePath: "src/lib.rs",
+                    status: .modified
+                ),
+            ]
+        )
+        host.apply(expanded: [source.path], gitDecorations: decorations)
+        try await host.settle { host.coordinator.visibleRowNames.contains("lib.rs") }
+
+        host.window.setContentSize(NSSize(width: viewportWidth, height: 400))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: viewportWidth, height: 400))
+        container.autoresizesSubviews = false
+        host.window.contentView = nil
+        scroll.frame = NSRect(x: 0, y: 0, width: viewportWidth + 80, height: 400)
+        container.addSubview(scroll)
+        host.window.contentView = container
+        defer {
+            scroll.removeFromSuperview()
+            host.window.contentView = scroll
+            host.tearDown()
+        }
+
+        container.layoutSubtreeIfNeeded()
+        scroll.layoutSubtreeIfNeeded()
+        outline.layoutSubtreeIfNeeded()
+        let row = try #require(host.coordinator.visibleRowNames.firstIndex(of: "lib.rs"))
+        let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)
+        cell.layoutSubtreeIfNeeded()
+        let status = try #require(
+            cell.subviews.first { $0.identifier?.rawValue == "git-status" } as? NSTextField
+        )
+        let statusInWindow = status.convert(status.bounds, to: nil)
+        var effectiveClip = scroll.contentView.convert(scroll.contentView.bounds, to: nil)
+        var ancestor = scroll.contentView.superview
+        while let view = ancestor {
+            effectiveClip = effectiveClip.intersection(view.convert(view.bounds, to: nil))
+            ancestor = view.superview
+        }
+
+        #expect(effectiveClip.width == CGFloat(viewportWidth))
+        #expect(
+            effectiveClip.width < scroll.contentView.bounds.width,
+            "the fixture must keep an oversized scroll view behind a narrower ancestor"
+        )
+        let cellInWindow = cell.convert(cell.bounds, to: nil)
+        #expect(cellInWindow.maxX <= effectiveClip.maxX,
+                "cell \(cellInWindow) must be sized before layout to fit \(effectiveClip)")
+        #expect(status.stringValue == "M")
+        #expect(effectiveClip.contains(statusInWindow), "badge \(statusInWindow) must remain inside \(effectiveClip)")
+        #expect(status.visibleRect.contains(status.bounds))
+        #expect(outline.tableColumns.first?.resizingMask.isEmpty == true)
+        #expect(outline.columnAutoresizingStyle == .noColumnAutoresizing)
+        #expect(!outline.autoresizesOutlineColumn)
     }
 
     @Test func rowMenuFollowsTheTargetAndTheEmptyAreaOffersOnlyCreation() async throws {

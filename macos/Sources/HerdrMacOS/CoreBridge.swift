@@ -1386,6 +1386,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let statusLabel: String
     /// Whether closing this pane needs confirmation first.
     let requiresCloseConfirmation: Bool
+    let identityLabel: String
     let summary: String
     let elapsed: String
     let lastActivity: String
@@ -1427,6 +1428,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel: String = "Idle",
         requiresCloseConfirmation: Bool = false,
         summary: String,
+        identityLabel: String? = nil,
         elapsed: String,
         lastActivity: String,
         ambient: CoreAmbientSignal?
@@ -1445,6 +1447,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.emphasized = emphasized
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.identityLabel = identityLabel ?? summary
         self.summary = summary
         self.elapsed = elapsed
         self.lastActivity = lastActivity
@@ -1468,6 +1471,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel = try container.decode(String.self, forKey: .statusLabel)
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
         summary = try container.decode(String.self, forKey: .summary)
+        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
         ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
@@ -1500,6 +1504,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case emphasized
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
+        case identityLabel = "identity_label"
         case summary
         case elapsed
         case lastActivity = "last_activity"
@@ -1848,13 +1853,23 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-/// The right panel's four sections. The core owns which one is showing, so the
+/// The right panel's three sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
     case overview
     case explorer
     case changes
-    case git
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        // A saved retired tab opens the existing project Overview.
+        if value == "git" { self = .overview; return }
+        guard let section = Self(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown right panel section: \(value)")
+        }
+        self = section
+    }
 
     var id: String { rawValue }
 
@@ -1863,7 +1878,6 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .explorer: "Explorer"
         case .changes: "Changes"
-        case .git: "Git"
         }
     }
 
@@ -1872,7 +1886,6 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "info.circle"
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
-        case .git: HideTheme.gitSectionIcon
         }
     }
 }
@@ -1954,6 +1967,7 @@ struct CoreChangesSnapshot: Decodable {
 struct CoreChangedFile: Decodable, Identifiable, Equatable {
     let path: String
     let relativePath: String
+    let previousRelativePath: String?
     let status: CoreChangedFileStatus
     /// Absent for a file git cannot count - an untracked one has no index side
     /// and a binary one has no lines - so the row shows no numbers rather than
@@ -1982,6 +1996,7 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case path
         case relativePath = "relative_path"
+        case previousRelativePath = "previous_relative_path"
         case status
         case addedLines = "added_lines"
         case removedLines = "removed_lines"
@@ -1990,12 +2005,14 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     init(
         path: String,
         relativePath: String,
+        previousRelativePath: String? = nil,
         status: CoreChangedFileStatus,
         addedLines: Int? = nil,
         removedLines: Int? = nil
     ) {
         self.path = path
         self.relativePath = relativePath
+        self.previousRelativePath = previousRelativePath
         self.status = status
         self.addedLines = addedLines
         self.removedLines = removedLines
@@ -2007,6 +2024,8 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
     case added
     case deleted
     case untracked
+    case renamed
+    case conflict
 
     /// The single letter the row shows, which is how Git itself names these.
     var badge: String {
@@ -2015,6 +2034,19 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
         case .added: "A"
         case .deleted: "D"
         case .untracked: "U"
+        case .renamed: "R"
+        case .conflict: "!"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .modified: "Modified"
+        case .added: "Added"
+        case .deleted: "Deleted"
+        case .untracked: "Untracked"
+        case .renamed: "Renamed"
+        case .conflict: "Conflict"
         }
     }
 }
@@ -2043,6 +2075,7 @@ struct CoreStatusSnapshot: Decodable {
     let backgroundAI: CoreBackgroundAI
     let diagnostics: [CoreDiagnostic]
     let lastError: CoreLastError?
+    let paneFocusRequest: CorePaneFocusRequest?
 
     enum CodingKeys: String, CodingKey {
         case herdr
@@ -2053,6 +2086,7 @@ struct CoreStatusSnapshot: Decodable {
         case backgroundAI = "background_ai"
         case diagnostics
         case lastError = "last_error"
+        case paneFocusRequest = "pane_focus_request"
     }
 
     init(from decoder: Decoder) throws {
@@ -2067,6 +2101,23 @@ struct CoreStatusSnapshot: Decodable {
             ?? CoreBackgroundAI()
         diagnostics = try container.decodeIfPresent([CoreDiagnostic].self, forKey: .diagnostics) ?? []
         lastError = try container.decodeIfPresent(CoreLastError.self, forKey: .lastError)
+        paneFocusRequest = try container.decodeIfPresent(CorePaneFocusRequest.self, forKey: .paneFocusRequest)
+    }
+}
+
+struct CorePaneFocusRequest: Decodable, Equatable {
+    let requestID: String
+    let targetPaneID: String
+    let phase: String
+    let message: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case targetPaneID = "target_pane_id"
+        case phase
+        case message
+        case retryable
     }
 }
 
@@ -2427,6 +2478,17 @@ struct CoreDispatchRoutingPolicy {
     }
 }
 
+/// Whether a typed core event entered the runtime.
+///
+/// Most callers only need fire-and-forget dispatch. Pane relationship Open is
+/// different: B24 keeps its pending control on screen when the event could not
+/// even enter the core, so that caller needs the synchronous admission answer
+/// without scraping the app-wide `bridgeError` string.
+enum CoreDispatchOutcome: Equatable {
+    case accepted
+    case rejected(String)
+}
+
 @MainActor
 final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
@@ -2772,11 +2834,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         case restore
     }
 
-    func focusPane(_ paneID: String, origin: PaneFocusOrigin) {
-        dispatch(
-            kind: "focus_pane",
-            payload: ["pane_id": paneID, "origin": origin.rawValue]
-        )
+    @discardableResult
+    func focusPane(
+        _ paneID: String,
+        origin: PaneFocusOrigin,
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
+        var payload: [String: Any] = ["pane_id": paneID, "origin": origin.rawValue]
+        if let requestID {
+            payload["request_id"] = requestID
+        }
+        return dispatch(kind: "focus_pane", payload: payload)
     }
 
     /// The core owns the ladder and its bounds, so the shell sends a direction
@@ -3120,6 +3188,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             bridgeError = "pane.no_current_pane: Select a terminal pane before toggling zoom"
             return
         }
+        togglePaneZoom(paneID)
+    }
+
+    func togglePaneZoom(_ paneID: String) {
         dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
     }
 
@@ -3143,11 +3215,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "fork_pane", payload: ["pane_id": paneID])
     }
 
-    func focusRemotePane(targetID: String, paneID: String) {
+    @discardableResult
+    func focusRemotePane(
+        targetID: String,
+        paneID: String,
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
         dispatchRemoteControl(
             targetID: targetID,
             action: "focus_pane",
-            extra: ["pane_id": paneID]
+            extra: ["pane_id": paneID],
+            requestID: requestID
         )
     }
 
@@ -3225,20 +3303,26 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
     }
 
+    @discardableResult
     private func dispatchRemoteControl(
         targetID: String,
         action: String,
-        extra: [String: Any] = [:]
-    ) {
+        extra: [String: Any] = [:],
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
+        let reportsPaneFocusOutcome = requestID != nil
         var payload: [String: Any] = [
             "target_id": targetID,
-            "request_id": UUID().uuidString,
+            "request_id": requestID ?? UUID().uuidString,
             "action": action,
         ]
+        if reportsPaneFocusOutcome {
+            payload["report_pane_focus_outcome"] = true
+        }
         for (key, value) in extra {
             payload[key] = value
         }
-        dispatch(kind: "remote_control", payload: payload)
+        return dispatch(kind: "remote_control", payload: payload)
     }
 
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
@@ -3479,7 +3563,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "card_measure_disk", payload: [:])
     }
 
-    func dispatch(kind: String, payload: [String: Any]) {
+    @discardableResult
+    func dispatch(kind: String, payload: [String: Any]) -> CoreDispatchOutcome {
         if CoreDispatchRoutingPolicy.blocks(
             kind: kind,
             whenDeviceIsRemote: commandDevice.isRemote
@@ -3491,11 +3576,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 "core.dispatch.blocked",
                 detail: "kind=\(kind) device_id=\(commandDevice.id)"
             )
-            return
+            return .rejected(message)
         }
         guard let core else {
-            bridgeError = "Hide is still starting. Try again when the Herdr status is available."
-            return
+            let message = "Hide is still starting. Try again when the Herdr status is available."
+            bridgeError = message
+            return .rejected(message)
         }
         if let detail = dispatchTraceDetail(kind: kind, payload: payload) {
             HideLaunchTrace.mark("core.dispatch", detail: detail)
@@ -3506,12 +3592,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "payload": payload,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: envelope) else {
-            bridgeError = "Could not encode \(kind) event"
-            return
+            let message = "Could not encode \(kind) event"
+            bridgeError = message
+            return .rejected(message)
         }
         data.withUnsafeBytes { buffer in
             herdr_core_dispatch(core, buffer.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
+        return .accepted
     }
 
     private func dispatchTraceDetail(kind: String, payload: [String: Any]) -> String? {

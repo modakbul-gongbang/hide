@@ -6,6 +6,50 @@ import Testing
 /// each can be asked directly: which menu a click gets, whether a typed name
 /// may be sent, what a path is relative to the root, and where a drop lands.
 @Suite struct WorkspaceOutlinePresentationTests {
+    @Test func gitDecorationsUseTheFullChangedSetAndKeepTheHighestRiskState() {
+        let decorations = WorkspaceGitDecorations(
+            rootPath: "/repo",
+            entries: [
+                CoreChangedFile(
+                    path: "/repo/src/old.swift",
+                    relativePath: "src/old.swift",
+                    status: .deleted
+                ),
+                CoreChangedFile(
+                    path: "/repo/src/new name.swift",
+                    relativePath: "src/new name.swift",
+                    previousRelativePath: "src/old name.swift",
+                    status: .renamed
+                ),
+                CoreChangedFile(
+                    path: "/repo/src/conflicted.swift",
+                    relativePath: "src/conflicted.swift",
+                    status: .conflict
+                ),
+            ]
+        )
+        #expect(decorations.decoration(for: "/repo/src", isDirectory: true)?.status == .conflict)
+        #expect(decorations.decoration(for: "/repo/src/new name.swift", isDirectory: false)?.badge == "R")
+        #expect(decorations.decoration(for: "/repo/README.md", isDirectory: false) == nil)
+    }
+
+    @Test func deletedDescendantsMarkAnExistingFolderWithoutInventingADeletedRow() {
+        let decorations = WorkspaceGitDecorations(
+            rootPath: "/repo",
+            entries: [
+                CoreChangedFile(
+                    path: "/repo/removed/file.swift",
+                    relativePath: "removed/file.swift",
+                    status: .deleted
+                ),
+            ]
+        )
+        let folder = decorations.decoration(for: "/repo/removed", isDirectory: true)
+        #expect(folder?.badge == "●")
+        #expect(folder?.status == .deleted)
+        #expect(decorations.decoration(for: "/repo/removed/file.swift", isDirectory: false)?.badge == "D")
+    }
+
     @Test func localRowsGetTheFullMenuInVSCodeOrderAndTheEmptyAreaOnlyCreates() {
         let expected: [WorkspaceOutlineMenuItem] = [
             .newFile, .newFolder,

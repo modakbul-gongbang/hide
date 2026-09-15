@@ -205,7 +205,8 @@ private func presentationAgent(
     id: String,
     paneID: String,
     group: String,
-    demand: String = "none"
+    demand: String = "none",
+    identityLabel: String? = nil
 ) -> SidebarAgent {
     SidebarAgent(
         id: id,
@@ -218,6 +219,7 @@ private func presentationAgent(
         group: group,
         symbol: "\u{25cf}",
         summary: "Agent \(id)",
+        identityLabel: identityLabel,
         elapsed: "1m",
         lastActivity: "0000000000001",
         ambient: nil
@@ -244,6 +246,52 @@ private func presentationAgent(
     #expect(presentation.status?.color == HideTheme.agentWorking)
     #expect(presentation.detailTooltip.hasPrefix("Working: 1"))
     #expect(presentation.isPrimary)
+}
+
+@Test func agentsScopeUsesTheCoresFinalDelegatedAnswer() {
+    let own = presentationAgent(id: "own", paneID: "pane-own", group: "working")
+    var delegated = presentationAgent(id: "delegated", paneID: "pane-child", group: "working")
+    delegated.delegated = true
+    let all = [own, delegated]
+
+    #expect(SidebarGrouping.visibleAgents(all, scope: .mine).map(\.id) == ["own"])
+    #expect(SidebarGrouping.visibleAgents(all, scope: .all).map(\.id) == ["own", "delegated"])
+    #expect(SidebarGrouping.sections(SidebarGrouping.visibleAgents(all, scope: .mine)).flatMap(\.agents).map(\.id) == ["own"])
+}
+
+@Test func projectTaskForestCrossesCheckoutsAndSearchKeepsAncestors() {
+    var parent = presentationAgent(id: "parent", paneID: "pane-parent", group: "working")
+    var child = presentationAgent(id: "child", paneID: "pane-child", group: "working")
+    var grandchild = presentationAgent(id: "grandchild", paneID: "pane-grandchild", group: "working", identityLabel: "구성 검토")
+    parent.lineageChildPaneIDs = ["pane-child"]
+    child.lineageDepth = 1
+    child.lineageChildPaneIDs = ["pane-grandchild"]
+    grandchild.lineageDepth = 2
+    let checkouts = [
+        presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-parent"]),
+        presentationCheckout(id: "feature", path: "/tmp/hide.feature", paneIDs: ["pane-child", "pane-grandchild"]),
+    ]
+
+    let rows = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts
+    )
+    #expect(rows.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+    #expect(rows.map(\.depth) == [0, 1, 2])
+    #expect(rows.map(\.checkoutLabel) == ["main", "feature", "feature"])
+
+    let search = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts,
+        query: "grandchild"
+    )
+    #expect(search.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+    let titleSearch = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts,
+        query: "구성 검토"
+    )
+    #expect(titleSearch.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
 }
 
 @Test func checkoutSummaryFallsBackToPanesAndKeepsMissingExplicit() {
@@ -514,4 +562,17 @@ private func presentationAgent(
         symbol: "×", label: "Error", connected: true)
     #expect(readError.symbol == "×")
     #expect(readError.color == HideTheme.danger.opacity(HideTheme.readStatusOpacity))
+}
+
+@Test func sidebarIdentityUsesTheCanonicalTaskInsteadOfTheActivitySummary() {
+    let agent = SidebarAgent(
+        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project",
+        agentKind: "codex", symbol: "●", summary: "A shorter activity summary",
+        identityLabel: "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름",
+        elapsed: "0s", lastActivity: "", ambient: nil
+    )
+    let compact = AgentRowPresentation(agent: agent, density: .compact, connected: true)
+    let prominent = AgentRowPresentation(agent: agent, density: .prominent, connected: true)
+    #expect(compact.title == "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름")
+    #expect(prominent.detail == compact.title)
 }

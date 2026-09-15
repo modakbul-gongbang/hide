@@ -81,7 +81,7 @@ write_state() {
   "schema_version": 1,
   "left_sidebar_visible": true,
   "right_panel_visible": $visible,
-  "right_panel_section": "git",
+  "right_panel_section": "overview",
   "expanded_paths": [],
   "collapsed_workspace_ids": [],
   "project_base_branches": {},

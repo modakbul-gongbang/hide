@@ -304,6 +304,8 @@ pub struct SidebarAgentSnapshot {
     /// Derived: closing this pane would interrupt work or discard a result the
     /// operator has not read.
     pub requires_close_confirmation: bool,
+    /// Canonical task identity, distinct from the compact activity summary.
+    pub identity_label: String,
     pub summary: String,
     pub elapsed: String,
     /// The ordering key: the label plugin's activity timestamp when it has one,
@@ -987,24 +989,23 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's four persisted sections.
+/// The right panel's three persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
+    #[serde(alias = "git")]
     Overview,
     Explorer,
     Changes,
-    Git,
 }
 
 impl RightPanelSection {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "overview" => Some(Self::Overview),
+            "overview" | "git" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
-            "git" => Some(Self::Git),
             _ => None,
         }
     }
@@ -1016,7 +1017,7 @@ pub struct UiStateSnapshot {
     pub left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
     pub right_panel_visible: bool,
-    /// Which of the right panel's two sections is showing. Persisted rather
+    /// Which of the right panel's three sections is showing. Persisted rather
     /// than held in the view, because hiding the panel tears the view down
     /// and the section has to come back the way it was left.
     #[serde(default)]
@@ -1270,6 +1271,8 @@ pub enum ChangedFileStatus {
     Added,
     Deleted,
     Untracked,
+    Renamed,
+    Conflict,
 }
 
 impl ChangedFileStatus {
@@ -1281,8 +1284,14 @@ impl ChangedFileStatus {
         let mut characters = code.chars();
         let index = characters.next().unwrap_or(' ');
         let worktree = characters.next().unwrap_or(' ');
-        if index == '?' || worktree == '?' {
+        if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
+            return Self::Conflict;
+        }
+        if index == '?' && worktree == '?' {
             return Self::Untracked;
+        }
+        if index == 'R' || worktree == 'R' {
+            return Self::Renamed;
         }
         if index == 'D' || worktree == 'D' {
             return Self::Deleted;
@@ -1299,6 +1308,8 @@ impl ChangedFileStatus {
             Self::Added => "added",
             Self::Deleted => "deleted",
             Self::Untracked => "untracked",
+            Self::Renamed => "renamed",
+            Self::Conflict => "conflict",
         }
     }
 }
@@ -1309,6 +1320,10 @@ pub struct ChangedFileSnapshot {
     pub path: String,
     /// Relative to the checkout root, which is what the row shows.
     pub relative_path: String,
+    /// The source side of a rename, relative to the checkout root. Absent for
+    /// every other status. The destination remains `relative_path`, so
+    /// opening a row always addresses the file that exists now.
+    pub previous_relative_path: Option<String>,
     pub status: ChangedFileStatus,
     /// Lines added and removed in this file. Absent for a file git cannot
     /// count - an untracked file has no index side and a binary file has no
@@ -1687,6 +1702,21 @@ pub struct StatusSnapshot {
     pub background_ai: BackgroundAiSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+    /// The core-owned outcome of the latest explicitly correlated pane-focus
+    /// request. Ordinary focus events have no request id and do not replace
+    /// this receipt, so a relationship control never mistakes another pane's
+    /// error or an older focused layout for its own answer.
+    pub pane_focus_request: Option<PaneFocusRequestSnapshot>,
+}
+
+/// One explicitly correlated pane-focus request and its core-owned outcome.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PaneFocusRequestSnapshot {
+    pub request_id: String,
+    pub target_pane_id: String,
+    pub phase: String,
+    pub message: Option<String>,
+    pub retryable: bool,
 }
 
 /// Which agent and model the background AI features use, and what each
@@ -2036,6 +2066,7 @@ impl Snapshot {
                 background_ai: BackgroundAiSnapshot::unread(),
                 diagnostics: Vec::new(),
                 last_error: None,
+                pane_focus_request: None,
             },
             pet: PetSnapshot::initial(),
         }

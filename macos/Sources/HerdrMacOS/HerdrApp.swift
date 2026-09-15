@@ -4,7 +4,11 @@ import SwiftUI
 
 @MainActor
 enum MainWindowPresentation {
-    static func present(_ window: NSWindow, application: NSApplication = .shared) {
+    static func present(_ window: NSWindow, application: NSApplication = .shared, background: Bool = false) {
+        if background {
+            window.orderBack(nil)
+            return
+        }
         application.setActivationPolicy(.regular)
         application.activate(ignoringOtherApps: true)
         window.orderFrontRegardless()
@@ -288,16 +292,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                     detail: "command_w_menu_item_missing"
                 )
             }
-            #if DEBUG
-            if CommandLine.arguments.contains("--verification-ui-fixture"),
-               CommandLine.arguments.contains("--verification-background") {
-                mainWindow.orderBack(nil)
-            } else {
-                MainWindowPresentation.present(mainWindow)
-            }
-            #else
-            MainWindowPresentation.present(mainWindow)
-            #endif
+            MainWindowPresentation.present(mainWindow, background: self.verificationBackground)
             HideLaunchTrace.mark(
                 "main_window.pre_runtime",
                 detail: "visible_\(mainWindow.isVisible)_windows_\(NSApplication.shared.windows.count)"
@@ -349,9 +344,17 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     /// state and can leave a live foreground process with no visible window.
     /// Activate first, then use unconditional ordering and verify the result
     /// on the next main-run-loop turn.
+    private var verificationBackground: Bool {
+        #if DEBUG
+        CommandLine.arguments.contains("--verification-background")
+        #else
+        false
+        #endif
+    }
+
     private func presentMainWindow(_ window: NSWindow, source: String) {
         let application = NSApplication.shared
-        MainWindowPresentation.present(window, application: application)
+        MainWindowPresentation.present(window, application: application, background: verificationBackground)
         publishUsageWindowVisibility()
         HideLaunchTrace.mark(
             "main_window.visible",
@@ -360,7 +363,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self, weak window] in
             guard let self, let window else { return }
             if !window.isVisible {
-                MainWindowPresentation.present(window, application: application)
+                MainWindowPresentation.present(window, application: application, background: verificationBackground)
                 HideLaunchTrace.mark(
                     "main_window.reasserted",
                     detail: "source_\(source)_visible_\(window.isVisible)_windows_\(application.windows.count)"

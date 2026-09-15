@@ -227,6 +227,21 @@ final class WorkspaceNSOutlineView: NSOutlineView {
 
     private var hoveredRow = -1
 
+    /// Outline indentation can put the default cell frame past the column's
+    /// viewport. Bound the cell itself, before AppKit lays out its contents;
+    /// a trailing constraint then has one stable coordinate space at every
+    /// depth, including a scroll view clipped by its SwiftUI ancestors.
+    override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+        var frame = super.frameOfCell(atColumn: column, row: row)
+        guard column == 0, !frame.isEmpty,
+              let scroll = enclosingScrollView as? WorkspaceOutlineScrollView
+        else { return frame }
+        let viewport = scroll.effectiveDocumentRect(in: self)
+        guard !viewport.isNull else { return .zero }
+        frame.size.width = max(0, min(frame.maxX, viewport.maxX) - frame.minX)
+        return frame
+    }
+
     /// `super` records `clickedRow` and draws the row's contextual ring; the
     /// menu itself is the coordinator's, because it depends on the item.
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -314,9 +329,28 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
             let column = outline.tableColumns.first
         else { return }
 
-        let viewportWidth = max(column.minWidth, contentSize.width)
-        guard abs(column.width - viewportWidth) > 0.5 else { return }
-        column.width = viewportWidth
+        // An NSViewRepresentable hosted in an HSplitView can temporarily keep
+        // the width proposed before the split settles while an ancestor clips
+        // it to the actual right-panel width. The scroll view itself also
+        // includes the vertical scroller, while only its clip view contains
+        // document pixels. Start from that clip view and intersect every
+        // ancestor in window coordinates so the column follows the effective
+        // document viewport, not either wider proposal.
+        let viewportWidth = max(column.minWidth, effectiveDocumentRect(in: outline).width)
+        if abs(column.width - viewportWidth) > 0.5 {
+            column.width = viewportWidth
+        }
+    }
+
+    func effectiveDocumentRect(in target: NSView) -> NSRect {
+        var visible = contentView.convert(contentView.bounds, to: nil)
+        var ancestor = contentView.superview
+        while let view = ancestor {
+            visible = visible.intersection(view.convert(view.bounds, to: nil))
+            guard !visible.isNull else { return .null }
+            ancestor = view.superview
+        }
+        return target.convert(visible, from: nil)
     }
 }
 
@@ -328,6 +362,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
     let selectedPath: String?
     let fontScale: CGFloat
     let operation: CoreExplorerOperation?
+    let gitDecorations: WorkspaceGitDecorations?
     let openFile: (URL) -> Void
     let updateExpandedPaths: ([String]) -> Void
     let fileOperations: WorkspaceFileOperations
@@ -350,10 +385,15 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         let outline = WorkspaceNSOutlineView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("workspace-name"))
         column.minWidth = 120
-        column.resizingMask = .autoresizingMask
+        // This view owns the one column's width from the actual clipped
+        // viewport. AppKit's automatic column resizing otherwise restores the
+        // stale, wider document width after `WorkspaceOutlineScrollView`
+        // corrects it and puts every trailing Git mark behind the clip edge.
+        column.resizingMask = []
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
-        outline.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        outline.columnAutoresizingStyle = .noColumnAutoresizing
+        outline.autoresizesOutlineColumn = false
         outline.headerView = nil
         outline.backgroundColor = NSColor(HideTheme.panel)
         outline.selectionHighlightStyle = .none
@@ -402,7 +442,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             expandedPaths: expandedPaths,
             selectedPath: selectedPath,
             fontScale: fontScale,
-            operation: operation
+            operation: operation,
+            gitDecorations: gitDecorations
         )
     }
 
@@ -452,6 +493,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         /// file, so the selection moves only when that path changes.
         private var appliedSelectedPath: String??
         private var fontScale: CGFloat = 1
+        private var gitDecorations: WorkspaceGitDecorations?
         private var suppressExpansionPersistence = false
 
         init(
@@ -494,11 +536,14 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             expandedPaths: Set<String>,
             selectedPath: String?,
             fontScale: CGFloat,
-            operation: CoreExplorerOperation?
+            operation: CoreExplorerOperation?,
+            gitDecorations: WorkspaceGitDecorations? = nil
         ) {
             desiredExpandedPaths = expandedPaths
             self.selectedPath = selectedPath
             self.fontScale = fontScale
+            let gitChanged = self.gitDecorations != gitDecorations
+            self.gitDecorations = gitDecorations
             if handledOperationID == nil {
                 handledOperationID = .some(operation?.id)
             }
@@ -519,6 +564,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 }
             } else {
                 restoreVisibleState()
+                if gitChanged {
+                    outline?.reloadData()
+                }
             }
             observe(operation)
         }
@@ -651,16 +699,24 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             label.identifier = NSUserInterfaceItemIdentifier("label")
             label.translatesAutoresizingMaskIntoConstraints = false
             label.lineBreakMode = .byTruncatingMiddle
+            let git = NSTextField(labelWithString: "")
+            git.identifier = NSUserInterfaceItemIdentifier("git-status")
+            git.translatesAutoresizingMaskIntoConstraints = false
+            git.alignment = .center
             cell.addSubview(icon)
             cell.addSubview(label)
+            cell.addSubview(git)
             cell.textField = label
             NSLayoutConstraint.activate([
                 icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
                 icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 icon.widthAnchor.constraint(equalToConstant: 16),
                 label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                label.trailingAnchor.constraint(equalTo: git.leadingAnchor, constant: -4),
                 label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                git.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                git.widthAnchor.constraint(equalToConstant: HideTheme.agentMarkWidth),
+                git.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -HideTheme.spacingXS),
             ])
             return cell
         }
@@ -687,7 +743,25 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             cell.setAccessibilityIdentifier(
                 editing ? "workspace-item-editor" : "workspace-item-\(node.url.path)"
             )
-            cell.setAccessibilityLabel(node.name)
+            let decoration = node.isEntry
+                ? gitDecorations?.decoration(for: node.url.path, isDirectory: node.isDirectory)
+                : nil
+            let accessibility = decoration.map { "\(node.name), \($0.title)" } ?? node.name
+            cell.setAccessibilityLabel(accessibility)
+            let presentedPath = rootPath.map {
+                WorkspaceOutlinePathPresentation.relativePath(node.url.path, root: $0)
+            } ?? node.url.path
+            cell.toolTip = decoration.map { "\(presentedPath) · \($0.title)" } ?? presentedPath
+
+            if let gitView = cell.subviews.first(where: { $0.identifier?.rawValue == "git-status" }) as? NSTextField {
+                gitView.stringValue = decoration?.badge ?? ""
+                gitView.font = HideTheme.nativeFont(
+                    size: HideTheme.Typography.caption * fontScale,
+                    weight: .medium
+                )
+                gitView.textColor = decoration.map(gitColor) ?? .clear
+                gitView.setAccessibilityLabel(decoration?.title)
+            }
 
             guard let iconView = cell.subviews.first(where: { $0.identifier?.rawValue == "icon" }) as? NSTextField else {
                 return
@@ -738,6 +812,15 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                     iconView.attributedStringValue = NSAttributedString(attachment: attachment)
                 }
                 iconView.textColor = NSColor(HideTheme.color(for: icon.colorHex))
+            }
+        }
+
+        private func gitColor(_ decoration: WorkspaceGitDecoration) -> NSColor {
+            switch decoration.status {
+            case .added, .untracked: HideTheme.Native.success
+            case .deleted, .conflict: HideTheme.Native.danger
+            case .modified: HideTheme.Native.warning
+            case .renamed: HideTheme.Native.accent
             }
         }
 

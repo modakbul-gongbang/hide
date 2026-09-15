@@ -3,13 +3,14 @@ import SwiftUI
 /// Project inspection stays separate from the terminal's active checkout.
 struct CheckoutOverview: View {
     @EnvironmentObject private var model: ShellModel
-    @State private var mode = "Tree"
+    @State private var mode = "Tasks"
     @State private var query = ""
     @State private var searchSelection = HideSearchSelection()
     @State private var showDisk = false
     @State private var showGitHub = false
     @State private var showCleanup = false
     @State private var listScrollID: String?
+    @State private var inspectedAgentPaneID: String?
 
     private var project: CoreProjectWorktrees? { model.core.snapshot?.gitWorktrees }
     private var workspace: CoreWorkspaceSnapshot? { model.focusedWorkspace }
@@ -19,10 +20,33 @@ struct CheckoutOverview: View {
     private var rows: [CoreCheckoutSnapshot] {
         let entries = workspace?.checkouts ?? []
         return entries.filter { row in
-            query.isEmpty || ([row.label, row.path] + model.agents(in: row).map(\.summary))
+            query.isEmpty || ([row.label, row.path] + model.agents(in: row).map(\.identityLabel))
                 .contains { $0.localizedCaseInsensitiveContains(query) }
         }.sorted { left, right in
             rank(left) == rank(right) ? left.path < right.path : rank(left) < rank(right)
+        }
+    }
+    private var allTaskRows: [ProjectTaskRow] {
+        ProjectTaskForestPresentation.rows(
+            agents: model.agents,
+            checkouts: workspace?.checkouts ?? []
+        )
+    }
+    private var taskRows: [ProjectTaskRow] {
+        ProjectTaskForestPresentation.rows(
+            agents: model.agents,
+            checkouts: workspace?.checkouts ?? [],
+            query: query
+        )
+    }
+    private var inspectedAgent: SidebarAgent? {
+        let paneID = inspectedAgentPaneID ?? model.focusedPaneID
+        return allTaskRows.first { $0.agent.paneID == paneID }?.agent
+    }
+    private var inspectedAgentCheckout: CoreCheckoutSnapshot? {
+        guard let paneID = inspectedAgent?.paneID else { return nil }
+        return workspace?.checkouts.first { checkout in
+            checkout.tabs.flatMap(\.panes).contains { $0.id == paneID }
         }
     }
     private func rank(_ row: CoreCheckoutSnapshot) -> Int {
@@ -40,6 +64,9 @@ struct CheckoutOverview: View {
         if model.isRemoteContext {
             HideEmptyState("Overview is local only", systemImage: "externaldrive",
                            description: Text("Git context is read on this Mac."))
+        } else if model.core.snapshot == nil {
+            HideEmptyState("Loading Overview", systemImage: "clock",
+                           description: Text("Waiting for the first runtime snapshot."))
         } else if let workspace {
             VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
                 HStack(alignment: .top, spacing: HideTheme.spacingSM) {
@@ -50,7 +77,7 @@ struct CheckoutOverview: View {
                             .hideFont(size: HideTheme.Typography.subhead).foregroundStyle(HideTheme.secondary)
                     }
                     Spacer(minLength: HideTheme.spacingXS)
-                    HideChoiceGroup(label: "Project view", values: ["Tree", "List"], selection: $mode,
+                    HideChoiceGroup(label: "Project view", values: ["Tasks", "Git"], selection: $mode,
                                     title: { $0 }).fixedSize()
                     .accessibilityIdentifier("overview-view-mode")
                 }.padding(HideTheme.spacingMD)
@@ -59,41 +86,54 @@ struct CheckoutOverview: View {
                 ScrollViewReader { proxy in
                     HStack(spacing: HideTheme.spacingSM) {
                         Button {
-                            if let row = workspace.checkouts.first(where: { $0.agentSummary.needsYou > 0 }) {
-                                inspect(row); mode = "List"; query = ""; listScrollID = row.id
+                            if let row = allTaskRows.first(where: { $0.agent.group == "needs_you" }) {
+                                inspectedAgentPaneID = row.agent.paneID
+                                mode = "Tasks"
+                                query = ""
+                                listScrollID = row.id
                             }
                         } label: {
                             Text("? Needs You · \(workspace.checkouts.reduce(0) { $0 + $1.agentSummary.needsYou })")
                                 .foregroundStyle(workspace.checkouts.contains { $0.agentSummary.needsYou > 0 } ? HideTheme.warning : HideTheme.secondary)
                         }.buttonStyle(HideInteractiveButtonStyle())
                         Spacer(minLength: HideTheme.spacingXS)
-                        Text(mode == "Tree" ? "Git history" : "Attention first").foregroundStyle(HideTheme.muted)
-                        HideIconButton(systemImage: "scope", help: "Locate selected workspace", variant: .toolbar) {
-                            mode = "List"; query = ""
-                            if let selected { listScrollID = selected.id }
+                        Text(mode == "Git" ? "Git ancestry" : "Project task forest").foregroundStyle(HideTheme.muted)
+                        HideIconButton(systemImage: "scope", help: "Locate shown pane", variant: .toolbar) {
+                            mode = "Tasks"; query = ""
+                            if let paneID = model.focusedPaneID {
+                                inspectedAgentPaneID = paneID
+                                listScrollID = paneID
+                            }
                         }
                     }.hideFont(size: HideTheme.Typography.subhead).padding(.horizontal, HideTheme.spacingMD).padding(.vertical, HideTheme.spacingSM)
-                    if mode == "List" {
-                        HideSearchField(placeholder: "Find workspace or agent…", text: $query,
-                                        selection: $searchSelection, resultIDs: rows.map(\.id), activate: {
-                            if let row = searchSelection.entry(in: rows) { inspect(row) }
+                    if mode == "Tasks" {
+                        HideSearchField(placeholder: "Find task or workspace…", text: $query,
+                                        selection: $searchSelection, resultIDs: taskRows.map(\.id), activate: {
+                            if let row = searchSelection.entry(in: taskRows) {
+                                inspectedAgentPaneID = row.agent.paneID
+                            }
                         }, dismiss: { query = "" })
                             .padding(.horizontal, HideTheme.spacingMD)
                             .accessibilityIdentifier("overview-search")
+                        if !model.agentsConnected {
+                            Label("Live task status unavailable; showing the last known task forest", systemImage: "bolt.slash")
+                                .hideFont(size: HideTheme.Typography.subhead)
+                                .foregroundStyle(HideTheme.warning)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingXS)
+                        }
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-                                if rows.isEmpty {
-                                    Text("No matching workspaces").foregroundStyle(HideTheme.secondary)
+                                if taskRows.isEmpty {
+                                    Text(query.isEmpty ? "No live tasks in this project" : "No matching tasks")
+                                        .foregroundStyle(HideTheme.secondary)
                                         .padding(HideTheme.spacingLG)
-                                    Button("Clear search") { query = "" }.padding(.horizontal, HideTheme.spacingLG)
-                                }
-                                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                                    if index == 0 || rank(rows[index - 1]) != rank(row) {
-                                        Text(["Needs You", "Done", "Working", "Seen", "No agent"][rank(row)])
-                                            .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
-                                            .foregroundStyle(HideTheme.secondary).padding(HideTheme.spacingSM)
+                                    if !query.isEmpty {
+                                        Button("Clear search") { query = "" }.padding(.horizontal, HideTheme.spacingLG)
                                     }
-                                    workspaceRow(row).id(row.id)
+                                }
+                                ForEach(taskRows) { row in
+                                    taskRow(row).id(row.id)
                                 }
                             }.scrollTargetLayout()
                         }.scrollPosition(id: $listScrollID).onChange(of: searchSelection.selectedID) { _, id in
@@ -104,11 +144,15 @@ struct CheckoutOverview: View {
                             workspaceRow(row)
                         }
                     } else {
-                        HideEmptyState("No Git history", systemImage: "folder", description: Text("This project is a folder. Use List to inspect its workspaces."))
+                        HideEmptyState("No Git history", systemImage: "folder", description: Text("This project is a folder. Use Tasks to inspect its work."))
                     }
                 }
                 Divider()
-                inspector
+                if mode == "Tasks" {
+                    taskInspector
+                } else {
+                    inspector
+                }
             }
             .foregroundStyle(HideTheme.primary)
             .buttonStyle(HideTextButtonStyle(density: .regular))
@@ -119,7 +163,10 @@ struct CheckoutOverview: View {
                 }
                 .environmentObject(model)
             }
-            .onChange(of: workspace.id) { _, _ in query = "" }
+            .onChange(of: workspace.id) { _, _ in
+                query = ""
+                inspectedAgentPaneID = nil
+            }
         } else {
             HideEmptyState("No workspace", systemImage: "folder",
                            description: Text("Choose a workspace to see its context."))
@@ -221,6 +268,168 @@ struct CheckoutOverview: View {
             .hideOverlayHost().preferredColorScheme(.dark)
     }
 
+    private func taskRow(_ row: ProjectTaskRow) -> some View {
+        let state = AgentStatusPresentation(agent: row.agent, connected: model.agentsConnected)
+        let selected = inspectedAgent?.paneID == row.agent.paneID
+        let shown = model.focusedPaneID == row.agent.paneID
+        return HStack(spacing: HideTheme.spacingXS) {
+            Button {
+                inspectedAgentPaneID = row.agent.paneID
+            } label: {
+                HStack(spacing: HideTheme.spacingXS) {
+                    Image(systemName: row.hasChildren ? "chevron.down" : "circle.fill")
+                        .hideFont(
+                            size: row.hasChildren
+                                ? HideTheme.Typography.micro
+                                : HideTheme.spacingXS
+                        )
+                        .foregroundStyle(HideTheme.muted)
+                        .frame(width: HideTheme.lineageChevronWidth)
+                    AgentStatusMark(symbol: state.symbol, color: state.color)
+                    AgentBadge(
+                        agentKind: row.agent.agentKind,
+                        stateColor: state.color,
+                        size: HideTheme.compactAgentBadgeSize
+                    )
+                    Text(row.agent.identityLabel)
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                        .foregroundStyle(row.agent.delegated ? HideTheme.secondary : HideTheme.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: HideTheme.spacingXS)
+                    if row.depth == 0 || row.agent.lineageWorktreeBadge != nil {
+                        Text(row.checkoutLabel)
+                            .hideFont(size: HideTheme.Typography.micro)
+                            .foregroundStyle(HideTheme.muted)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.leading, HideTheme.lineageInset(depth: row.depth))
+                .padding(.vertical, HideTheme.spacingXS)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+            .accessibilityLabel("Inspect \(row.agent.identityLabel), \(state.label), \(row.checkoutLabel)")
+
+            HideIconButton(
+                systemImage: shown ? "rectangle.inset.filled" : "arrow.up.right.square",
+                help: shown ? "This pane is shown" : "Open this agent pane",
+                accessibilityLabel: shown ? "Agent pane is shown" : "Open \(row.agent.identityLabel)",
+                variant: .toolbar
+            ) {
+                model.selectAgent(paneID: row.agent.paneID)
+            }
+            .disabled(shown)
+        }
+        .padding(.horizontal, HideTheme.spacingSM)
+        .frame(minHeight: HideTheme.Layout.paneHeaderHeight)
+        .background(
+            selected ? HideTheme.elevated : Color.clear,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+        )
+        .overlay(alignment: .leading) {
+            if row.depth > 0 {
+                Rectangle()
+                    .fill(HideTheme.divider)
+                    .frame(width: HideTheme.Layout.hairlineWidth)
+                    .padding(
+                        .leading,
+                        HideTheme.lineageInset(depth: row.depth)
+                            + HideTheme.spacingSM - HideTheme.Layout.hairlineWidth
+                    )
+            }
+        }
+        .hideTooltip("\(row.agent.identityLabel) · \(row.checkoutLabel) · \(state.label)")
+        .accessibilityIdentifier("overview-task-\(row.agent.paneID)")
+    }
+
+    private var taskInspector: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
+            HStack {
+                Text("Inspected task").foregroundStyle(HideTheme.secondary)
+                Spacer(minLength: HideTheme.spacingXS)
+                if let focused = model.focusedPaneID,
+                   focused != inspectedAgent?.paneID
+                {
+                    Button("Back to shown") {
+                        inspectedAgentPaneID = focused
+                        listScrollID = focused
+                    }
+                    .buttonStyle(HideTextButtonStyle(appearance: .quiet))
+                } else {
+                    Text("Shown").foregroundStyle(HideTheme.muted)
+                }
+            }
+            .hideFont(size: HideTheme.Typography.subhead)
+
+            if let agent = inspectedAgent {
+                let state = AgentStatusPresentation(agent: agent, connected: model.agentsConnected)
+                HStack(spacing: HideTheme.spacingSM) {
+                    AgentBadge(
+                        agentKind: agent.agentKind,
+                        stateColor: state.color,
+                        size: HideTheme.compactAgentBadgeSize
+                    )
+                    VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                        Text(agent.identityLabel)
+                            .hideFont(size: HideTheme.Typography.title, weight: .semibold)
+                            .lineLimit(2)
+                        Text("\(state.symbol) \(state.label) · \(inspectedAgentCheckout?.label ?? agent.workspaceLabel)")
+                            .foregroundStyle(state.color)
+                    }
+                    Spacer(minLength: HideTheme.spacingXS)
+                    Button(agent.paneID == model.focusedPaneID ? "Viewing" : "Open") {
+                        model.selectAgent(paneID: agent.paneID)
+                    }
+                    .disabled(agent.paneID == model.focusedPaneID)
+                    .accessibilityIdentifier("overview-open-agent")
+                }
+                if agent.lineageOrphan {
+                    Label(
+                        agent.lineageHint ?? "Parent unavailable; shown as operator-owned work",
+                        systemImage: "questionmark.circle"
+                    )
+                    .foregroundStyle(HideTheme.warning)
+                }
+                if !model.agentsConnected {
+                    Label("Live status unavailable while Herdr reconnects", systemImage: "bolt.slash")
+                        .foregroundStyle(HideTheme.warning)
+                }
+                if let checkout = inspectedAgentCheckout {
+                    VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                        Text("Workspace details")
+                            .foregroundStyle(HideTheme.primary)
+                        Text(checkout.path)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Button("Reveal") { model.revealCheckout(checkout) }
+                            Button("Copy path") { model.copyCheckoutPath(checkout) }
+                            Button("View changes") {
+                                model.core.dispatch(
+                                    kind: "overview_changes",
+                                    payload: ["checkout_path": checkout.path]
+                                )
+                            }
+                            .disabled(checkout.id != model.focusedCheckout?.id)
+                        }
+                    }
+                    .foregroundStyle(HideTheme.secondary)
+                }
+            } else {
+                Text(model.agentsConnected
+                    ? "Select a task to inspect it without moving terminal focus."
+                    : "Task inspection is unavailable while Herdr reconnects.")
+                    .foregroundStyle(HideTheme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .hideFont(size: HideTheme.Typography.title)
+        .padding(HideTheme.spacingMD)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("overview-task-inspector")
+    }
+
     private func workspaceRow(_ checkout: CoreCheckoutSnapshot) -> some View {
         Button { inspect(checkout) } label: {
             VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
@@ -232,7 +441,7 @@ struct CheckoutOverview: View {
                 }
                 if let agent = representative(checkout) {
                     HStack(spacing: HideTheme.spacingXS) {
-                        Text(agent.summary).lineLimit(1)
+                        Text(agent.identityLabel).lineLimit(1)
                         Spacer(minLength: HideTheme.spacingXS)
                         status(agent)
                     }
@@ -241,7 +450,7 @@ struct CheckoutOverview: View {
                     .foregroundStyle(HideTheme.secondary).lineLimit(1)
             }.hideFont(size: HideTheme.Typography.subhead)
                 .padding(HideTheme.spacingSM).frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected?.id == checkout.id || (mode == "List" && searchSelection.selectedID == checkout.id) ? HideTheme.elevated : HideTheme.panel,
+                .background(selected?.id == checkout.id ? HideTheme.elevated : HideTheme.panel,
                             in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
         }.buttonStyle(HideInteractiveButtonStyle()).hideTooltip(checkout.label)
             .accessibilityLabel("Inspect \(checkout.label), \(changesLabel(checkout))")
@@ -281,7 +490,7 @@ struct CheckoutOverview: View {
                 if let agent = representative(selected) {
                     HStack(alignment: .center, spacing: HideTheme.spacingSM) {
                         VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
-                            Text(agent.summary).lineLimit(2)
+                            Text(agent.identityLabel).lineLimit(2)
                             status(agent)
                         }
                         Spacer(minLength: HideTheme.spacingXS)

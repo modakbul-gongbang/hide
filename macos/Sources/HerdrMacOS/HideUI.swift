@@ -607,6 +607,10 @@ private struct HideSidebar: View {
             SidebarContentPicker()
             SidebarCommandBar()
 
+            if model.sidebarContent == .agents {
+                AgentScopePicker()
+            }
+
             SidebarList {
                 switch model.sidebarContent {
                 case .projects:
@@ -678,23 +682,83 @@ private struct HideSidebar: View {
 
     @ViewBuilder
     private var agentsContent: some View {
-        if model.agents.isEmpty {
+        if model.core.snapshot == nil {
+            HideSectionLabel(title: "Agents", count: 0)
+            EmptySidebarRow(
+                systemImage: "clock",
+                title: "Loading agents",
+                detail: "Waiting for the first runtime snapshot."
+            )
+        } else if !model.agentsConnected {
+            HideSectionLabel(title: "Agents", count: model.visibleAgentList.count)
+            EmptySidebarRow(
+                systemImage: "bolt.slash",
+                title: "Agents unavailable",
+                detail: "The last known rows may be stale while Herdr reconnects."
+            )
+            agentSectionRows
+        } else if model.agents.isEmpty {
             HideSectionLabel(title: "Agents", count: 0)
             EmptySidebarRow(
                 systemImage: "person.2",
                 title: "No agents running",
                 detail: "Start an agent from a project to see it here."
             )
+        } else if model.visibleAgentList.isEmpty {
+            HideSectionLabel(title: "My Work", count: 0)
+            Button {
+                model.agentListScope = .all
+            } label: {
+                EmptySidebarRow(
+                    systemImage: "person.2.badge.gearshape",
+                    title: "Only delegated work is active",
+                    detail: "Show All to inspect the agents being supervised."
+                )
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+            .accessibilityIdentifier("agents-show-all-empty-state")
         } else {
-            // The four group boundaries, in the order the core sorted them.
-            // Membership and order are the core's answer; this only draws it.
-            ForEach(model.agentSections) { section in
-                HideSectionLabel(title: section.group.title, count: section.agents.count)
-                ForEach(section.agents) { agent in
-                    AgentNavigatorRow(agent: agent, showsWorkspace: true)
-                }
+            agentSectionRows
+        }
+    }
+
+    @ViewBuilder
+    private var agentSectionRows: some View {
+        // The four group boundaries, in the order the core sorted them.
+        // Membership and order are the core's answer; this only draws it.
+        ForEach(model.agentSections) { section in
+            HideSectionLabel(title: section.group.title, count: section.agents.count)
+            ForEach(section.agents) { agent in
+                AgentNavigatorRow(agent: agent, showsWorkspace: true)
             }
         }
+    }
+}
+
+/// The agent scope is navigation chrome, not a row in the scrollable result.
+/// Keeping it above `SidebarList` prevents AppKit's list row clipping from
+/// collapsing the segmented control and keeps both scopes reachable while the
+/// operator scrolls a long agent list.
+private struct AgentScopePicker: View {
+    @EnvironmentObject private var model: ShellModel
+
+    var body: some View {
+        HideChoiceGroup(
+            label: "Agent scope",
+            values: AgentListScope.allCases,
+            selection: $model.agentListScope,
+            title: { $0.title },
+            identifier: { "agents-scope-\($0.rawValue)" },
+            optionHelp: {
+                $0 == .mine
+                    ? "Show work currently owned by you. Escalated and orphaned work remains visible."
+                    : "Show all work, including delegated agents."
+            },
+            equalWidth: true
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.bottom, HideTheme.spacingXS)
     }
 }
 
@@ -1714,9 +1778,15 @@ private struct AgentNavigatorRow: View {
         model.shortcutHintState.reveals(.agent(1), bindings: model.paneShortcuts)
     }
 
+    private var relationshipLeadingInset: CGFloat {
+        guard showsWorkspace else { return HideTheme.spacingNone }
+        return density.leadingPadding + HideTheme.agentMarkWidth + density.badgeSize
+            + density.iconSpacing * 2
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
-            HStack(spacing: HideTheme.spacingNone) {
+            HStack(alignment: .top, spacing: HideTheme.spacingNone) {
                 if !showsWorkspace {
                     Button {
                         model.core.dispatch(kind: "agent_tree_toggle", payload: ["pane_id": agent.paneID])
@@ -1725,7 +1795,8 @@ private struct AgentNavigatorRow: View {
                             .foregroundStyle(HideTheme.muted)
                     }
                     .buttonStyle(HideInteractiveButtonStyle())
-                    .frame(width: HideTheme.lineageChevronWidth)
+                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.compactAgentBadgeSize)
+                    .padding(.top, HideTheme.compactAgentRowVerticalPadding)
                     // The toggle sits directly above the line it opens, so
                     // the branch starts at its own control instead of
                     // floating a column away from it.
@@ -1757,27 +1828,40 @@ private struct AgentNavigatorRow: View {
                 HideBadge(label: badge, color: HideTheme.secondary)
             }
             if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
-                // The line says where this row came from, and when that
-                // origin is still a live agent it goes there. A row whose
-                // parent is not drawn above it is the only place this shows,
-                // so the jump is the only way to reach it from here
-                // (design principle 3).
+                let fallbackParentLabel = hint.replacingOccurrences(of: "↳ from ", with: "")
+                let parentLabel = agent.spawnOriginPaneID.flatMap(model.paneIdentity(for:))
+                    ?? fallbackParentLabel
+                // Keep the relationship in the same leading metadata slot as
+                // the agent identity instead of drawing a debug-looking line
+                // at the sidebar edge. When the origin remains live this is
+                // also the direct return action (PRD B7, B9, B23).
                 if let origin = agent.spawnOriginPaneID {
                     Button {
                         model.selectAgent(paneID: origin)
                     } label: {
-                        Text(hint)
-                            .hideFont(size: HideTheme.Typography.caption)
-                            .foregroundStyle(HideTheme.secondary)
-                            .underline()
+                        HStack(spacing: HideTheme.spacingXXS) {
+                            Image(systemName: "arrow.turn.up.left")
+                            Text(parentLabel)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .hideFont(size: HideTheme.Typography.micro, weight: .medium)
+                        .foregroundStyle(HideTheme.secondary)
                     }
                     .buttonStyle(HideInteractiveButtonStyle())
-                    .accessibilityLabel("Go to \(hint.replacingOccurrences(of: "↳ from ", with: ""))")
-                    .hideTooltip("Go to the agent that started this one")
+                    .padding(.leading, relationshipLeadingInset)
+                    .accessibilityLabel("Return to parent \(parentLabel)")
+                    .hideTooltip("Return to parent \(parentLabel)")
                 } else {
-                    Text(hint)
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(HideTheme.muted)
+                    HStack(spacing: HideTheme.spacingXXS) {
+                        Image(systemName: "arrow.turn.up.left")
+                        Text(parentLabel)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .hideFont(size: HideTheme.Typography.micro)
+                    .foregroundStyle(HideTheme.muted)
+                    .padding(.leading, relationshipLeadingInset)
                 }
             }
         }
@@ -1797,7 +1881,7 @@ private struct AgentNavigatorRow: View {
 
         .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (shortcutVisible))
         .accessibilityIdentifier("hide-agent-\(agent.id)")
-        .hideTooltip(agent.summary, command: model.agentShortcutNumber(paneID: agent.paneID).map(HideCommand.agent), inline: true)
+        .hideTooltip(agent.identityLabel, command: model.agentShortcutNumber(paneID: agent.paneID).map(HideCommand.agent), inline: true)
     }
 }
 
@@ -2111,7 +2195,64 @@ private struct HideTerminalSurface: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HideTheme.background)
+        .overlay(alignment: .top) {
+            if let operation = model.paneSelectionOperation {
+                PaneSelectionOutcomeNotice(
+                    operation: operation,
+                    onRetry: model.retryPaneSelection
+                )
+                .padding(HideTheme.spacingSM)
+            }
+        }
         .accessibilityIdentifier("hide-terminal-surface")
+    }
+}
+
+/// Keeps a relationship Open/Return outcome visible after the core moves the
+/// selected pane and the source header is no longer on the visible canvas.
+/// It overlays the canvas, so pending and failure feedback do not resize the
+/// terminal or mutate Herdr-owned geometry (PRD B23, B24).
+struct PaneSelectionOutcomeNotice: View {
+    let operation: PaneSelectionOperation
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: HideTheme.spacingSM) {
+            switch operation.phase {
+            case .pending:
+                ProgressView().controlSize(.small)
+                Text("Opening \(operation.targetLabel)…")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+            case .failed(let reason, let retryable):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(HideTheme.warning)
+                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                    Text("Could not open \(operation.targetLabel)")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                    Text(reason)
+                        .hideFont(size: HideTheme.Typography.micro)
+                        .foregroundStyle(HideTheme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if retryable {
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(HideInteractiveButtonStyle())
+                }
+            }
+        }
+        .padding(.horizontal, HideTheme.spacingMD)
+        .padding(.vertical, HideTheme.spacingSM)
+        .foregroundStyle(HideTheme.primary)
+        .background(
+            HideTheme.elevated,
+            in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: HideTheme.radiusSmall)
+                .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pane-selection-outcome")
     }
 }
 
@@ -2134,33 +2275,44 @@ private struct HideTabCanvas: View {
                 case .browser(let binding):
                     BrowserPaneView(
                         pane: pane, binding: binding,
-                        isFocused: item.isFocused, isZoomed: isZoomed,
+                        isFocused: item.isFocused,
+                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
+                        isZoomed: isZoomed,
                         onFocus: { model.focusPane(pane.id) },
+                        onToggleZoom: { model.togglePaneZoom(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) }
                     )
                 case .unavailable(let reason):
                     HideTerminalPaneCard(
                         paneID: pane.id, kind: "unavailable", title: pane.herdrLabel ?? "Pane unavailable",
-                        status: "ready", isFocused: item.isFocused, isZoomed: isZoomed,
+                        status: "ready", isFocused: item.isFocused,
+                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
+                        isZoomed: isZoomed,
                         onFocus: { model.focusPane(pane.id) },
-                        onClose: { model.closePaneFromHeader(pane.id) }
+                        onClose: { model.closePaneFromHeader(pane.id) },
+                        onToggleZoom: { model.togglePaneZoom(pane.id) }
                     ) {
                         HideEmptyState("Pane unavailable", systemImage: "exclamationmark.triangle", description: Text(reason))
                     }
                 case .terminal:
                     PaneTerminalCell(
                         pane: pane,
+                        lineagePath: model.resolvedLineagePath(for: pane),
+                        agent: model.agents.first { $0.paneID == pane.id },
                         status: model.paneStatus(for: pane.id),
                         statusMessage: model.paneTransportMessage(for: pane.id),
                         isFocused: item.isFocused,
+                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
                         isZoomed: isZoomed,
                         showsFork: model.canForkPane(pane),
                         activity: model.paneActivity(for: pane.id),
                         notice: model.paneNotice(for: pane.id),
                         connected: model.agentsConnected,
+                        paneSelectionOperation: model.paneSelectionOperation,
                         onFocus: { model.focusPane(pane.id) },
                         onReconnect: { model.reconnectPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) },
+                        onToggleZoom: { model.togglePaneZoom(pane.id) },
                         onFork: { model.forkPaneFromHeader(pane.id) },
                         onOpenPort: { model.openPanePort($0) },
                         // A child chip, a breadcrumb step and a sibling are
@@ -2168,7 +2320,7 @@ private struct HideTabCanvas: View {
                         // The core moves the visible tab to whichever tab
                         // holds it, so the screen is replaced rather than
                         // split (PRD B7, D-16).
-                        onSelectPane: { model.focusPane($0) }
+                        onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
                     ) {
                         TerminalHost(
                             bridge: model.core,

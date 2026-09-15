@@ -814,10 +814,16 @@ The only "imagery" in the system is in-product Raycast UI screenshots and small 
 
 ## Native Git and lineage tokens
 
+The [agent workflow contract](design/agent-workflow-review.md) and the adopted `Screen /` and `Component /` boards in `design/hide.pen` define parent-centric delegation, project-wide task Overview, shared Agent identity, pane focus, and Explorer Git decorations.
+The former Review candidates, Final, R2, R3, and the family-only Overview comparison are historical and are not implementation references.
+`My Work` is a session-local default, and `All` restores delegated rows without changing status groups, pane focus, or read state.
+
 `HideTheme.lineageIndent` is one column per descendant level, uniform at every depth.
 It is a measurement rather than a chosen spacing: the distance from a row's status mark to its agent badge, so a child's mark sits centered under its parent's badge and the tree reads as columns.
 It replaced a step that shrank after two levels, which kept deep trees narrow at the cost of the marks lining up with nothing.
 `lineageChevronWidth` reserves 16pt on every project agent row for the disclosure control, and that column is where the connector lives: the trunk drops from the control that opens the branch, so a branch and the thing that shows or hides it are one column rather than two.
+The disclosure occupies the first identity line rather than the center of a multiline row, and the descending rail starts below its glyph.
+Continuing ancestor rails remain in that ancestor parent column through deeper descendants.
 `lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a stall notice does not slide the connector off the mark.
 The Git worktree section sizes its own text from `HideTheme.gitRowFontSize` (11pt) for a worktree row and `HideTheme.gitDetailFontSize` (10pt) for the ahead/behind, pushed and disk detail beside it.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
@@ -856,8 +862,8 @@ New worktree uses stacked Branch name, Create from, and Start with fields, follo
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
 `HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
 Inside a settings row the same picker drops its stacked label and takes the `settingsControlWidth` (200pt) right-hand column, because the row already carries the label on the left; its accessibility label stays the picker's own.
-Terminal tabs use the focused pane's existing header title precedence and agent status/provider marks, with `tabTitleMaxWidth` (200pt) bounding long summaries.
-The tooltip retains the tab's stable name and full pane title; file and diff tabs retain their file names.
+Terminal tabs use the stable Herdr tab name, with `tabTitleMaxWidth` (200pt) bounding long names; the pane header alone carries the focused pane title and its agent status/provider marks.
+The tooltip retains the stable tab name and full focused-pane title; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
@@ -865,26 +871,40 @@ The sidebar runtime version stays on one line with middle truncation; its toolti
 
 ## Pane header lineage and ownership
 
-The pane header keeps its 28pt breadcrumb row.
+The pane header keeps one 28pt identity row.
 A pane with children gains a second 24pt row for the child chips, and that row exists only when there are children; a pane with none stays at 28pt.
 This is a user decision between four candidates, not a default: compressing the marks onto the breadcrumb row, relying on the sidebar alone, and a bottom status bar were all rejected, because the chip has to carry the child's name where the operator is already looking.
 
-The breadcrumb draws the pane's ancestors root first.
-Each step carries that layer's siblings in a dropdown, so moving between siblings is one step inside a lineage; moving between lineages is the sidebar's job and is not duplicated here.
-A root has no siblings list and therefore no chevron, following the existing rule that a control with nothing to disclose is not drawn.
+An authoritative parent becomes one compact Return control in the first row, with icon-only fallback before current identity or actions are truncated.
+The second row names the first direct child with the shared status mark, 16pt provider badge, body type and 24pt hit area; the remaining children fold into the adjacent `+N` relationship control.
+Long names truncate at the tail inside the bounded chip, with their full identity in the shared tooltip.
+The direct-children sheet uses a bounded scrolling list, and each title may wrap to two lines.
+Pending navigation disables child changes; Retry remains attached to the inspected target that failed.
+The relationship sheet inspects on row selection and navigates only through its explicit Open action.
+A relationship Open or parent Return publishes one request-scoped pending state from the existing control and the retained canvas.
+The same target cannot dispatch again while that request is pending.
+Target retirement before dispatch and core-owned refusal, timeout, or remote-control failure keep the current pane geometry and tab topology, show the scoped reason, and offer Retry when the outcome is retryable.
+Retry creates a new request ID only after the prior request has settled.
+The shell never derives success from an old focused layout or optimistic remote selection, never attributes an unrelated global error to the control, and never sends a second focus event as rollback.
+A canvas notice preserves pending and failed feedback after successful navigation removes the source header or sheet from view.
+A root with no parent carries no Return control, following the existing rule that a control with nothing to do is not drawn.
+
+The header wash marks the pane Hide is showing, while the outer primary hairline marks the terminal that owns the native keyboard responder.
+Inspecting an Overview task leaves the shown wash in place and removes the terminal outline.
+Zoom or Restore stays at the right edge, secondary fork, port, and sibling actions live in overflow, and Close remains separate.
 
 Ownership is drawn as emphasis, not as a new color or container.
 The operator's own rows are bright; delegated rows are subdued, using the existing emphasized/subdued treatment that Needs You and Done already use.
 Nothing new is introduced for it: a delegated row is simply never emphasized, because it can only be Working or Seen.
 When a stall hands a child back to the operator, its dimming lifts through the same token rather than through a state of its own.
 
-The uninstrumented mark is drawn in exactly three places, and only on panes where an agent was detected: the pane header, the sidebar agent row, and the Overview worktree row's agent line.
+The uninstrumented mark is drawn in exactly three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar agent row, and the Overview worktree row's agent line.
 It is a mark plus an accessible name, never a color alone, and its tooltip carries the whole sentence.
 The subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 
-The Overview worktree row gains one agent line and no new area.
-An empty line with no mark means nobody is working in that worktree; an empty line with the uninstrumented mark means Hide cannot see into it.
-The existing branch, ahead/behind, pushed, PR and CI indicators on that row are unchanged, as is the PR lookup failure treatment.
+Overview Tasks reuses the same agent identity and state presentation as the sidebar and relationship sheet.
+A missing task row means the current live projection has no agent there; an uninstrumented mark means Hide cannot see in-process children and never means zero.
+Git mode retains the existing branch, ahead/behind, pushed, PR, CI, and lookup-failure presentation on its worktree rows.
 
 ## In-Product Components
 
@@ -1126,32 +1146,39 @@ The project tree uses one token-based indentation ladder: top-level projects and
 Selection begins just before the selected checkout's own content edge instead of spanning back to the top-level edge, so its background preserves the child relationship.
 Each completed project block leaves the same project-level vertical gap before the next sibling or top-level inactive disclosure; rows inside a block retain their compact spacing.
 
-The right panel starts with Overview, followed by Explorer, Changes, and Git.
+The right panel starts with Overview, followed by Explorer and Changes.
 The compact section selector uses text labels on one line without a competing checkout title.
-Existing saved section selections survive; new state starts on Overview.
-Overview is project-scoped: a compact Project Summary, Tree/List worktree inspection, and a selected-workspace inspector.
-Project Summary shows the existing GitHub result, Allocated on disk, and a separate Clean up merged worktrees entry.
+Saved Git section selections migrate to Overview; other selections survive, and new state starts on Overview.
+Overview is project-scoped and opens in Tasks, which shows the current Project's live task forest across its Workspaces with a compact selected-task inspector.
+Git is a separate Overview mode that preserves the existing Project Summary, GitHub result, allocated disk measurement, cleanup entry, ancestry graph, worktree list, and selected-workspace inspector.
 GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
 The popover states the lookup window and preserves loading, no recent PRs, authentication, unavailable and stale results.
 
-Tree draws actual Git parent edges for all project worktree HEADs and the known main/base refs.
+Tasks creates edges only from authoritative child pane IDs and never infers parentage from depth, name, creation order, or shared Workspace.
+Unknown parents, visible orphans, and cycles remain visible as roots.
+Root tasks and cross-Workspace children carry their Workspace label, while search retains matching tasks and their known ancestors.
+Row selection and Return update inspection only; the trailing pane action and the inspector's Open action are the only controls that change pane focus and read state.
+Loading, confirmed empty, query-empty, partial lineage, disconnected, and unavailable states are distinct, and query-empty preserves the prior inspector.
+
+Git Tree draws actual Git parent edges for all project worktree HEADs and the known main/base refs.
 Commit parent order is preserved, including merges; named refs and worktree attachments stay visible when linear ancestry is folded.
 A window holds at most 512 commits; actual parent IDs beyond it form a continuation frontier, never a fabricated root or branch.
 Shallow boundaries and unavailable history are explicit, and a missing or unborn HEAD has no invented attachment.
 Tree may scroll horizontally when concurrent lanes exceed panel width.
-List reuses the search keyboard pattern and Needs You, Done, Working, Seen ordering, with stable path ties and an explicit empty state.
-Both modes share one core-owned inspector selection; switching modes, filtering, inspecting and scrolling never changes the terminal's pane, tab, checkout focus or read state.
+Git List reuses the search keyboard pattern and Needs You, Done, Working, Seen ordering, with stable path ties and an explicit empty state.
+Git modes share one core-owned Workspace inspector selection; switching modes, filtering, inspecting and scrolling never changes the terminal's pane, tab, checkout focus or read state.
 Only explicit Open workspace or Open/Return agent actions change workspace or pane focus.
 View changes switches the section for the currently open workspace; another inspected workspace must first be opened.
 
-The inspector puts the branch, short folder name, current representative agent and status, changed files and PR before collapsed latest-commit details.
+The task inspector puts canonical agent identity, status, Workspace, lineage availability, explicit Open, and Workspace details together without attributing Workspace change counts to one agent.
+The Git inspector puts the branch, short folder name, current representative agent and status, changed files and PR before collapsed latest-commit details.
 The live pane list is not repeated.
 Absolute paths and commit IDs are selectable secondary details; the latest commit describes the checkout HEAD, not the pane that authored it.
 The pinned Herdr contract offers lifetime-scoped display metadata and agent lineage but no persistent commit-authoring relation, so Hide neither adds Git trailers nor renames branches.
 Retired or moved panes leave the current context on the next topology projection; a retired parent ID is omitted.
 Remote Overview explicitly reports that local Git context is unavailable.
 Explorer contains file navigation only, with no checkout summary above it.
-Changes and Git keep their existing responsibilities.
+Changes retains its diff navigation; Git/PR context remains in Overview and Workspace controls.
 
 Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.
 Nested roots belong to the longest matching root; hard links share one inode allocation, and descendant symlinks are not followed.
@@ -1186,7 +1213,7 @@ A completed removal disappears from the core snapshot and a repeated request is 
 Save failures remain caller-visible; normal no-op results never become alerts.
 
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
-Git and the selected Overview project retain their open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
+The selected Overview project retains its open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
 All triggers share the existing bounded background reader, authentication and cache.
 Explorer and Changes do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
@@ -1220,6 +1247,8 @@ A token name alone is not approval to add a new visual treatment.
 
 Every interactive component's contract specifies its label and accessible name, supported sizes/roles, default, hovered, pressed, keyboard-focused, selected and disabled states where applicable.
 Pending actions must show pending feedback and preserve the existing retry/duplicate-action contract.
+Relationship navigation uses the core's request-specific pane-focus outcome as that contract's authority.
+The adopted `Component / Spec / Relationship action states` and its referenced Ready, Pending, Target unavailable, and Open failed states use existing semantic and surface tokens without opacity overrides, so the disabled Open label, warning icon, long Korean or English reason, and Retry action remain legible.
 Status indicators retain text or a symbol alongside color; actual product state supplies their values.
 Keyboard activation, selection, IME handling and focus semantics remain part of the control contract when its appearance changes.
 Focus and hover are local presentation state and must not publish core snapshots or trigger Git/disk work.
@@ -1327,6 +1356,20 @@ A drag moves one item inside the tree.
 Dropping on a folder puts the item inside it, on a file puts it beside that file, and on the empty area puts it at the root; the receiving folder row is what highlights.
 The same parent, the item itself and a folder inside the item show no drop indicator and accept nothing.
 The pasteboard type is private to the tree, so Finder never reads the drag as a file and nothing is copied out.
+
+The existing 22pt native row reserves a fixed 12pt Git status slot at the trailing edge.
+The outline sizes each indented cell within the effective document viewport before laying out its contents; neither general column resizing nor expansion-driven outline resizing can override that width.
+Seti file artwork and disclosure keep their existing columns, and the filename truncates before the Git slot instead of moving it.
+Modified, Added, Untracked, Renamed, and Conflict render as `M`, `A`, `U`, `R`, and `!` with semantic color and a matching status name in tooltip and accessibility help.
+A folder with any changed descendant renders `●`; the mark describes derived folder state and never relabels the folder as a modified file.
+Deleted descendants still mark an existing ancestor folder but never create a file row that no longer exists.
+Clean and unavailable decoration both reserve the slot, while loading and failure are distinguished by the panel notice above the still-usable tree.
+The decoration is not a control and cannot intercept file open, disclosure, inline editing, drag, keyboard navigation, or the native context menu.
+
+Git state comes from the root-scoped Changes projection.
+Rename keeps both previous and current relative paths, conflict remains an independent status, and folder state is derived from the complete changed set rather than only loaded outline children.
+Explorer visibility reuses the Changes reader's bounded two-second refresh outside the runtime mutex.
+Switching Workspaces replaces the decoration root, and no per-row, hover, selection, or scroll path starts Git.
 
 ## Terminal image attachment boundary
 

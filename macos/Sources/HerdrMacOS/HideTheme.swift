@@ -131,8 +131,8 @@ enum HideTheme {
     /// keeps its shape and its hue so the row still says what it is; only its
     /// urgency drops (DESIGN.md, R5).
     static let readStatusOpacity: Double = 0.55
-    /// The column an agent's status mark sits in. Fixed, so `?` `!` `×` and
-    /// `~` line up down a list instead of shifting each row's text.
+    /// The fixed column a compact row's status mark sits in. Agent marks and
+    /// Explorer Git badges share it so status never shifts the row label.
     static let agentMarkWidth: CGFloat = 12
     /// Diff line tints, named here so the changes view and any later diff
     /// surface cannot drift apart. They lean on the semantic pair above
@@ -156,7 +156,10 @@ enum HideTheme {
         static let primary = NSColor(HideTheme.primary)
         static let secondary = NSColor(HideTheme.secondary)
         static let muted = NSColor(HideTheme.muted)
+        static let accent = NSColor(HideTheme.accent)
         static let danger = NSColor(HideTheme.danger)
+        static let warning = NSColor(HideTheme.warning)
+        static let success = NSColor(HideTheme.success)
         static let searchMatchHighlight = NSColor(HideTheme.searchMatchHighlight)
     }
 
@@ -181,7 +184,7 @@ enum HideTheme {
     static let radiusLarge: CGFloat = 10
     static let radiusExtraLarge: CGFloat = 16
 
-    /// Git section and lineage geometry, shared by the sidebar's agent tree and
+    /// Git context and lineage geometry, shared by the sidebar's agent tree and
     /// the worktree list so the two indent the same way.
     /// Semantic PR colors follow GitHub's dark status palette, independent of chrome.
     enum PullRequest {
@@ -304,6 +307,7 @@ enum HideTheme {
 
     enum Layout {
         static let pullRequestPopoverWidth: CGFloat = 360
+        static let relationshipListMaxHeight: CGFloat = 360
         static let hairlineWidth: CGFloat = 1
         static let resizeHandleThickness: CGFloat = 2
         /// The strip that answers the pointer. Wider than the 2pt marker it
