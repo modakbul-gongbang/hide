@@ -227,6 +227,21 @@ final class WorkspaceNSOutlineView: NSOutlineView {
 
     private var hoveredRow = -1
 
+    /// Outline indentation can put the default cell frame past the column's
+    /// viewport. Bound the cell itself, before AppKit lays out its contents;
+    /// a trailing constraint then has one stable coordinate space at every
+    /// depth, including a scroll view clipped by its SwiftUI ancestors.
+    override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+        var frame = super.frameOfCell(atColumn: column, row: row)
+        guard column == 0, !frame.isEmpty,
+              let scroll = enclosingScrollView as? WorkspaceOutlineScrollView
+        else { return frame }
+        let viewport = scroll.effectiveDocumentRect(in: self)
+        guard !viewport.isNull else { return .zero }
+        frame.size.width = max(0, min(frame.maxX, viewport.maxX) - frame.minX)
+        return frame
+    }
+
     /// `super` records `clickedRow` and draws the row's contextual ring; the
     /// menu itself is the coordinator's, because it depends on the item.
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -321,49 +336,21 @@ private final class WorkspaceOutlineScrollView: NSScrollView {
         // document pixels. Start from that clip view and intersect every
         // ancestor in window coordinates so the column follows the effective
         // document viewport, not either wider proposal.
-        let viewportWidth = max(column.minWidth, effectivelyVisibleWidth())
+        let viewportWidth = max(column.minWidth, effectiveDocumentRect(in: outline).width)
         if abs(column.width - viewportWidth) > 0.5 {
             column.width = viewportWidth
         }
     }
 
-    private func effectivelyVisibleWidth() -> CGFloat {
+    func effectiveDocumentRect(in target: NSView) -> NSRect {
         var visible = contentView.convert(contentView.bounds, to: nil)
         var ancestor = contentView.superview
         while let view = ancestor {
             visible = visible.intersection(view.convert(view.bounds, to: nil))
-            guard !visible.isNull else { return 0 }
+            guard !visible.isNull else { return .null }
             ancestor = view.superview
         }
-        return visible.width
-    }
-}
-
-/// AppKit indents the outline column's cell after sizing the table column.
-/// A cell can therefore extend beyond the final clip even when the column is
-/// the viewport width. Keep the fixed Git slot inside the cell's post-layout
-/// visible rect so disclosure depth and ancestor clipping cannot hide it.
-private final class WorkspaceOutlineCellView: NSTableCellView {
-    private var statusTrailingConstraint: NSLayoutConstraint?
-
-    func attachTrailingStatus(_ status: NSView) {
-        let constraint = status.trailingAnchor.constraint(
-            equalTo: trailingAnchor,
-            constant: -HideTheme.spacingXS
-        )
-        constraint.isActive = true
-        statusTrailingConstraint = constraint
-    }
-
-    override func layout() {
-        // Resolve the final inset before AppKit lays out the subviews. Calling
-        // super.layout() a second time after changing a constraint does not
-        // guarantee another constraint solve in the same layout pass.
-        if let statusTrailingConstraint, visibleRect.width > 0 {
-            let hiddenTrailing = max(0, bounds.maxX - visibleRect.maxX)
-            statusTrailingConstraint.constant = -(HideTheme.spacingXS + hiddenTrailing)
-        }
-        super.layout()
+        return target.convert(visible, from: nil)
     }
 }
 
@@ -406,6 +393,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
         outline.columnAutoresizingStyle = .noColumnAutoresizing
+        outline.autoresizesOutlineColumn = false
         outline.headerView = nil
         outline.backgroundColor = NSColor(HideTheme.panel)
         outline.selectionHighlightStyle = .none
@@ -701,7 +689,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         }
 
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-            let cell = WorkspaceOutlineCellView()
+            let cell = NSTableCellView()
             cell.identifier = identifier
             let icon = NSTextField(labelWithString: "")
             icon.identifier = NSUserInterfaceItemIdentifier("icon")
@@ -728,8 +716,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                 label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 git.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 git.widthAnchor.constraint(equalToConstant: HideTheme.agentMarkWidth),
+                git.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -HideTheme.spacingXS),
             ])
-            cell.attachTrailingStatus(git)
             return cell
         }
 

@@ -128,7 +128,8 @@ import Testing
         return host
     }
 
-    @Test @MainActor func nestedGitBadgeStaysInsideTheFinalClippedCellGeometry() async throws {
+    @Test(arguments: [240.0, 320.0, 344.0, 400.0])
+    func nestedGitBadgeStaysInsideTheFinalClippedCellGeometry(viewportWidth: Double) async throws {
         let host = try await Self.makeHost()
         let scroll = try #require(host.window.contentView as? NSScrollView)
         let outline = host.outline
@@ -147,9 +148,11 @@ import Testing
         host.apply(expanded: [source.path], gitDecorations: decorations)
         try await host.settle { host.coordinator.visibleRowNames.contains("lib.rs") }
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 200))
+        host.window.setContentSize(NSSize(width: viewportWidth, height: 400))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: viewportWidth, height: 400))
+        container.autoresizesSubviews = false
         host.window.contentView = nil
-        scroll.frame = NSRect(x: 0, y: 0, width: 320, height: 200)
+        scroll.frame = NSRect(x: 0, y: 0, width: viewportWidth + 80, height: 400)
         container.addSubview(scroll)
         host.window.contentView = container
         defer {
@@ -175,16 +178,20 @@ import Testing
             ancestor = view.superview
         }
 
-        let visibleCellBounds = cell.visibleRect.intersection(cell.bounds)
+        #expect(effectiveClip.width == CGFloat(viewportWidth))
         #expect(
-            visibleCellBounds.width < cell.bounds.width,
-            "the fixture must reproduce a trailing-clipped outline cell: \(cell.visibleRect) in \(cell.bounds)"
+            effectiveClip.width < scroll.contentView.bounds.width,
+            "the fixture must keep an oversized scroll view behind a narrower ancestor"
         )
+        let cellInWindow = cell.convert(cell.bounds, to: nil)
+        #expect(cellInWindow.maxX <= effectiveClip.maxX,
+                "cell \(cellInWindow) must be sized before layout to fit \(effectiveClip)")
         #expect(status.stringValue == "M")
         #expect(effectiveClip.contains(statusInWindow), "badge \(statusInWindow) must remain inside \(effectiveClip)")
         #expect(status.visibleRect.contains(status.bounds))
         #expect(outline.tableColumns.first?.resizingMask.isEmpty == true)
         #expect(outline.columnAutoresizingStyle == .noColumnAutoresizing)
+        #expect(!outline.autoresizesOutlineColumn)
     }
 
     @Test func rowMenuFollowsTheTargetAndTheEmptyAreaOffersOnlyCreation() async throws {

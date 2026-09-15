@@ -1358,6 +1358,7 @@ The same parent, the item itself and a folder inside the item show no drop indic
 The pasteboard type is private to the tree, so Finder never reads the drag as a file and nothing is copied out.
 
 The existing 22pt native row reserves a fixed 12pt Git status slot at the trailing edge.
+The outline sizes each indented cell within the effective document viewport before laying out its contents; neither general column resizing nor expansion-driven outline resizing can override that width.
 Seti file artwork and disclosure keep their existing columns, and the filename truncates before the Git slot instead of moving it.
 Modified, Added, Untracked, Renamed, and Conflict render as `M`, `A`, `U`, `R`, and `!` with semantic color and a matching status name in tooltip and accessibility help.
 A folder with any changed descendant renders `●`; the mark describes derived folder state and never relabels the folder as a modified file.
