@@ -356,12 +356,13 @@ private final class WorkspaceOutlineCellView: NSTableCellView {
     }
 
     override func layout() {
-        super.layout()
-        guard let statusTrailingConstraint, visibleRect.width > 0 else { return }
-        let hiddenTrailing = max(0, bounds.maxX - visibleRect.maxX)
-        let nextConstant = -(HideTheme.spacingXS + hiddenTrailing)
-        guard abs(statusTrailingConstraint.constant - nextConstant) > 0.5 else { return }
-        statusTrailingConstraint.constant = nextConstant
+        // Resolve the final inset before AppKit lays out the subviews. Calling
+        // super.layout() a second time after changing a constraint does not
+        // guarantee another constraint solve in the same layout pass.
+        if let statusTrailingConstraint, visibleRect.width > 0 {
+            let hiddenTrailing = max(0, bounds.maxX - visibleRect.maxX)
+            statusTrailingConstraint.constant = -(HideTheme.spacingXS + hiddenTrailing)
+        }
         super.layout()
     }
 }

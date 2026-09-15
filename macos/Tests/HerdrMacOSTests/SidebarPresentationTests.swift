@@ -205,7 +205,8 @@ private func presentationAgent(
     id: String,
     paneID: String,
     group: String,
-    demand: String = "none"
+    demand: String = "none",
+    identityLabel: String? = nil
 ) -> SidebarAgent {
     SidebarAgent(
         id: id,
@@ -218,6 +219,7 @@ private func presentationAgent(
         group: group,
         symbol: "\u{25cf}",
         summary: "Agent \(id)",
+        identityLabel: identityLabel,
         elapsed: "1m",
         lastActivity: "0000000000001",
         ambient: nil
@@ -260,7 +262,7 @@ private func presentationAgent(
 @Test func projectTaskForestCrossesCheckoutsAndSearchKeepsAncestors() {
     var parent = presentationAgent(id: "parent", paneID: "pane-parent", group: "working")
     var child = presentationAgent(id: "child", paneID: "pane-child", group: "working")
-    var grandchild = presentationAgent(id: "grandchild", paneID: "pane-grandchild", group: "working")
+    var grandchild = presentationAgent(id: "grandchild", paneID: "pane-grandchild", group: "working", identityLabel: "구성 검토")
     parent.lineageChildPaneIDs = ["pane-child"]
     child.lineageDepth = 1
     child.lineageChildPaneIDs = ["pane-grandchild"]
@@ -284,6 +286,12 @@ private func presentationAgent(
         query: "grandchild"
     )
     #expect(search.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+    let titleSearch = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts,
+        query: "구성 검토"
+    )
+    #expect(titleSearch.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
 }
 
 @Test func checkoutSummaryFallsBackToPanesAndKeepsMissingExplicit() {
