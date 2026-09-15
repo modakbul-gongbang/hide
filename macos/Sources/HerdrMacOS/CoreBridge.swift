@@ -2638,26 +2638,25 @@ struct CoreLastError: Decodable {
     }
 }
 
-/// Blocks only topology events whose Rust handlers still address the local
-/// Herdr session directly. Terminal input, resize, and scroll are deliberately
-/// absent: the core routes those through the target-scoped terminal session
-/// selected by the pane ID for both local and remote panes.
+/// Blocks local-Herdr mutations while commands target a remote device.
+///
+/// Only terminal events whose core handlers resolve a target-scoped session
+/// from the pane ID may cross this boundary. Every other event classified as
+/// a local Herdr mutation stays local and is rejected instead of accidentally
+/// changing the operator's local session.
 struct CoreDispatchRoutingPolicy {
-    private static let localTopologyEventKinds: Set<String> = [
-        "reconnect_pane",
-        "focus_pane",
-        "focus_checkout",
-        "focus_tab",
-        "reorder_tab",
-        "create_tab",
-        "create_pane",
-        "toggle_zoom",
-        "close_pane",
-        "fork_pane",
+    private static let remoteTargetScopedEventKinds: Set<String> = [
+        "key",
+        "terminal_click",
+        "terminal_resize",
+        "terminal_scroll",
+        "terminal_viewport",
     ]
 
     static func blocks(kind: String, whenDeviceIsRemote isRemote: Bool) -> Bool {
-        isRemote && localTopologyEventKinds.contains(kind)
+        isRemote
+            && LocalHerdrMutationDispatchPolicy.isMutation(kind: kind)
+            && !remoteTargetScopedEventKinds.contains(kind)
     }
 }
 
@@ -2700,7 +2699,11 @@ struct LocalHerdrMutationDispatchPolicy {
         kind: String,
         whenDeviceIsRemote: Bool = false
     ) -> Bool {
-        !whenDeviceIsRemote && eventKinds.contains(kind)
+        !whenDeviceIsRemote && isMutation(kind: kind)
+    }
+
+    static func isMutation(kind: String) -> Bool {
+        eventKinds.contains(kind)
     }
 }
 

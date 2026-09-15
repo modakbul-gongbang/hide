@@ -15,17 +15,27 @@ struct CoreDispatchRoutingPolicyTests {
         }
     }
 
-    @Test func remoteTopologyEventsStillRequireTheExplicitRemoteControlContract() {
+    @Test func remoteLocalHerdrMutationsStillRequireTheExplicitRemoteControlContract() {
         for kind in [
-            "reconnect_pane",
-            "focus_pane",
-            "focus_checkout",
-            "focus_tab",
-            "reorder_tab",
-            "create_tab",
-            "create_pane",
-            "toggle_zoom",
+            "close_tab",
             "close_pane",
+            "create_pane",
+            "create_scratch_chat_tab",
+            "create_tab",
+            "create_worktree",
+            "create_workspace",
+            "focus_checkout",
+            "focus_pane",
+            "focus_tab",
+            "fork_pane",
+            "git_worktree_open",
+            "migrate_main_branch",
+            "reconnect_pane",
+            "reopen_closed",
+            "remove_worktree",
+            "reorder_tab",
+            "resize_pane",
+            "toggle_zoom",
         ] {
             #expect(
                 CoreDispatchRoutingPolicy.blocks(
