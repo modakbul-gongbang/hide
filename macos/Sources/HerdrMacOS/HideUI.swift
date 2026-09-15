@@ -658,8 +658,8 @@ private struct HideSidebar: View {
         } else {
             ForEach(model.sidebarProjectRows) { row in
                 switch row {
-                case .workspace(let workspace):
-                    WorkspaceNavigatorRow(workspace: workspace)
+                case .workspace(let workspace, let hierarchyLevel):
+                    WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
                 case .inactiveProjects(let group, let folded):
                     InactiveFoldRow(
                         title: "Inactive projects",
@@ -667,8 +667,10 @@ private struct HideSidebar: View {
                         itemName: "project",
                         expanded: group.expanded,
                         accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                        hierarchyLevel: .root,
                         action: { model.toggleInactiveProjects(in: group) }
                     )
+                    .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
                 }
             }
         }
@@ -1292,6 +1294,7 @@ private struct WorkspaceNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
     let workspace: CoreWorkspaceSnapshot
+    let hierarchyLevel: SidebarHierarchyLevel
 
     private var isFocusedWorkspace: Bool {
         model.focusedWorkspace?.id == workspace.id
@@ -1365,12 +1368,12 @@ private struct WorkspaceNavigatorRow: View {
                 .fixedSize()
                 .frame(width: 24, height: 28)
             }
-            .padding(.leading, HideTheme.spacingMD)
+            .padding(.leading, hierarchyLevel.contentLeadingInset)
             .padding(.trailing, HideTheme.spacingSM)
 
             if workspace.expanded {
                 ForEach(model.activeCheckouts(in: workspace)) { checkout in
-                    checkoutGroup(checkout)
+                    checkoutGroup(checkout, hierarchyLevel: hierarchyLevel.childLevel)
                 }
                 let inactive = model.inactiveCheckouts(in: workspace)
                 if !inactive.isEmpty {
@@ -1380,22 +1383,28 @@ private struct WorkspaceNavigatorRow: View {
                         itemName: "checkout",
                         expanded: workspace.inactiveCheckouts.expanded,
                         accessibilityID: "hide-inactive-checkouts-\(workspace.id)",
-                        indented: true,
+                        hierarchyLevel: hierarchyLevel.childLevel,
                         action: { model.toggleInactiveCheckouts(in: workspace) }
                     )
                     if workspace.inactiveCheckouts.expanded {
                         ForEach(inactive) { checkout in
-                            checkoutGroup(checkout)
+                            checkoutGroup(
+                                checkout,
+                                hierarchyLevel: hierarchyLevel.childLevel.childLevel
+                            )
                         }
                     }
                 }
             }
         }
-        .padding(.bottom, HideTheme.spacingXS)
+        .padding(.bottom, HideTheme.spacingSM)
         .onAppear { model.requestGithubStatus(workspace) }
     }
 
-    private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
+    private func checkoutGroup(
+        _ checkout: CoreCheckoutSnapshot,
+        hierarchyLevel: SidebarHierarchyLevel
+    ) -> some View {
         let isFocused = model.focusedCheckout?.id == checkout.id
         let visibleAgents = SidebarGrouping.tree(model.agents, checkoutID: checkout.id,
             ownedPaneIDs: Set(checkout.tabs.flatMap(\.panes).map(\.id)))
@@ -1438,7 +1447,8 @@ private struct WorkspaceNavigatorRow: View {
                     .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
             }
         }
-        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.leading, hierarchyLevel.selectionLeadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
     }
 }
 
@@ -1451,7 +1461,7 @@ private struct InactiveFoldRow: View {
     let itemName: String
     let expanded: Bool
     let accessibilityID: String
-    var indented = false
+    let hierarchyLevel: SidebarHierarchyLevel
     let action: () -> Void
 
     var body: some View {
@@ -1467,12 +1477,13 @@ private struct InactiveFoldRow: View {
                     .foregroundStyle(HideTheme.secondary)
                 Spacer(minLength: HideTheme.spacingXS)
             }
-            .padding(.leading, indented ? HideTheme.spacingXL : HideTheme.spacingMD)
-            .padding(.trailing, HideTheme.spacingMD)
+            .padding(.horizontal, HideTheme.spacingSM)
             .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
             .contentShape(Rectangle())
         }
         .buttonStyle(HideInteractiveButtonStyle())
+        .padding(.leading, hierarchyLevel.selectionLeadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
         .accessibilityLabel(
             "\(title), \(count) \(countedItemName), \(expanded ? "expanded" : "collapsed")"
         )

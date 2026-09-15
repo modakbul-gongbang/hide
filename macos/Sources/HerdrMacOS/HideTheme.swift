@@ -170,6 +170,11 @@ enum HideTheme {
     static let spacingXXL: CGFloat = 32
     static let spacingXXXL: CGFloat = 40
 
+    /// Sidebar hierarchy continues the 12pt spacing rhythm beyond the named
+    /// scale stops so every nested level keeps a distinct leading edge.
+    static let sidebarHierarchyGrandchildInset = spacingXXL + spacingXS
+    static let sidebarHierarchyGreatGrandchildInset = spacingXXXL + spacingSM
+
     static let radiusExtraSmall: CGFloat = 4
     static let radiusSmall: CGFloat = 6
     static let radiusMedium: CGFloat = 8

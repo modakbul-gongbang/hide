@@ -531,7 +531,7 @@ final class ShellModel: ObservableObject {
     /// Project rows in exactly the order the Projects view draws them.
     var sidebarVisibleWorkspaces: [CoreWorkspaceSnapshot] {
         sidebarProjectRows.compactMap { row in
-            guard case .workspace(let workspace) = row else { return nil }
+            guard case .workspace(let workspace, _) = row else { return nil }
             return workspace
         }
     }

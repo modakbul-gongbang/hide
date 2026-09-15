@@ -1,16 +1,47 @@
 import Foundation
 
 enum SidebarProjectRow: Identifiable {
-    case workspace(CoreWorkspaceSnapshot)
+    case workspace(CoreWorkspaceSnapshot, level: SidebarHierarchyLevel)
     case inactiveProjects(CoreInactiveProjectGroupSnapshot, [CoreWorkspaceSnapshot])
 
     var id: String {
         switch self {
-        case .workspace(let workspace):
+        case .workspace(let workspace, _):
             "workspace:\(workspace.id)"
         case .inactiveProjects(let group, _):
             "inactive-projects:\(group.deviceID)"
         }
+    }
+}
+
+/// The project tree's semantic indentation ladder. Each level advances on
+/// the same spacing rhythm, while the selected-row surface begins one small
+/// inset before its content so the background keeps the child relationship.
+enum SidebarHierarchyLevel: Equatable {
+    case root
+    case child
+    case grandchild
+    case greatGrandchild
+
+    var childLevel: SidebarHierarchyLevel {
+        switch self {
+        case .root: .child
+        case .child: .grandchild
+        case .grandchild, .greatGrandchild: .greatGrandchild
+        }
+    }
+
+    var contentLeadingInset: CGFloat {
+        switch self {
+        case .root: HideTheme.spacingMD
+        case .child: HideTheme.spacingXL
+        case .grandchild: HideTheme.sidebarHierarchyGrandchildInset
+        case .greatGrandchild: HideTheme.sidebarHierarchyGreatGrandchildInset
+        }
+    }
+
+    var selectionLeadingInset: CGFloat {
+        contentLeadingInset - HideTheme.spacingSM
     }
 }
 
@@ -34,13 +65,13 @@ enum SidebarInactiveProjection {
             let inactiveIDs = Set(group?.projectIDs ?? [])
             var rows = workspaces
                 .filter { $0.deviceID == deviceID && !inactiveIDs.contains($0.id) }
-                .map(SidebarProjectRow.workspace)
+                .map { SidebarProjectRow.workspace($0, level: .root) }
             guard let group else { return rows }
             let inactive = group.projectIDs.compactMap { byID[$0] }
             guard !inactive.isEmpty else { return rows }
             rows.append(.inactiveProjects(group, inactive))
             if group.expanded {
-                rows.append(contentsOf: inactive.map(SidebarProjectRow.workspace))
+                rows.append(contentsOf: inactive.map { SidebarProjectRow.workspace($0, level: .child) })
             }
             return rows
         }

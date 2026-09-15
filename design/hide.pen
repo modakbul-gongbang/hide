@@ -5395,7 +5395,7 @@
               "id": "inactive-fold-title-spec",
               "name": "Spec",
               "fill": "$--color-muted",
-              "content": "InactiveFoldRow · project and checkout group disclosure",
+              "content": "InactiveFoldRow · hierarchy level supplied by project tree · token-based inset",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-subhead",
               "fontWeight": "normal"
@@ -6050,19 +6050,39 @@
                       }
                     },
                     {
-                      "id": "inactive-state-1-checkout-focus",
-                      "type": "ref",
-                      "ref": "LrlHe",
-                      "name": "Checkout / sidebar-projects-focus",
+                      "id": "inactive-state-1-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
                       "width": "fill_container",
-                      "descendants": {
-                        "rCmzg": {
-                          "content": "sidebar-projects-focus"
-                        },
-                        "ATYs4": {
-                          "icon": "chevron-right"
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "inactive-state-1-checkout-focus",
+                          "type": "ref",
+                          "ref": "LrlHe",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "rCmzg": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "ATYs4": {
+                              "icon": "chevron-right"
+                            }
+                          }
                         }
-                      }
+                      ]
                     },
                     {
                       "id": "inactive-state-1-fold",
@@ -6087,6 +6107,13 @@
                     },
                     {
                       "id": "inactive-state-1-project-sasu",
+                      "type": "frame",
+                      "name": "Top-level group separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-1-project-sasu-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / sasu",
@@ -6583,19 +6610,39 @@
                       }
                     },
                     {
-                      "id": "inactive-state-2-checkout-focus",
-                      "type": "ref",
-                      "ref": "LrlHe",
-                      "name": "Checkout / sidebar-projects-focus",
+                      "id": "inactive-state-2-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
                       "width": "fill_container",
-                      "descendants": {
-                        "rCmzg": {
-                          "content": "sidebar-projects-focus"
-                        },
-                        "ATYs4": {
-                          "icon": "chevron-right"
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "inactive-state-2-checkout-focus",
+                          "type": "ref",
+                          "ref": "LrlHe",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "rCmzg": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "ATYs4": {
+                              "icon": "chevron-right"
+                            }
+                          }
                         }
-                      }
+                      ]
                     },
                     {
                       "id": "inactive-state-2-fold",
@@ -6624,6 +6671,12 @@
                       "ref": "LrlHe",
                       "name": "Checkout / cleanup-merged",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--size-sidebar-hierarchy-grandchild"
+                      ],
                       "descendants": {
                         "rCmzg": {
                           "content": "cleanup-merged"
@@ -6642,6 +6695,12 @@
                       "ref": "LrlHe",
                       "name": "Checkout / legacy-shell",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--size-sidebar-hierarchy-grandchild"
+                      ],
                       "descendants": {
                         "rCmzg": {
                           "content": "legacy-shell"
@@ -6657,6 +6716,12 @@
                       "ref": "LrlHe",
                       "name": "Checkout / old-spike",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--size-sidebar-hierarchy-grandchild"
+                      ],
                       "descendants": {
                         "rCmzg": {
                           "content": "old-spike"
@@ -6671,6 +6736,13 @@
                     },
                     {
                       "id": "inactive-state-2-project-sasu",
+                      "type": "frame",
+                      "name": "Top-level group separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-2-project-sasu-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / sasu",
@@ -7152,22 +7224,49 @@
                       }
                     },
                     {
-                      "id": "inactive-state-3-checkout-focus",
-                      "type": "ref",
-                      "ref": "LrlHe",
-                      "name": "Checkout / sidebar-projects-focus",
+                      "id": "inactive-state-3-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
                       "width": "fill_container",
-                      "descendants": {
-                        "rCmzg": {
-                          "content": "sidebar-projects-focus"
-                        },
-                        "ATYs4": {
-                          "icon": "chevron-right"
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "inactive-state-3-checkout-focus",
+                          "type": "ref",
+                          "ref": "LrlHe",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "rCmzg": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "ATYs4": {
+                              "icon": "chevron-right"
+                            }
+                          }
                         }
-                      }
+                      ]
                     },
                     {
                       "id": "inactive-state-3-project-task-factory",
+                      "type": "frame",
+                      "name": "Top-level group separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-3-project-task-factory-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / task-factory",
@@ -7186,6 +7285,13 @@
                     },
                     {
                       "id": "inactive-state-3-fold",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-3-fold-row",
                       "type": "ref",
                       "ref": "inactive-fold-row",
                       "name": "Inactive projects / Collapsed",
@@ -7670,22 +7776,49 @@
                       }
                     },
                     {
-                      "id": "inactive-state-4-checkout-focus",
-                      "type": "ref",
-                      "ref": "LrlHe",
-                      "name": "Checkout / sidebar-projects-focus",
+                      "id": "inactive-state-4-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
                       "width": "fill_container",
-                      "descendants": {
-                        "rCmzg": {
-                          "content": "sidebar-projects-focus"
-                        },
-                        "ATYs4": {
-                          "icon": "chevron-right"
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "inactive-state-4-checkout-focus",
+                          "type": "ref",
+                          "ref": "LrlHe",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "rCmzg": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "ATYs4": {
+                              "icon": "chevron-right"
+                            }
+                          }
                         }
-                      }
+                      ]
                     },
                     {
                       "id": "inactive-state-4-project-task-factory",
+                      "type": "frame",
+                      "name": "Top-level group separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-4-project-task-factory-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / task-factory",
@@ -7704,6 +7837,13 @@
                     },
                     {
                       "id": "inactive-state-4-fold",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-4-fold-row",
                       "type": "ref",
                       "ref": "inactive-fold-row",
                       "name": "Inactive projects / Expanded",
@@ -7729,9 +7869,15 @@
                       "ref": "qdhY0",
                       "name": "Project / sasu",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-xl"
+                      ],
                       "descendants": {
                         "iBYjj": {
-                          "icon": "chevron-right"
+                          "icon": "chevron-down"
                         },
                         "JkPyX": {
                           "content": "sasu"
@@ -7742,11 +7888,45 @@
                       }
                     },
                     {
+                      "id": "inactive-state-4-checkout-sasu-main",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / sasu main",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--size-sidebar-hierarchy-grandchild"
+                      ],
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "main"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
                       "id": "inactive-state-4-project-creator",
+                      "type": "frame",
+                      "name": "Nested project separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-4-project-creator-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / creator-assist",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-xl"
+                      ],
                       "descendants": {
                         "iBYjj": {
                           "icon": "chevron-right"
@@ -7761,10 +7941,23 @@
                     },
                     {
                       "id": "inactive-state-4-project-pet",
+                      "type": "frame",
+                      "name": "Nested project separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-4-project-pet-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / herdr-pet",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-xl"
+                      ],
                       "descendants": {
                         "iBYjj": {
                           "icon": "chevron-right"
@@ -7779,10 +7972,23 @@
                     },
                     {
                       "id": "inactive-state-4-project-class",
+                      "type": "frame",
+                      "name": "Nested project separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "inactive-state-4-project-class-row",
                       "type": "ref",
                       "ref": "qdhY0",
                       "name": "Project / vibecoding-class",
                       "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-xl"
+                      ],
                       "descendants": {
                         "iBYjj": {
                           "icon": "chevron-right"
@@ -19378,6 +19584,14 @@
     "--size-settings-control-w": {
       "type": "number",
       "value": 200
+    },
+    "--size-sidebar-hierarchy-grandchild": {
+      "type": "number",
+      "value": 36
+    },
+    "--size-sidebar-hierarchy-great-grandchild": {
+      "type": "number",
+      "value": 48
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

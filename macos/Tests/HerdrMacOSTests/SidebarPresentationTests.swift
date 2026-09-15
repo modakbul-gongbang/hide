@@ -140,6 +140,16 @@ private func presentationWorkspace(
         "inactive-projects:mini",
         "workspace:remote-inactive",
     ])
+    let workspaceLevels = rows.compactMap { row -> (String, SidebarHierarchyLevel)? in
+        guard case .workspace(let workspace, let level) = row else { return nil }
+        return (workspace.id, level)
+    }
+    #expect(workspaceLevels.map(\.0) == [
+        "workspace-visible",
+        "remote-active",
+        "remote-inactive",
+    ])
+    #expect(workspaceLevels.map(\.1) == [.root, .root, .child])
     #expect(
         SidebarInactiveProjection.activeCheckouts(in: foldedProject).map(\.id)
             == ["main", "active"]
@@ -148,6 +158,28 @@ private func presentationWorkspace(
         SidebarInactiveProjection.inactiveCheckouts(in: foldedProject).map(\.id)
             == ["old-two", "old-one"]
     )
+}
+
+/// Human review asked for a visible hierarchy ladder. The policy keeps every
+/// content edge distinct and starts selection behind that edge, so a selected
+/// checkout still reads as a child rather than a full-width top-level row.
+@Test func sidebarHierarchyKeepsNestedContentAndSelectionDistinct() {
+    let levels: [SidebarHierarchyLevel] = [.root, .child, .grandchild, .greatGrandchild]
+    let contentInsets = levels.map(\.contentLeadingInset)
+
+    #expect(contentInsets == [
+        HideTheme.spacingMD,
+        HideTheme.spacingXL,
+        HideTheme.sidebarHierarchyGrandchildInset,
+        HideTheme.sidebarHierarchyGreatGrandchildInset,
+    ])
+    #expect(zip(contentInsets, contentInsets.dropFirst()).allSatisfy { $0 < $1 })
+    #expect(levels.allSatisfy {
+        $0.selectionLeadingInset + HideTheme.spacingSM == $0.contentLeadingInset
+    })
+    #expect(SidebarHierarchyLevel.root.childLevel == .child)
+    #expect(SidebarHierarchyLevel.child.childLevel == .grandchild)
+    #expect(SidebarHierarchyLevel.grandchild.childLevel == .greatGrandchild)
 }
 
 /// Additive wire fields default to closed and empty, so an older snapshot
