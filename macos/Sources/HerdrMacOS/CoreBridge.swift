@@ -2685,6 +2685,7 @@ struct LocalHerdrMutationDispatchPolicy {
         "key",
         "migrate_main_branch",
         "reconnect_pane",
+        "reopen_closed",
         "remove_worktree",
         "reorder_tab",
         "resize_pane",
