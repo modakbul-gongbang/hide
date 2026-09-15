@@ -26,7 +26,11 @@ struct SettledTerminalSize {
     mutating func displayTick() -> Grid? {
         defer { sampled = candidate }
         guard let candidate, candidate == sampled, candidate != delivered else { return nil }
-        delivered = candidate
         return candidate
+    }
+
+    mutating func markDelivered(_ grid: Grid) {
+        guard candidate == grid else { return }
+        delivered = grid
     }
 }
