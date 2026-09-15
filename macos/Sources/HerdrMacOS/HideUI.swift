@@ -229,6 +229,25 @@ struct ShellView: View {
         } message: {
             Text(model.interactionNotice ?? "")
         }
+        // A close with a consequence - a browser pane, whose Chromium tab goes
+        // with it, or a working agent - waits here for the operator's answer.
+        // The model holds the pending target, so the header X and ⌘W share
+        // one prompt. Return closes and Esc cancels, as in the trash prompt
+        // above; dismissing by any other route cancels through the binding.
+        .alert(
+            model.consequenceNotice?.title ?? "",
+            isPresented: Binding(
+                get: { model.consequenceNotice != nil },
+                set: { if !$0, model.consequenceNotice != nil { model.cancelConsequencePreview() } }
+            ),
+            presenting: model.consequenceNotice
+        ) { _ in
+            Button("Close", role: .destructive, action: model.confirmConsequencePreview)
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel, action: model.cancelConsequencePreview)
+        } message: { notice in
+            Text(notice.message)
+        }
     }
 }
 
