@@ -15,9 +15,35 @@ struct CoreDispatchRoutingPolicyTests {
             #expect(
                 !CoreDispatchRoutingPolicy.blocks(
                     kind: kind,
-                    whenDeviceIsRemote: true
+                    payload: ["pane_id": "remote:mini:pane:w1:p1"],
+                    remoteDeviceID: "mini"
                 )
             )
+        }
+    }
+
+    @Test func remoteTerminalEventsCannotFallThroughToALocalOrDifferentRemotePane() {
+        for kind in [
+            "key",
+            "terminal_click",
+            "terminal_resize",
+            "terminal_scroll",
+            "terminal_viewport",
+        ] {
+            #expect(CoreDispatchRoutingPolicy.blocks(
+                kind: kind,
+                payload: ["pane_id": "w1:p1"],
+                remoteDeviceID: "mini"
+            ))
+            #expect(CoreDispatchRoutingPolicy.blocks(
+                kind: kind,
+                payload: ["pane_id": "remote:build:pane:w1:p1"],
+                remoteDeviceID: "mini"
+            ))
+            #expect(CoreDispatchRoutingPolicy.blocks(
+                kind: kind,
+                remoteDeviceID: "mini"
+            ))
         }
     }
 
@@ -46,7 +72,7 @@ struct CoreDispatchRoutingPolicyTests {
             #expect(
                 CoreDispatchRoutingPolicy.blocks(
                     kind: kind,
-                    whenDeviceIsRemote: true
+                    remoteDeviceID: "mini"
                 )
             )
         }
@@ -56,7 +82,7 @@ struct CoreDispatchRoutingPolicyTests {
         #expect(
             !CoreDispatchRoutingPolicy.blocks(
                 kind: "focus_pane",
-                whenDeviceIsRemote: false
+                remoteDeviceID: nil
             )
         )
     }

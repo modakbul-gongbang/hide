@@ -2653,10 +2653,23 @@ struct CoreDispatchRoutingPolicy {
         "terminal_viewport",
     ]
 
-    static func blocks(kind: String, whenDeviceIsRemote isRemote: Bool) -> Bool {
-        isRemote
-            && LocalHerdrMutationDispatchPolicy.isMutation(kind: kind)
-            && !remoteTargetScopedEventKinds.contains(kind)
+    static func blocks(
+        kind: String,
+        payload: [String: Any] = [:],
+        remoteDeviceID: String?
+    ) -> Bool {
+        guard let remoteDeviceID,
+              LocalHerdrMutationDispatchPolicy.isMutation(kind: kind)
+        else {
+            return false
+        }
+        guard remoteTargetScopedEventKinds.contains(kind) else {
+            return true
+        }
+        guard let paneID = payload["pane_id"] as? String else {
+            return true
+        }
+        return !paneID.hasPrefix("remote:\(remoteDeviceID):pane:")
     }
 }
 
@@ -3852,7 +3865,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func dispatch(kind: String, payload: [String: Any]) -> CoreDispatchOutcome {
         if CoreDispatchRoutingPolicy.blocks(
             kind: kind,
-            whenDeviceIsRemote: commandDevice.isRemote
+            payload: payload,
+            remoteDeviceID: commandDevice.isRemote ? commandDevice.id : nil
         ) {
             let message = "device.route_blocked: \(commandDevice.label) is selected. \(kind) was not sent to the local Herdr session."
             routingError = message
