@@ -546,6 +546,16 @@ struct FocusDevicePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct InactiveCheckoutsTogglePayload {
+    project_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InactiveProjectsTogglePayload {
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RemoveWorkspacePayload {
     workspace_id: String,
 }
@@ -1191,6 +1201,8 @@ enum ValidatedEvent {
     FocusTab(FocusTabPayload),
     ReorderTab(ReorderTabPayload),
     FocusDevice(FocusDevicePayload),
+    InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
+    InactiveProjectsToggle(InactiveProjectsTogglePayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
     RemoveDevice(RemoveDevicePayload),
@@ -4803,6 +4815,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        self.refresh_inactive_groups();
 
         let focused_project = self
             .snapshot
@@ -5634,6 +5647,17 @@ impl Runtime {
         sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
     }
 
+    /// Recomputes the two inactive folds from current core facts. No row is
+    /// moved or copied: the full collections stay authoritative for search,
+    /// focus, and non-sidebar consumers.
+    fn refresh_inactive_groups(&mut self) -> bool {
+        crate::project_context::refresh_inactive_groups(
+            &mut self.snapshot.navigator,
+            &self.snapshot.ui_state,
+            unix_milliseconds(),
+        )
+    }
+
     /// Refills every pane's child summary and breadcrumb from the final agent
     /// list.
     ///
@@ -5763,7 +5787,7 @@ impl Runtime {
         if delegated_tabs_changed {
             self.rebuild_tab_strips();
         }
-        changed || delegated_tabs_changed
+        changed | delegated_tabs_changed | self.refresh_inactive_groups()
     }
 
     /// Whether a delegated child's clock should be running at all.
@@ -6647,7 +6671,7 @@ impl Runtime {
         self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
         let changed = before != agents;
         self.snapshot.navigator.agents = agents;
-        changed
+        changed | self.refresh_inactive_groups()
     }
 
     fn ensure_terminal_pane(&mut self, pane_id: &str) {
@@ -8797,6 +8821,7 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
+        self.refresh_inactive_groups();
         // Selecting a checkout measures it, and selecting the one already
         // selected measures it again - that is the card's cheapest refresh
         // for a number that moves whenever a build runs (R8).
@@ -9345,6 +9370,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
+                self.refresh_inactive_groups();
                 self.visible_tab_ids
                     .insert(payload.checkout_id.clone(), payload.tab_id.clone());
                 // Nothing is cleared here. The tab being selected already has
@@ -9435,6 +9461,72 @@ impl Runtime {
                 self.deactivate_editor_tab();
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::InactiveCheckoutsToggle(payload) => {
+                let Some(group) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.path == payload.project_path)
+                    .map(|workspace| &workspace.inactive_checkouts)
+                else {
+                    self.set_error(
+                        "inactive_checkouts.unknown_project",
+                        format!("Project {} is not available", payload.project_path),
+                        false,
+                    );
+                    return true;
+                };
+                if group.checkout_ids.is_empty() {
+                    self.set_error(
+                        "inactive_checkouts.unavailable",
+                        format!("Project {} has no inactive checkouts", payload.project_path),
+                        false,
+                    );
+                    return true;
+                }
+                let expanded = &mut self
+                    .snapshot
+                    .ui_state
+                    .expanded_inactive_checkout_project_paths;
+                if expanded.contains(&payload.project_path) {
+                    expanded.retain(|path| path != &payload.project_path);
+                } else {
+                    expanded.push(payload.project_path);
+                    expanded.sort();
+                }
+                self.refresh_inactive_groups();
+                self.persist_ui_state();
+                true
+            }
+            ValidatedEvent::InactiveProjectsToggle(payload) => {
+                let available = self
+                    .snapshot
+                    .navigator
+                    .inactive_projects
+                    .iter()
+                    .any(|group| {
+                        group.device_id == payload.device_id && !group.project_ids.is_empty()
+                    });
+                if !available {
+                    self.set_error(
+                        "inactive_projects.unavailable",
+                        format!("Device {} has no inactive projects", payload.device_id),
+                        false,
+                    );
+                    return true;
+                }
+                let expanded = &mut self.snapshot.ui_state.expanded_inactive_project_device_ids;
+                if expanded.contains(&payload.device_id) {
+                    expanded.retain(|device_id| device_id != &payload.device_id);
+                } else {
+                    expanded.push(payload.device_id);
+                    expanded.sort();
+                }
+                self.refresh_inactive_groups();
+                self.persist_ui_state();
                 true
             }
             ValidatedEvent::RemoveWorkspace(payload) => {
@@ -10673,6 +10765,10 @@ impl Runtime {
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids
                         .unwrap_or(current.collapsed_checkout_ids),
+                    expanded_inactive_checkout_project_paths: current
+                        .expanded_inactive_checkout_project_paths,
+                    expanded_inactive_project_device_ids: current
+                        .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
                     collapsed_agent_pane_ids: payload
                         .collapsed_agent_pane_ids
@@ -10715,6 +10811,7 @@ impl Runtime {
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                self.refresh_inactive_groups();
                 self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(
                     &mut self.snapshot.navigator.workspaces,
@@ -11533,6 +11630,12 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "focus_tab" => decode!(FocusTabPayload, FocusTab),
         "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
+        "inactive_checkouts_toggle" => {
+            decode!(InactiveCheckoutsTogglePayload, InactiveCheckoutsToggle)
+        }
+        "inactive_projects_toggle" => {
+            decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
+        }
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
@@ -14434,6 +14537,7 @@ mod tests {
             session_workspace_ids: Vec::new(),
             last_activity_unix_ms: None,
             checkouts,
+            inactive_checkouts: Default::default(),
         }
     }
 
@@ -14504,6 +14608,97 @@ mod tests {
                 .snapshot()
                 .ui_state
                 .collapsed_checkout_ids
+                .is_empty()
+        );
+    }
+
+    /// B5, B12. The two fold events own independent persisted keys and update
+    /// the snapshot immediately. Repeating each toggle converges back to the
+    /// default collapsed state without changing project disclosure.
+    #[test]
+    fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
+        let mut runtime = runtime();
+        let path = "/tmp/hide-runtime-inactive";
+        let settled = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
+            id: id.to_owned(),
+            workspace_id: "workspace-inactive".to_owned(),
+            label: id.to_owned(),
+            path: checkout_path.to_owned(),
+            is_worktree,
+            worktree: Some(crate::model::WorktreeSnapshot {
+                merged: Some(true),
+                ..Default::default()
+            }),
+            ..CheckoutSnapshot::default()
+        };
+        runtime.snapshot.navigator.workspaces = vec![workspace(
+            "workspace-inactive",
+            "Inactive",
+            path,
+            vec![
+                settled("primary", path, false),
+                settled("secondary", "/tmp/hide-runtime-inactive-secondary", true),
+            ],
+        )];
+        runtime.refresh_inactive_groups();
+        assert_eq!(
+            runtime.snapshot.navigator.workspaces[0]
+                .inactive_checkouts
+                .checkout_ids,
+            ["secondary"]
+        );
+        assert_eq!(runtime.snapshot.navigator.inactive_projects.len(), 1);
+
+        let checkout_toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inactive_checkouts_toggle",
+            "payload": { "project_path": path }
+        }))
+        .unwrap();
+        let project_toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inactive_projects_toggle",
+            "payload": { "device_id": "local" }
+        }))
+        .unwrap();
+
+        assert!(runtime.dispatch_json(&checkout_toggle));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .inactive_checkouts
+                .expanded
+        );
+        assert_eq!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_checkout_project_paths,
+            [path]
+        );
+        assert!(runtime.dispatch_json(&project_toggle));
+        assert!(runtime.snapshot.navigator.inactive_projects[0].expanded);
+        assert_eq!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_project_device_ids,
+            ["local"]
+        );
+
+        assert!(runtime.dispatch_json(&checkout_toggle));
+        assert!(runtime.dispatch_json(&project_toggle));
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_checkout_project_paths
+                .is_empty()
+        );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_project_device_ids
                 .is_empty()
         );
     }

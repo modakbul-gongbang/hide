@@ -4017,7 +4017,7 @@
       "x": 0,
       "y": -1300,
       "name": "Band / Component",
-      "width": 1645,
+      "width": 2080,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -5365,11 +5365,170 @@
     },
     {
       "type": "frame",
+      "id": "inactive-fold-sheet",
+      "name": "Component / Inactive Fold Row",
+      "width": 355,
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "inactive-fold-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-fold-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "Inactive fold row",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-display",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "inactive-fold-title-spec",
+              "name": "Spec",
+              "fill": "$--color-muted",
+              "content": "InactiveFoldRow · project and checkout group disclosure",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "inactive-fold-master-wrap",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-fold-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - every state below is a ref of this",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "inactive-fold-row",
+              "name": "Component / Inactive Fold Row",
+              "reusable": true,
+              "width": "fill_container",
+              "height": 32,
+              "layout": "horizontal",
+              "gap": "$--spacing-sm",
+              "padding": [
+                0,
+                "$--spacing-md"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "inactive-fold-chevron",
+                  "name": "Chevron",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$--color-muted"
+                },
+                {
+                  "type": "text",
+                  "id": "inactive-fold-label",
+                  "name": "Label",
+                  "fill": "$--color-secondary",
+                  "content": "Inactive 3",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "inactive-fold-state-collapsed",
+          "name": "State / Collapsed",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-fold-state-collapsed-label",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Collapsed",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "inactive-fold-state-collapsed-ref",
+              "type": "ref",
+              "ref": "inactive-fold-row",
+              "name": "Row / Collapsed",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "inactive-fold-state-expanded",
+          "name": "State / Expanded",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-fold-state-expanded-label",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Expanded",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "inactive-fold-state-expanded-ref",
+              "type": "ref",
+              "ref": "inactive-fold-row",
+              "name": "Row / Expanded",
+              "width": "fill_container",
+              "descendants": {
+                "inactive-fold-chevron": {
+                  "icon": "chevron-down"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "x": 1725,
+      "y": -1200
+    },
+    {
+      "type": "frame",
       "id": "band-screen",
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 2404,
+      "width": 3352,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -5409,125 +5568,348 @@
       "x": 0,
       "y": 0,
       "name": "Screen / Sidebar / Projects",
-      "clip": true,
-      "width": 292,
-      "height": 900,
-      "fill": "$--color-sidebar",
-      "layout": "vertical",
+      "width": 1240,
+      "height": 944,
+      "fill": "$--color-canvas",
+      "clip": false,
+      "layout": "horizontal",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
       "children": [
         {
           "type": "frame",
-          "id": "DhP5X",
-          "name": "Controls",
-          "width": "fill_container",
+          "id": "inactive-state-1-wrapper",
+          "name": "State / Checkout fold · collapsed",
+          "width": 292,
           "layout": "vertical",
           "gap": "$--spacing-sm",
-          "padding": "$--spacing-md",
           "children": [
             {
+              "type": "text",
+              "id": "inactive-state-1-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Checkout fold · collapsed",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
               "type": "frame",
-              "id": "zLkqf",
-              "name": "Mode switcher (HideChoiceGroup segmented)",
-              "width": "fill_container",
-              "height": 36,
-              "cornerRadius": "$--radius-sm",
-              "stroke": "$--color-divider",
-              "strokeWidth": "$--size-hairline",
-              "strokeAlignment": "inner",
-              "padding": "$--spacing-xxs",
+              "id": "inactive-state-1-qZcwf",
+              "name": "Sidebar / Checkout fold · collapsed",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
               "children": [
                 {
                   "type": "frame",
-                  "id": "s2m1lG",
-                  "name": "Choice Projects",
+                  "id": "inactive-state-1-DhP5X",
+                  "name": "Controls",
                   "width": "fill_container",
-                  "height": "fill_container",
-                  "fill": "$--color-elevated",
-                  "cornerRadius": "$--radius-xs",
-                  "justifyContent": "center",
-                  "alignItems": "center",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "n2coe8",
-                      "name": "Label",
-                      "fill": "$--color-primary",
-                      "content": "Projects",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead",
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "inactive-state-1-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-1-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-1-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-1-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-1-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-1-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-1-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "inactive-state-1-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "inactive-state-1-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "inactive-state-1-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "inactive-state-1-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-1-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-1-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-1-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-1-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 },
                 {
                   "type": "frame",
-                  "id": "G9z4I",
-                  "name": "Choice Agents",
+                  "id": "inactive-state-1-QqMPc",
+                  "name": "Attention groups",
                   "width": "fill_container",
-                  "height": "fill_container",
-                  "cornerRadius": "$--radius-xs",
-                  "justifyContent": "center",
-                  "alignItems": "center",
+                  "layout": "vertical",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "mQryP",
-                      "name": "Label",
-                      "fill": "$--color-secondary",
-                      "content": "Agents",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead",
-                      "fontWeight": "normal"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "H2WUDM",
-              "name": "Search row",
-              "width": "fill_container",
-              "gap": "$--spacing-sm",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "RjWXM",
-                  "name": "Search (a Button shaped like a field - 32, radius 8)",
-                  "width": "fill_container",
-                  "fill": "$--color-elevated",
-                  "cornerRadius": "$--asbuilt-sidebar-search-radius",
-                  "padding": [
-                    0,
-                    "$--spacing-md"
-                  ],
-                  "justifyContent": "space_between",
-                  "alignItems": "center",
-                  "children": [
+                      "id": "inactive-state-1-Z4DCTS",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Needs You"
+                        },
+                        "pDXCz": {
+                          "content": "1"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-q8VhA",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "!",
+                          "fill": "$--color-warning"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-warning"
+                        },
+                        "dlAEP": {
+                          "content": "herdr-ide"
+                        },
+                        "eX3w9": {
+                          "content": "1m"
+                        },
+                        "Kwpda": {
+                          "content": "아이콘 패밀리와 버튼 제작"
+                        },
+                        "FqGsJ": {
+                          "content": "Approval",
+                          "fill": "$--color-warning"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-yHroq",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Done",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Done"
+                        },
+                        "pDXCz": {
+                          "content": "2"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-vrp4i",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "sasu"
+                        },
+                        "eX3w9": {
+                          "content": "0s"
+                        },
+                        "Kwpda": {
+                          "content": "실패 시 관측 정보 기록 개선"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
                     {
                       "type": "frame",
-                      "id": "acXfe",
-                      "name": "Placeholder",
-                      "gap": "$--spacing-sm",
+                      "id": "inactive-state-1-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "icon",
-                          "id": "fhOul",
-                          "name": "Magnifier",
-                          "width": 12,
-                          "height": 12,
-                          "icon": "search",
-                          "library": "lucide",
-                          "fill": "$--color-muted"
+                          "type": "text",
+                          "id": "inactive-state-1-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
                         },
                         {
                           "type": "text",
-                          "id": "X82Ld",
-                          "name": "Label",
-                          "fill": "$--color-secondary",
-                          "content": "Search",
+                          "id": "inactive-state-1-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-body",
                           "fontWeight": "normal"
@@ -5535,618 +5917,1881 @@
                       ]
                     },
                     {
-                      "id": "bPip6",
+                      "id": "inactive-state-1-csMSx",
                       "type": "ref",
-                      "ref": "Ec2W1",
-                      "name": "Shortcut"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "ogq8a",
-                  "name": "Icon button folder-plus",
-                  "width": 32,
-                  "height": 32,
-                  "fill": "$--color-elevated",
-                  "cornerRadius": "$--asbuilt-sidebar-search-radius",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
+                      "ref": "XOsFn",
+                      "name": "Row / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "task-factory"
+                        },
+                        "eX3w9": {
+                          "content": "56s"
+                        },
+                        "Kwpda": {
+                          "content": "GitHub 작업 흐름과 상태 설계 정리"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
                     {
-                      "type": "icon",
-                      "id": "R6uD6",
-                      "name": "Glyph",
-                      "width": 14,
-                      "height": 14,
-                      "icon": "folder-plus",
-                      "library": "lucide",
-                      "fill": "$--color-secondary"
+                      "type": "frame",
+                      "id": "inactive-state-1-jgnJi",
+                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "inactive-state-1-MBrtM",
+                          "name": "Chevron",
+                          "width": 9,
+                          "height": 9,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$--color-muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-1-pBvfU",
+                          "name": "Label",
+                          "fill": "$--color-secondary",
+                          "content": "SCRATCH",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-1-olbHk",
+                          "name": "Count",
+                          "fill": "$--color-muted",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "normal"
+                        }
+                      ]
                     }
                   ]
                 },
                 {
                   "type": "frame",
-                  "id": "SvdTb",
-                  "name": "Icon button plus",
-                  "width": 32,
-                  "height": 32,
-                  "fill": "$--color-elevated",
-                  "cornerRadius": "$--asbuilt-sidebar-search-radius",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "AgSM6",
-                      "name": "Glyph",
-                      "width": 14,
-                      "height": 14,
-                      "icon": "plus",
-                      "library": "lucide",
-                      "fill": "$--color-secondary"
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "QqMPc",
-          "name": "Attention groups",
-          "width": "fill_container",
-          "layout": "vertical",
-          "children": [
-            {
-              "id": "Z4DCTS",
-              "type": "ref",
-              "ref": "N4x4y",
-              "name": "Section / Needs You",
-              "width": "fill_container",
-              "descendants": {
-                "E6oWq": {
-                  "content": "Needs You"
-                },
-                "pDXCz": {
-                  "content": "1"
-                }
-              }
-            },
-            {
-              "id": "q8VhA",
-              "type": "ref",
-              "ref": "XOsFn",
-              "name": "Row / herdr-ide",
-              "width": "fill_container",
-              "descendants": {
-                "YCLQI": {
-                  "content": "!",
-                  "fill": "$--color-warning"
-                },
-                "XOWDE": {
-                  "fill": "$--color-wash-warning"
-                },
-                "dlAEP": {
-                  "content": "herdr-ide"
-                },
-                "eX3w9": {
-                  "content": "1m"
-                },
-                "Kwpda": {
-                  "content": "아이콘 패밀리와 버튼 제작"
-                },
-                "FqGsJ": {
-                  "content": "Approval",
-                  "fill": "$--color-warning"
-                },
-                "cLWJI": {
-                  "content": "main"
-                }
-              }
-            },
-            {
-              "id": "yHroq",
-              "type": "ref",
-              "ref": "N4x4y",
-              "name": "Section / Done",
-              "width": "fill_container",
-              "descendants": {
-                "E6oWq": {
-                  "content": "Done"
-                },
-                "pDXCz": {
-                  "content": "2"
-                }
-              }
-            },
-            {
-              "id": "vrp4i",
-              "type": "ref",
-              "ref": "XOsFn",
-              "name": "Row / sasu",
-              "width": "fill_container",
-              "descendants": {
-                "YCLQI": {
-                  "content": "✓",
-                  "fill": "$--color-success"
-                },
-                "XOWDE": {
-                  "fill": "$--color-wash-success"
-                },
-                "dlAEP": {
-                  "content": "sasu"
-                },
-                "eX3w9": {
-                  "content": "0s"
-                },
-                "Kwpda": {
-                  "content": "실패 시 관측 정보 기록 개선"
-                },
-                "FqGsJ": {
-                  "content": "Done",
-                  "fill": "$--color-success"
-                },
-                "cLWJI": {
-                  "content": "main"
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "ZJ7gQ",
-              "name": "lineage caption / drawn ABOVE the row it belongs to",
-              "width": "fill_container",
-              "gap": "$--spacing-xs",
-              "padding": [
-                0,
-                "$--spacing-sm"
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "Ss3Wd",
-                  "name": "Elbow",
-                  "fill": "$--color-muted",
-                  "content": "↳",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "jCfix",
-                  "name": "Origin",
-                  "fill": "$--color-muted",
-                  "content": "from w72:pX",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
-                }
-              ]
-            },
-            {
-              "id": "csMSx",
-              "type": "ref",
-              "ref": "XOsFn",
-              "name": "Row / task-factory",
-              "width": "fill_container",
-              "descendants": {
-                "YCLQI": {
-                  "content": "✓",
-                  "fill": "$--color-success"
-                },
-                "XOWDE": {
-                  "fill": "$--color-wash-success"
-                },
-                "dlAEP": {
-                  "content": "task-factory"
-                },
-                "eX3w9": {
-                  "content": "56s"
-                },
-                "Kwpda": {
-                  "content": "GitHub 작업 흐름과 상태 설계 정리"
-                },
-                "FqGsJ": {
-                  "content": "Done",
-                  "fill": "$--color-success"
-                },
-                "cLWJI": {
-                  "content": "main"
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "jgnJi",
-              "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
-              "width": "fill_container",
-              "gap": "$--spacing-xs",
-              "padding": [
-                "$--spacing-sm",
-                "$--spacing-md"
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "MBrtM",
-                  "name": "Chevron",
-                  "width": 9,
-                  "height": 9,
-                  "icon": "chevron-right",
-                  "library": "lucide",
-                  "fill": "$--color-muted"
-                },
-                {
-                  "type": "text",
-                  "id": "pBvfU",
-                  "name": "Label",
-                  "fill": "$--color-secondary",
-                  "content": "SCRATCH",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "600"
-                },
-                {
-                  "type": "text",
-                  "id": "olbHk",
-                  "name": "Count",
-                  "fill": "$--color-muted",
-                  "content": "1",
-                  "fontFamily": "$--font-mono",
-                  "fontSize": "$--text-micro",
-                  "fontWeight": "normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "aWbQk",
-          "name": "Projects tree",
-          "width": "fill_container",
-          "layout": "vertical",
-          "children": [
-            {
-              "id": "d5jqB",
-              "type": "ref",
-              "ref": "N4x4y",
-              "name": "Section / Projects - Recent activity",
-              "width": "fill_container",
-              "descendants": {
-                "E6oWq": {
-                  "content": "Projects · Recent activity"
-                },
-                "pDXCz": {
-                  "content": "18"
-                }
-              }
-            },
-            {
-              "id": "lvIi1",
-              "type": "ref",
-              "ref": "qdhY0",
-              "name": "Checkout / sasu",
-              "width": "fill_container",
-              "descendants": {
-                "iBYjj": {
-                  "icon": "chevron-right"
-                },
-                "JkPyX": {
-                  "content": "sasu"
-                },
-                "nZkan": {
-                  "content": "3 agents"
-                }
-              }
-            },
-            {
-              "id": "astAd",
-              "type": "ref",
-              "ref": "qdhY0",
-              "name": "Checkout / task-factory",
-              "width": "fill_container",
-              "descendants": {
-                "iBYjj": {
-                  "icon": "chevron-down"
-                },
-                "JkPyX": {
-                  "content": "task-factory"
-                },
-                "nZkan": {
-                  "content": "1 agent"
-                }
-              }
-            },
-            {
-              "id": "ti53o",
-              "type": "ref",
-              "ref": "LrlHe",
-              "name": "Branch / main",
-              "width": "fill_container",
-              "descendants": {
-                "rCmzg": {
-                  "content": "main"
-                },
-                "BNtyi": {
-                  "enabled": true
-                },
-                "ATYs4": {
-                  "icon": "chevron-down"
-                }
-              }
-            },
-            {
-              "id": "MbfaB",
-              "type": "ref",
-              "ref": "W89tl",
-              "name": "Agent / GitHub 작업 흐름과 상태 설",
-              "width": "fill_container",
-              "padding": [
-                "$--asbuilt-agent-vpad-compact",
-                "$--asbuilt-agent-trail-compact",
-                "$--asbuilt-agent-vpad-compact",
-                13
-              ],
-              "descendants": {
-                "I7HDcq": {
-                  "enabled": false
-                },
-                "bwtRp": {
-                  "content": "✓",
-                  "fill": "$--color-success"
-                },
-                "hcU27": {
-                  "fill": "$--color-wash-success"
-                },
-                "e3iiT": {
-                  "content": "GitHub 작업 흐름과 상태 설계 정리"
-                },
-                "tDs9D": {
-                  "content": "56s"
-                },
-                "HUeCB": {
-                  "content": "Done",
-                  "fill": "$--color-success"
-                }
-              }
-            },
-            {
-              "id": "cgEHs",
-              "type": "ref",
-              "ref": "qdhY0",
-              "name": "Checkout / herdr-ide",
-              "width": "fill_container",
-              "descendants": {
-                "iBYjj": {
-                  "icon": "chevron-down"
-                },
-                "JkPyX": {
-                  "content": "herdr-ide"
-                },
-                "nZkan": {
-                  "content": "7 agents"
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "VIais",
-              "name": "Selected group inset",
-              "width": "fill_container",
-              "padding": [
-                0,
-                "$--spacing-sm"
-              ],
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "fa33N",
-                  "name": "Expanded branch group (stroke divider, radius 6)",
+                  "id": "inactive-state-1-projects-tree",
+                  "name": "Projects tree",
                   "width": "fill_container",
-                  "cornerRadius": "$--radius-sm",
-                  "stroke": "$--color-divider",
-                  "strokeWidth": "$--size-hairline",
-                  "strokeAlignment": "inner",
                   "layout": "vertical",
                   "children": [
                     {
-                      "id": "xri85",
+                      "id": "inactive-state-1-section",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "pDXCz": {
+                          "content": "18"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-checkout-main",
                       "type": "ref",
                       "ref": "LrlHe",
-                      "name": "Branch / main",
+                      "name": "Checkout / main",
                       "width": "fill_container",
                       "descendants": {
                         "rCmzg": {
                           "content": "main"
                         },
-                        "BNtyi": {
-                          "enabled": true
-                        },
                         "ATYs4": {
-                          "icon": "chevron-down"
+                          "icon": "chevron-right"
                         }
                       }
                     },
                     {
-                      "id": "B06fE",
+                      "id": "inactive-state-1-checkout-focus",
                       "type": "ref",
-                      "ref": "W89tl",
-                      "name": "Agent / 아이콘 패밀리와 버튼 제작",
+                      "ref": "LrlHe",
+                      "name": "Checkout / sidebar-projects-focus",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "sidebar-projects-focus"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-fold",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive / Collapsed",
                       "width": "fill_container",
                       "padding": [
-                        "$--asbuilt-agent-vpad-compact",
-                        "$--asbuilt-agent-trail-compact",
-                        "$--asbuilt-agent-vpad-compact",
-                        13
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-xl"
                       ],
                       "descendants": {
-                        "I7HDcq": {
-                          "enabled": false
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-right"
                         },
-                        "bwtRp": {
+                        "inactive-fold-label": {
+                          "content": "Inactive 3"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-1-project-sasu",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "sasu"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 3m"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "inactive-state-2-wrapper",
+          "name": "State / Checkout fold · expanded",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-state-2-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Checkout fold · expanded",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "inactive-state-2-qZcwf",
+              "name": "Sidebar / Checkout fold · expanded",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "inactive-state-2-DhP5X",
+                  "name": "Controls",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-2-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-2-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-2-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-2-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-2-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-2-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-2-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "inactive-state-2-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "inactive-state-2-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "inactive-state-2-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "inactive-state-2-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-2-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-2-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-2-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-2-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-state-2-QqMPc",
+                  "name": "Attention groups",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "inactive-state-2-Z4DCTS",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Needs You"
+                        },
+                        "pDXCz": {
+                          "content": "1"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-q8VhA",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
                           "content": "!",
                           "fill": "$--color-warning"
                         },
-                        "hcU27": {
+                        "XOWDE": {
                           "fill": "$--color-wash-warning"
                         },
-                        "e3iiT": {
+                        "dlAEP": {
+                          "content": "herdr-ide"
+                        },
+                        "eX3w9": {
+                          "content": "1m"
+                        },
+                        "Kwpda": {
                           "content": "아이콘 패밀리와 버튼 제작"
                         },
-                        "tDs9D": {
-                          "content": "1m"
-                        },
-                        "HUeCB": {
+                        "FqGsJ": {
                           "content": "Approval",
                           "fill": "$--color-warning"
+                        },
+                        "cLWJI": {
+                          "content": "main"
                         }
                       }
                     },
                     {
-                      "id": "krpTR",
+                      "id": "inactive-state-2-yHroq",
                       "type": "ref",
-                      "ref": "W89tl",
-                      "name": "Agent / Figma 플러그인 제거 후 디자",
+                      "ref": "N4x4y",
+                      "name": "Section / Done",
                       "width": "fill_container",
-                      "fill": "$--color-panel",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Done"
+                        },
+                        "pDXCz": {
+                          "content": "2"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-vrp4i",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "sasu"
+                        },
+                        "eX3w9": {
+                          "content": "0s"
+                        },
+                        "Kwpda": {
+                          "content": "실패 시 관측 정보 기록 개선"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-2-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "inactive-state-2-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-2-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "inactive-state-2-csMSx",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "task-factory"
+                        },
+                        "eX3w9": {
+                          "content": "56s"
+                        },
+                        "Kwpda": {
+                          "content": "GitHub 작업 흐름과 상태 설계 정리"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-2-jgnJi",
+                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "inactive-state-2-MBrtM",
+                          "name": "Chevron",
+                          "width": 9,
+                          "height": 9,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$--color-muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-2-pBvfU",
+                          "name": "Label",
+                          "fill": "$--color-secondary",
+                          "content": "SCRATCH",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-2-olbHk",
+                          "name": "Count",
+                          "fill": "$--color-muted",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-state-2-projects-tree",
+                  "name": "Projects tree",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "inactive-state-2-section",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "pDXCz": {
+                          "content": "18"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-checkout-main",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / main",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "main"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-checkout-focus",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / sidebar-projects-focus",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "sidebar-projects-focus"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-fold",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive / Expanded",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-xl"
+                      ],
+                      "descendants": {
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-down"
+                        },
+                        "inactive-fold-label": {
+                          "content": "Inactive 3"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-checkout-old-one",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / cleanup-merged",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "cleanup-merged"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        },
+                        "BNtyi": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-checkout-old-two",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / legacy-shell",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "legacy-shell"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-checkout-old-three",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / old-spike",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "old-spike"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        },
+                        "BNtyi": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-2-project-sasu",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "sasu"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 3m"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "inactive-state-3-wrapper",
+          "name": "State / Project fold · collapsed",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-state-3-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Project fold · collapsed",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "inactive-state-3-qZcwf",
+              "name": "Sidebar / Project fold · collapsed",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "inactive-state-3-DhP5X",
+                  "name": "Controls",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-3-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
                       "cornerRadius": "$--radius-sm",
-                      "padding": [
-                        "$--asbuilt-agent-vpad-compact",
-                        "$--asbuilt-agent-trail-compact",
-                        "$--asbuilt-agent-vpad-compact",
-                        13
-                      ],
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-3-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-3-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-3-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-3-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-3-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-3-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "inactive-state-3-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "inactive-state-3-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "inactive-state-3-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "inactive-state-3-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-3-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-3-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-3-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-3-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-state-3-QqMPc",
+                  "name": "Attention groups",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "inactive-state-3-Z4DCTS",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
                       "descendants": {
-                        "I7HDcq": {
-                          "enabled": true
+                        "E6oWq": {
+                          "content": "Needs You"
                         },
-                        "bwtRp": {
-                          "content": "○",
-                          "fill": "$--color-muted"
+                        "pDXCz": {
+                          "content": "1"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-3-q8VhA",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "!",
+                          "fill": "$--color-warning"
                         },
-                        "hcU27": {
-                          "fill": "$--color-wash-muted"
+                        "XOWDE": {
+                          "fill": "$--color-wash-warning"
                         },
-                        "e3iiT": {
-                          "content": "Figma 플러그인 제거 후 디자인…"
+                        "dlAEP": {
+                          "content": "herdr-ide"
                         },
-                        "tDs9D": {
+                        "eX3w9": {
                           "content": "1m"
                         },
-                        "HUeCB": {
-                          "content": "Idle",
-                          "fill": "$--color-muted"
+                        "Kwpda": {
+                          "content": "아이콘 패밀리와 버튼 제작"
+                        },
+                        "FqGsJ": {
+                          "content": "Approval",
+                          "fill": "$--color-warning"
+                        },
+                        "cLWJI": {
+                          "content": "main"
                         }
                       }
                     },
                     {
-                      "id": "kduAa",
+                      "id": "inactive-state-3-yHroq",
                       "type": "ref",
-                      "ref": "W89tl",
-                      "name": "Agent / Check agent-contex",
+                      "ref": "N4x4y",
+                      "name": "Section / Done",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Done"
+                        },
+                        "pDXCz": {
+                          "content": "2"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-3-vrp4i",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "sasu"
+                        },
+                        "eX3w9": {
+                          "content": "0s"
+                        },
+                        "Kwpda": {
+                          "content": "실패 시 관측 정보 기록 개선"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-3-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "inactive-state-3-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-3-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "inactive-state-3-csMSx",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "task-factory"
+                        },
+                        "eX3w9": {
+                          "content": "56s"
+                        },
+                        "Kwpda": {
+                          "content": "GitHub 작업 흐름과 상태 설계 정리"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-3-jgnJi",
+                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "inactive-state-3-MBrtM",
+                          "name": "Chevron",
+                          "width": 9,
+                          "height": 9,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$--color-muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-3-pBvfU",
+                          "name": "Label",
+                          "fill": "$--color-secondary",
+                          "content": "SCRATCH",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-3-olbHk",
+                          "name": "Count",
+                          "fill": "$--color-muted",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-state-3-projects-tree",
+                  "name": "Projects tree",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "inactive-state-3-section",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "pDXCz": {
+                          "content": "18"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-3-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-3-checkout-focus",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / sidebar-projects-focus",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "sidebar-projects-focus"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-3-project-task-factory",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "task-factory"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 4m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-3-fold",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive projects / Collapsed",
                       "width": "fill_container",
                       "padding": [
-                        "$--asbuilt-agent-vpad-compact",
-                        "$--asbuilt-agent-trail-compact",
-                        "$--asbuilt-agent-vpad-compact",
-                        31
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-md"
                       ],
                       "descendants": {
-                        "I7HDcq": {
-                          "enabled": false
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-right"
                         },
-                        "bwtRp": {
-                          "content": "●",
-                          "fill": "$--color-agent-working"
+                        "inactive-fold-label": {
+                          "content": "Inactive projects 4"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "inactive-state-4-wrapper",
+          "name": "State / Project fold · expanded",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "inactive-state-4-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Project fold · expanded",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "inactive-state-4-qZcwf",
+              "name": "Sidebar / Project fold · expanded",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "inactive-state-4-DhP5X",
+                  "name": "Controls",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-4-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-4-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-4-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
                         },
-                        "hcU27": {
-                          "fill": "$--color-wash-working"
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-4-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "inactive-state-4-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-4-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-4-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "inactive-state-4-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "inactive-state-4-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "inactive-state-4-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "inactive-state-4-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
                         },
-                        "e3iiT": {
-                          "content": "Check agent-context-labels…"
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-4-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-4-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
                         },
-                        "tDs9D": {
+                        {
+                          "type": "frame",
+                          "id": "inactive-state-4-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "inactive-state-4-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-state-4-QqMPc",
+                  "name": "Attention groups",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "inactive-state-4-Z4DCTS",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Needs You"
+                        },
+                        "pDXCz": {
+                          "content": "1"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-q8VhA",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "!",
+                          "fill": "$--color-warning"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-warning"
+                        },
+                        "dlAEP": {
+                          "content": "herdr-ide"
+                        },
+                        "eX3w9": {
                           "content": "1m"
                         },
-                        "HUeCB": {
-                          "content": "Working",
-                          "fill": "$--color-agent-working"
+                        "Kwpda": {
+                          "content": "아이콘 패밀리와 버튼 제작"
+                        },
+                        "FqGsJ": {
+                          "content": "Approval",
+                          "fill": "$--color-warning"
+                        },
+                        "cLWJI": {
+                          "content": "main"
                         }
                       }
                     },
                     {
-                      "id": "sVYZy",
+                      "id": "inactive-state-4-yHroq",
                       "type": "ref",
-                      "ref": "W89tl",
-                      "name": "Agent / 정리 항목 4개 모두 처리",
+                      "ref": "N4x4y",
+                      "name": "Section / Done",
                       "width": "fill_container",
-                      "padding": [
-                        "$--asbuilt-agent-vpad-compact",
-                        "$--asbuilt-agent-trail-compact",
-                        "$--asbuilt-agent-vpad-compact",
-                        13
-                      ],
                       "descendants": {
-                        "I7HDcq": {
-                          "enabled": false
+                        "E6oWq": {
+                          "content": "Done"
                         },
-                        "bwtRp": {
-                          "content": "○",
-                          "fill": "$--color-muted"
-                        },
-                        "hcU27": {
-                          "fill": "$--color-wash-muted"
-                        },
-                        "e3iiT": {
-                          "content": "정리 항목 4개 모두 처리"
-                        },
-                        "tDs9D": {
-                          "content": "20m"
-                        },
-                        "HUeCB": {
-                          "content": "Idle",
-                          "fill": "$--color-muted"
+                        "pDXCz": {
+                          "content": "2"
                         }
                       }
                     },
                     {
-                      "id": "yesYR",
+                      "id": "inactive-state-4-vrp4i",
                       "type": "ref",
-                      "ref": "W89tl",
-                      "name": "Agent / 머지 후 플러그인 설치 및 구 워",
+                      "ref": "XOsFn",
+                      "name": "Row / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "sasu"
+                        },
+                        "eX3w9": {
+                          "content": "0s"
+                        },
+                        "Kwpda": {
+                          "content": "실패 시 관측 정보 기록 개선"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-4-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "inactive-state-4-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-4-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "inactive-state-4-csMSx",
+                      "type": "ref",
+                      "ref": "XOsFn",
+                      "name": "Row / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "YCLQI": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "XOWDE": {
+                          "fill": "$--color-wash-success"
+                        },
+                        "dlAEP": {
+                          "content": "task-factory"
+                        },
+                        "eX3w9": {
+                          "content": "56s"
+                        },
+                        "Kwpda": {
+                          "content": "GitHub 작업 흐름과 상태 설계 정리"
+                        },
+                        "FqGsJ": {
+                          "content": "Done",
+                          "fill": "$--color-success"
+                        },
+                        "cLWJI": {
+                          "content": "main"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "inactive-state-4-jgnJi",
+                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "inactive-state-4-MBrtM",
+                          "name": "Chevron",
+                          "width": 9,
+                          "height": 9,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$--color-muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-4-pBvfU",
+                          "name": "Label",
+                          "fill": "$--color-secondary",
+                          "content": "SCRATCH",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "inactive-state-4-olbHk",
+                          "name": "Count",
+                          "fill": "$--color-muted",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-state-4-projects-tree",
+                  "name": "Projects tree",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "inactive-state-4-section",
+                      "type": "ref",
+                      "ref": "N4x4y",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E6oWq": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "pDXCz": {
+                          "content": "18"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-checkout-focus",
+                      "type": "ref",
+                      "ref": "LrlHe",
+                      "name": "Checkout / sidebar-projects-focus",
+                      "width": "fill_container",
+                      "descendants": {
+                        "rCmzg": {
+                          "content": "sidebar-projects-focus"
+                        },
+                        "ATYs4": {
+                          "icon": "chevron-right"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-project-task-factory",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "task-factory"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 4m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-fold",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive projects / Expanded",
                       "width": "fill_container",
                       "padding": [
-                        "$--asbuilt-agent-vpad-compact",
-                        "$--asbuilt-agent-trail-compact",
-                        "$--asbuilt-agent-vpad-compact",
-                        13
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-md"
                       ],
                       "descendants": {
-                        "I7HDcq": {
-                          "enabled": true
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-down"
                         },
-                        "bwtRp": {
-                          "content": "○",
-                          "fill": "$--color-muted"
+                        "inactive-fold-label": {
+                          "content": "Inactive projects 4"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-project-sasu",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
                         },
-                        "hcU27": {
-                          "fill": "$--color-wash-muted"
+                        "JkPyX": {
+                          "content": "sasu"
                         },
-                        "e3iiT": {
-                          "content": "머지 후 플러그인 설치 및 구…"
+                        "nZkan": {
+                          "content": "12d"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-project-creator",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / creator-assist",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
                         },
-                        "tDs9D": {
-                          "content": "28m"
+                        "JkPyX": {
+                          "content": "creator-assist"
                         },
-                        "HUeCB": {
-                          "content": "Idle",
-                          "fill": "$--color-muted"
+                        "nZkan": {
+                          "content": "19d"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-project-pet",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-pet",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-pet"
+                        },
+                        "nZkan": {
+                          "content": "31d"
+                        }
+                      }
+                    },
+                    {
+                      "id": "inactive-state-4-project-class",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / vibecoding-class",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "vibecoding-class"
+                        },
+                        "nZkan": {
+                          "content": "44d"
                         }
                       }
                     }
@@ -6161,7 +7806,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 372,
+      "x": 1320,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -6814,7 +8459,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 744,
+      "x": 1692,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -8165,7 +9810,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 1179,
+      "x": 2127,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -9273,7 +10918,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 1614,
+      "x": 2562,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -9845,7 +11490,7 @@
     {
       "type": "frame",
       "id": "uZe5J",
-      "x": 2049,
+      "x": 2997,
       "y": 0,
       "name": "Screen / Panel / Git",
       "clip": true,

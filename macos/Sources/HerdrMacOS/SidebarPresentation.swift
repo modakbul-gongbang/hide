@@ -1,5 +1,62 @@
 import Foundation
 
+enum SidebarProjectRow: Identifiable {
+    case workspace(CoreWorkspaceSnapshot)
+    case inactiveProjects(CoreInactiveProjectGroupSnapshot, [CoreWorkspaceSnapshot])
+
+    var id: String {
+        switch self {
+        case .workspace(let workspace):
+            "workspace:\(workspace.id)"
+        case .inactiveProjects(let group, _):
+            "inactive-projects:\(group.deviceID)"
+        }
+    }
+}
+
+/// Maps core-owned inactive group IDs back to the authoritative rows. This is
+/// presentation only: no merge, age, or exception rule is repeated here.
+enum SidebarInactiveProjection {
+    static func projectRows(
+        _ workspaces: [CoreWorkspaceSnapshot],
+        groups: [CoreInactiveProjectGroupSnapshot]
+    ) -> [SidebarProjectRow] {
+        let byID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let groupsByDevice = Dictionary(uniqueKeysWithValues: groups.map { ($0.deviceID, $0) })
+        var deviceIDs: [String] = []
+        var seenDevices = Set<String>()
+        for workspace in workspaces where seenDevices.insert(workspace.deviceID).inserted {
+            deviceIDs.append(workspace.deviceID)
+        }
+
+        return deviceIDs.flatMap { deviceID -> [SidebarProjectRow] in
+            let group = groupsByDevice[deviceID]
+            let inactiveIDs = Set(group?.projectIDs ?? [])
+            var rows = workspaces
+                .filter { $0.deviceID == deviceID && !inactiveIDs.contains($0.id) }
+                .map(SidebarProjectRow.workspace)
+            guard let group else { return rows }
+            let inactive = group.projectIDs.compactMap { byID[$0] }
+            guard !inactive.isEmpty else { return rows }
+            rows.append(.inactiveProjects(group, inactive))
+            if group.expanded {
+                rows.append(contentsOf: inactive.map(SidebarProjectRow.workspace))
+            }
+            return rows
+        }
+    }
+
+    static func activeCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        let inactive = Set(workspace.inactiveCheckouts.checkoutIDs)
+        return workspace.checkouts.filter { !inactive.contains($0.id) }
+    }
+
+    static func inactiveCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        let byID = Dictionary(uniqueKeysWithValues: workspace.checkouts.map { ($0.id, $0) })
+        return workspace.inactiveCheckouts.checkoutIDs.compactMap { byID[$0] }
+    }
+}
+
 struct SidebarCheckoutPresentation: Equatable {
     let agentCount: Int
     let isPrimary: Bool

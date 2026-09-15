@@ -656,8 +656,20 @@ private struct HideSidebar: View {
                 detail: "Add a folder to create your first project."
             )
         } else {
-            ForEach(model.workspaces) { workspace in
-                WorkspaceNavigatorRow(workspace: workspace)
+            ForEach(model.sidebarProjectRows) { row in
+                switch row {
+                case .workspace(let workspace):
+                    WorkspaceNavigatorRow(workspace: workspace)
+                case .inactiveProjects(let group, let folded):
+                    InactiveFoldRow(
+                        title: "Inactive projects",
+                        count: folded.count,
+                        itemName: "project",
+                        expanded: group.expanded,
+                        accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                        action: { model.toggleInactiveProjects(in: group) }
+                    )
+                }
             }
         }
     }
@@ -1296,8 +1308,25 @@ private struct WorkspaceNavigatorRow: View {
             .padding(.trailing, HideTheme.spacingSM)
 
             if workspace.expanded {
-                ForEach(workspace.checkouts) { checkout in
+                ForEach(model.activeCheckouts(in: workspace)) { checkout in
                     checkoutGroup(checkout)
+                }
+                let inactive = model.inactiveCheckouts(in: workspace)
+                if !inactive.isEmpty {
+                    InactiveFoldRow(
+                        title: "Inactive",
+                        count: inactive.count,
+                        itemName: "checkout",
+                        expanded: workspace.inactiveCheckouts.expanded,
+                        accessibilityID: "hide-inactive-checkouts-\(workspace.id)",
+                        indented: true,
+                        action: { model.toggleInactiveCheckouts(in: workspace) }
+                    )
+                    if workspace.inactiveCheckouts.expanded {
+                        ForEach(inactive) { checkout in
+                            checkoutGroup(checkout)
+                        }
+                    }
                 }
             }
         }
@@ -1349,6 +1378,45 @@ private struct WorkspaceNavigatorRow: View {
             }
         }
         .padding(.horizontal, HideTheme.spacingSM)
+    }
+}
+
+/// One disclosure pattern for both inactive levels. It uses the sidebar's
+/// existing interactive feedback and tokens; only the core decides which rows
+/// belong behind it.
+private struct InactiveFoldRow: View {
+    let title: String
+    let count: Int
+    let itemName: String
+    let expanded: Bool
+    let accessibilityID: String
+    var indented = false
+    let action: () -> Void
+
+    var body: some View {
+        let countedItemName = count == 1 ? itemName : "\(itemName)s"
+        Button(action: action) {
+            HStack(spacing: HideTheme.spacingSM) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
+                    .foregroundStyle(HideTheme.muted)
+                    .frame(width: 12, height: 20)
+                Text("\(title) \(count)")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                    .foregroundStyle(HideTheme.secondary)
+                Spacer(minLength: HideTheme.spacingXS)
+            }
+            .padding(.leading, indented ? HideTheme.spacingXL : HideTheme.spacingMD)
+            .padding(.trailing, HideTheme.spacingMD)
+            .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(HideInteractiveButtonStyle())
+        .accessibilityLabel(
+            "\(title), \(count) \(countedItemName), \(expanded ? "expanded" : "collapsed")"
+        )
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier(accessibilityID)
     }
 }
 
