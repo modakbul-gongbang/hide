@@ -42,6 +42,8 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 - The PRD harness binds `scripts/verify-cargo.sh`, because a verify command runs with no shell and an `ENV=value cargo ...` binding fails with ENOENT at verify time.
 - `[profile.dev] incremental = false` is deliberate: an agent worktree is built a few times and discarded, which never repays an incremental cache.
 - `git worktree remove` takes the cache with the work; a worktree kept alive after its branch lands keeps its cache alive too.
+- The root checkout stays on `main`; every branch is worked on in its own worktree under `../herdr-ide.worktrees/`.
+  `scripts/hooks/root-worktree-main-only.sh` is a `PreToolUse` hook (registered for Claude Code in `.claude/settings.json`, for Codex in `~/.codex/hooks.json`) that refuses a `git checkout`/`git switch` off `main` in the root worktree and answers with the `git worktree add` form to use instead.
 
 ## Runtime Architecture
 
