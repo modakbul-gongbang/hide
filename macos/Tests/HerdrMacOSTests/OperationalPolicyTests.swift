@@ -265,14 +265,68 @@ import Testing
         startupDiagnostic: nil,
         bridgeError: "pane.focus_failed: pane w1:p1 not found",
         state: "protocol_mismatch",
-        providerMessage: "The running Herdr speaks protocol 20; this hide needs protocol 21."
-    ) == "The running Herdr speaks protocol 20; this hide needs protocol 21.")
+        providerMessage: "The running Herdr uses protocol 22; this version of Hide requires protocol 23."
+    ) == "The running Herdr uses protocol 22; this version of Hide requires protocol 23.")
     #expect(HerdrStatusPresentation.localMessage(
         startupDiagnostic: HideStartupDiagnostic.runtimeUnavailable,
         bridgeError: "pane.focus_failed: pane w1:p1 not found",
         state: "socket_missing",
         providerMessage: "Herdr socket is missing"
     ) == HideStartupDiagnostic.runtimeUnavailable)
+}
+
+@Test func localHerdrMutationPolicyBlocksUntilConnectedAndCarriesTypedMismatchDetails() {
+    let runtime = HerdrRuntimeSelection(
+        path: "/Applications/hide.app/Contents/Resources/herdr",
+        version: "0.9.0-preview.fixture",
+        sha256: "fixture"
+    )
+    let mismatchStatus = CoreHerdrStatus(
+        state: "protocol_mismatch",
+        socketPath: "/tmp/herdr.sock",
+        message: "human readable",
+        expectedProtocol: 23,
+        receivedProtocol: 22,
+        receivedVersion: "0.9.0"
+    )
+
+    #expect(LocalHerdrMutationPolicy.evaluate(
+        runtimeSelection: nil,
+        status: nil,
+        startupDiagnostic: nil,
+        hideVersion: "1.0"
+    ) != .connected)
+    let mismatch = LocalHerdrMutationPolicy.evaluate(
+        runtimeSelection: runtime,
+        status: mismatchStatus,
+        startupDiagnostic: nil,
+        hideVersion: "1.0"
+    )
+    guard case .protocolMismatch(let details) = mismatch else {
+        Issue.record("protocol mismatch should remain typed")
+        return
+    }
+    #expect(details.expectedProtocol == 23)
+    #expect(details.receivedProtocol == 22)
+    #expect(details.expectedVersion == "0.9.0-preview.fixture")
+    #expect(details.receivedVersion == "0.9.0")
+    #expect(details.diagnostics.contains("Error code: protocol_mismatch"))
+    #expect(!details.diagnostics.contains("{"))
+
+    let connected = CoreHerdrStatus(
+        state: "connected",
+        socketPath: "/tmp/herdr.sock",
+        message: nil,
+        expectedProtocol: nil,
+        receivedProtocol: nil,
+        receivedVersion: nil
+    )
+    #expect(LocalHerdrMutationPolicy.evaluate(
+        runtimeSelection: runtime,
+        status: connected,
+        startupDiagnostic: nil,
+        hideVersion: "1.0"
+    ) == .connected)
 }
 
 @Test func coreRemoteSessionCarriesContextAndPaneCwd() throws {

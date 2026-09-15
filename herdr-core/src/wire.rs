@@ -32,12 +32,18 @@ struct EventMetadata {
     payload: ev::EventEnvelope,
 }
 
-pub(crate) fn protocol_mismatch(received: u64) -> SessionFetchError {
-    SessionFetchError::Protocol(format!(
-        "The running Herdr speaks protocol {received}; this hide needs protocol {HERDR_PROTOCOL_REVISION}. \
-         Stop it with `herdr server stop` and reopen hide so it starts its bundled Herdr, \
-         or update hide to a release built against that Herdr."
-    ))
+pub(crate) fn protocol_mismatch(
+    received_protocol: u64,
+    received_version: Option<String>,
+) -> SessionFetchError {
+    SessionFetchError::Protocol {
+        message: format!(
+            "The running Herdr uses protocol {received_protocol}; this version of Hide requires protocol {HERDR_PROTOCOL_REVISION}. Update Hide, then try again. No workspace or agent was created."
+        ),
+        expected_protocol: HERDR_PROTOCOL_REVISION,
+        received_protocol,
+        received_version,
+    }
 }
 
 fn malformed(message: impl Into<String>) -> SessionFetchError {
@@ -52,14 +58,14 @@ fn validate_snapshot(value: &Value) -> Result<(), SessionFetchError> {
         .get("protocol")
         .and_then(Value::as_u64)
         .ok_or_else(|| malformed("snapshot is missing protocol"))?;
-    if protocol != HERDR_PROTOCOL_REVISION {
-        return Err(protocol_mismatch(protocol));
-    }
-    if !value
+    let version = value
         .get("version")
         .and_then(Value::as_str)
-        .is_some_and(|v| !v.trim().is_empty())
-    {
+        .filter(|version| !version.trim().is_empty());
+    if protocol != HERDR_PROTOCOL_REVISION {
+        return Err(protocol_mismatch(protocol, version.map(str::to_owned)));
+    }
+    if version.is_none() {
         return Err(malformed("snapshot is missing version"));
     }
     for field in [
@@ -617,6 +623,7 @@ pub(crate) fn workspace_create_params(cwd: &str, label: &str) -> Result<Value, S
         label: Some(label.into()),
         focus: true,
         env: Default::default(),
+        source_workspace_id: None,
     })
 }
 pub(crate) fn workspace_target_params(id: &str) -> Result<Value, String> {
@@ -711,18 +718,24 @@ pub(crate) fn worktree_create_params(
         label: None,
         // Herdr owns the default checkout location. Hide must never restate it.
         path: None,
+        // Keep Herdr's repository trust checks in force.
+        trust_repository: None,
         workspace_id: None,
     })
 }
 pub(crate) fn worktree_list_params(cwd: &str) -> Result<Value, String> {
     params(req::WorktreeListParams {
         cwd: Some(cwd.to_owned()),
+        // Listing must not implicitly trust a repository on the user's behalf.
+        trust_repository: None,
         workspace_id: None,
     })
 }
 pub(crate) fn worktree_remove_params(workspace_id: &str) -> Result<Value, String> {
     params(req::WorktreeRemoveParams {
         force: false,
+        // Removal must not implicitly trust a repository on the user's behalf.
+        trust_repository: None,
         workspace_id: workspace_id.to_owned(),
     })
 }
@@ -1322,7 +1335,7 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_protocol_retains_both_revisions_and_the_remedy() {
+    fn incompatible_protocol_retains_typed_revisions_version_and_safe_remedy() {
         let mut value = empty_snapshot();
         let received = HERDR_PROTOCOL_REVISION + 1;
         value["protocol"] = json!(received);
@@ -1331,8 +1344,12 @@ mod tests {
         assert_eq!(
             error.message(),
             format!(
-                "The running Herdr speaks protocol {received}; this hide needs protocol {HERDR_PROTOCOL_REVISION}. Stop it with `herdr server stop` and reopen hide so it starts its bundled Herdr, or update hide to a release built against that Herdr."
+                "The running Herdr uses protocol {received}; this version of Hide requires protocol {HERDR_PROTOCOL_REVISION}. Update Hide, then try again. No workspace or agent was created."
             )
+        );
+        assert_eq!(
+            error.protocol_details(),
+            Some((HERDR_PROTOCOL_REVISION, received, Some("fixture")))
         );
     }
 

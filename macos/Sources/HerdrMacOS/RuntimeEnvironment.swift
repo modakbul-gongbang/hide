@@ -684,8 +684,9 @@ enum HerdrTerminalLauncher {
             arguments: arguments
         )
         guard result.status == 0 else {
-            let detail = String(decoding: result.error, as: UTF8.self)
+            let rawDetail = String(decoding: result.error, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = HerdrErrorEnvelope.message(in: rawDetail) ?? rawDetail
             return TerminalLaunchResult(
                 succeeded: false,
                 message: detail.isEmpty

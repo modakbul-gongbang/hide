@@ -11468,7 +11468,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 14673,
+      "width": 15653,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -14089,6 +14089,182 @@
     },
     {
       "type": "frame",
+      "id": "screen-startup-protocol-mismatch",
+      "name": "Screen / Startup / Protocol mismatch",
+      "width": 900,
+      "height": 520,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "startup-protocol-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Startup / Protocol mismatch",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "startup-protocol-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "A typed core readiness failure blocks every local Herdr mutation before the CLI runs. The native alert explains the incompatibility without JSON, offers safe recovery and diagnostics, and never stops or replaces the running server.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "startup-protocol-stage",
+          "name": "Native alert stage",
+          "width": "fill_container",
+          "height": 360,
+          "fill": "$--color-sidebar",
+          "cornerRadius": "$--radius-lg",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "startup-protocol-alert",
+              "name": "Protocol mismatch alert",
+              "width": 560,
+              "fill": "$--color-elevated",
+              "stroke": "$--color-divider",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "cornerRadius": "$--radius-lg",
+              "layout": "vertical",
+              "gap": "$--spacing-lg",
+              "padding": "$--spacing-xl",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "startup-protocol-alert-title",
+                  "name": "Alert title",
+                  "fill": "$--color-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Hide and Herdr aren’t compatible",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-headline",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "startup-protocol-alert-message",
+                  "name": "Alert message",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "The running Herdr uses a different protocol than this version of Hide. Update Hide, then try again. No workspace or agent was created.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "startup-protocol-alert-actions",
+                  "name": "Alert actions",
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "justifyContent": "end",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "startup-protocol-open-releases",
+                      "name": "Open Hide Releases",
+                      "fill": "$--color-panel",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-md",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "startup-protocol-open-releases-label",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Open Hide Releases",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "startup-protocol-copy-diagnostics",
+                      "name": "Copy Diagnostics",
+                      "fill": "$--color-panel",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-md",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "startup-protocol-copy-diagnostics-label",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Copy Diagnostics",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "startup-protocol-ok",
+                      "name": "OK",
+                      "fill": "$--color-accent",
+                      "cornerRadius": "$--radius-md",
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "startup-protocol-ok-label",
+                          "name": "Label",
+                          "fill": "$--color-background",
+                          "content": "OK",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "x": 1320,
+      "y": 0
+    },
+    {
+      "type": "frame",
       "id": "screen-toolbar-weekly-usage-states",
       "name": "Screen / Toolbar / Weekly Usage states",
       "width": 1096,
@@ -14502,13 +14678,13 @@
           ]
         }
       ],
-      "x": 1320,
+      "x": 2300,
       "y": 0
     },
     {
       "type": "frame",
       "id": "Snwg0",
-      "x": 2496,
+      "x": 3476,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -14876,7 +15052,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 4064,
+      "x": 5044,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -16640,7 +16816,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 4436,
+      "x": 5416,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -18118,7 +18294,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 4871,
+      "x": 5851,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -21477,7 +21653,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 5306,
+      "x": 6286,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -21693,7 +21869,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 6874,
+      "x": 7854,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -23317,7 +23493,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 7309,
+      "x": 8289,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -24135,7 +24311,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 7909,
+      "x": 8889,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -24232,7 +24408,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 8889,
+      "x": 9869,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -25565,7 +25741,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 10457,
+      "x": 11437,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -25712,7 +25888,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 12025,
+      "x": 13005,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -26160,7 +26336,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 13185,
+      "x": 14165,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,

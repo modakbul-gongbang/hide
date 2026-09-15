@@ -107,7 +107,8 @@ On launch it verifies the bundled Herdr v0.9.0-preview.2026-09-15-deefc5857a5c b
 Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket; hide and every `herdr` process it starts follow the same value.
 
 A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.
-When it does not, hide stays disconnected and names both revisions: stop that server with `herdr server stop` and reopen hide so it starts its own, or update hide to a release built against that Herdr.
+When it does not, hide stays disconnected and blocks workspace, terminal, chat, and agent creation before any command is sent.
+The compatibility alert can open the hide Releases page or copy version and protocol diagnostics, but it never stops or replaces the running server.
 
 A separate Herdr installation is not required.
 The bundled binary is at `hide.app/Contents/Resources/herdr-runtime/herdr` if you want the matching CLI on your `PATH`.
@@ -150,7 +151,9 @@ Reinstall hide from a release archive whose checksum verified, or rebuild it; th
 ### hide says the running Herdr speaks another protocol
 
 A Herdr server started outside hide (an installed CLI, an older hide) owns the socket and was built against a different protocol revision.
-Run `herdr server stop` with that CLI, or quit the other app, then reopen hide so it starts its bundled Herdr.
+Choose `Open Hide Releases` and install a hide build compatible with that server, or choose `Copy Diagnostics` when reporting the mismatch.
+No workspace or agent was created, and hide leaves the running server and its panes untouched.
+If you intentionally want hide to start its bundled server instead, first coordinate with anyone using the current Herdr session and stop it from a terminal only when its panes are safe to interrupt.
 
 ### An agent cannot start
 

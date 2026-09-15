@@ -475,6 +475,7 @@ final class ShellModel: ObservableObject {
     private var handledTaskOperationIDs: Set<UInt64> = []
     private var pendingScratchChat: (provider: AgentProvider, message: String, bypass: Bool)?
     @Published var interactionNotice: String?
+    @Published var herdrProtocolMismatch: HerdrProtocolMismatchDetails?
     /// When the last reported fork failure happened, so one failure is raised
     /// once rather than on every snapshot that still carries it.
     /// Panes with a fork in flight, which is what puts "forking…" in the
@@ -1887,6 +1888,11 @@ final class ShellModel: ObservableObject {
         }
         if operation.kind == "scratch_chat_tab", let pending = pendingScratchChat {
             pendingScratchChat = nil
+            guard requireLocalHerdrMutationReadiness() else {
+                composerSubmitting = false
+                showComposer = false
+                return
+            }
             core.startAgentInCreatedPane(
                 paneID: paneID,
                 path: path,
@@ -1905,6 +1911,7 @@ final class ShellModel: ObservableObject {
             worktreeWorkspace = nil
             worktreeDraft = WorktreeSheetDraft()
             if let raw = operation.agentKind, let provider = AgentProvider(rawValue: raw) {
+                guard requireLocalHerdrMutationReadiness() else { return }
                 core.startAgentInCreatedPane(
                     paneID: paneID,
                     path: path,
@@ -2073,6 +2080,10 @@ final class ShellModel: ObservableObject {
         case .start(let resolved):
             destination = resolved
         }
+        guard requireLocalHerdrMutationReadiness() else {
+            showComposer = false
+            return
+        }
         // The operator's choices are remembered before the work starts, so a
         // failed launch still leaves the composer offering what they picked.
         core.persistUIState(
@@ -2115,6 +2126,41 @@ final class ShellModel: ObservableObject {
         interactionNotice = nil
     }
 
+    func dismissHerdrProtocolMismatch() {
+        herdrProtocolMismatch = nil
+    }
+
+    func openHideReleases() {
+        herdrProtocolMismatch = nil
+        guard let url = URL(string: "https://github.com/modakbul-gongbang/hide/releases") else {
+            interactionNotice = "Hide could not form the Releases address."
+            return
+        }
+        ExternalBrowser.open(url) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    func copyHerdrProtocolDiagnostics(_ details: HerdrProtocolMismatchDetails) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(details.diagnostics, forType: .string)
+        herdrProtocolMismatch = nil
+    }
+
+    @discardableResult
+    private func requireLocalHerdrMutationReadiness() -> Bool {
+        switch core.localHerdrMutationReadiness {
+        case .connected:
+            return true
+        case .protocolMismatch(let details):
+            interactionNotice = nil
+            herdrProtocolMismatch = details
+        case .initializing(let message), .unavailable(let message):
+            interactionNotice = message
+        }
+        return false
+    }
+
     func addDevice(label: String, alias: String) {
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = "device:\(trimmedAlias.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression))"
@@ -2147,6 +2193,10 @@ final class ShellModel: ObservableObject {
     }
 
     private func startTerminal(for checkout: CoreCheckoutSnapshot, focusHerdr: Bool) {
+        guard requireLocalHerdrMutationReadiness() else {
+            checkoutStartState = .failed(core.localHerdrMutationReadiness.message)
+            return
+        }
         guard pendingCheckoutStarts.insert(checkout.id).inserted else {
             checkoutStartState = .starting
             return

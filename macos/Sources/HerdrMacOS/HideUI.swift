@@ -219,6 +219,20 @@ struct ShellView: View {
             .background(HideTheme.panel)
         }
         .alert(
+            HerdrProtocolMismatchDetails.title,
+            isPresented: Binding(
+                get: { model.herdrProtocolMismatch != nil },
+                set: { if !$0 { model.dismissHerdrProtocolMismatch() } }
+            ),
+            presenting: model.herdrProtocolMismatch
+        ) { details in
+            Button("Open Hide Releases", action: model.openHideReleases)
+            Button("Copy Diagnostics") { model.copyHerdrProtocolDiagnostics(details) }
+            Button("OK", role: .cancel, action: model.dismissHerdrProtocolMismatch)
+        } message: { _ in
+            Text(HerdrProtocolMismatchDetails.message)
+        }
+        .alert(
             "Hide",
             isPresented: Binding(
                 get: { model.interactionNotice != nil },

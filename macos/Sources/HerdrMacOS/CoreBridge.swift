@@ -2390,11 +2390,107 @@ struct CoreHerdrStatus: Decodable {
     let state: String
     let socketPath: String?
     let message: String?
+    let expectedProtocol: UInt64?
+    let receivedProtocol: UInt64?
+    let receivedVersion: String?
 
     enum CodingKeys: String, CodingKey {
         case state
         case socketPath = "socket_path"
         case message
+        case expectedProtocol = "expected_protocol"
+        case receivedProtocol = "received_protocol"
+        case receivedVersion = "received_version"
+    }
+}
+
+struct HerdrProtocolMismatchDetails: Equatable, Identifiable {
+    let expectedProtocol: UInt64?
+    let receivedProtocol: UInt64?
+    let expectedVersion: String?
+    let receivedVersion: String?
+    let hideVersion: String?
+
+    var id: String {
+        [expectedProtocol.map(String.init), receivedProtocol.map(String.init), expectedVersion, receivedVersion]
+            .map { $0 ?? "unknown" }
+            .joined(separator: ":")
+    }
+
+    static let title = "Hide and Herdr aren’t compatible"
+    static let message = "The running Herdr uses a different protocol than this version of Hide. Update Hide, then try again. No workspace or agent was created."
+
+    var diagnostics: String {
+        var lines = ["Error code: protocol_mismatch"]
+        if let hideVersion, !hideVersion.isEmpty {
+            lines.append("Hide version: \(hideVersion)")
+        }
+        if let expectedVersion, !expectedVersion.isEmpty {
+            lines.append("Required Herdr version: \(expectedVersion)")
+        }
+        if let expectedProtocol {
+            lines.append("Required protocol: \(expectedProtocol)")
+        }
+        if let receivedVersion, !receivedVersion.isEmpty {
+            lines.append("Running Herdr version: \(receivedVersion)")
+        }
+        if let receivedProtocol {
+            lines.append("Running protocol: \(receivedProtocol)")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
+enum LocalHerdrMutationReadiness: Equatable {
+    case connected
+    case initializing(String)
+    case protocolMismatch(HerdrProtocolMismatchDetails)
+    case unavailable(String)
+
+    var message: String {
+        switch self {
+        case .connected:
+            "Connected to Herdr"
+        case .initializing(let message), .unavailable(let message):
+            message
+        case .protocolMismatch:
+            HerdrProtocolMismatchDetails.message
+        }
+    }
+}
+
+enum LocalHerdrMutationPolicy {
+    static func evaluate(
+        runtimeSelection: HerdrRuntimeSelection?,
+        status: CoreHerdrStatus?,
+        startupDiagnostic: String?,
+        hideVersion: String?
+    ) -> LocalHerdrMutationReadiness {
+        guard let runtimeSelection else {
+            return .initializing(
+                startupDiagnostic
+                    ?? "The bundled Herdr runtime is still starting. Wait for Herdr status, then try again."
+            )
+        }
+        guard let status else {
+            return .initializing("Hide is waiting for the first Herdr status. Try again in a moment.")
+        }
+        if status.state == "connected" {
+            return .connected
+        }
+        if status.state == "protocol_mismatch" {
+            return .protocolMismatch(HerdrProtocolMismatchDetails(
+                expectedProtocol: status.expectedProtocol,
+                receivedProtocol: status.receivedProtocol,
+                expectedVersion: runtimeSelection.version,
+                receivedVersion: status.receivedVersion,
+                hideVersion: hideVersion
+            ))
+        }
+        return .unavailable(
+            status.message
+                ?? "Hide is not connected to Herdr yet. Wait for the connection, then try again."
+        )
     }
 }
 
@@ -2531,6 +2627,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var routingError: String?
     private let remoteTargets: [[String: String]]
     var runtimeReadyHandler: (() -> Void)?
+
+    var localHerdrMutationReadiness: LocalHerdrMutationReadiness {
+        LocalHerdrMutationPolicy.evaluate(
+            runtimeSelection: runtimeSelection,
+            status: snapshot?.status.herdr,
+            startupDiagnostic: startupDiagnostic,
+            hideVersion: Bundle.main.object(
+                forInfoDictionaryKey: "CFBundleShortVersionString"
+            ) as? String
+        )
+    }
 
     private struct CommandDevice {
         let id: String
@@ -3050,6 +3157,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         bypassWarnings: Bool,
         completion: @escaping @MainActor (ChatLaunchResult) -> Void
     ) {
+        guard case .connected = localHerdrMutationReadiness else {
+            completion(ChatLaunchResult(
+                succeeded: false,
+                failedStep: .createTab,
+                message: localHerdrMutationReadiness.message,
+                paneID: nil
+            ))
+            return
+        }
         guard let runtimeSelection else {
             bridgeError = HideStartupDiagnostic.runtimeUnavailable
             completion(
@@ -3104,6 +3220,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         bypassWarnings: Bool,
         completion: @escaping @MainActor (ChatLaunchResult) -> Void
     ) {
+        guard case .connected = localHerdrMutationReadiness else {
+            completion(ChatLaunchResult(
+                succeeded: false,
+                failedStep: .startAgent,
+                message: localHerdrMutationReadiness.message,
+                paneID: paneID
+            ))
+            return
+        }
         guard let runtimeSelection else {
             completion(ChatLaunchResult(
                 succeeded: false,
