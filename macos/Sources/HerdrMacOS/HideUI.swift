@@ -245,6 +245,25 @@ struct ShellView: View {
         } message: {
             Text(model.interactionNotice ?? "")
         }
+        // A close with a consequence - a browser pane, whose Chromium tab goes
+        // with it, or a working agent - waits here for the operator's answer.
+        // The model holds the pending target, so the header X and ⌘W share
+        // one prompt. Return closes and Esc cancels, as in the trash prompt
+        // above; dismissing by any other route cancels through the binding.
+        .alert(
+            model.consequenceNotice?.title ?? "",
+            isPresented: Binding(
+                get: { model.consequenceNotice != nil },
+                set: { if !$0, model.consequenceNotice != nil { model.cancelConsequencePreview() } }
+            ),
+            presenting: model.consequenceNotice
+        ) { _ in
+            Button("Close", role: .destructive, action: model.confirmConsequencePreview)
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel, action: model.cancelConsequencePreview)
+        } message: { notice in
+            Text(notice.message)
+        }
     }
 }
 
@@ -2103,6 +2122,23 @@ private struct HideTabStrip: View {
                 // the row equally cut the strip to four tabs while the rest
                 // of the row stayed empty.
                 .layoutPriority(1)
+            }
+
+            if let notice = model.reopenTabNotice {
+                HStack(spacing: HideTheme.spacingXS) {
+                    if model.core.snapshot?.recentClosed.restoring == true {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle")
+                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                    }
+                    Text(notice)
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(HideTheme.warning)
+                .accessibilityIdentifier("hide-reopen-notice")
             }
 
             WindowDragArea()

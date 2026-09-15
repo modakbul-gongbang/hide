@@ -42,6 +42,8 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 - The PRD harness binds `scripts/verify-cargo.sh`, because a verify command runs with no shell and an `ENV=value cargo ...` binding fails with ENOENT at verify time.
 - `[profile.dev] incremental = false` is deliberate: an agent worktree is built a few times and discarded, which never repays an incremental cache.
 - `git worktree remove` takes the cache with the work; a worktree kept alive after its branch lands keeps its cache alive too.
+- The root checkout stays on `main`; every branch is worked on in its own worktree under `../herdr-ide.worktrees/`.
+  `scripts/hooks/root-worktree-main-only.sh` is a `PreToolUse` hook (registered for Claude Code in `.claude/settings.json`, for Codex in `~/.codex/hooks.json`) that refuses a `git checkout`/`git switch` off `main` in the root worktree and answers with the `git worktree add` form to use instead.
 
 ## Runtime Architecture
 
@@ -85,7 +87,7 @@ It owns the reproduction procedure, the isolation checklist, the measurement bou
 - No subprocesses, blocking I/O, or large serialization under `Mutex<Runtime>`: `snapshot_delta_payload` takes owned data under the lock and `serialize_snapshot_delta` serializes outside it, and `ChangeNotifier` announces once per burst.
   No per-tick or per-tab git forks: the catalog reads repository facts from the repository's own files (`git_dir.rs`), never from a `git` process.
 - Report idle and driven measurements separately, with the load and workload recorded for each.
-- Native verification uses exactly one identified app and an isolated Herdr server; never manipulate the operator's panes or server.
+- Native verification targets one precisely identified candidate PID/window and an isolated Herdr server; the operator app may remain running. Never quit, restart, focus, or manipulate the operator's app, panes, or server for QA without explicit coordination. Prefer background exact-window capture; see `docs/PERFORMANCE_TESTING.md` for isolation and foreground-interaction boundaries.
 - A Browser plugin pane is only for QA of the browser-pane product surface, never a verification surface for the native shell, editor, Git diff, sidebar, build, or installed app.
 
 <!-- harness:agents-namespace:start -->

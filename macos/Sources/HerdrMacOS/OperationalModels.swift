@@ -780,6 +780,14 @@ struct ConsequenceNotice: Equatable, Identifiable, Sendable {
     let requiresConfirmation: Bool
 
     var id: String { title }
+
+    /// The prompt body: the consequence, then the working panes it lists.
+    /// A target whose consequence is already the sentence (a browser pane)
+    /// is not repeated as a line under it.
+    var message: String {
+        let listed = affected.filter { $0.contentConsequence == nil }.map { "\($0.label) - \($0.statusLabel)" }
+        return ([consequence] + listed).joined(separator: "\n")
+    }
 }
 
 enum ConsequencePolicy {

@@ -241,13 +241,34 @@ pub(crate) fn request_with_connector(
     params: Value,
     timeout: Duration,
 ) -> Result<Value, ApiError> {
+    request_with_correlation_id(
+        connector,
+        &format!("herdr-core:{method}"),
+        method,
+        params,
+        timeout,
+    )
+}
+
+/// Sends one request with a caller-selected correlation id.
+///
+/// The pinned Herdr contract explicitly keeps this envelope id separate from
+/// mutation idempotency. Callers may use it to correlate one reopen stage in
+/// diagnostics, but must reconcile an ambiguous transport failure before
+/// submitting that external effect again.
+pub(crate) fn request_with_correlation_id(
+    connector: &dyn ApiConnector,
+    request_id: &str,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, ApiError> {
     let mut stream = connector.connect()?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
-    let request_id = format!("herdr-core:{method}");
-    write_request(stream.as_mut(), &request_id, method, params)?;
+    write_request(stream.as_mut(), request_id, method, params)?;
     let response = read_response(&mut BufReader::new(stream))?;
-    response_result(response, &request_id)
+    response_result(response, request_id)
 }
 
 #[cfg(test)]

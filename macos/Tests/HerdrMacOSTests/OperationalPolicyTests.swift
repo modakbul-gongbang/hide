@@ -691,3 +691,19 @@ private extension Process {
         return data
     }
 }
+
+@Test func consequencePromptListsWorkingPanesButNotTheBrowserSentence() {
+    let browser = DestructiveTarget(
+        id: "w1:p1", label: "Browser", statusLabel: "Idle",
+        requiresCloseConfirmation: true, summary: "Closing closes the tab.", contentConsequence: "Closing closes the tab."
+    )
+    let working = DestructiveTarget(
+        id: "w1:p2", label: "claude", statusLabel: "Working",
+        requiresCloseConfirmation: true, summary: "Editing files", contentConsequence: nil
+    )
+    let pane = ConsequencePolicy.notice(kind: .pane, targets: [browser])
+    #expect(pane.message == "Closing closes the tab.")
+    let tab = ConsequencePolicy.notice(kind: .tab, targets: [browser, working])
+    #expect(tab.message.hasSuffix("\nclaude - Working"))
+    #expect(!tab.message.contains("Browser - Idle"))
+}

@@ -52,14 +52,30 @@ export function parseOpen(args, environment) {
   return { profile: options.profile, targetPane, url: options.url, session: options.session, targetID: options['target-id'], placement, direction, bindingID, requestID };
 }
 
+// chromux answers with a stream of pretty-printed JSON documents, not one:
+// an `open` on a stopped profile prints the auto-launch receipt before the
+// session. The command's answer is the last document; earlier ones are
+// progress the caller did not ask for.
+export function lastJsonDocument(stdout) {
+  const text = stdout.trimEnd();
+  for (let start = text.lastIndexOf('\n{'); ; start = text.lastIndexOf('\n{', start - 1)) {
+    const candidate = start < 0 ? text : text.slice(start + 1);
+    try { return JSON.parse(candidate); }
+    catch (error) { if (start < 0) throw error; }
+  }
+}
+
 async function command(program, args, responseFormat = 'json') {
+  let stdout;
   try {
-    const { stdout } = await execute(program, args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-    return responseFormat === 'json' ? JSON.parse(stdout) : undefined;
+    ({ stdout } = await execute(program, args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }));
   } catch (error) {
     // Do not repeat args: they can contain a URL or the host's configuration.
-    throw new Error(`${program} failed (${error.code || (error.killed ? 'timeout' : 'invalid response')}). Inspect its host pane for diagnostics.`, { cause: error });
+    throw new Error(`${program} failed (${error.code || (error.killed ? 'timeout' : 'no exit status')}). Inspect its host pane for diagnostics.`, { cause: error });
   }
+  if (responseFormat !== 'json') return undefined;
+  try { return lastJsonDocument(stdout); }
+  catch (error) { throw new Error(`${program} answered with invalid JSON (${error.message}). Inspect its host pane for diagnostics.`, { cause: error }); }
 }
 
 async function snapshot() {

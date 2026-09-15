@@ -54,6 +54,21 @@ pub struct Snapshot {
     pub input_generation: u64,
     pub status: StatusSnapshot,
     pub pet: PetSnapshot,
+    pub recent_closed: RecentClosedSnapshot,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct RecentClosedSnapshot {
+    pub count: usize,
+    pub top_label: Option<String>,
+    pub restoring: bool,
+    pub notices: Vec<RecentClosedNoticeSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RecentClosedNoticeSnapshot {
+    pub pane_id: Option<String>,
+    pub message: String,
 }
 
 /// What a pane search found, over the pane's whole scrollback.
@@ -2075,6 +2090,7 @@ impl Snapshot {
                 pane_focus_request: None,
             },
             pet: PetSnapshot::initial(),
+            recent_closed: RecentClosedSnapshot::default(),
         }
     }
 }
@@ -2128,6 +2144,7 @@ pub struct RestSections {
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
     pub pet: PetSnapshot,
+    pub recent_closed: RecentClosedSnapshot,
 }
 
 impl RestSections {
@@ -2155,6 +2172,7 @@ impl RestSections {
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
             pet: snapshot.pet.clone(),
+            recent_closed: snapshot.recent_closed.clone(),
         }
     }
 
@@ -2183,6 +2201,7 @@ impl RestSections {
             && self.ime == snapshot.ime
             && self.status == snapshot.status
             && self.pet == snapshot.pet
+            && self.recent_closed == snapshot.recent_closed
     }
 }
 
@@ -2272,6 +2291,7 @@ pub struct RestWire<'a> {
     pub ime: &'a ImeSnapshot,
     pub status: &'a StatusSnapshot,
     pub pet: &'a PetSnapshot,
+    pub recent_closed: &'a RecentClosedSnapshot,
 }
 
 impl<'a> RestWire<'a> {
@@ -2301,6 +2321,7 @@ impl<'a> RestWire<'a> {
             ime: &rest.ime,
             status: &rest.status,
             pet: &rest.pet,
+            recent_closed: &rest.recent_closed,
         }
     }
 }

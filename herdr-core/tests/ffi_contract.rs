@@ -268,6 +268,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "overlay",
             "pane_layouts",
             "pet",
+            "recent_closed",
             "schema_version",
             "status",
             "tab",
