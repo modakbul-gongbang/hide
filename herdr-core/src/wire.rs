@@ -36,10 +36,17 @@ pub(crate) fn protocol_mismatch(
     received_protocol: u64,
     received_version: Option<String>,
 ) -> SessionFetchError {
+    let message = if received_protocol < HERDR_PROTOCOL_REVISION {
+        format!(
+            "The running Herdr uses protocol {received_protocol}, but Hide requires protocol {HERDR_PROTOCOL_REVISION}. When your current work is safe, stop the Herdr session and reopen Hide. Hide will start its compatible bundled Herdr. No workspace or agent was created."
+        )
+    } else {
+        format!(
+            "The running Herdr uses protocol {received_protocol}, but this Hide supports protocol {HERDR_PROTOCOL_REVISION}. Update Hide to a compatible release, then try again. No workspace or agent was created."
+        )
+    };
     SessionFetchError::Protocol {
-        message: format!(
-            "The running Herdr uses protocol {received_protocol}; this version of Hide requires protocol {HERDR_PROTOCOL_REVISION}. Update Hide, then try again. No workspace or agent was created."
-        ),
+        message,
         expected_protocol: HERDR_PROTOCOL_REVISION,
         received_protocol,
         received_version,
@@ -1339,17 +1346,27 @@ mod tests {
         let mut value = empty_snapshot();
         let received = HERDR_PROTOCOL_REVISION + 1;
         value["protocol"] = json!(received);
-        let error = snapshot(value).unwrap_err();
+        let error = snapshot(value.clone()).unwrap_err();
         assert_eq!(error.state(), "protocol_mismatch");
         assert_eq!(
             error.message(),
             format!(
-                "The running Herdr uses protocol {received}; this version of Hide requires protocol {HERDR_PROTOCOL_REVISION}. Update Hide, then try again. No workspace or agent was created."
+                "The running Herdr uses protocol {received}, but this Hide supports protocol {HERDR_PROTOCOL_REVISION}. Update Hide to a compatible release, then try again. No workspace or agent was created."
             )
         );
         assert_eq!(
             error.protocol_details(),
             Some((HERDR_PROTOCOL_REVISION, received, Some("fixture")))
+        );
+
+        let received = HERDR_PROTOCOL_REVISION - 1;
+        value["protocol"] = json!(received);
+        let error = snapshot(value).unwrap_err();
+        assert_eq!(
+            error.message(),
+            format!(
+                "The running Herdr uses protocol {received}, but Hide requires protocol {HERDR_PROTOCOL_REVISION}. When your current work is safe, stop the Herdr session and reopen Hide. Hide will start its compatible bundled Herdr. No workspace or agent was created."
+            )
         );
     }
 

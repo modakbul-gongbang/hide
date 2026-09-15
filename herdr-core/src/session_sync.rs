@@ -4151,7 +4151,8 @@ mod tests {
         let message = mismatch.message();
         assert!(
             message.contains(&format!("protocol {}", HERDR_PROTOCOL_REVISION + 1))
-                && message.contains(&format!("requires protocol {HERDR_PROTOCOL_REVISION}"))
+                && message.contains(&format!("supports protocol {HERDR_PROTOCOL_REVISION}"))
+                && message.contains("Update Hide")
                 && message.contains("No workspace or agent was created")
                 && !message.contains("server stop"),
             "the mismatch names both revisions and the remedy: {message}"
