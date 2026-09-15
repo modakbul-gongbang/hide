@@ -2586,14 +2586,18 @@ struct LocalHerdrMutationDispatchPolicy {
         "close_pane",
         "close_tab",
         "create_pane",
+        "create_scratch_chat_tab",
         "create_tab",
+        "create_worktree",
         "create_workspace",
         "focus_checkout",
         "focus_pane",
         "focus_tab",
         "fork_pane",
         "key",
+        "migrate_main_branch",
         "reconnect_pane",
+        "remove_worktree",
         "reorder_tab",
         "resize_pane",
         "terminal_click",
@@ -2949,11 +2953,23 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func reportTerminalViewport(paneID: String, cols: Int, rows: Int, newView: Bool) {
-        dispatch(kind: "terminal_viewport", payload: ["pane_id": paneID, "cols": cols, "rows": rows, "new_view": newView])
+    @discardableResult
+    func reportTerminalViewport(
+        paneID: String,
+        cols: Int,
+        rows: Int,
+        newView: Bool
+    ) -> CoreDispatchOutcome {
+        dispatch(kind: "terminal_viewport", payload: [
+            "pane_id": paneID,
+            "cols": cols,
+            "rows": rows,
+            "new_view": newView,
+        ])
     }
 
-    func resizeTerminal(paneID: String, cols: Int, rows: Int) {
+    @discardableResult
+    func resizeTerminal(paneID: String, cols: Int, rows: Int) -> CoreDispatchOutcome {
         dispatch(kind: "terminal_resize", payload: [
             "pane_id": paneID,
             "cols": cols,
