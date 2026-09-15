@@ -182,24 +182,42 @@ pub struct ProviderUsageSnapshot {
     pub resets_at_unix_seconds: Option<u64>,
     pub message: Option<String>,
     pub last_checked_at_unix_ms: Option<u64>,
+    pub last_success_at_unix_ms: Option<u64>,
+    pub last_error_kind: Option<String>,
+    pub buckets: Vec<ProviderUsageBucketSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderUsageBucketSnapshot {
+    pub label: String,
+    pub state: String,
+    pub used_percent: Option<f64>,
+    pub resets_at_unix_seconds: Option<u64>,
+    pub message: Option<String>,
 }
 
 impl ProviderUsageSnapshot {
     pub fn initial_rows() -> Vec<Self> {
         vec![
-            Self::unavailable(
-                "claude",
-                "Claude Code",
-                "Claude Code weekly usage has not been checked yet",
-                0,
-            ),
-            Self::unavailable(
-                "codex",
-                "Codex",
-                "Codex weekly usage has not been checked yet",
-                0,
-            ),
+            Self::loading("claude", "Claude Code"),
+            Self::loading("codex", "Codex"),
         ]
+    }
+
+    pub fn loading(provider: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+            label: label.into(),
+            window_minutes: 10_080,
+            state: "loading".to_owned(),
+            used_percent: None,
+            resets_at_unix_seconds: None,
+            message: Some("Checking usage…".to_owned()),
+            last_checked_at_unix_ms: None,
+            last_success_at_unix_ms: None,
+            last_error_kind: None,
+            buckets: Vec::new(),
+        }
     }
 
     pub fn unavailable(
@@ -217,6 +235,9 @@ impl ProviderUsageSnapshot {
             resets_at_unix_seconds: None,
             message: Some(message.into()),
             last_checked_at_unix_ms: (checked_at_unix_ms > 0).then_some(checked_at_unix_ms),
+            last_success_at_unix_ms: None,
+            last_error_kind: None,
+            buckets: Vec::new(),
         }
     }
 }
