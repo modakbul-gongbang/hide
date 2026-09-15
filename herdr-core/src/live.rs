@@ -21,7 +21,8 @@ use crate::ffi::ChangeNotifier;
 use crate::find::PaneFindOptions;
 use crate::fork::{ForkRequest, fork_arguments};
 use crate::herdr_api::{
-    ApiConnector, UnixSocketConnector, request_with_connector, request_with_correlation_id,
+    ApiConnector, ApiError, UnixSocketConnector, request_with_connector,
+    request_with_correlation_id,
 };
 #[cfg(test)]
 use crate::herdr_api::{HERDR_PROTOCOL_REVISION, request};
@@ -30,8 +31,8 @@ use crate::model::{
     WorkspaceRegistration, WorkspaceSnapshot,
 };
 use crate::recent_closed::{
-    ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutNode, ClosedPane, PanePlacement,
-    resume_arguments,
+    ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutBranch, ClosedLayoutNode, ClosedPane,
+    PanePlacement, resume_arguments,
 };
 use crate::remote::RusshRemoteClient;
 use crate::runtime::Runtime;
@@ -643,6 +644,12 @@ pub struct CloseCaptureOutcome {
     pub item: Option<ClosedItem>,
 }
 
+#[derive(Clone, Debug)]
+pub struct CloseEffectRequest {
+    pub key: String,
+    pub target: CloseCaptureTarget,
+}
+
 pub fn spawn_close_capture(
     context: LiveContext,
     request: CloseCaptureRequest,
@@ -650,11 +657,11 @@ pub fn spawn_close_capture(
     thread::Builder::new()
         .name("herdr-core-close-capture".to_owned())
         .spawn(move || {
-            let result = run_close_capture(context.api_connector.as_ref(), &request);
+            let result = capture_close_item(context.api_connector.as_ref(), &request);
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
-            let changed = match runtime.lock() {
+            let (changed, effects) = match runtime.lock() {
                 Ok(mut guard) => guard.ingest_close_capture_result(&request, result),
                 Err(_) => return,
             };
@@ -662,12 +669,26 @@ pub fn spawn_close_capture(
             if changed {
                 context.notifier.notify();
             }
+            for effect in effects {
+                let result = run_close_effect(context.api_connector.as_ref(), &effect);
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.ingest_close_effect_result(&effect, result),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            }
         })
         .map(|_| ())
         .map_err(|error| format!("close capture worker could not be started: {error}"))
 }
 
-fn run_close_capture(
+fn capture_close_item(
     connector: &dyn ApiConnector,
     request: &CloseCaptureRequest,
 ) -> Result<CloseCaptureOutcome, String> {
@@ -691,6 +712,7 @@ fn run_close_capture(
             } else {
                 let placement = layout.root.placement_for(pane_id).unwrap_or(PanePlacement {
                     neighbor_pane_id: None,
+                    parent_path: Vec::new(),
                     direction: crate::recent_closed::ClosedSplitDirection::Right,
                     ratio: 0.5,
                     target_was_first: false,
@@ -714,17 +736,31 @@ fn run_close_capture(
             })
         }
     };
+    Ok(CloseCaptureOutcome { item })
+}
+
+fn run_close_effect(
+    connector: &dyn ApiConnector,
+    request: &CloseEffectRequest,
+) -> Result<(), ApiError> {
     let (method, params) = match &request.target {
-        CloseCaptureTarget::Pane { pane_id } => ("pane.close", wire::pane_target_params(pane_id)?),
-        CloseCaptureTarget::Tab { tab_id } => ("tab.close", wire::tab_target_params(tab_id)?),
+        CloseCaptureTarget::Pane { pane_id } => (
+            "pane.close",
+            wire::pane_target_params(pane_id).map_err(ApiError::Malformed)?,
+        ),
+        CloseCaptureTarget::Tab { tab_id } => (
+            "tab.close",
+            wire::tab_target_params(tab_id).map_err(ApiError::Malformed)?,
+        ),
     };
-    reopen_request(
+    request_with_correlation_id(
         connector,
         &format!("herdr-core:{}:close", request.key),
         method,
         params,
-    )?;
-    Ok(CloseCaptureOutcome { item })
+        Duration::from_secs(5),
+    )
+    .map(|_| ())
 }
 
 #[derive(Clone, Debug)]
@@ -954,8 +990,17 @@ pub enum FileReopenResultOrHerdr {
 
 fn run_file_reopen(path: &str) -> FileReopenResultOrHerdr {
     let path = Path::new(path);
-    if !path.exists() {
-        return FileReopenResultOrHerdr::File(FileReopenResult::Missing);
+    match std::fs::metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return FileReopenResultOrHerdr::File(FileReopenResult::Missing);
+        }
+        Err(error) => {
+            return FileReopenResultOrHerdr::File(FileReopenResult::Failed(format!(
+                "{} metadata could not be read: {error}",
+                path.display()
+            )));
+        }
     }
     FileReopenResultOrHerdr::File(match crate::files::open(path) {
         Ok(document) => FileReopenResult::Opened(document),
@@ -1038,6 +1083,7 @@ fn ensure_workspace_and_tab(
         ));
     }
     if let Some(layout) = recovered_layouts.pop() {
+        let layout = repair_incomplete_tab_layout(connector, key, context, root, layout, notices)?;
         return Ok(restore_tab_position(
             connector, key, context, layout, notices,
         ));
@@ -1079,9 +1125,55 @@ fn ensure_workspace_and_tab(
         )?,
     )?;
     let layout = wire::applied_layout(applied)?;
+    let layout = repair_incomplete_tab_layout(connector, key, context, root, layout, notices)?;
     Ok(restore_tab_position(
         connector, key, context, layout, notices,
     ))
+}
+
+fn repair_incomplete_tab_layout(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    root: &ClosedLayoutNode,
+    mut layout: crate::recent_closed::ClosedLayout,
+    notices: &mut Vec<String>,
+) -> Result<crate::recent_closed::ClosedLayout, String> {
+    let expected = root.pane_count();
+    let first_actual = layout.root.pane_count();
+    if first_actual == expected {
+        return Ok(layout);
+    }
+    if first_actual > expected {
+        return Err(format!(
+            "the reopened tab returned {first_actual} panes, expected {expected}; extra panes were not adopted or overwritten and retry is available"
+        ));
+    }
+    let repaired = reopen_request(
+        connector,
+        &format!("herdr-core:{key}:layout-repair"),
+        "layout.apply",
+        wire::layout_apply_params(
+            &layout.workspace_id,
+            Some(&layout.tab_id),
+            &context.tab_label,
+            &tag_reopen_layout(root, key, ReopenIntentStage::Layout),
+        )?,
+    )?;
+    layout = wire::applied_layout(repaired)?;
+    let repaired_actual = layout.root.pane_count();
+    if repaired_actual > expected {
+        return Err(format!(
+            "the reopened tab restored {first_actual} of {expected} panes, then returned {repaired_actual} after repair; extra panes were not adopted or overwritten and retry is available"
+        ));
+    }
+    if repaired_actual < expected {
+        return Err(format!(
+            "the reopened tab restored {first_actual} of {expected} panes, then {repaired_actual} after repair; retry is available"
+        ));
+    }
+    notices.push("The incomplete tab restore was repaired before reopening sessions".into());
+    Ok(layout)
 }
 
 fn reopen_pane(
@@ -1095,12 +1187,6 @@ fn reopen_pane(
     let mut notices = Vec::new();
     let cwd = restored_cwd(&pane.cwd, &context.checkout_path, &mut notices);
     let restored_pane_id = if request.tab_exists {
-        let target = placement
-            .neighbor_pane_id
-            .as_ref()
-            .filter(|id| request.fallback_pane_id.as_deref() == Some(id.as_str()))
-            .or(request.fallback_pane_id.as_ref())
-            .ok_or_else(|| "the original tab has no pane to split".to_owned())?;
         let current_layout = export_reopen_layout(connector, key, &context.tab_id)?;
         let marker = reopen_intent_marker(key, ReopenIntentStage::Pane);
         let mut recovered_panes = Vec::new();
@@ -1116,7 +1202,12 @@ fn reopen_pane(
                 format!("reopen retry could not locate owned pane {pane_id} in its layout")
             })?;
             (pane_id, current.target_was_first)
-        } else {
+        } else if let Some(target) = placement.neighbor_pane_id.as_ref() {
+            if request.fallback_pane_id.as_deref() != Some(target.as_str()) {
+                return Err(format!(
+                    "the original sibling pane {target} is no longer available"
+                ));
+            }
             let value = reopen_request(
                 connector,
                 &format!("herdr-core:{key}:pane"),
@@ -1130,8 +1221,50 @@ fn reopen_pane(
                 )?,
             )?;
             (wire::split_pane(value)?, false)
+        } else {
+            let pane_root = tag_reopen_layout(
+                &ClosedLayoutNode::Pane {
+                    pane_id: None,
+                    label: pane.label.clone(),
+                    cwd: Some(cwd.clone()),
+                    command: None,
+                    env: Default::default(),
+                },
+                key,
+                ReopenIntentStage::Pane,
+            );
+            let root = wrap_surviving_subtree(
+                current_layout.root.clone(),
+                &placement.parent_path,
+                pane_root,
+                placement.direction,
+                placement.ratio,
+                placement.target_was_first,
+            )?;
+            let value = reopen_request(
+                connector,
+                &format!("herdr-core:{key}:pane-layout"),
+                "layout.apply",
+                wire::layout_apply_params(
+                    &current_layout.workspace_id,
+                    Some(&context.tab_id),
+                    &context.tab_label,
+                    &root,
+                )?,
+            )?;
+            let applied = wire::applied_layout(value)?;
+            let mut owned = Vec::new();
+            pane_ids_with_reopen_marker(&applied.root, &marker, &mut owned);
+            if owned.len() != 1 {
+                return Err(format!(
+                    "reopen layout created {} owned panes instead of one",
+                    owned.len()
+                ));
+            }
+            (owned.remove(0), placement.target_was_first)
         };
         if current_target_was_first != placement.target_was_first
+            && let Some(target) = placement.neighbor_pane_id.as_ref()
             && let Err(message) = reopen_request(
                 connector,
                 &format!("herdr-core:{key}:swap"),
@@ -1171,6 +1304,68 @@ fn reopen_pane(
     })
 }
 
+fn wrap_surviving_subtree(
+    surviving: ClosedLayoutNode,
+    parent_path: &[ClosedLayoutBranch],
+    reopened: ClosedLayoutNode,
+    direction: crate::recent_closed::ClosedSplitDirection,
+    ratio: f32,
+    target_was_first: bool,
+) -> Result<ClosedLayoutNode, String> {
+    if parent_path.is_empty() {
+        let (first, second) = if target_was_first {
+            (reopened, surviving)
+        } else {
+            (surviving, reopened)
+        };
+        return Ok(ClosedLayoutNode::Split {
+            direction,
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        });
+    }
+    let ClosedLayoutNode::Split {
+        direction: surviving_direction,
+        ratio: surviving_ratio,
+        first,
+        second,
+    } = surviving
+    else {
+        return Err("the surviving layout no longer matches the closed pane's parent path".into());
+    };
+    let (first, second) = match parent_path[0] {
+        ClosedLayoutBranch::First => (
+            Box::new(wrap_surviving_subtree(
+                *first,
+                &parent_path[1..],
+                reopened,
+                direction,
+                ratio,
+                target_was_first,
+            )?),
+            second,
+        ),
+        ClosedLayoutBranch::Second => (
+            first,
+            Box::new(wrap_surviving_subtree(
+                *second,
+                &parent_path[1..],
+                reopened,
+                direction,
+                ratio,
+                target_was_first,
+            )?),
+        ),
+    };
+    Ok(ClosedLayoutNode::Split {
+        direction: surviving_direction,
+        ratio: surviving_ratio,
+        first,
+        second,
+    })
+}
+
 fn reopen_tab(
     connector: &dyn ApiConnector,
     key: &str,
@@ -1199,6 +1394,7 @@ fn reopen_tab(
         .iter()
         .filter_map(|id| pane_map.get(id))
         .collect::<Vec<_>>();
+    ensure_complete_tab_restore(terminal_panes.len(), new_ids.len())?;
     let mut notices = Vec::new();
     for (index, (pane, new_id)) in terminal_panes.iter().zip(new_ids.iter()).enumerate() {
         let mut pane_notices = Vec::new();
@@ -1232,6 +1428,16 @@ fn reopen_tab(
         focused_pane_id: first,
         notices,
     })
+}
+
+fn ensure_complete_tab_restore(expected: usize, actual: usize) -> Result<(), String> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "the reopened tab restored {actual} of {expected} terminal panes; retry is available"
+        ))
+    }
 }
 
 fn restored_cwd(cwd: &str, checkout_root: &str, notices: &mut Vec<String>) -> String {
@@ -2930,6 +3136,7 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2937,6 +3144,219 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn nested_split_reopen_applies_the_original_outer_and_inner_geometry() {
+        let socket_root = std::path::PathBuf::from("/tmp").join(format!(
+            "herdr-core-reopen-nested-layout-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&socket_root).expect("create socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            for expected_method in ["layout.export", "layout.apply"] {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], expected_method);
+                let result = if expected_method == "layout.export" {
+                    json!({"type":"layout_export","layout": {
+                        "workspace_id":"w1", "tab_id":"w1:t1", "zoomed":false,
+                        "focused_pane_id":"outer-left",
+                        "root":{"type":"split", "direction":"right", "ratio":0.4,
+                            "first":{"type":"pane", "pane_id":"outer-left", "cwd":"/tmp", "env":{}},
+                            "second":{"type":"split", "direction":"right", "ratio":0.65,
+                                "first":{"type":"pane", "pane_id":"inner-left", "cwd":"/tmp", "env":{}},
+                                "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}
+                    }})
+                } else {
+                    let root = &request["params"]["root"];
+                    assert_eq!(root["direction"], "right");
+                    assert!((root["ratio"].as_f64().unwrap() - 0.4).abs() < 0.000_001);
+                    assert_eq!(root["first"]["pane_id"], "outer-left");
+                    assert_eq!(root["second"]["direction"], "down");
+                    assert!((root["second"]["ratio"].as_f64().unwrap() - 0.3).abs() < 0.000_001);
+                    assert_eq!(
+                        root["second"]["first"]["env"][REOPEN_INTENT_ENV],
+                        reopen_intent_marker("nested-intent", ReopenIntentStage::Pane)
+                    );
+                    assert_eq!(root["second"]["second"]["direction"], "right");
+                    assert!(
+                        (root["second"]["second"]["ratio"].as_f64().unwrap() - 0.65).abs()
+                            < 0.000_001
+                    );
+                    assert_eq!(root["second"]["second"]["first"]["pane_id"], "inner-left");
+                    assert_eq!(root["second"]["second"]["second"]["pane_id"], "inner-right");
+                    json!({"type":"layout_apply","layout": {
+                        "workspace_id":"w1", "tab_id":"w1:t1", "zoomed":false,
+                        "focused_pane_id":"reopened",
+                        "root":{"type":"split", "direction":"right", "ratio":0.4,
+                            "first":{"type":"pane", "pane_id":"outer-left", "cwd":"/tmp", "env":{}},
+                            "second":{"type":"split", "direction":"down", "ratio":0.3,
+                                "first":{"type":"pane", "pane_id":"reopened", "cwd":"/tmp", "env":{
+                                    (REOPEN_INTENT_ENV): reopen_intent_marker("nested-intent", ReopenIntentStage::Pane)
+                                }},
+                                "second":{"type":"split", "direction":"right", "ratio":0.65,
+                                    "first":{"type":"pane", "pane_id":"inner-left", "cwd":"/tmp", "env":{}},
+                                    "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}}
+                    }})
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
+            }
+        });
+        let context = ClosedContext {
+            workspace_id: "w1".into(),
+            workspace_label: "Fixture".into(),
+            workspace_ids_before_close: vec!["w1".into()],
+            tab_ids_before_close: vec!["w1:t1".into()],
+            pane_ids_before_close: vec![
+                "outer-left".into(),
+                "closed".into(),
+                "inner-left".into(),
+                "inner-right".into(),
+            ],
+            checkout_id: "checkout".into(),
+            checkout_path: "/tmp".into(),
+            tab_id: "w1:t1".into(),
+            tab_label: "Tab".into(),
+            tab_index: 0,
+        };
+        let pane = ClosedPane {
+            pane_id: "closed".into(),
+            label: None,
+            cwd: "/tmp".into(),
+            agent: None,
+            browser: false,
+        };
+        let placement = PanePlacement {
+            neighbor_pane_id: None,
+            parent_path: vec![ClosedLayoutBranch::Second],
+            direction: crate::recent_closed::ClosedSplitDirection::Down,
+            ratio: 0.3,
+            target_was_first: true,
+        };
+        let request = ReopenRequest {
+            item: ClosedItem::Pane {
+                key: "nested-intent".into(),
+                context: context.clone(),
+                pane: pane.clone(),
+                placement: placement.clone(),
+            },
+            workspace_exists: true,
+            tab_exists: true,
+            fallback_pane_id: Some("outer-left".into()),
+        };
+
+        let outcome = reopen_pane(
+            &UnixSocketConnector::new(&socket_path),
+            "nested-intent",
+            &context,
+            &pane,
+            &placement,
+            &request,
+        )
+        .expect("nested pane reopens through layout.apply");
+
+        assert_eq!(outcome.focused_pane_id.as_deref(), Some("reopened"));
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&socket_root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn over_count_tab_layout_is_not_adopted_or_overwritten() {
+        let pane = |id: &str| ClosedLayoutNode::Pane {
+            pane_id: Some(id.to_owned()),
+            label: None,
+            cwd: Some("/tmp".to_owned()),
+            command: None,
+            env: Default::default(),
+        };
+        let expected_root = ClosedLayoutNode::Split {
+            direction: crate::recent_closed::ClosedSplitDirection::Right,
+            ratio: 0.5,
+            first: Box::new(pane("expected-a")),
+            second: Box::new(pane("expected-b")),
+        };
+        let actual_root = ClosedLayoutNode::Split {
+            direction: crate::recent_closed::ClosedSplitDirection::Right,
+            ratio: 0.5,
+            first: Box::new(expected_root.clone()),
+            second: Box::new(pane("unknown-extra")),
+        };
+        let context = ClosedContext {
+            workspace_id: "w1".into(),
+            workspace_label: "Fixture".into(),
+            workspace_ids_before_close: vec!["w1".into()],
+            tab_ids_before_close: vec!["w1:t1".into()],
+            pane_ids_before_close: vec!["w1:p1".into(), "w1:p2".into()],
+            checkout_id: "checkout".into(),
+            checkout_path: "/tmp".into(),
+            tab_id: "w1:t1".into(),
+            tab_label: "Tab".into(),
+            tab_index: 0,
+        };
+        let error = repair_incomplete_tab_layout(
+            &UnixSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
+            "over-count",
+            &context,
+            &expected_root,
+            crate::recent_closed::ClosedLayout {
+                workspace_id: "w1".into(),
+                tab_id: "w1:t2".into(),
+                zoomed: false,
+                focused_pane_id: "unknown-extra".into(),
+                root: actual_root,
+            },
+            &mut Vec::new(),
+        )
+        .expect_err("an extra pane is not owned by the reopen intent");
+
+        assert!(error.contains("returned 3 panes, expected 2"));
+        assert!(error.contains("not adopted or overwritten"));
+        assert!(error.contains("retry is available"));
+    }
+
+    #[test]
+    fn partial_tab_restore_is_not_consumed_as_success() {
+        let error = ensure_complete_tab_restore(3, 2).expect_err("one pane is still missing");
+        assert!(error.contains("restored 2 of 3"));
+        assert!(error.contains("retry is available"));
+        assert!(ensure_complete_tab_restore(3, 3).is_ok());
+    }
+
+    #[test]
+    fn file_reopen_distinguishes_metadata_failure_from_a_missing_file() {
+        let root =
+            std::env::temp_dir().join(format!("hide-file-metadata-denied-{}", std::process::id()));
+        let denied = root.join("denied");
+        let file = denied.join("document.txt");
+        std::fs::create_dir_all(&denied).expect("create denied fixture");
+        std::fs::write(&file, "saved").expect("write fixture");
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000))
+            .expect("deny traversal");
+
+        let result = run_file_reopen(file.to_str().unwrap());
+
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700))
+            .expect("restore traversal");
+        std::fs::remove_dir_all(&root).expect("remove fixture");
+        match result {
+            FileReopenResultOrHerdr::File(FileReopenResult::Failed(message)) => {
+                assert!(message.contains("metadata could not be read"));
+            }
+            other => panic!("permission failure must stay retryable, got {other:?}"),
+        }
+    }
 
     #[test]
     fn pane_reopen_ignores_an_unowned_same_cwd_pane() {
@@ -3032,6 +3452,7 @@ mod tests {
         };
         let placement = PanePlacement {
             neighbor_pane_id: Some("w1:p1".into()),
+            parent_path: Vec::new(),
             direction: crate::recent_closed::ClosedSplitDirection::Right,
             ratio: 0.5,
             target_was_first: false,
@@ -3090,10 +3511,12 @@ mod tests {
         let socket_path = root.join("herdr.sock");
         let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
         let server = std::thread::spawn(move || {
+            let mut layout_apply_count = 0;
             for expected_method in [
                 "session.snapshot",
                 "layout.export",
                 "workspace.create",
+                "layout.apply",
                 "layout.apply",
                 "tab.move",
             ] {
@@ -3132,15 +3555,151 @@ mod tests {
                         assert_eq!(request["params"]["tab_id"], "w3:t1");
                         assert!(request["params"].get("workspace_id").is_none());
                         assert_eq!(
-                            request["params"]["root"]["env"][REOPEN_INTENT_ENV],
+                            request["params"]["root"]["first"]["env"][REOPEN_INTENT_ENV],
                             reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
                         );
+                        layout_apply_count += 1;
+                        if layout_apply_count == 1 {
+                            json!({"type":"layout_apply","layout": {
+                                "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
+                                "focused_pane_id":"w3:p3",
+                                "root":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
+                                    (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                                }}
+                            }})
+                        } else {
+                            json!({"type":"layout_apply","layout": {
+                                "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
+                                "focused_pane_id":"w3:p3",
+                                "root":{"type":"split","direction":"right","ratio":0.6,
+                                    "first":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
+                                        (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                                    }},
+                                    "second":{"type":"pane","pane_id":"w3:p4","cwd":"/tmp","env":{
+                                        (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                                    }}}
+                            }})
+                        }
+                    }
+                    "tab.move" => json!({"type":"tab_list","tabs":[]}),
+                    _ => unreachable!(),
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
+            }
+        });
+        let context = ClosedContext {
+            workspace_id: "w1".into(),
+            workspace_label: "Fixture".into(),
+            workspace_ids_before_close: vec!["w1".into()],
+            tab_ids_before_close: vec!["w1:t1".into()],
+            pane_ids_before_close: vec!["w1:p1".into()],
+            checkout_id: "checkout".into(),
+            checkout_path: "/tmp".into(),
+            tab_id: "w1:t1".into(),
+            tab_label: "Tab".into(),
+            tab_index: 0,
+        };
+        let layout_root = ClosedLayoutNode::Split {
+            direction: crate::recent_closed::ClosedSplitDirection::Right,
+            ratio: 0.6,
+            first: Box::new(ClosedLayoutNode::Pane {
+                pane_id: None,
+                label: None,
+                cwd: Some("/tmp".into()),
+                command: None,
+                env: Default::default(),
+            }),
+            second: Box::new(ClosedLayoutNode::Pane {
+                pane_id: None,
+                label: None,
+                cwd: Some("/tmp".into()),
+                command: None,
+                env: Default::default(),
+            }),
+        };
+        let mut notices = Vec::new();
+        let restored = ensure_workspace_and_tab(
+            &UnixSocketConnector::new(&socket_path),
+            "layout-intent",
+            &context,
+            false,
+            &layout_root,
+            &mut notices,
+        )
+        .expect("owned layout is created");
+
+        assert_eq!(restored.workspace_id, "w3");
+        assert_eq!(restored.tab_id, "w3:t1");
+        assert_eq!(restored.focused_pane_id, "w3:p3");
+        assert_eq!(restored.root.pane_count(), 2);
+        assert_eq!(
+            notices,
+            ["The incomplete tab restore was repaired before reopening sessions"]
+        );
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn recovered_partial_tab_layout_is_repaired_and_revalidated() {
+        let socket_root = std::path::PathBuf::from("/tmp").join(format!(
+            "herdr-core-reopen-repair-recovered-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&socket_root).expect("create socket directory");
+        let socket_path = socket_root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            for expected_method in [
+                "session.snapshot",
+                "layout.export",
+                "layout.apply",
+                "tab.move",
+            ] {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], expected_method);
+                let result = match expected_method {
+                    "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
+                        "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
+                        "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
+                        "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
+                        "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
+                        "panes":[], "layouts":[], "agents":[], "lineage":[]
+                    }}),
+                    "layout.export" => json!({"type":"layout_export","layout": {
+                        "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
+                        "focused_pane_id":"w1:p2",
+                        "root":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
+                            (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                        }}
+                    }}),
+                    "layout.apply" => {
+                        assert_eq!(request["params"]["tab_id"], "w1:t2");
+                        assert_eq!(
+                            request["params"]["root"]["second"]["env"][REOPEN_INTENT_ENV],
+                            reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                        );
                         json!({"type":"layout_apply","layout": {
-                            "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
-                            "focused_pane_id":"w3:p3",
-                            "root":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
-                                (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
-                            }}
+                            "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
+                            "focused_pane_id":"w1:p2",
+                            "root":{"type":"split","direction":"right","ratio":0.6,
+                                "first":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
+                                    (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                                }},
+                                "second":{"type":"pane","pane_id":"w1:p3","cwd":"/tmp","env":{
+                                    (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                                }}}
                         }})
                     }
                     "tab.move" => json!({"type":"tab_list","tabs":[]}),
@@ -3166,28 +3725,44 @@ mod tests {
             tab_label: "Tab".into(),
             tab_index: 0,
         };
-        let restored = ensure_workspace_and_tab(
-            &UnixSocketConnector::new(&socket_path),
-            "layout-intent",
-            &context,
-            false,
-            &ClosedLayoutNode::Pane {
+        let root = ClosedLayoutNode::Split {
+            direction: crate::recent_closed::ClosedSplitDirection::Right,
+            ratio: 0.6,
+            first: Box::new(ClosedLayoutNode::Pane {
                 pane_id: None,
                 label: None,
                 cwd: Some("/tmp".into()),
                 command: None,
                 env: Default::default(),
-            },
-            &mut Vec::new(),
+            }),
+            second: Box::new(ClosedLayoutNode::Pane {
+                pane_id: None,
+                label: None,
+                cwd: Some("/tmp".into()),
+                command: None,
+                env: Default::default(),
+            }),
+        };
+        let mut notices = Vec::new();
+        let restored = ensure_workspace_and_tab(
+            &UnixSocketConnector::new(&socket_path),
+            "recovered-intent",
+            &context,
+            false,
+            &root,
+            &mut notices,
         )
-        .expect("owned layout is created");
+        .expect("the recovered layout is repaired");
 
-        assert_eq!(restored.workspace_id, "w3");
-        assert_eq!(restored.tab_id, "w3:t1");
-        assert_eq!(restored.focused_pane_id, "w3:p3");
+        assert_eq!(restored.tab_id, "w1:t2");
+        assert_eq!(restored.root.pane_count(), 2);
+        assert_eq!(
+            notices,
+            ["The incomplete tab restore was repaired before reopening sessions"]
+        );
         server.join().expect("fake server joins");
         std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        std::fs::remove_dir(&socket_root).expect("remove socket directory");
     }
 
     struct ScrollSink {

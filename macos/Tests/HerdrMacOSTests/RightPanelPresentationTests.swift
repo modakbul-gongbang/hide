@@ -385,6 +385,43 @@ struct RightPanelPresentationTests {
         #expect(bridge.snapshot?.editor.path == fileURL.path)
     }
 
+    @Test @MainActor func closingAnInactiveFileFlushesItsPendingDraftFirst() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hide-inactive-file-save-\(UUID().uuidString)")
+        let stateURL = root.appendingPathComponent("state.json")
+        let firstURL = root.appendingPathComponent("first.txt")
+        let secondURL = root.appendingPathComponent("second.txt")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "old".write(to: firstURL, atomically: true, encoding: .utf8)
+        try "second".write(to: secondURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bridge = CoreBridge(arguments: [
+            "HerdrMacOS",
+            "--verification-ui-fixture",
+            "--verification-no-remote",
+            "--workspace-root", root.path,
+            "--state-path", stateURL.path,
+        ])
+        try await Task.sleep(for: .milliseconds(100))
+        let workspace = try #require(bridge.snapshot?.navigator.workspaces.first)
+        let checkout = try #require(workspace.checkouts.first)
+
+        bridge.openFile(firstURL, workspaceID: workspace.id, checkoutID: checkout.id)
+        try await Task.sleep(for: .milliseconds(50))
+        let firstTabID = try #require(bridge.snapshot?.editor.activeTabID)
+        bridge.scheduleFileSave("saved before close")
+        bridge.openFile(secondURL, workspaceID: workspace.id, checkoutID: checkout.id)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(bridge.snapshot?.editor.activeTabID != firstTabID)
+        #expect(try String(contentsOf: firstURL, encoding: .utf8) == "old")
+
+        bridge.closeFileTab(firstTabID)
+        try await Task.sleep(for: .milliseconds(150))
+
+        #expect(try String(contentsOf: firstURL, encoding: .utf8) == "saved before close")
+        #expect(bridge.snapshot?.editor.tabs.contains { $0.id == firstTabID } == false)
+    }
+
     @Test func panelVisibilityDefaultsOpenAndDecodesIndependentClosedStates() throws {
         let defaults = try JSONDecoder().decode(
             CoreUIStateSnapshot.self,

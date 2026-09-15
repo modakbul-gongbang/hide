@@ -3441,10 +3441,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     func closeFileTab(_ tabID: String) {
-        if snapshot?.editor.activeTabID == tabID {
-            flushPendingFileSave()
+        var payload: [String: Any] = ["tab_id": tabID]
+        if let pendingSave = takePendingFileSave(for: tabID) {
+            payload["pending_save"] = pendingSave
         }
-        dispatch(kind: "file_close", payload: ["tab_id": tabID])
+        dispatch(kind: "file_close", payload: payload)
     }
 
     func setFileView(tabID: String, preview: Bool, wrap: Bool) {
@@ -3485,12 +3486,18 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func flushPendingFileSave() {
-        guard let payload = pendingFileSavePayload else { return }
+    func flushPendingFileSave(for tabID: String? = nil) {
+        guard let payload = takePendingFileSave(for: tabID) else { return }
+        dispatch(kind: "file_save", payload: payload)
+    }
+
+    private func takePendingFileSave(for tabID: String? = nil) -> [String: Any]? {
+        guard let payload = pendingFileSavePayload else { return nil }
+        if let tabID, payload["tab_id"] as? String != tabID { return nil }
         pendingFileSave?.cancel()
         pendingFileSave = nil
         pendingFileSavePayload = nil
-        dispatch(kind: "file_save", payload: payload)
+        return payload
     }
 
     func resolveConflict(_ action: String) {

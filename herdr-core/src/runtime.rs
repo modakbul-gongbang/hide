@@ -905,6 +905,13 @@ struct FileTabPayload {
     tab_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct FileClosePayload {
+    tab_id: String,
+    #[serde(default)]
+    pending_save: Option<FileSavePayload>,
+}
+
 /// One clicked path, already resolved on the filesystem by the shell.
 ///
 /// The shell owns filesystem resolution because reading directory entries
@@ -1269,7 +1276,7 @@ enum ValidatedEvent {
     FileOpen(FileOpenPayload),
     RevealPath(RevealPathPayload),
     FileFocus(FileTabPayload),
-    FileClose(FileTabPayload),
+    FileClose(FileClosePayload),
     FileDraft(FileDraftPayload),
     FileView(FileViewPayload),
     FileSave(FileSavePayload),
@@ -1446,6 +1453,14 @@ pub struct Runtime {
     /// User-initiated local closes, newest last. Memory only by contract.
     recent_closed: VecDeque<ClosedItem>,
     close_captures_in_flight: HashSet<String>,
+    close_capture_order: VecDeque<String>,
+    close_capture_results: HashMap<
+        String,
+        (
+            live::CloseCaptureRequest,
+            Result<live::CloseCaptureOutcome, String>,
+        ),
+    >,
     recent_closed_sequence: u64,
     reopen_in_flight: Option<String>,
     /// Panes that were scrolled before any view reported their size. One
@@ -1722,6 +1737,8 @@ impl Runtime {
             panes_closing: HashSet::new(),
             recent_closed: VecDeque::new(),
             close_captures_in_flight: HashSet::new(),
+            close_capture_order: VecDeque::new(),
+            close_capture_results: HashMap::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
             #[cfg(test)]
@@ -1896,15 +1913,7 @@ impl Runtime {
         editor: EditorDocumentSnapshot,
         result: Result<(), String>,
     ) -> bool {
-        let is_current_draft = self.snapshot.editor.tabs.iter().any(|tab| {
-            tab.id == tab_id
-                && tab.path == path
-                && self
-                    .editor_documents
-                    .get(&tab_id)
-                    .and_then(|document| document.contents_utf8.as_deref())
-                    == Some(contents.as_str())
-        });
+        let is_current_draft = self.is_current_file_draft(&tab_id, &path, &contents);
         if !is_current_draft {
             self.push_diagnostic(
                 "file.save_stale",
@@ -1922,6 +1931,128 @@ impl Runtime {
             Err(message) => self.set_error("file.save_failed", message, true),
         }
         true
+    }
+
+    fn is_current_file_draft(&self, tab_id: &str, path: &str, contents: &str) -> bool {
+        self.snapshot.editor.tabs.iter().any(|tab| {
+            tab.id == tab_id
+                && tab.path == path
+                && self
+                    .editor_documents
+                    .get(tab_id)
+                    .and_then(|document| document.contents_utf8.as_deref())
+                    == Some(contents)
+        })
+    }
+
+    fn ingest_file_save_then_close_result(
+        &mut self,
+        tab_id: String,
+        path: String,
+        contents: String,
+        editor: EditorDocumentSnapshot,
+        result: Result<(), String>,
+    ) -> bool {
+        let close_after_save =
+            result.is_ok() && self.is_current_file_draft(&tab_id, &path, &contents);
+        self.ingest_file_save_result(tab_id.clone(), path, contents, editor, result);
+        if close_after_save {
+            self.close_file_tab_now(&tab_id)
+        } else {
+            true
+        }
+    }
+
+    fn start_file_save_then_close(
+        &mut self,
+        close_tab_id: String,
+        payload: FileSavePayload,
+    ) -> bool {
+        if payload.tab_id != close_tab_id {
+            self.set_error(
+                "file.close_save_mismatch",
+                "The pending save did not belong to the file being closed",
+                false,
+            );
+            return true;
+        }
+        let Some(tab) = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == payload.tab_id && tab.path == payload.path)
+        else {
+            self.set_error(
+                "file.close_unknown_tab",
+                "The save target is not open",
+                false,
+            );
+            return true;
+        };
+        let tab_id = tab.id.clone();
+        let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+            self.set_error(
+                "file.close_save_rejected",
+                "The save target has no document state",
+                false,
+            );
+            return true;
+        };
+        document.contents_utf8 = Some(payload.contents_utf8.clone());
+        document.dirty = true;
+        self.sync_file_tab_dirty(&tab_id);
+        self.sync_active_editor_document();
+        let Some(context) = self.worker_context.clone() else {
+            self.set_error(
+                "file.close_save_worker_unavailable",
+                "The file stayed open because its pending save could not start",
+                true,
+            );
+            return true;
+        };
+        let path = payload.path;
+        let contents = payload.contents_utf8;
+        let expected_modified_at = payload.expected_modified_at_unix_ms;
+        let mut editor = self
+            .editor_documents
+            .get(&tab_id)
+            .cloned()
+            .expect("the close-save document was validated");
+        match thread::Builder::new()
+            .name("herdr-core-file-save-close".to_owned())
+            .spawn(move || {
+                let result = files::save(
+                    &mut editor,
+                    Path::new(&path),
+                    contents.clone(),
+                    expected_modified_at,
+                );
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard
+                        .ingest_file_save_then_close_result(tab_id, path, contents, editor, result),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            }) {
+            Ok(_) => true,
+            Err(error) => {
+                self.set_error(
+                    "file.close_save_worker_failed",
+                    format!(
+                        "The file stayed open because its pending save could not start: {error}"
+                    ),
+                    true,
+                );
+                true
+            }
+        }
     }
 
     /// Takes one delta response for the snapshot wire: sections whose revision
@@ -9071,6 +9202,72 @@ impl Runtime {
         }
     }
 
+    fn close_file_tab_now(&mut self, tab_id: &str) -> bool {
+        let Some(index) = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .position(|tab| tab.id == tab_id)
+        else {
+            self.set_error(
+                "file.close_unknown_tab",
+                format!("File tab {tab_id} is not open"),
+                false,
+            );
+            return true;
+        };
+        let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id);
+        let closed_tab = self.snapshot.editor.tabs.remove(index);
+        if closed_tab.kind == EditorTabKind::File {
+            let key = self.next_recent_closed_key();
+            let checkout_path = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.checkouts.iter())
+                .find(|checkout| checkout.id == closed_tab.checkout_id)
+                .map(|checkout| checkout.path.clone())
+                .unwrap_or_default();
+            self.push_recent_closed(ClosedItem::File {
+                key,
+                workspace_id: closed_tab.workspace_id.clone(),
+                checkout_id: closed_tab.checkout_id.clone(),
+                checkout_path,
+                path: closed_tab.path.clone(),
+                label: closed_tab.label.clone(),
+            });
+        }
+        self.rebuild_tab_strips();
+        self.editor_documents.remove(tab_id);
+        self.editor_tab_history.retain(|known| known != tab_id);
+        if was_active {
+            self.snapshot.editor.active_tab_id = None;
+            self.snapshot.editor.document = None;
+            if closed_tab.kind == EditorTabKind::Diff {
+                self.snapshot.changes.selected_path = None;
+                self.snapshot.changes.diff = None;
+            }
+            while let Some(previous_id) = self.editor_tab_history.pop() {
+                if self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == previous_id)
+                {
+                    if let Err(message) = self.activate_editor_tab(&previous_id) {
+                        self.set_error("editor.focus_failed", message, false);
+                    }
+                    break;
+                }
+            }
+        }
+        self.persist_current_ui_state();
+        true
+    }
+
     fn set_reopen_notices(&mut self, notices: Vec<live::ReopenNotice>) {
         self.snapshot.recent_closed.notices = notices
             .into_iter()
@@ -9190,9 +9387,12 @@ impl Runtime {
             panes: self.closed_panes(&tab),
             target,
         };
-        if let Err(message) = live::spawn_close_capture(live_context, request) {
+        self.close_capture_order.push_back(request.key.clone());
+        if let Err(message) = live::spawn_close_capture(live_context, request.clone()) {
             self.close_captures_in_flight.remove(&target_id);
             self.panes_closing.remove(&target_id);
+            self.close_capture_order
+                .retain(|pending| pending != &request.key);
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: None,
                 message: format!("The close worker could not start: {message}"),
@@ -9201,10 +9401,68 @@ impl Runtime {
         true
     }
 
-    pub fn ingest_close_capture_result(
+    pub(crate) fn ingest_close_capture_result(
         &mut self,
         request: &live::CloseCaptureRequest,
         result: Result<live::CloseCaptureOutcome, String>,
+    ) -> (bool, Vec<live::CloseEffectRequest>) {
+        self.close_capture_results
+            .insert(request.key.clone(), (request.clone(), result));
+        let mut effects = Vec::new();
+        while let Some(key) = self.close_capture_order.front().cloned() {
+            let Some((request, result)) = self.close_capture_results.remove(&key) else {
+                break;
+            };
+            self.close_capture_order.pop_front();
+            match result {
+                Ok(outcome) => {
+                    if let Some(item) = outcome.item {
+                        self.push_recent_closed(item);
+                    }
+                    self.snapshot.recent_closed.notices.clear();
+                    self.push_diagnostic(
+                        "recent_closed.reserved",
+                        format!(
+                            "Reserved user close {} before its external effect",
+                            request.key
+                        ),
+                    );
+                    effects.push(live::CloseEffectRequest {
+                        key: request.key,
+                        target: request.target,
+                    });
+                }
+                Err(message) => {
+                    let target_id = match &request.target {
+                        live::CloseCaptureTarget::Pane { pane_id } => pane_id,
+                        live::CloseCaptureTarget::Tab { tab_id } => tab_id,
+                    };
+                    self.close_captures_in_flight.remove(target_id);
+                    if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
+                        self.panes_closing.remove(pane_id);
+                    }
+                    self.set_reopen_notices(vec![live::ReopenNotice {
+                        pane_id: match &request.target {
+                            live::CloseCaptureTarget::Pane { pane_id } => Some(pane_id.clone()),
+                            live::CloseCaptureTarget::Tab { .. } => None,
+                        },
+                        message: format!("The item was not closed: {message}"),
+                    }]);
+                    self.push_diagnostic(
+                        "recent_closed.capture_failed",
+                        format!("{}: {message}", request.key),
+                    );
+                }
+            }
+        }
+        self.sync_recent_closed_snapshot();
+        (true, effects)
+    }
+
+    pub(crate) fn ingest_close_effect_result(
+        &mut self,
+        request: &live::CloseEffectRequest,
+        result: Result<(), crate::herdr_api::ApiError>,
     ) -> bool {
         let target_id = match &request.target {
             live::CloseCaptureTarget::Pane { pane_id } => pane_id,
@@ -9212,17 +9470,15 @@ impl Runtime {
         };
         self.close_captures_in_flight.remove(target_id);
         match result {
-            Ok(outcome) => {
-                if let Some(item) = outcome.item {
-                    self.push_recent_closed(item);
-                }
+            Ok(()) => {
                 self.snapshot.recent_closed.notices.clear();
                 self.push_diagnostic(
                     "recent_closed.captured",
                     format!("Captured user close {}", request.key),
                 );
             }
-            Err(message) => {
+            Err(crate::herdr_api::ApiError::Remote { code, message }) => {
+                self.consume_recent_closed(&request.key);
                 if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
                     self.panes_closing.remove(pane_id);
                 }
@@ -9231,11 +9487,29 @@ impl Runtime {
                         live::CloseCaptureTarget::Pane { pane_id } => Some(pane_id.clone()),
                         live::CloseCaptureTarget::Tab { .. } => None,
                     },
-                    message: format!("The item was not closed: {message}"),
+                    message: format!("The item was not closed: {code}: {message}"),
                 }]);
                 self.push_diagnostic(
-                    "recent_closed.capture_failed",
-                    format!("{}: {message}", request.key),
+                    "recent_closed.close_failed",
+                    format!("{}: {code}: {message}", request.key),
+                );
+            }
+            Err(error) => {
+                if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
+                    self.panes_closing.remove(pane_id);
+                }
+                self.set_reopen_notices(vec![live::ReopenNotice {
+                    pane_id: match &request.target {
+                        live::CloseCaptureTarget::Pane { pane_id } => Some(pane_id.clone()),
+                        live::CloseCaptureTarget::Tab { .. } => None,
+                    },
+                    message: format!(
+                        "Hide could not confirm whether the item closed; its reopen entry was kept: {error}"
+                    ),
+                }]);
+                self.push_diagnostic(
+                    "recent_closed.close_unconfirmed",
+                    format!("{}: {error}", request.key),
                 );
             }
         }
@@ -10856,71 +11130,11 @@ impl Runtime {
                 true
             }
             ValidatedEvent::FileClose(payload) => {
-                let Some(index) = self
-                    .snapshot
-                    .editor
-                    .tabs
-                    .iter()
-                    .position(|tab| tab.id == payload.tab_id)
-                else {
-                    self.set_error(
-                        "file.close_unknown_tab",
-                        format!("File tab {} is not open", payload.tab_id),
-                        false,
-                    );
-                    return true;
-                };
-                let was_active =
-                    self.snapshot.editor.active_tab_id.as_deref() == Some(payload.tab_id.as_str());
-                let closed_tab = self.snapshot.editor.tabs.remove(index);
-                if closed_tab.kind == EditorTabKind::File {
-                    let key = self.next_recent_closed_key();
-                    let checkout_path = self
-                        .snapshot
-                        .navigator
-                        .workspaces
-                        .iter()
-                        .flat_map(|workspace| workspace.checkouts.iter())
-                        .find(|checkout| checkout.id == closed_tab.checkout_id)
-                        .map(|checkout| checkout.path.clone())
-                        .unwrap_or_default();
-                    self.push_recent_closed(ClosedItem::File {
-                        key,
-                        workspace_id: closed_tab.workspace_id.clone(),
-                        checkout_id: closed_tab.checkout_id.clone(),
-                        checkout_path,
-                        path: closed_tab.path.clone(),
-                        label: closed_tab.label.clone(),
-                    });
+                if let Some(pending_save) = payload.pending_save {
+                    self.start_file_save_then_close(payload.tab_id, pending_save)
+                } else {
+                    self.close_file_tab_now(&payload.tab_id)
                 }
-                self.rebuild_tab_strips();
-                self.editor_documents.remove(&payload.tab_id);
-                self.editor_tab_history
-                    .retain(|tab_id| tab_id != &payload.tab_id);
-                if was_active {
-                    self.snapshot.editor.active_tab_id = None;
-                    self.snapshot.editor.document = None;
-                    if closed_tab.kind == EditorTabKind::Diff {
-                        self.snapshot.changes.selected_path = None;
-                        self.snapshot.changes.diff = None;
-                    }
-                    while let Some(previous_id) = self.editor_tab_history.pop() {
-                        if self
-                            .snapshot
-                            .editor
-                            .tabs
-                            .iter()
-                            .any(|tab| tab.id == previous_id)
-                        {
-                            if let Err(message) = self.activate_editor_tab(&previous_id) {
-                                self.set_error("editor.focus_failed", message, false);
-                            }
-                            break;
-                        }
-                    }
-                }
-                self.persist_current_ui_state();
-                true
             }
             ValidatedEvent::FileView(payload) => {
                 let Some(tab) = self
@@ -12489,7 +12703,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "file_open" => decode!(FileOpenPayload, FileOpen),
         "reveal_path" => decode!(RevealPathPayload, RevealPath),
         "file_focus" => decode!(FileTabPayload, FileFocus),
-        "file_close" => decode!(FileTabPayload, FileClose),
+        "file_close" => decode!(FileClosePayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_view" => decode!(FileViewPayload, FileView),
         "file_save" => decode!(FileSavePayload, FileSave),
@@ -22552,6 +22766,121 @@ mod tests {
                 .and_then(|name| name.to_str())
                 .unwrap_or(path)
                 .to_owned(),
+        }
+    }
+
+    fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
+        live::CloseCaptureRequest {
+            key: key.to_owned(),
+            context: ClosedContext {
+                workspace_id: "workspace:0".to_owned(),
+                workspace_label: "Fixture".to_owned(),
+                workspace_ids_before_close: vec!["workspace:0".to_owned()],
+                tab_ids_before_close: vec![format!("tab:{key}")],
+                pane_ids_before_close: vec![],
+                checkout_id: "checkout:0".to_owned(),
+                checkout_path: "/repo".to_owned(),
+                tab_id: format!("tab:{key}"),
+                tab_label: key.to_owned(),
+                tab_index: 0,
+            },
+            panes: vec![],
+            target: live::CloseCaptureTarget::Tab {
+                tab_id: format!("tab:{key}"),
+            },
+        }
+    }
+
+    #[test]
+    fn close_capture_completion_cannot_invert_user_close_order() {
+        let mut runtime = runtime();
+        let first = close_capture_request("first");
+        let second = close_capture_request("second");
+        runtime.close_capture_order = VecDeque::from([first.key.clone(), second.key.clone()]);
+
+        let (_, early_effects) = runtime.ingest_close_capture_result(
+            &second,
+            Ok(live::CloseCaptureOutcome {
+                item: Some(closed_file("second", "/repo/second.rs")),
+            }),
+        );
+        assert!(early_effects.is_empty());
+        assert_eq!(runtime.snapshot().recent_closed.count, 0);
+
+        let (_, ordered_effects) = runtime.ingest_close_capture_result(
+            &first,
+            Ok(live::CloseCaptureOutcome {
+                item: Some(closed_file("first", "/repo/first.rs")),
+            }),
+        );
+        assert_eq!(
+            ordered_effects
+                .iter()
+                .map(|effect| effect.key.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert_eq!(runtime.snapshot().recent_closed.count, 2);
+        assert_eq!(
+            runtime.snapshot().recent_closed.top_label.as_deref(),
+            Some("second.rs")
+        );
+    }
+
+    #[test]
+    fn rejected_close_removes_only_its_reserved_item() {
+        let mut runtime = runtime();
+        runtime.push_recent_closed(closed_file("first", "/repo/first.rs"));
+        runtime.push_recent_closed(closed_file("second", "/repo/second.rs"));
+
+        runtime.ingest_close_effect_result(
+            &live::CloseEffectRequest {
+                key: "first".to_owned(),
+                target: live::CloseCaptureTarget::Tab {
+                    tab_id: "tab:first".to_owned(),
+                },
+            },
+            Err(crate::herdr_api::ApiError::Remote {
+                code: "refused".to_owned(),
+                message: "close refused".to_owned(),
+            }),
+        );
+
+        assert_eq!(runtime.snapshot().recent_closed.count, 1);
+        assert_eq!(
+            runtime.snapshot().recent_closed.top_label.as_deref(),
+            Some("second.rs")
+        );
+    }
+
+    #[test]
+    fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
+        for error in [
+            crate::herdr_api::ApiError::Transport("acknowledgement timed out".to_owned()),
+            crate::herdr_api::ApiError::Malformed("acknowledgement was invalid".to_owned()),
+        ] {
+            let mut runtime = runtime();
+            runtime.push_recent_closed(closed_file("first", "/repo/first.rs"));
+            runtime.ingest_close_effect_result(
+                &live::CloseEffectRequest {
+                    key: "first".to_owned(),
+                    target: live::CloseCaptureTarget::Tab {
+                        tab_id: "tab:first".to_owned(),
+                    },
+                },
+                Err(error),
+            );
+
+            assert_eq!(runtime.snapshot().recent_closed.count, 1);
+            assert_eq!(
+                runtime.snapshot().recent_closed.top_label.as_deref(),
+                Some("first.rs")
+            );
+            assert!(
+                runtime.snapshot().recent_closed.notices[0]
+                    .message
+                    .contains("could not confirm")
+            );
         }
     }
 

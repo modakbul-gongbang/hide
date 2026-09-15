@@ -85,9 +85,19 @@ pub enum ClosedSplitDirection {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanePlacement {
     pub neighbor_pane_id: Option<String>,
+    /// Path from the tab root to the split that directly owned the closed
+    /// pane. A split sibling has no single pane that `pane.split` can target,
+    /// so reopen wraps the surviving subtree at this location instead.
+    pub parent_path: Vec<ClosedLayoutBranch>,
     pub direction: ClosedSplitDirection,
     pub ratio: f32,
     pub target_was_first: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClosedLayoutBranch {
+    First,
+    Second,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,6 +142,13 @@ impl ClosedItem {
 }
 
 impl ClosedLayoutNode {
+    pub fn pane_count(&self) -> usize {
+        match self {
+            Self::Pane { .. } => 1,
+            Self::Split { first, second, .. } => first.pane_count() + second.pane_count(),
+        }
+    }
+
     pub fn pane_ids(&self, output: &mut Vec<String>) {
         match self {
             Self::Pane { pane_id, .. } => output.extend(pane_id.iter().cloned()),
@@ -163,6 +180,14 @@ impl ClosedLayoutNode {
     }
 
     pub fn placement_for(&self, target: &str) -> Option<PanePlacement> {
+        self.placement_for_at_path(target, &mut Vec::new())
+    }
+
+    fn placement_for_at_path(
+        &self,
+        target: &str,
+        path: &mut Vec<ClosedLayoutBranch>,
+    ) -> Option<PanePlacement> {
         match self {
             Self::Pane { .. } => None,
             Self::Split {
@@ -173,7 +198,8 @@ impl ClosedLayoutNode {
             } => {
                 if first.is_pane(target) {
                     return Some(PanePlacement {
-                        neighbor_pane_id: second.first_pane_id(),
+                        neighbor_pane_id: second.direct_pane_id(),
+                        parent_path: path.clone(),
                         direction: *direction,
                         ratio: *ratio,
                         target_was_first: true,
@@ -181,7 +207,8 @@ impl ClosedLayoutNode {
                 }
                 if second.is_pane(target) {
                     return Some(PanePlacement {
-                        neighbor_pane_id: first.first_pane_id(),
+                        neighbor_pane_id: first.direct_pane_id(),
+                        parent_path: path.clone(),
                         direction: *direction,
                         // Herdr's pane.split ratio always describes the first
                         // child's share. The later swap restores which side the
@@ -191,9 +218,16 @@ impl ClosedLayoutNode {
                         target_was_first: false,
                     });
                 }
-                first
-                    .placement_for(target)
-                    .or_else(|| second.placement_for(target))
+                path.push(ClosedLayoutBranch::First);
+                let first_placement = first.placement_for_at_path(target, path);
+                path.pop();
+                if first_placement.is_some() {
+                    return first_placement;
+                }
+                path.push(ClosedLayoutBranch::Second);
+                let second_placement = second.placement_for_at_path(target, path);
+                path.pop();
+                second_placement
             }
         }
     }
@@ -202,12 +236,10 @@ impl ClosedLayoutNode {
         matches!(self, Self::Pane { pane_id: Some(pane_id), .. } if pane_id == target)
     }
 
-    fn first_pane_id(&self) -> Option<String> {
+    fn direct_pane_id(&self) -> Option<String> {
         match self {
             Self::Pane { pane_id, .. } => pane_id.clone(),
-            Self::Split { first, second, .. } => {
-                first.first_pane_id().or_else(|| second.first_pane_id())
-            }
+            Self::Split { .. } => None,
         }
     }
 
@@ -330,7 +362,8 @@ mod tests {
         assert_eq!(
             layout.placement_for("left"),
             Some(PanePlacement {
-                neighbor_pane_id: Some("top".into()),
+                neighbor_pane_id: None,
+                parent_path: vec![],
                 direction: ClosedSplitDirection::Right,
                 ratio: 0.35,
                 target_was_first: true,
@@ -338,6 +371,7 @@ mod tests {
         );
         let bottom = layout.placement_for("bottom").unwrap();
         assert_eq!(bottom.neighbor_pane_id.as_deref(), Some("top"));
+        assert_eq!(bottom.parent_path, [ClosedLayoutBranch::Second]);
         assert_eq!(bottom.direction, ClosedSplitDirection::Down);
         assert!((bottom.ratio - 0.6).abs() < f32::EPSILON * 2.0);
         assert!(!bottom.target_was_first);
