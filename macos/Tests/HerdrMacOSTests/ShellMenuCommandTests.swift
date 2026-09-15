@@ -28,7 +28,7 @@ struct ShellMenuCommandTests {
 
         #expect(menu.items.map(\.title) == ["Minimize", "Reopen Closed Tab", "", "hide"])
         #expect(item.identifier == ReopenWindowMenuPolicy.itemIdentifier)
-        #expect(item.keyEquivalent == "z")
+        #expect(item.keyEquivalent == "t")
         #expect(item.keyEquivalentModifierMask == [.command, .shift])
         #expect(item.target === target)
 
@@ -47,8 +47,8 @@ struct ShellMenuCommandTests {
     }
 
     @MainActor
-    @Test func reopenUsesCommandShiftZButYieldsToTextRedo() {
-        #expect(ShellMenuCommand.reopenClosedTab.shortcut.canonical == "command+shift+z")
+    @Test func reopenUsesCommandShiftTRegardlessOfFocus() {
+        #expect(ShellMenuCommand.reopenClosedTab.shortcut.canonical == "command+shift+t")
         #expect(ShellMenuCommand.reopenClosedTab.title == "Reopen Closed Tab")
         let event = NSEvent.keyEvent(
             with: .keyDown,
@@ -57,14 +57,12 @@ struct ShellMenuCommandTests {
             timestamp: 0,
             windowNumber: 0,
             context: nil,
-            characters: "Z",
-            charactersIgnoringModifiers: "z",
+            characters: "T",
+            charactersIgnoringModifiers: "t",
             isARepeat: false,
-            keyCode: 6
+            keyCode: 17
         )!
-        #expect(ReopenShortcutPolicy.shouldReopen(event, firstResponder: nil))
-        #expect(!ReopenShortcutPolicy.shouldReopen(event, firstResponder: NSTextView()))
-        #expect(!ReopenShortcutPolicy.shouldReopen(event, firstResponder: NSSearchField()))
+        #expect(ReopenShortcutPolicy.shouldReopen(event))
     }
 
     @Test func theRetiredOptionChordIsClaimedByNothing() {

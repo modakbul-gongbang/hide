@@ -86,7 +86,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .search: PaneShortcut(key: "k", modifiers: [.command])
         case .openFile: PaneShortcut(key: "p", modifiers: [.command])
         case .closeTab: PaneShortcut(key: "w", modifiers: [.command])
-        case .reopenClosedTab: PaneShortcut(key: "z", modifiers: [.command, .shift])
+        case .reopenClosedTab: PaneShortcut(key: "t", modifiers: [.command, .shift])
         case .toggleLeftSidebar: PaneShortcut(key: "b", modifiers: [.command])
         case .toggleSidebarView: PaneShortcut(key: "e", modifiers: [.command])
         case .toggleRightPanel: PaneShortcut(key: "b", modifiers: [.command, .shift])

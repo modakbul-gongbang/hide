@@ -4,21 +4,9 @@ import SwiftUI
 
 @MainActor
 enum ReopenShortcutPolicy {
-    static func isTextEditing(_ responder: NSResponder?) -> Bool {
-        var responder = responder
-        while let current = responder {
-            if current is NSTextView || current is NSTextField || current is NSSearchField {
-                return true
-            }
-            responder = current.nextResponder
-        }
-        return false
-    }
-
-    static func shouldReopen(_ event: NSEvent, firstResponder: NSResponder?) -> Bool {
+    static func shouldReopen(_ event: NSEvent) -> Bool {
         event.type == .keyDown
             && ShellMenuCommand.reopenClosedTab.shortcut.matches(event)
-            && !isTextEditing(firstResponder)
     }
 }
 
@@ -236,10 +224,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 }
                 return nil
             }
-            if ReopenShortcutPolicy.shouldReopen(
-                event,
-                firstResponder: event.window?.firstResponder ?? self.mainWindow?.firstResponder
-            ) {
+            if ReopenShortcutPolicy.shouldReopen(event) {
                 MainActor.assumeIsolated {
                     self.model.reopenClosed()
                 }

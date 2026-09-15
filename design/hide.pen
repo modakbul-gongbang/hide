@@ -6184,7 +6184,7 @@
           "id": "screen-reopen-spec",
           "name": "Spec",
           "fill": "$--color-muted",
-          "content": "Window menu and Shift+Command+Z share one LIFO action; the chord yields to text Redo.",
+          "content": "Window menu and Shift+Command+T share one LIFO action regardless of focus.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -6217,7 +6217,7 @@
               "name": "Menu item",
               "fill": "$--color-muted",
               "opacity": "$--opacity-disabled",
-              "content": "Reopen Closed Tab    Shift+Command+Z",
+              "content": "Reopen Closed Tab    Shift+Command+T",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
               "fontWeight": "normal"
@@ -6251,7 +6251,7 @@
               "id": "screen-reopen-ready-menu",
               "name": "Menu item",
               "fill": "$--color-primary",
-              "content": "Reopen Closed Tab    Shift+Command+Z",
+              "content": "Reopen Closed Tab    Shift+Command+T",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
               "fontWeight": "normal"
