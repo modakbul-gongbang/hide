@@ -69,6 +69,29 @@ A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
 A close Hide asked for, or a pane Herdr has already stopped listing, projects `closing` with no notice chunk and keeps the pane's last frame until it is removed. Every other reason still reports `ended` with its message.
 
+### Reopening locally closed work
+
+The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.
+Scratch panes, Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
+Before sending a Herdr close, background workers export the tab layout and the core drains their results in user-event order, reserves each captured item on the LIFO stack, and only then starts the corresponding external close effect.
+A definitive Herdr refusal removes only that reservation; a transport failure or malformed acknowledgement cannot prove whether the close happened, so the reservation stays available for reconciliation and an inline notice reports the uncertainty.
+The snapshot exposes only the count, top label, in-flight state, and inline notices; the Swift shell routes the menu and shortcut and renders those values without keeping a second stack.
+
+Recreation also runs outside `Mutex<Runtime>`.
+Pane restore uses the captured parent path, direct neighbor, split direction, original first-child ratio, and cwd, falling back to the tab's current pane and then the checkout root when the original facts no longer exist.
+A direct pane sibling uses `pane.split`; a sibling subtree is wrapped at its captured nested parent with `layout.apply`, preserving the surrounding tree and every existing ratio.
+Tab restore prunes Browser leaves, applies the remaining exported layout, restores its workspace position, and starts each captured agent in the new pane with the captured session id when the agent kind supports resume.
+The create, split, and applied-layout requests stamp their panes with a reserved `HIDE_REOPEN_INTENT` environment value containing the closed-item key and mutation stage.
+On a retry, the worker adopts only a pane or layout carrying that exact marker; a new id, matching cwd, or matching workspace or tab label is never ownership evidence, so an unrelated agent cannot be interrupted as part of restore.
+Both a recovered layout and the first `layout.apply` result must contain the exact expected terminal-pane count before any agent starts.
+An under-count is repaired once by reapplying the fully tagged intended layout to the owned tab and revalidating the returned count; an over-count is never adopted or overwritten because the extra pane may have another owner.
+The pinned create and split mutations have no operation context, and the request envelope id is correlation only, so this marker is the topology evidence that makes an acknowledged-late mutation converge without guessing.
+The pinned Herdr can reuse a just-closed pane id while its old PTY still owns the agent process, so the restore worker interrupts that reused process before `agent.start` applies the explicit resume arguments.
+A failure before a pane or tab exists retains the same closed item for retry; once a tab exists, failed agent starts degrade to a shell or fresh session and publish a pane-local notice rather than offering a partial pane retry.
+File reads use the filesystem worker, and missing, unreadable, already-open, and successfully reopened files each have an explicit result.
+A file close carries its matching debounced save in the same core event, writes that exact path and contents outside the runtime mutex, and removes the tab only after the current draft saves successfully.
+No reopen notice uses the shell's modal interaction alert.
+
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
@@ -77,6 +100,7 @@ The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Reso
 Do not write new wire deserialization structs in `session_sync.rs` or import generated types into domain, runtime or sidebar code.
 The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
 Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
+The envelope `id` is request correlation, never retry identity; mutation convergence must use an operation context on a method whose pinned schema actually carries one, or reconcile the resulting topology before retrying a method that does not.
 `live.rs` and `remote.rs` also use this boundary for response decoding and generated request parameters.
 The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses and CLI-created agent envelope.
 Terminal input, scroll, resize and release messages and the parameterless snapshot request remain boundary-owned schema gaps, with tests that require migration when their parameter types appear.

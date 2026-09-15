@@ -1028,6 +1028,11 @@ Holding Control while pressing Tab again walks older visits rather than tab-stri
 Option+Tab and Option+Shift+Tab cycle projects globally and restore each project's last used surface.
 Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
 Menu actions commit immediately.
+Window > Reopen Closed Tab uses Shift+Command+T and is disabled when the session-local recent-close stack is empty or a restore is already running.
+The keyboard chord and Window menu item restore regardless of whether a terminal, file editor, search field, or composer text input owns focus.
+Restoration is one action with no confirmation: an in-flight pane uses the existing pane-header progress suffix, while a restore without a target pane uses the tab strip's compact warning line.
+Missing cwd, unavailable prior conversation, pruned Browser pane, missing file, and retryable failure states use the same warning color and inline notice vocabulary as existing pane operations, without adding a banner, card, or modal alert.
+A definitive Herdr close refusal removes its reserved reopen entry, while an unconfirmed transport or acknowledgement result keeps the entry and explains inline that Hide could not determine whether the item closed.
 Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
 Agent number hints follow the command registry: reveal only during an exact Option hold, ignoring Caps Lock, and clear on release or a suppressing sheet.
 Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.
@@ -1308,6 +1313,7 @@ The core owns mode and source wrapping per open file tab; another tab has indepe
 These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
 The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
 Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
+Closing a file tab carries that tab's matching pending save in the same close intent, and the tab remains open with a visible error if the exact path and contents cannot be saved.
 The native editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
 The syntax highlighter and text view use the same scaled monospaced font; unchanged view updates do not restart highlighting or reset its typography.
 Core acknowledgement, switching file identity, and explicitly reloading a disk conflict settle that presentation buffer.

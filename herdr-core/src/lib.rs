@@ -23,6 +23,7 @@ pub mod pet;
 mod ports;
 mod project_context;
 mod reader;
+mod recent_closed;
 pub mod remote;
 pub mod remote_files;
 mod runtime;

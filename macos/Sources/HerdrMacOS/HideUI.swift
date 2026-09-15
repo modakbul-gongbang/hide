@@ -2089,6 +2089,23 @@ private struct HideTabStrip: View {
                 .layoutPriority(1)
             }
 
+            if let notice = model.reopenTabNotice {
+                HStack(spacing: HideTheme.spacingXS) {
+                    if model.core.snapshot?.recentClosed.restoring == true {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle")
+                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                    }
+                    Text(notice)
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(HideTheme.warning)
+                .accessibilityIdentifier("hide-reopen-notice")
+            }
+
             WindowDragArea()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 

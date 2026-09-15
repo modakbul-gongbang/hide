@@ -488,6 +488,9 @@ final class ShellModel: ObservableObject {
 
     /// A failure that belongs to one pane, keyed by that pane.
     @Published private(set) var paneNotices: [String: String] = [:]
+    @Published private(set) var reopenPaneNotices: [String: String] = [:]
+    @Published private(set) var reopenTabNotice: String?
+    @Published private(set) var panesReopening: Set<String> = []
 
     private var lastReportedForkFailure: UInt64?
     /// Which checkout the composer opens on, or `nil` for Scratch. Scratch is
@@ -540,11 +543,13 @@ final class ShellModel: ObservableObject {
         shortcutDiagnostic = shortcutResolution.diagnostic ?? Self.uiStateDiagnostic(core.snapshot)
         remote.ingest(core.snapshot?.status.remote ?? [])
         observeNavigation(in: core.snapshot)
+        observeRecentClosed(in: core.snapshot)
         coreSubscription = core.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             self.observeWorktreeRemoval(in: snapshot)
             self.observeTaskOperation(in: snapshot)
             self.observeForkFailure(in: snapshot)
+            self.observeRecentClosed(in: snapshot)
             self.settlePaneSelection(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
             self.observeNavigation(in: snapshot)
@@ -573,6 +578,20 @@ final class ShellModel: ObservableObject {
             remote.refresh(targetID: device.id, label: device.label)
         }
         #endif
+    }
+
+    private func observeRecentClosed(in snapshot: CoreSnapshot?) {
+        let state = snapshot?.recentClosed ?? .empty
+        reopenPaneNotices = Dictionary(
+            state.notices.compactMap { notice in
+                notice.paneID.map { ($0, notice.message) }
+            },
+            uniquingKeysWith: { _, newest in newest }
+        )
+        reopenTabNotice = state.notices.last(where: { $0.paneID == nil })?.message
+        panesReopening = state.restoring
+            ? Set(state.notices.compactMap(\.paneID))
+            : []
     }
 
     /// A fork that failed has to say so where the operator is looking, and
@@ -621,13 +640,24 @@ final class ShellModel: ObservableObject {
 
     /// What a pane is doing right now, shown after its name in the header.
     func paneActivity(for paneID: String) -> String {
-        panesForking.contains(paneID) ? " · forking…" : ""
+        if panesReopening.contains(paneID) { return " · reopening…" }
+        return panesForking.contains(paneID) ? " · forking…" : ""
     }
 
     /// A failure that belongs to one pane, shown in that pane rather than in
     /// a dialog.
     func paneNotice(for paneID: String) -> String? {
-        paneNotices[paneID]
+        reopenPaneNotices[paneID] ?? paneNotices[paneID]
+    }
+
+    var canReopenClosed: Bool {
+        guard let recent = core.snapshot?.recentClosed else { return false }
+        return recent.count > 0 && !recent.restoring
+    }
+
+    func reopenClosed() {
+        guard canReopenClosed else { return }
+        core.reopenClosed()
     }
 
     var workspaces: [CoreWorkspaceSnapshot] {

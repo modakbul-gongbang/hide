@@ -3,6 +3,14 @@ import Combine
 import SwiftUI
 
 @MainActor
+enum ReopenShortcutPolicy {
+    static func shouldReopen(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && ShellMenuCommand.reopenClosedTab.shortcut.matches(event)
+    }
+}
+
+@MainActor
 enum MainWindowPresentation {
     static func present(_ window: NSWindow, application: NSApplication = .shared, background: Bool = false) {
         if background {
@@ -17,7 +25,43 @@ enum MainWindowPresentation {
 }
 
 @MainActor
-final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
+enum ReopenWindowMenuPolicy {
+    static let itemIdentifier = NSUserInterfaceItemIdentifier("me.grab.hide.reopen-closed-tab")
+
+    @discardableResult
+    static func install(
+        in menu: NSMenu,
+        target: AnyObject,
+        action: Selector
+    ) -> NSMenuItem {
+        if let existing = menu.item(withTag: itemTag) {
+            return existing
+        }
+        let command = ShellMenuCommand.reopenClosedTab
+        let item = NSMenuItem(
+            title: command.title,
+            action: action,
+            keyEquivalent: command.shortcut.menuKeyEquivalent
+        )
+        item.identifier = itemIdentifier
+        item.tag = itemTag
+        item.keyEquivalentModifierMask = command.shortcut.modifierFlags
+        item.target = target
+
+        // AppKit owns this app's main window rather than a SwiftUI WindowGroup,
+        // so SwiftUI's `.windowList` placement never materialises. Insert at
+        // the final separator, immediately before AppKit's window list.
+        let insertionIndex = menu.items.lastIndex(where: \.isSeparatorItem)
+            ?? menu.numberOfItems
+        menu.insertItem(item, at: insertionIndex)
+        return item
+    }
+
+    private static let itemTag = 0x48494445
+}
+
+@MainActor
+final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     let model: ShellModel
     private var mainWindow: NSWindow?
     private var switcherReleaseProbe: Timer?
@@ -27,6 +71,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
     private var petVisibilityObservation: AnyCancellable?
     private var usageWindowObservation: AnyCancellable?
     private var paneKeyMonitor: Any?
+    private var reopenClosedMenuItem: NSMenuItem?
 
     override init() {
         let startedAt = Date()
@@ -202,6 +247,12 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil
             }
+            if ReopenShortcutPolicy.shouldReopen(event) {
+                MainActor.assumeIsolated {
+                    self.model.reopenClosed()
+                }
+                return nil
+            }
             return event
         }
         presentMainWindow(window, source: "launch")
@@ -216,7 +267,18 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         petVisibilityObservation = model.core.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.petMenuBarController?.refresh() }
+                MainActor.assumeIsolated {
+                    self?.petMenuBarController?.refresh()
+                }
+                // ShellCommands observes the same core and may rebuild the
+                // SwiftUI-owned main menu on this run-loop turn. Restore the
+                // AppKit-owned Window item one turn later if that rebuild
+                // removed it. The policy is a no-op while the item exists.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.installReopenWindowMenuItem()
+                    }
+                }
             }
         }
 
@@ -327,6 +389,50 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
         model.clearShortcutHints()
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        installReopenWindowMenuItem()
+    }
+
+    private func installReopenWindowMenuItem() {
+        let application = NSApplication.shared
+        guard let windowMenu = application.mainMenu?
+            .items.first(where: { $0.title == "Window" })?.submenu
+            ?? application.windowsMenu
+        else {
+            HideLaunchTrace.mark(
+                "reopen_closed.window_menu.failed",
+                detail: "window_menu_missing"
+            )
+            return
+        }
+        reopenClosedMenuItem = ReopenWindowMenuPolicy.install(
+            in: windowMenu,
+            target: self,
+            action: #selector(reopenClosedFromWindowMenu(_:))
+        )
+        windowMenu.delegate = self
+        HideLaunchTrace.mark("reopen_closed.window_menu.installed")
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        reopenClosedMenuItem = ReopenWindowMenuPolicy.install(
+            in: menu,
+            target: self,
+            action: #selector(reopenClosedFromWindowMenu(_:))
+        )
+    }
+
+    @objc private func reopenClosedFromWindowMenu(_ sender: NSMenuItem) {
+        model.reopenClosed()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.identifier == ReopenWindowMenuPolicy.itemIdentifier {
+            return model.canReopenClosed
+        }
+        return true
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard let mainWindow else { return false }
         if !flag || !mainWindow.isVisible {
@@ -374,6 +480,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate {
                     detail: "source_\(source)_visible_true_windows_\(application.windows.count)"
                 )
             }
+            self.installReopenWindowMenuItem()
             self.publishUsageWindowVisibility()
         }
     }

@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import HerdrMacOS
 
@@ -7,9 +8,61 @@ import Testing
 /// keypress reaches the shell at all.
 @Suite("Shell menu shortcuts")
 struct ShellMenuCommandTests {
+    @MainActor
+    @Test func reopenCommandInstallsBeforeTheWindowList() {
+        final class Target: NSObject {
+            @objc func reopen(_ sender: NSMenuItem) {}
+        }
+
+        let menu = NSMenu(title: "Window")
+        menu.addItem(withTitle: "Minimize", action: nil, keyEquivalent: "m")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "hide", action: nil, keyEquivalent: "")
+        let target = Target()
+
+        let item = ReopenWindowMenuPolicy.install(
+            in: menu,
+            target: target,
+            action: #selector(Target.reopen(_:))
+        )
+
+        #expect(menu.items.map(\.title) == ["Minimize", "Reopen Closed Tab", "", "hide"])
+        #expect(item.identifier == ReopenWindowMenuPolicy.itemIdentifier)
+        #expect(item.keyEquivalent == "t")
+        #expect(item.keyEquivalentModifierMask == [.command, .shift])
+        #expect(item.target === target)
+
+        let sameItem = ReopenWindowMenuPolicy.install(
+            in: menu,
+            target: target,
+            action: #selector(Target.reopen(_:))
+        )
+        #expect(sameItem === item)
+        #expect(menu.items.filter { $0.identifier == ReopenWindowMenuPolicy.itemIdentifier }.count == 1)
+    }
+
     @Test func theRightPanelTogglesOnCommandShiftB() {
         #expect(ShellMenuCommand.toggleRightPanel.shortcut.canonical == "command+shift+b")
         #expect(ShellMenuCommand.toggleRightPanel.displayShortcut == "⇧⌘B")
+    }
+
+    @MainActor
+    @Test func reopenUsesCommandShiftTRegardlessOfFocus() {
+        #expect(ShellMenuCommand.reopenClosedTab.shortcut.canonical == "command+shift+t")
+        #expect(ShellMenuCommand.reopenClosedTab.title == "Reopen Closed Tab")
+        let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command, .shift],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "T",
+            charactersIgnoringModifiers: "t",
+            isARepeat: false,
+            keyCode: 17
+        )!
+        #expect(ReopenShortcutPolicy.shouldReopen(event))
     }
 
     @Test func theRetiredOptionChordIsClaimedByNothing() {
