@@ -656,8 +656,22 @@ private struct HideSidebar: View {
                 detail: "Add a folder to create your first project."
             )
         } else {
-            ForEach(model.workspaces) { workspace in
-                WorkspaceNavigatorRow(workspace: workspace)
+            ForEach(model.sidebarProjectRows) { row in
+                switch row {
+                case .workspace(let workspace, let hierarchyLevel):
+                    WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
+                case .inactiveProjects(let group, let folded):
+                    InactiveFoldRow(
+                        title: "Inactive projects",
+                        count: folded.count,
+                        itemName: "project",
+                        expanded: group.expanded,
+                        accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                        hierarchyLevel: .root,
+                        action: { model.toggleInactiveProjects(in: group) }
+                    )
+                    .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
+                }
             }
         }
     }
@@ -1280,6 +1294,7 @@ private struct WorkspaceNavigatorRow: View {
     @EnvironmentObject private var model: ShellModel
     @Environment(\.hideAccent) private var accent
     let workspace: CoreWorkspaceSnapshot
+    let hierarchyLevel: SidebarHierarchyLevel
 
     private var isFocusedWorkspace: Bool {
         model.focusedWorkspace?.id == workspace.id
@@ -1353,20 +1368,43 @@ private struct WorkspaceNavigatorRow: View {
                 .fixedSize()
                 .frame(width: 24, height: 28)
             }
-            .padding(.leading, HideTheme.spacingMD)
+            .padding(.leading, hierarchyLevel.contentLeadingInset)
             .padding(.trailing, HideTheme.spacingSM)
 
             if workspace.expanded {
-                ForEach(workspace.checkouts) { checkout in
-                    checkoutGroup(checkout)
+                ForEach(model.activeCheckouts(in: workspace)) { checkout in
+                    checkoutGroup(checkout, hierarchyLevel: hierarchyLevel.childLevel)
+                }
+                let inactive = model.inactiveCheckouts(in: workspace)
+                if !inactive.isEmpty {
+                    InactiveFoldRow(
+                        title: "Inactive",
+                        count: inactive.count,
+                        itemName: "checkout",
+                        expanded: workspace.inactiveCheckouts.expanded,
+                        accessibilityID: "hide-inactive-checkouts-\(workspace.id)",
+                        hierarchyLevel: hierarchyLevel.childLevel,
+                        action: { model.toggleInactiveCheckouts(in: workspace) }
+                    )
+                    if workspace.inactiveCheckouts.expanded {
+                        ForEach(inactive) { checkout in
+                            checkoutGroup(
+                                checkout,
+                                hierarchyLevel: hierarchyLevel.childLevel.childLevel
+                            )
+                        }
+                    }
                 }
             }
         }
-        .padding(.bottom, HideTheme.spacingXS)
+        .padding(.bottom, HideTheme.spacingSM)
         .onAppear { model.requestGithubStatus(workspace) }
     }
 
-    private func checkoutGroup(_ checkout: CoreCheckoutSnapshot) -> some View {
+    private func checkoutGroup(
+        _ checkout: CoreCheckoutSnapshot,
+        hierarchyLevel: SidebarHierarchyLevel
+    ) -> some View {
         let isFocused = model.focusedCheckout?.id == checkout.id
         let visibleAgents = SidebarGrouping.tree(model.agents, checkoutID: checkout.id,
             ownedPaneIDs: Set(checkout.tabs.flatMap(\.panes).map(\.id)))
@@ -1409,7 +1447,48 @@ private struct WorkspaceNavigatorRow: View {
                     .stroke(HideTheme.divider, lineWidth: HideTheme.Layout.hairlineWidth)
             }
         }
-        .padding(.horizontal, HideTheme.spacingSM)
+        .padding(.leading, hierarchyLevel.selectionLeadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
+    }
+}
+
+/// One disclosure pattern for both inactive levels. It uses the sidebar's
+/// existing interactive feedback and tokens; only the core decides which rows
+/// belong behind it.
+private struct InactiveFoldRow: View {
+    let title: String
+    let count: Int
+    let itemName: String
+    let expanded: Bool
+    let accessibilityID: String
+    let hierarchyLevel: SidebarHierarchyLevel
+    let action: () -> Void
+
+    var body: some View {
+        let countedItemName = count == 1 ? itemName : "\(itemName)s"
+        Button(action: action) {
+            HStack(spacing: HideTheme.spacingSM) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
+                    .foregroundStyle(HideTheme.muted)
+                    .frame(width: 12, height: 20)
+                Text("\(title) \(count)")
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                    .foregroundStyle(HideTheme.secondary)
+                Spacer(minLength: HideTheme.spacingXS)
+            }
+            .padding(.horizontal, HideTheme.spacingSM)
+            .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(HideInteractiveButtonStyle())
+        .padding(.leading, hierarchyLevel.selectionLeadingInset)
+        .padding(.trailing, HideTheme.spacingSM)
+        .accessibilityLabel(
+            "\(title), \(count) \(countedItemName), \(expanded ? "expanded" : "collapsed")"
+        )
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier(accessibilityID)
     }
 }
 
@@ -2512,14 +2591,23 @@ private struct HideSearchSheet: View {
         return HideSearchEntry.filtered(entries, query: query)
     }
 
+    private var projectEntries: [HideSearchEntry] {
+        HideSearchPresentation.foldedProjectEntries(
+            workspaces: model.workspaces,
+            groups: model.inactiveProjectGroups,
+            query: query
+        )
+    }
+
     private var entries: [HideSearchEntry] {
-        agentGroups.flatMap(\.entries) + checkoutEntries
+        agentGroups.flatMap(\.entries) + projectEntries + checkoutEntries
     }
 
     var body: some View {
         let groups = agentGroups
+        let projects = projectEntries
         let checkouts = checkoutEntries
-        let resultIDs = (groups.flatMap(\.entries) + checkouts).map(\.id)
+        let resultIDs = (groups.flatMap(\.entries) + projects + checkouts).map(\.id)
         VStack(alignment: .leading, spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 HideSearchField(
@@ -2546,6 +2634,17 @@ private struct HideSearchSheet: View {
                                 .padding(.horizontal, HideTheme.spacingMD)
                                 .padding(.top, HideTheme.spacingSM)
                             ForEach(group.entries) { entry in
+                                searchButton(entry)
+                            }
+                        }
+                        if !projects.isEmpty {
+                            Text("WORKSPACES > PROJECTS")
+                                .hideFont(size: HideTheme.Typography.caption, weight: .bold)
+                                .foregroundStyle(HideTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, HideTheme.spacingMD)
+                                .padding(.top, HideTheme.spacingSM)
+                            ForEach(projects) { entry in
                                 searchButton(entry)
                             }
                         }
@@ -2632,6 +2731,7 @@ private struct HideSearchSheet: View {
         switch entry.kind {
         case let .agent(agent): model.selectAgent(agent)
         case let .checkout(_, checkout): model.selectCheckout(checkout)
+        case let .project(_, primaryCheckout): model.selectCheckout(primaryCheckout)
         }
         dismiss()
     }
@@ -2644,6 +2744,31 @@ struct HideSearchAgentGroup: Identifiable {
 }
 
 enum HideSearchPresentation {
+    static func foldedProjectEntries(
+        workspaces: [CoreWorkspaceSnapshot],
+        groups: [CoreInactiveProjectGroupSnapshot],
+        query: String
+    ) -> [HideSearchEntry] {
+        let byID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let entries = groups
+            .filter { !$0.expanded }
+            .flatMap(\.projectIDs)
+            .compactMap { projectID -> HideSearchEntry? in
+                guard let workspace = byID[projectID],
+                      let primary = workspace.checkouts.first(where: {
+                          !$0.isWorktree && $0.path == workspace.path
+                      })
+                else { return nil }
+                return HideSearchEntry(
+                    id: "project-\(workspace.id)",
+                    title: workspace.repoName,
+                    subtitle: workspace.path,
+                    kind: .project(workspace, primary)
+                )
+            }
+        return HideSearchEntry.filtered(entries, query: query)
+    }
+
     static func agentGroups(
         workspaces: [CoreWorkspaceSnapshot],
         agents: [SidebarAgent],
@@ -2677,11 +2802,13 @@ struct HideSearchEntry: Identifiable {
     enum Kind {
         case agent(SidebarAgent)
         case checkout(CoreWorkspaceSnapshot, CoreCheckoutSnapshot)
+        case project(CoreWorkspaceSnapshot, CoreCheckoutSnapshot)
 
         var systemImage: String {
             switch self {
             case .agent: "sparkles"
             case .checkout: "rectangle.stack"
+            case .project: "folder"
             }
         }
     }
@@ -2689,6 +2816,7 @@ struct HideSearchEntry: Identifiable {
     enum Route: Equatable {
         case agent(paneID: String)
         case checkout(workspaceID: String, checkoutID: String)
+        case project(workspaceID: String, primaryCheckoutID: String)
     }
 
     let id: String
@@ -2702,6 +2830,8 @@ struct HideSearchEntry: Identifiable {
             .agent(paneID: agent.paneID)
         case let .checkout(workspace, checkout):
             .checkout(workspaceID: workspace.id, checkoutID: checkout.id)
+        case let .project(workspace, primaryCheckout):
+            .project(workspaceID: workspace.id, primaryCheckoutID: primaryCheckout.id)
         }
     }
 

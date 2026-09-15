@@ -27,6 +27,14 @@ struct StoredUiState {
     collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
     collapsed_checkout_ids: Vec<String>,
+    /// Project paths whose Inactive checkout row is open. The project path is
+    /// stable across navigator rebuilds and matches the existing path-keyed
+    /// expansion contract.
+    #[serde(default)]
+    expanded_inactive_checkout_project_paths: Vec<String>,
+    /// Device ids whose Inactive projects row is open.
+    #[serde(default)]
+    expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     project_base_branches: BTreeMap<String, String>,
     #[serde(default)]
@@ -142,6 +150,9 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             expanded_paths: stored.expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
             collapsed_checkout_ids: stored.collapsed_checkout_ids,
+            expanded_inactive_checkout_project_paths: stored
+                .expanded_inactive_checkout_project_paths,
+            expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
             project_base_branches: stored.project_base_branches,
             collapsed_agent_pane_ids: stored.collapsed_agent_pane_ids,
             selected_path: stored.selected_path,
@@ -187,6 +198,10 @@ pub fn save(
         expanded_paths: state.expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         collapsed_checkout_ids: state.collapsed_checkout_ids.clone(),
+        expanded_inactive_checkout_project_paths: state
+            .expanded_inactive_checkout_project_paths
+            .clone(),
+        expanded_inactive_project_device_ids: state.expanded_inactive_project_device_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
         collapsed_agent_pane_ids: state.collapsed_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
@@ -462,6 +477,43 @@ mod tests {
         assert_eq!(restored_again.expanded_paths, ["/repo/src", "/repo/tests"]);
         assert_eq!(restored_again.collapsed_workspace_ids, ["workspace:alpha"]);
         assert_eq!(restored_again.collapsed_checkout_ids, ["checkout:main"]);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
+    }
+
+    /// B5, B12. Fold disclosure is independent at the project and device
+    /// levels, survives a relaunch, and an older store defaults both closed.
+    #[test]
+    fn inactive_fold_expansion_survives_relaunch_and_defaults_closed() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-inactive-folds-{}", std::process::id()));
+        let path = root.join("state.json");
+        let state = UiStateSnapshot {
+            expanded_inactive_checkout_project_paths: vec!["/repo/alpha".to_owned()],
+            expanded_inactive_project_device_ids: vec!["local".to_owned()],
+            ..UiStateSnapshot::default()
+        };
+
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist inactive fold expansion");
+        let (restored, _sizes, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(
+            restored.expanded_inactive_checkout_project_paths,
+            ["/repo/alpha"]
+        );
+        assert_eq!(restored.expanded_inactive_project_device_ids, ["local"]);
+
+        let legacy = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
+        let (legacy_state, _sizes, legacy_disposition) = decode(legacy);
+        assert_eq!(legacy_disposition, LoadDisposition::Loaded);
+        assert!(
+            legacy_state
+                .expanded_inactive_checkout_project_paths
+                .is_empty()
+        );
+        assert!(legacy_state.expanded_inactive_project_device_ids.is_empty());
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);

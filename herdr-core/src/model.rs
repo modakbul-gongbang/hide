@@ -127,11 +127,23 @@ pub struct NavigatorSnapshot {
     pub focused_checkout_id: Option<String>,
     pub devices: Vec<DeviceSnapshot>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+    /// Project rows the core grouped at the bottom of each device's Projects
+    /// list. `workspaces` remains the one authoritative row collection so
+    /// search, focus, and project navigation never lose a folded project.
+    pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
     /// The one space that is not a project. Its own section, never a row in
     /// `workspaces` and never counted with them.
     pub scratch: ScratchSnapshot,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct InactiveProjectGroupSnapshot {
+    pub device_id: String,
+    pub expanded: bool,
+    /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
+    pub project_ids: Vec<String>,
 }
 
 /// The Scratch node: one fixed folder, and the Herdr tabs living in it.
@@ -406,6 +418,17 @@ pub struct WorkspaceSnapshot {
     #[serde(default)]
     pub last_activity_unix_ms: Option<u64>,
     pub checkouts: Vec<CheckoutSnapshot>,
+    /// Checkout rows grouped after the active rows in this project. The full
+    /// rows stay in `checkouts`, which remains the authority for focus,
+    /// search, tab state, and every non-sidebar consumer.
+    pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct InactiveCheckoutGroupSnapshot {
+    pub expanded: bool,
+    /// IDs in the same recent-activity order as `WorkspaceSnapshot.checkouts`.
+    pub checkout_ids: Vec<String>,
 }
 
 /// Agent counts and representative after Hide applies its pane-level read records.
@@ -1004,6 +1027,14 @@ pub struct UiStateSnapshot {
     /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
     #[serde(default)]
     pub collapsed_checkout_ids: Vec<String>,
+    /// Projects whose Inactive checkout group the operator opened. Absence is
+    /// the default collapsed state, so old stores need no migration.
+    #[serde(default)]
+    pub expanded_inactive_checkout_project_paths: Vec<String>,
+    /// Device groups whose Inactive projects group the operator opened.
+    /// Absence is the default collapsed state.
+    #[serde(default)]
+    pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
     #[serde(default)]
@@ -1127,6 +1158,8 @@ impl Default for UiStateSnapshot {
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
             collapsed_checkout_ids: Vec::new(),
+            expanded_inactive_checkout_project_paths: Vec::new(),
+            expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
             collapsed_agent_pane_ids: Vec::new(),
             selected_path: None,
@@ -1903,6 +1936,7 @@ impl Snapshot {
                     agent_count: 0,
                 }],
                 workspaces: Vec::new(),
+                inactive_projects: Vec::new(),
                 agents: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
                 scratch: ScratchSnapshot {

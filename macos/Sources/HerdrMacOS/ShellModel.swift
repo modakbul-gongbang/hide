@@ -513,6 +513,42 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.workspaces ?? []
     }
 
+    /// Core-owned project folds that have rows in the current navigation
+    /// context. Remote navigation remains unchanged until its wire exposes the
+    /// same metadata.
+    var inactiveProjectGroups: [CoreInactiveProjectGroupSnapshot] {
+        guard !isRemoteContext else { return [] }
+        let available = Set(workspaces.map(\.id))
+        return (core.snapshot?.navigator.inactiveProjects ?? []).filter { group in
+            group.projectIDs.contains(where: available.contains)
+        }
+    }
+
+    var sidebarProjectRows: [SidebarProjectRow] {
+        SidebarInactiveProjection.projectRows(workspaces, groups: inactiveProjectGroups)
+    }
+
+    /// Project rows in exactly the order the Projects view draws them.
+    var sidebarVisibleWorkspaces: [CoreWorkspaceSnapshot] {
+        sidebarProjectRows.compactMap { row in
+            guard case .workspace(let workspace, _) = row else { return nil }
+            return workspace
+        }
+    }
+
+    func activeCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        SidebarInactiveProjection.activeCheckouts(in: workspace)
+    }
+
+    func inactiveCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        SidebarInactiveProjection.inactiveCheckouts(in: workspace)
+    }
+
+    func sidebarVisibleCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        activeCheckouts(in: workspace)
+            + (workspace.inactiveCheckouts.expanded ? inactiveCheckouts(in: workspace) : [])
+    }
+
     var devices: [CoreDeviceSnapshot] {
         core.snapshot?.navigator.devices ?? []
     }
@@ -1088,13 +1124,15 @@ final class ShellModel: ObservableObject {
     /// them: the whole agent list in the Agents view, the raised rows and expanded
     /// lineage trees in the Projects view.
     var shortcutAgents: [SidebarAgent] {
-        AgentShortcutNumbering.candidates(
+        let expandedWorkspaces = sidebarVisibleWorkspaces.filter(\.expanded)
+        let visibleCheckouts = expandedWorkspaces.flatMap { sidebarVisibleCheckouts(in: $0) }
+        return AgentShortcutNumbering.candidates(
             for: sidebarContent,
             agents: agents,
-            visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id),
+            visibleCheckoutIDs: visibleCheckouts.map(\.id),
             collapsedCheckoutIDs: Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? []),
             ownedPaneIDsByCheckout: Dictionary(uniqueKeysWithValues:
-                workspaces.filter(\.expanded).flatMap(\.checkouts).map {
+                visibleCheckouts.map {
                     ($0.id, Set($0.tabs.flatMap(\.panes).map(\.id)))
                 })
         )
@@ -1385,6 +1423,14 @@ final class ShellModel: ObservableObject {
             collapsed.remove(workspace.id)
         }
         core.persistUIState(collapsedWorkspaceIDs: collapsed.sorted())
+    }
+
+    func toggleInactiveCheckouts(in workspace: CoreWorkspaceSnapshot) {
+        core.toggleInactiveCheckouts(projectPath: workspace.path)
+    }
+
+    func toggleInactiveProjects(in group: CoreInactiveProjectGroupSnapshot) {
+        core.toggleInactiveProjects(deviceID: group.deviceID)
     }
 
     func isCheckoutExpanded(_ checkout: CoreCheckoutSnapshot) -> Bool {
