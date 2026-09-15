@@ -3,13 +3,15 @@ use super::*;
 struct Repository(PathBuf);
 impl Repository {
     fn new() -> Self {
+        static NEXT_REPOSITORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "hide-worktree-policy-{}-{}",
+            "hide-worktree-policy-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_REPOSITORY.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-b", "main"]).unwrap();
